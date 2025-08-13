@@ -60,10 +60,10 @@ def open_browser(api_key: str, token: str, call_id: str) -> str:
 # Example tool implementation
 class DotaAPI:
     """Example Dota API tool."""
-    
+
     def __init__(self, game_id: str):
         self.game_id = game_id
-    
+
     def __call__(self, *args, **kwargs):
         # Mock implementation - in reality this would call the Dota API
         return {
@@ -73,22 +73,22 @@ class DotaAPI:
                 "deaths": 8,
                 "assists": 12,
                 "last_hits": 150,
-                "gpm": 420
+                "gpm": 420,
             },
-            "match_duration": "35:42"
+            "match_duration": "35:42",
         }
 
 
-# Example pre-processor implementation  
+# Example pre-processor implementation
 class Roboflow:
     """Example Roboflow pre-processor."""
-    
+
     def process(self, data):
         # Mock implementation - in reality this would process computer vision data
         return {
             "original_input": data,
             "detected_objects": ["hero", "creep", "tower"],
-            "confidence_scores": [0.95, 0.87, 0.92]
+            "confidence_scores": [0.95, 0.87, 0.92],
         }
 
 
@@ -99,73 +99,75 @@ def dota_api(game_id: str):
 
 async def main() -> None:
     """Create a video call and let an AI agent with OpenAI model join."""
-    
+
     load_dotenv()
-    
+
     # Check for required API keys
     if not os.getenv("OPENAI_API_KEY"):
         print("❌ OPENAI_API_KEY environment variable not set")
         return
-    
+
     if not os.getenv("ELEVENLABS_API_KEY"):
         print("❌ ELEVENLABS_API_KEY environment variable not set")
         return
-    
+
     client = Stream.from_env()
-    
+
     human_id = f"user-{uuid4()}"
-    
+
     create_user(client, human_id, "Human")
-    
+
     token = client.create_token(human_id, expiration=3600)
-    
+
     call_id = str(uuid4())
     call = client.video.call("default", call_id)
     call.get_or_create(data={"created_by_id": human_id})
-    
+
     logging.info("📞 Call ready: %s", call_id)
-    
+
     open_browser(client.api_key, token, call_id)
-    
+
     # Create TTS service
     tts = ElevenLabsTTS()  # API key picked from ELEVENLABS_API_KEY
-    
+
     # Create OpenAI model
     openai_model = OpenAIModel(
-        name="gpt-4o-mini",           # Using mini for cost efficiency
-        default_temperature=0.8,      # More creative responses
-        default_max_tokens=150        # Keep responses concise
+        name="gpt-4o-mini",  # Using mini for cost efficiency
+        default_temperature=0.8,  # More creative responses
+        default_max_tokens=150,  # Keep responses concise
     )
-    
+
     logging.info(f"🤖 Created OpenAI model: {openai_model}")
-    
+
     # Create agent with OpenAI model and the requested syntax
     agent = Agent(
         instructions="Roast my in-game performance in a funny but encouraging manner. "
-                    "Be witty and humorous while staying supportive. Keep responses brief and engaging.",
+        "Be witty and humorous while staying supportive. Keep responses brief and engaging.",
         tools=[dota_api("game123")],
         pre_processors=[Roboflow()],
         model=openai_model,
-        # stt=None,    # Would be set to your STT service  
+        # stt=None,    # Would be set to your STT service
         tts=tts,
         # turn_detection=None,  # Would be set to your turn detection service
-        name="AI Dota Roast Bot"
+        name="AI Dota Roast Bot",
     )
-    
+
     # Create user creation callback
     def create_bot_user(bot_id: str, bot_name: str):
         create_user(client, bot_id, bot_name)
         logging.info("Created bot user: %s (%s)", bot_id, bot_name)
-    
+
     try:
         # Join the call using the agent with OpenAI integration
         await agent.join(call, user_creation_callback=create_bot_user)
-        
+
     except asyncio.CancelledError:
         logging.info("Stopping AI agent...")
     except Exception as e:
         if "NoneType" in str(e) and "await" in str(e):
-            logging.warning("Cleanup error (likely WebSocket already closed) - ignoring")
+            logging.warning(
+                "Cleanup error (likely WebSocket already closed) - ignoring"
+            )
         else:
             logging.error(f"Error running agent: {e}")
             raise
@@ -184,5 +186,5 @@ if __name__ == "__main__":
     print("• Custom tools and pre-processors")
     print("• Stream video call integration")
     print("=" * 50)
-    
+
     asyncio.run(main())

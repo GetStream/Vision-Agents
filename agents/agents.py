@@ -17,7 +17,11 @@ import aiortc
 from PIL import Image
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
-from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig, TrackType
+from getstream.video.rtc.tracks import (
+    SubscriptionConfig,
+    TrackSubscriptionConfig,
+    TrackType,
+)
 
 # Import STT, TTS, and VAD base classes from stream-py package
 from getstream.plugins.common.stt import STT
@@ -62,8 +66,10 @@ class TurnDetection(Protocol):
 
 class ImageProcessor(Protocol):
     """Protocol for image processors."""
-    
-    async def process_image(self, image: Image.Image, user_id: str, metadata: dict = None) -> None:
+
+    async def process_image(
+        self, image: Image.Image, user_id: str, metadata: dict = None
+    ) -> None:
         """Process a video frame image."""
         ...
 
@@ -139,29 +145,35 @@ class Agent:
         self._callback_executed = False
 
         self.logger = logging.getLogger(f"Agent[{self.bot_id}]")
-    
+
     async def _process_video_track(self, track_id: str, track_type: str, user):
         """Process video frames from a specific track."""
-        self.logger.info(f"🎥 Processing video track: {track_id} from user {user.user_id} (type: {track_type})")
-        
+        self.logger.info(
+            f"🎥 Processing video track: {track_id} from user {user.user_id} (type: {track_type})"
+        )
+
         # Only process video tracks
         if track_type != "video":
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
-        
+
         # If target_user_id is specified, only process that user's video
         if self.target_user_id and user.user_id != self.target_user_id:
-            self.logger.debug(f"Ignoring video from user {user.user_id} (target: {self.target_user_id})")
+            self.logger.debug(
+                f"Ignoring video from user {user.user_id} (target: {self.target_user_id})"
+            )
             return
-        
+
         # Subscribe to the video track
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
         if not track:
             self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
             return
-        
-        self.logger.info(f"✅ Successfully subscribed to video track from {user.user_id}")
-        
+
+        self.logger.info(
+            f"✅ Successfully subscribed to video track from {user.user_id}"
+        )
+
         try:
             while True:
                 try:
@@ -169,41 +181,47 @@ class Agent:
                     video_frame: aiortc.mediastreams.VideoFrame = await track.recv()
                     if not video_frame:
                         continue
-                    
+
                     # Convert to PIL Image
                     img = video_frame.to_image()
-                    
+
                     # Process through all image processors
                     for processor in self.image_processors:
                         try:
                             await processor.process_image(
-                                img, 
-                                user.user_id, 
+                                img,
+                                user.user_id,
                                 metadata={
                                     "track_id": track_id,
-                                    "timestamp": asyncio.get_event_loop().time()
-                                }
+                                    "timestamp": asyncio.get_event_loop().time(),
+                                },
                             )
                         except Exception as e:
-                            self.logger.error(f"❌ Error in image processor {type(processor).__name__}: {e}")
+                            self.logger.error(
+                                f"❌ Error in image processor {type(processor).__name__}: {e}"
+                            )
                             self.logger.error(traceback.format_exc())
-                        
+
                 except Exception as e:
                     if "Connection closed" in str(e) or "Track ended" in str(e):
-                        self.logger.info(f"🔌 Video track ended for user {user.user_id}")
+                        self.logger.info(
+                            f"🔌 Video track ended for user {user.user_id}"
+                        )
                         break
                     else:
                         self.logger.error(f"❌ Error processing video frame: {e}")
                         self.logger.error(traceback.format_exc())
                         await asyncio.sleep(1)  # Brief pause before retry
-                        
+
         except Exception as e:
             self.logger.error(f"❌ Fatal error in video processing: {e}")
             self.logger.error(traceback.format_exc())
 
     async def join(
-        self, call, user_creation_callback: Optional[Callable] = None, 
-        on_connected_callback: Optional[Callable] = None
+        self,
+        call,
+        user_creation_callback: Optional[Callable] = None,
+        on_connected_callback: Optional[Callable] = None,
     ) -> None:
         """
         Join a Stream video call.
@@ -211,7 +229,7 @@ class Agent:
         Args:
             call: Stream video call object
             user_creation_callback: Optional callback to create the bot user
-            on_connected_callback: Optional async callback that receives (agent, connection) 
+            on_connected_callback: Optional async callback that receives (agent, connection)
                                  and runs as a background task after connection is established
         """
         if self._is_running:
@@ -233,13 +251,17 @@ class Agent:
             subscription_config = None
             if self.image_processors:
                 subscription_config = SubscriptionConfig(
-                    default=TrackSubscriptionConfig(track_types=[
-                        TrackType.TRACK_TYPE_VIDEO,
-                        TrackType.TRACK_TYPE_AUDIO,
-                    ])
+                    default=TrackSubscriptionConfig(
+                        track_types=[
+                            TrackType.TRACK_TYPE_VIDEO,
+                            TrackType.TRACK_TYPE_AUDIO,
+                        ]
+                    )
                 )
-            
-            async with await rtc.join(call, self.bot_id, subscription_config=subscription_config) as connection:
+
+            async with await rtc.join(
+                call, self.bot_id, subscription_config=subscription_config
+            ) as connection:
                 self._connection = connection
                 self._is_running = True
 
@@ -256,18 +278,21 @@ class Agent:
                 # Execute callback after full initialization to prevent race conditions
                 if on_connected_callback and not self._callback_executed:
                     self._callback_executed = True
+
                     async def safe_callback():
                         try:
                             await asyncio.wait_for(
                                 on_connected_callback(self, self._connection),
-                                timeout=30.0
+                                timeout=30.0,
                             )
                         except asyncio.TimeoutError:
-                            self.logger.error("❌ on_connected_callback timed out after 30 seconds")
+                            self.logger.error(
+                                "❌ on_connected_callback timed out after 30 seconds"
+                            )
                         except Exception as e:
                             self.logger.error(f"❌ Error in on_connected_callback: {e}")
                             self.logger.error(traceback.format_exc())
-                    
+
                     asyncio.create_task(safe_callback())
 
                 try:
@@ -299,7 +324,6 @@ class Agent:
                 except Exception as e:
                     self.logger.warning(f"Error closing STT service: {e}")
                     self.logger.error(traceback.format_exc())
-            
 
     async def say(self, message: str) -> None:
         """Send a message via TTS."""
@@ -308,48 +332,57 @@ class Agent:
 
         # Check if connection exists
         if not self._connection:
-            self.logger.error("❌ Cannot send message: Agent is not connected to a call")
+            self.logger.error(
+                "❌ Cannot send message: Agent is not connected to a call"
+            )
             return
 
         max_retries = 3
         retry_delay = 1.0  # Start with 1 second delay
-        
+
         for attempt in range(max_retries):
             try:
                 if self._connection.publisher_pc is not None:
-                    self.logger.debug(f"🔊 Waiting for publisher connection (attempt {attempt + 1}/{max_retries})")
-                    
+                    self.logger.debug(
+                        f"🔊 Waiting for publisher connection (attempt {attempt + 1}/{max_retries})"
+                    )
+
                     # Wait for connection with timeout
                     await asyncio.wait_for(
-                        self._connection.publisher_pc.wait_for_connected(), 
-                        timeout=10.0
+                        self._connection.publisher_pc.wait_for_connected(), timeout=10.0
                     )
-                    
+
                     # Double-check the connection state
-                    if self._connection.publisher_pc.connectionState == 'connected':
-                        self.logger.info("🤖 Agent ready to speak - TTS audio track published")
+                    if self._connection.publisher_pc.connectionState == "connected":
+                        self.logger.info(
+                            "🤖 Agent ready to speak - TTS audio track published"
+                        )
                         await self.tts.send(message)
                         break
                     else:
-                        raise RuntimeError(f"Publisher connection state is {self._connection.publisher_pc.connectionState}, not connected")
-                        
+                        raise RuntimeError(
+                            f"Publisher connection state is {self._connection.publisher_pc.connectionState}, not connected"
+                        )
+
                 else:
                     raise RuntimeError("No publisher peer connection available")
-                    
+
             except (asyncio.TimeoutError, RuntimeError) as e:
                 if attempt < max_retries - 1:
-                    self.logger.warning(f"⚠️ TTS setup attempt {attempt + 1} failed: {e}, retrying in {retry_delay}s")
+                    self.logger.warning(
+                        f"⚠️ TTS setup attempt {attempt + 1} failed: {e}, retrying in {retry_delay}s"
+                    )
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
-                    self.logger.error(f"❌ Failed to set up TTS after {max_retries} attempts: {e}")
+                    self.logger.error(
+                        f"❌ Failed to set up TTS after {max_retries} attempts: {e}"
+                    )
                     self.logger.error(traceback.format_exc())
                     # Clean up on failure
                     if self._audio_track:
                         self._audio_track = None
                     return
- 
-
 
     async def _setup_event_handlers(self) -> None:
         """Set up event handlers for the connection."""
@@ -367,10 +400,13 @@ class Agent:
                 track_id = getattr(event, "track_id", "unknown")
                 track_type = getattr(event, "track_type", "unknown")
 
-                self.logger.info(f"Handling track published: {user_id} - {track_id} - {track_type}")
+                self.logger.info(
+                    f"Handling track published: {user_id} - {track_id} - {track_type}"
+                )
 
                 if user_id and user_id != self.bot_id:
                     self.logger.info(f"👋 New participant joined: {user_id}")
+                    await self._handle_new_participant(user_id)
                 elif user_id == self.bot_id:
                     self.logger.debug(f'Not subscribing to track: user_id: "{user_id}"')
             except Exception as e:
@@ -390,9 +426,12 @@ class Agent:
 
         # Set up video track handler if image processors are configured
         if self.image_processors and self._connection:
+
             def on_track_added(track_id, track_type, user):
                 user_id = user.user_id if user else "unknown"
-                self.logger.info(f"🎬 New track detected: {track_id} ({track_type}) from {user_id}")
+                self.logger.info(
+                    f"🎬 New track detected: {track_id} ({track_type}) from {user_id}"
+                )
                 if track_type == "video":
                     asyncio.create_task(
                         self._process_video_track(track_id, track_type, user)
@@ -402,29 +441,36 @@ class Agent:
             self._connection.on("track_added", on_track_added)
 
         if self.tts:
+
             def on_tts_audio(audio_data, user=None, metadata=None):
                 user_id = user.user_id if user else "unknown"
                 self.logger.debug(f"🔊 TTS audio generated for: {user_id}")
                 asyncio.create_task(self._on_tts_audio(audio_data, user, metadata))
+
             self.tts.on("audio", on_tts_audio)
 
             def on_tts_error(error, user=None, metadata=None):
                 user_id = user.user_id if user else "unknown"
                 self.logger.error(f"❌ TTS Error for {user_id}: {error}")
                 asyncio.create_task(self._on_tts_error(error, user, metadata))
+
             self.tts.on("error", on_tts_error)
 
         # Set up WebSocket event handlers to keep connection alive
         try:
-            if hasattr(self._connection, '_ws_client') and self._connection._ws_client:
+            if hasattr(self._connection, "_ws_client") and self._connection._ws_client:
                 # Listen for track events to keep the connection active
-                self._connection._ws_client.on_event("track_published", on_track_published)
-                self._connection._ws_client.on_event("track_unpublished", lambda event: self.logger.debug("Track unpublished"))
+                self._connection._ws_client.on_event(
+                    "track_published", on_track_published
+                )
+                self._connection._ws_client.on_event(
+                    "track_unpublished",
+                    lambda event: self.logger.debug("Track unpublished"),
+                )
 
         except Exception as e:
             self.logger.error(f"Error setting up WebSocket event handlers: {e}")
             self.logger.error(traceback.format_exc())
-
 
     async def _handle_audio_input(self, pcm_data, user) -> None:
         """Handle incoming audio data from Stream WebRTC connection."""
@@ -433,7 +479,7 @@ class Agent:
 
         try:
             # Check if it's our turn to respond (if turn detection is configured)
-            if self.turn_detection and hasattr(pcm_data, 'data'):
+            if self.turn_detection and hasattr(pcm_data, "data"):
                 if not self.turn_detection.detect_turn(pcm_data.data):
                     return
 
@@ -476,18 +522,30 @@ class Agent:
 
     async def _on_speech_start(self, user=None, metadata=None):
         """Handle start of speech detected by VAD."""
-        user_info = user.name if user and hasattr(user, "name") else (user.user_id if user and hasattr(user, "user_id") else "unknown")
+        user_info = (
+            user.name
+            if user and hasattr(user, "name")
+            else (user.user_id if user and hasattr(user, "user_id") else "unknown")
+        )
         self.logger.debug(f"🎙️ Speech started: {user_info}")
 
     async def _on_speech_end(self, user=None, metadata=None):
         """Handle end of speech detected by VAD."""
-        user_info = user.name if user and hasattr(user, "name") else (user.user_id if user and hasattr(user, "user_id") else "unknown")
+        user_info = (
+            user.name
+            if user and hasattr(user, "name")
+            else (user.user_id if user and hasattr(user, "user_id") else "unknown")
+        )
         self.logger.debug(f"🎙️ Speech ended: {user_info}")
 
     async def _on_transcript(self, text: str, user=None, metadata=None):
         """Handle final transcript from STT service."""
         if text and text.strip():
-            user_info = user.name if user and hasattr(user, "name") else (user.user_id if user and hasattr(user, "user_id") else "unknown")
+            user_info = (
+                user.name
+                if user and hasattr(user, "name")
+                else (user.user_id if user and hasattr(user, "user_id") else "unknown")
+            )
             self.logger.info(f"🎤 [{user_info}]: {text}")
 
             # Log confidence if available
@@ -499,7 +557,11 @@ class Agent:
     async def _on_partial_transcript(self, text: str, user=None, metadata=None):
         """Handle partial transcript from STT service."""
         if text and text.strip():
-            user_info = user.name if user and hasattr(user, "name") else (user.user_id if user and hasattr(user, "user_id") else "unknown")
+            user_info = (
+                user.name
+                if user and hasattr(user, "name")
+                else (user.user_id if user and hasattr(user, "user_id") else "unknown")
+            )
             self.logger.debug(f"🎤 [{user_info}] (partial): {text}")
 
     async def _on_stt_error(self, error):
@@ -509,7 +571,11 @@ class Agent:
     async def _on_tts_audio(self, audio_data, user=None, metadata=None):
         """Handle TTS audio generation events."""
         try:
-            user_info = user.name if user and hasattr(user, "name") else (user.user_id if user and hasattr(user, "user_id") else "agent")
+            user_info = (
+                user.name
+                if user and hasattr(user, "name")
+                else (user.user_id if user and hasattr(user, "user_id") else "agent")
+            )
             self.logger.debug(f"🔊 TTS audio generated for: {user_info}")
 
             # TTS service automatically handles audio output to the configured track
@@ -521,7 +587,11 @@ class Agent:
     async def _on_tts_error(self, error, user=None, metadata=None):
         """Handle TTS service errors."""
         try:
-            user_info = user.name if user and hasattr(user, "name") else (user.user_id if user and hasattr(user, "user_id") else "agent")
+            user_info = (
+                user.name
+                if user and hasattr(user, "name")
+                else (user.user_id if user and hasattr(user, "user_id") else "agent")
+            )
             self.logger.error(f"❌ TTS Error for {user_info}: {error}")
         except Exception as e:
             self.logger.error(f"Error handling TTS error event: {e}")
@@ -572,3 +642,93 @@ class Agent:
             self.logger.error(f"Error generating response: {e}")
             self.logger.error(traceback.format_exc())
             return "I'm sorry, I encountered an error processing your request."
+
+    def is_running(self) -> bool:
+        """Check if the agent is currently running."""
+        return self._is_running
+
+    async def _generate_greeting(self, participant_count: int) -> str:
+        """Generate a greeting message when joining a call."""
+        if self.model:
+            try:
+                context = f"""
+                System: {self.instructions}
+                
+                You are joining a video call with {participant_count} participant(s).
+                Generate a brief, friendly greeting to introduce yourself.
+                Keep it under 2 sentences.
+                """
+
+                response = await self.model.generate(context)
+                return response
+            except Exception as e:
+                self.logger.error(f"Error generating greeting: {e}")
+                return f"Hello everyone! I'm {self.name}"
+        else:
+            return f"Hello everyone! I'm {self.name}"
+
+    async def _generate_participant_greeting(self, user_id: str) -> str:
+        """Generate a greeting message for a new participant."""
+        if self.model:
+            try:
+                context = f"""
+                System: {self.instructions}
+                
+                A new participant (user-{user_id}) has joined the call.
+                Generate a brief, friendly greeting to welcome them.
+                Keep it under 2 sentences.
+                """
+
+                response = await self.model.generate(context)
+                return response
+            except Exception as e:
+                self.logger.error(f"Error generating participant greeting: {e}")
+                return f"Welcome to the call, user-{user_id}!"
+        else:
+            return f"Welcome {user_id}!"
+
+    async def _handle_new_participant(self, user_id: str) -> None:
+        """Handle when a new participant joins the call."""
+        try:
+            if self.tts:
+                greeting = await self._generate_participant_greeting(user_id)
+                if greeting:
+                    await self.tts.send(greeting)
+                    self.logger.info(
+                        f"🤖 Welcomed new participant {user_id}: {greeting}"
+                    )
+        except Exception as e:
+            self.logger.error(f"Error handling new participant {user_id}: {e}")
+            self.logger.error(traceback.format_exc())
+
+    async def stop(self) -> None:
+        """Stop the agent and clean up resources."""
+        try:
+            self._is_running = False
+
+            # Close STT service if available
+            if self.stt and hasattr(self.stt, "close"):
+                try:
+                    await self.stt.close()
+                except Exception as e:
+                    self.logger.error(f"Error closing STT service: {e}")
+
+            # Close VAD service if available
+            if self.vad and hasattr(self.vad, "close"):
+                try:
+                    await self.vad.close()
+                except Exception as e:
+                    self.logger.error(f"Error closing VAD service: {e}")
+
+            # Close TTS service if available
+            if self.tts and hasattr(self.tts, "close"):
+                try:
+                    await self.tts.close()
+                except Exception as e:
+                    self.logger.error(f"Error closing TTS service: {e}")
+
+            self.logger.info("🛑 Agent stopped and resources cleaned up")
+
+        except Exception as e:
+            self.logger.error(f"Error during agent cleanup: {e}")
+            self.logger.error(traceback.format_exc())

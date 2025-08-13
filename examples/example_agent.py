@@ -61,10 +61,10 @@ def open_browser(api_key: str, token: str, call_id: str) -> str:
 # Example tool implementation
 class DotaAPI:
     """Example Dota API tool."""
-    
+
     def __init__(self, game_id: str):
         self.game_id = game_id
-    
+
     def __call__(self, *args, **kwargs):
         # Mock implementation - in reality this would call the Dota API
         return {
@@ -74,22 +74,22 @@ class DotaAPI:
                 "deaths": 8,
                 "assists": 12,
                 "last_hits": 150,
-                "gpm": 420
+                "gpm": 420,
             },
-            "match_duration": "35:42"
+            "match_duration": "35:42",
         }
 
 
-# Example pre-processor implementation  
+# Example pre-processor implementation
 class Roboflow:
     """Example Roboflow pre-processor."""
-    
+
     def process(self, data):
         # Mock implementation - in reality this would process computer vision data
         return {
             "original_input": data,
             "detected_objects": ["hero", "creep", "tower"],
-            "confidence_scores": [0.95, 0.87, 0.92]
+            "confidence_scores": [0.95, 0.87, 0.92],
         }
 
 
@@ -100,52 +100,58 @@ def dota_api(game_id: str):
 
 async def main() -> None:
     """Create a video call and let an AI agent join with tools and pre-processors."""
-    
+
     load_dotenv()
-    
+
     client = Stream.from_env()
-    
+
     human_id = f"user-{uuid4()}"
-    
+
     create_user(client, human_id, "Human")
-    
+
     token = client.create_token(human_id, expiration=3600)
-    
+
     call_id = str(uuid4())
     call = client.video.call("default", call_id)
     call.get_or_create(data={"created_by_id": human_id})
-    
+
     logging.info("📞 Call ready: %s", call_id)
-    
+
     open_browser(client.api_key, token, call_id)
-    
+
     # Create TTS service
     tts = ElevenLabsTTS()  # API key picked from ELEVENLABS_API_KEY
     stt = DeepgramSTT()
-    
+
     # Create agent with the requested syntax
     agent = Agent(
         instructions="Roast my in-game performance in a funny but encouraging manner",
         tools=[dota_api("game123")],
         pre_processors=[Roboflow()],
         # model=None,  # Would be set to your AI model
-        stt=stt,    # Would be set to your STT service  
+        stt=stt,  # Would be set to your STT service
         tts=tts,
         # turn_detection=None,  # Would be set to your turn detection service
-        name="Dota Roast Bot"
+        name="Dota Roast Bot",
     )
-    
+
     # Create user creation callback
     def create_bot_user(bot_id: str, bot_name: str):
         create_user(client, bot_id, bot_name)
         logging.info("Created bot user: %s (%s)", bot_id, bot_name)
 
     async def on_agent_connected(agent, connection):
-        await asyncio.sleep(2) # Wait two seconds after joining before saying the greeting
+        await asyncio.sleep(
+            2
+        )  # Wait two seconds after joining before saying the greeting
         await agent.say("Hello there, I am a dota 2 bot")
 
     try:
-        await agent.join(call, user_creation_callback=create_bot_user, on_connected_callback=on_agent_connected)
+        await agent.join(
+            call,
+            user_creation_callback=create_bot_user,
+            on_connected_callback=on_agent_connected,
+        )
     except asyncio.CancelledError:
         logging.info("Stopping agent...")
     finally:
