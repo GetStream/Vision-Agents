@@ -139,15 +139,13 @@ async def main() -> None:
     def create_bot_user(bot_id: str, bot_name: str):
         create_user(client, bot_id, bot_name)
         logging.info("Created bot user: %s (%s)", bot_id, bot_name)
-    
+
+    async def on_agent_connected(agent, connection):
+        await asyncio.sleep(2) # Wait two seconds after joining before saying the greeting
+        await agent.say("Hello there, I am a dota 2 bot")
+
     try:
-        # Join the call using the agent
-        await agent.join(call, user_creation_callback=create_bot_user)
-        agent.stt.on("transcript", on_transcript)
-        async def on_transcript(text: str, user: any, metadata: dict):
-            print(f"Transcript: {text}")
-            print(f"User: {user}")
-            print(f"Metadata: {metadata}")
+        await agent.join(call, user_creation_callback=create_bot_user, on_connected_callback=on_agent_connected)
     except asyncio.CancelledError:
         logging.info("Stopping agent...")
     finally:
