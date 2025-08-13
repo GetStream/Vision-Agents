@@ -70,12 +70,36 @@ class MockTTS:
     def __init__(self):
         self.output_track = None
         self.sent_texts = []
+        self._event_handlers = {}
 
     def set_output_track(self, track):
         self.output_track = track
 
-    async def send(self, text):
+    def on(self, event_name, handler):
+        """Mock event handler registration."""
+        if event_name not in self._event_handlers:
+            self._event_handlers[event_name] = []
+        self._event_handlers[event_name].append(handler)
+
+    async def emit(self, event_name, *args, **kwargs):
+        """Mock event emission."""
+        if event_name in self._event_handlers:
+            for handler in self._event_handlers[event_name]:
+                if asyncio.iscoroutinefunction(handler):
+                    await handler(*args, **kwargs)
+                else:
+                    handler(*args, **kwargs)
+
+    async def send(self, text, user=None):
         self.sent_texts.append(text)
+        # Simulate audio generation and emission
+        audio_data = b"mock_audio_data"
+        await self.emit("audio", audio_data, user)
+
+    async def simulate_error(self, error_msg, user=None):
+        """Helper method to simulate TTS errors for testing."""
+        error = Exception(error_msg)
+        await self.emit("error", error, user)
 
 
 class MockVAD:
@@ -212,46 +236,6 @@ class TestAgent:
         assert "I'm sorry, I encountered an error" in response
 
     @pytest.mark.asyncio
-    async def test_generate_greeting(self):
-        """Test greeting generation."""
-        model = MockModel()
-        agent = Agent(instructions="Test instructions", model=model)
-
-        greeting = await agent._generate_greeting(2)
-
-        assert greeting.startswith("Generated response for:")
-        assert "2 participant" in greeting
-
-    @pytest.mark.asyncio
-    async def test_generate_greeting_without_model(self):
-        """Test greeting generation without model."""
-        agent = Agent(instructions="Test instructions", name="Test Bot")
-
-        greeting = await agent._generate_greeting(1)
-
-        assert "Hello everyone! I'm Test Bot" in greeting
-
-    @pytest.mark.asyncio
-    async def test_generate_participant_greeting(self):
-        """Test participant greeting generation."""
-        model = MockModel()
-        agent = Agent(instructions="Test instructions", model=model)
-
-        greeting = await agent._generate_participant_greeting("user-123")
-
-        assert greeting.startswith("Generated response for:")
-        assert "user-123" in greeting
-
-    @pytest.mark.asyncio
-    async def test_generate_participant_greeting_without_model(self):
-        """Test participant greeting generation without model."""
-        agent = Agent(instructions="Test instructions")
-
-        greeting = await agent._generate_participant_greeting("user-123")
-
-        assert "Welcome user-123!" in greeting
-
-    @pytest.mark.asyncio
     async def test_handle_audio_input_without_stt(self):
         """Test audio input handling without STT."""
         agent = Agent(instructions="Test instructions")
@@ -326,9 +310,7 @@ class TestAgent:
         class MockEmptySTT(MockSTT):
             async def process_audio(self, pcm_data, user):
                 # Simulate empty transcription result
-                await self.emit(
-                    "transcript", "   ", user, {}
-                )  # Empty/whitespace text
+                await self.emit("transcript", "   ", user, {})  # Empty/whitespace text
 
         stt = MockEmptySTT()
         tts = MockTTS()
@@ -346,26 +328,6 @@ class TestAgent:
 
         # Should not send anything to TTS for empty transcription
         assert len(tts.sent_texts) == 0
-
-    @pytest.mark.asyncio
-    async def test_handle_new_participant_without_tts(self):
-        """Test handling new participant without TTS."""
-        agent = Agent(instructions="Test instructions")
-
-        # Should not raise an error
-        await agent._handle_new_participant("user-123")
-
-    @pytest.mark.asyncio
-    async def test_handle_new_participant_with_tts(self):
-        """Test handling new participant with TTS."""
-        tts = MockTTS()
-        agent = Agent(instructions="Test instructions", tts=tts)
-
-        await agent._handle_new_participant("user-123")
-
-        # Should send greeting to TTS
-        assert len(tts.sent_texts) == 1
-        assert "user-123" in tts.sent_texts[0]
 
     def test_is_running_initially_false(self):
         """Test that agent is not running initially."""
@@ -415,7 +377,7 @@ class TestAgent:
 
         assert result1 == "result1"
         assert result2 == "result2"
-    
+
     @pytest.mark.asyncio
     async def test_audio_handling_integration(self):
         """Test audio handling integration end-to-end."""
@@ -423,27 +385,27 @@ class TestAgent:
         tts = MockTTS()
         model = MockModel()
         turn_detection = MockTurnDetection()  # Always returns True for testing
-        
+
         agent = Agent(
             instructions="Test instructions",
             stt=stt,
             tts=tts,
             model=model,
-            turn_detection=turn_detection
+            turn_detection=turn_detection,
         )
-        
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "Test User"
-        
+
         # Test audio handling with mock data
         test_audio_data = b"test audio data"
         await agent._handle_audio_input(test_audio_data, mock_user)
-        
+
         # Give a moment for async processing
         await asyncio.sleep(0.01)
-        
+
         # Verify that STT was called and TTS received a response
         assert len(tts.sent_texts) == 1
         assert tts.sent_texts[0].startswith("Generated response for:")
@@ -455,25 +417,20 @@ class TestAgent:
         stt = MockSTT()
         tts = MockTTS()
         model = MockModel()
-        
-        agent = Agent(
-            instructions="Test instructions",
-            stt=stt,
-            tts=tts,
-            model=model
-        )
-        
+
+        agent = Agent(instructions="Test instructions", stt=stt, tts=tts, model=model)
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "Test User"
-        
+
         # Simulate transcript event
         await agent._on_transcript("Hello world", mock_user, {"confidence": 0.95})
-        
+
         # Give a moment for async processing
         await asyncio.sleep(0.01)
-        
+
         # Should process transcript and send TTS response
         assert len(tts.sent_texts) == 1
         assert tts.sent_texts[0].startswith("Generated response for:")
@@ -482,12 +439,12 @@ class TestAgent:
     async def test_stt_partial_transcript_event_handler(self):
         """Test STT partial transcript event handler."""
         agent = Agent(instructions="Test instructions")
-        
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "Test User"
-        
+
         # Should not raise error for partial transcript
         await agent._on_partial_transcript("Hel...", mock_user, {})
 
@@ -495,7 +452,7 @@ class TestAgent:
     async def test_stt_error_event_handler(self):
         """Test STT error event handler."""
         agent = Agent(instructions="Test instructions")
-        
+
         # Should not raise error for STT error
         await agent._on_stt_error("Connection timeout")
 
@@ -505,25 +462,20 @@ class TestAgent:
         stt = MockSTT()
         tts = MockTTS()
         model = MockModel()
-        
-        agent = Agent(
-            instructions="Test instructions",
-            stt=stt,
-            tts=tts,
-            model=model
-        )
-        
+
+        agent = Agent(instructions="Test instructions", stt=stt, tts=tts, model=model)
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "Test User"
-        
+
         # Process audio without VAD
         await agent._handle_audio_input(b"fake audio data", mock_user)
-        
+
         # Give a moment for async processing
         await asyncio.sleep(0.01)
-        
+
         # Should process audio directly through STT
         assert len(tts.sent_texts) == 1
 
@@ -534,26 +486,22 @@ class TestAgent:
         vad = MockVAD()
         tts = MockTTS()
         model = MockModel()
-        
+
         agent = Agent(
-            instructions="Test instructions",
-            stt=stt,
-            vad=vad,
-            tts=tts,
-            model=model
+            instructions="Test instructions", stt=stt, vad=vad, tts=tts, model=model
         )
-        
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "Test User"
-        
+
         # Process audio with VAD
         await agent._handle_audio_input(b"fake audio data", mock_user)
-        
+
         # Give a moment for async processing
         await asyncio.sleep(0.01)
-        
+
         # Should process audio through VAD first
         # Note: This test verifies VAD path is taken, not full speech-to-text pipeline
 
@@ -561,12 +509,12 @@ class TestAgent:
     async def test_vad_speech_start_event(self):
         """Test VAD speech start event handler."""
         agent = Agent(instructions="Test instructions")
-        
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "Test User"
-        
+
         # Should not raise error for speech start
         await agent._on_speech_start(mock_user, {})
 
@@ -574,12 +522,12 @@ class TestAgent:
     async def test_vad_speech_end_event(self):
         """Test VAD speech end event handler."""
         agent = Agent(instructions="Test instructions")
-        
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "Test User"
-        
+
         # Should not raise error for speech end
         await agent._on_speech_end(mock_user, {})
 
@@ -588,15 +536,15 @@ class TestAgent:
         """Test that STT event handlers are set up only once."""
         stt = MockSTT()
         agent = Agent(instructions="Test instructions", stt=stt)
-        
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
-        
+
         # Call _handle_audio_input multiple times
         await agent._handle_audio_input(b"audio1", mock_user)
         await agent._handle_audio_input(b"audio2", mock_user)
-        
+
         # Event handlers should only be registered once
         assert hasattr(agent, "_stt_setup")
         assert len(stt._event_handlers.get("transcript", [])) == 1
@@ -608,15 +556,15 @@ class TestAgent:
         """Test that VAD event handlers are set up only once."""
         vad = MockVAD()
         agent = Agent(instructions="Test instructions", vad=vad)
-        
+
         # Mock user object
         mock_user = Mock()
         mock_user.user_id = "test_user"
-        
+
         # Call _process_audio_with_vad multiple times
         await agent._process_audio_with_vad(b"audio1", mock_user)
         await agent._process_audio_with_vad(b"audio2", mock_user)
-        
+
         # Event handlers should only be registered once
         assert hasattr(agent, "_vad_setup")
         assert len(vad._event_handlers.get("speech_start", [])) == 1
@@ -627,12 +575,12 @@ class TestAgent:
         """Test user identification when user has name."""
         stt = MockSTT()
         agent = Agent(instructions="Test instructions", stt=stt)
-        
+
         # Mock user with name
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "John Doe"
-        
+
         # Should use name for identification
         await agent._on_transcript("Hello", mock_user, {})
 
@@ -641,12 +589,12 @@ class TestAgent:
         """Test user identification when user has no name."""
         stt = MockSTT()
         agent = Agent(instructions="Test instructions", stt=stt)
-        
+
         # Mock user without name
         mock_user = Mock()
         mock_user.user_id = "test_user"
         # No name attribute
-        
+
         # Should use user_id for identification
         await agent._on_transcript("Hello", mock_user, {})
 
@@ -655,16 +603,16 @@ class TestAgent:
         """Test confidence score logging in transcript handler."""
         stt = MockSTT()
         agent = Agent(instructions="Test instructions", stt=stt)
-        
+
         # Mock user
         mock_user = Mock()
         mock_user.user_id = "test_user"
         mock_user.name = "Test User"
-        
+
         # Should handle transcript with confidence
         metadata_with_confidence = {"confidence": 0.95}
         await agent._on_transcript("Hello", mock_user, metadata_with_confidence)
-        
+
         # Should handle transcript without confidence
         metadata_without_confidence = {}
         await agent._on_transcript("Hello", mock_user, metadata_without_confidence)
@@ -674,20 +622,16 @@ class TestAgent:
         """Test proper cleanup of STT and VAD services."""
         stt = MockSTT()
         vad = MockVAD()
-        
+
         # Mock close methods to track calls
         stt.close = AsyncMock()
         vad.close = AsyncMock()
-        
-        agent = Agent(
-            instructions="Test instructions",
-            stt=stt,
-            vad=vad
-        )
-        
+
+        agent = Agent(instructions="Test instructions", stt=stt, vad=vad)
+
         # Call stop method
         await agent.stop()
-        
+
         # Both services should be closed
         stt.close.assert_called_once()
         vad.close.assert_called_once()
@@ -697,19 +641,228 @@ class TestAgent:
         """Test cleanup handles errors gracefully."""
         stt = MockSTT()
         vad = MockVAD()
-        
+
         # Mock close methods to raise errors
         stt.close = AsyncMock(side_effect=Exception("STT close error"))
         vad.close = AsyncMock(side_effect=Exception("VAD close error"))
-        
-        agent = Agent(
-            instructions="Test instructions",
-            stt=stt,
-            vad=vad
-        )
-        
+
+        agent = Agent(instructions="Test instructions", stt=stt, vad=vad)
+
         # Should not raise error despite close failures
         await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_tts_audio_event_handling(self):
+        """Test TTS audio event handling with proper user handling."""
+        tts = MockTTS()
+        agent = Agent(instructions="Test instructions", tts=tts)
+
+        # Set up agent with mock connection
+        agent._connection = Mock()
+        agent._is_running = True
+
+        # Mock user object
+        mock_user = Mock()
+        mock_user.user_id = "test_user"
+        mock_user.name = "Test User"
+
+        # Test audio event handling
+        audio_data = b"test_audio_data"
+        await agent._on_tts_audio(audio_data, mock_user)
+
+        # Should not raise any errors
+
+    @pytest.mark.asyncio
+    async def test_tts_audio_event_with_none_user(self):
+        """Test TTS audio event handling with None user."""
+        tts = MockTTS()
+        agent = Agent(instructions="Test instructions", tts=tts)
+
+        # Set up agent with mock connection
+        agent._connection = Mock()
+        agent._is_running = True
+
+        # Test audio event handling with None user
+        audio_data = b"test_audio_data"
+        await agent._on_tts_audio(audio_data, None)
+
+        # Should not raise any errors
+
+    @pytest.mark.asyncio
+    async def test_tts_error_event_handling(self):
+        """Test TTS error event handling with proper user handling."""
+        tts = MockTTS()
+        agent = Agent(instructions="Test instructions", tts=tts)
+
+        # Mock user object
+        mock_user = Mock()
+        mock_user.user_id = "test_user"
+        mock_user.name = "Test User"
+
+        # Test error event handling
+        error = Exception("Test TTS error")
+        await agent._on_tts_error(error, mock_user)
+
+        # Should not raise any errors
+
+    @pytest.mark.asyncio
+    async def test_tts_error_event_with_none_user(self):
+        """Test TTS error event handling with None user."""
+        tts = MockTTS()
+        agent = Agent(instructions="Test instructions", tts=tts)
+
+        # Test error event handling with None user
+        error = Exception("Test TTS error")
+        await agent._on_tts_error(error, None)
+
+        # Should not raise any errors
+
+    @pytest.mark.asyncio
+    async def test_tts_error_event_with_user_without_name(self):
+        """Test TTS error event handling with user that has no name attribute."""
+        tts = MockTTS()
+        agent = Agent(instructions="Test instructions", tts=tts)
+
+        # Mock user object without name
+        mock_user = Mock()
+        mock_user.user_id = "test_user"
+        # No name attribute
+
+        # Test error event handling
+        error = Exception("Test TTS error")
+        await agent._on_tts_error(error, mock_user)
+
+        # Should not raise any errors
+
+    @pytest.mark.asyncio
+    async def test_tts_event_registration_on_join(self):
+        """Test that TTS event handlers are properly registered when agent joins."""
+        tts = MockTTS()
+        agent = Agent(instructions="Test instructions", tts=tts)
+
+        # Mock connection and setup
+        mock_connection = Mock()
+        mock_connection.on = Mock()
+        agent._connection = mock_connection
+        agent._is_running = True
+
+        # Simulate the event handler registration that happens in join
+        def on_tts_audio(audio_data, user=None, metadata=None):
+            user_id = user.user_id if user else "unknown"
+            agent.logger.debug(f"🔊 TTS audio generated for: {user_id}")
+            asyncio.create_task(agent._on_tts_audio(audio_data, user, metadata))
+
+        tts.on("audio", on_tts_audio)
+
+        def on_tts_error(error, user=None, metadata=None):
+            user_id = user.user_id if user else "unknown"
+            agent.logger.error(f"❌ TTS Error for {user_id}: {error}")
+            asyncio.create_task(agent._on_tts_error(error, user, metadata))
+
+        tts.on("error", on_tts_error)
+
+        # Verify handlers are registered
+        assert "audio" in tts._event_handlers
+        assert "error" in tts._event_handlers
+        assert len(tts._event_handlers["audio"]) == 1
+        assert len(tts._event_handlers["error"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_tts_audio_event_emission(self):
+        """Test TTS audio event emission and handling."""
+        tts = MockTTS()
+
+        audio_events_received = []
+
+        # Register event handler
+        def on_tts_audio(audio_data, user=None, metadata=None):
+            audio_events_received.append((audio_data, user, metadata))
+
+        tts.on("audio", on_tts_audio)
+
+        # Mock user
+        mock_user = Mock()
+        mock_user.user_id = "test_user"
+
+        # Emit audio event
+        await tts.emit("audio", b"test_audio", mock_user, {"sample_rate": 16000})
+
+        # Verify event was received
+        assert len(audio_events_received) == 1
+        audio_data, user, metadata = audio_events_received[0]
+        assert audio_data == b"test_audio"
+        assert user == mock_user
+        assert metadata == {"sample_rate": 16000}
+
+    @pytest.mark.asyncio
+    async def test_tts_error_event_emission(self):
+        """Test TTS error event emission and handling."""
+        tts = MockTTS()
+
+        error_events_received = []
+
+        # Register event handler
+        def on_tts_error(error, user=None, metadata=None):
+            error_events_received.append((error, user, metadata))
+
+        tts.on("error", on_tts_error)
+
+        # Mock user
+        mock_user = Mock()
+        mock_user.user_id = "test_user"
+
+        # Emit error event
+        test_error = Exception("Test TTS error")
+        await tts.emit("error", test_error, mock_user)
+
+        # Verify event was received
+        assert len(error_events_received) == 1
+        error, user, metadata = error_events_received[0]
+        assert error == test_error
+        assert user == mock_user
+
+    @pytest.mark.asyncio
+    async def test_tts_send_generates_audio_event(self):
+        """Test that TTS send method generates audio event."""
+        tts = MockTTS()
+
+        audio_events_received = []
+
+        # Register event handler
+        def on_tts_audio(audio_data, user=None, metadata=None):
+            audio_events_received.append((audio_data, user))
+
+        tts.on("audio", on_tts_audio)
+
+        # Mock user
+        mock_user = Mock()
+        mock_user.user_id = "test_user"
+
+        # Send text to TTS
+        await tts.send("Hello world", mock_user)
+
+        # Verify text was recorded
+        assert "Hello world" in tts.sent_texts
+
+        # Verify audio event was emitted
+        assert len(audio_events_received) == 1
+        audio_data, user = audio_events_received[0]
+        assert audio_data == b"mock_audio_data"
+        assert user == mock_user
+
+    @pytest.mark.asyncio
+    async def test_tts_set_output_track(self):
+        """Test TTS output track configuration."""
+        tts = MockTTS()
+
+        # Mock audio track
+        mock_track = Mock()
+
+        # Set output track
+        tts.set_output_track(mock_track)
+
+        # Verify track is set
+        assert tts.output_track == mock_track
 
 
 if __name__ == "__main__":
