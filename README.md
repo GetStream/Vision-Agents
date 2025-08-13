@@ -7,7 +7,7 @@ Low latency video and voice AI agents on [Stream's edge network](https://getstre
 
 SDKs for React, Android, iOS, Flutter, React, React Native and Unity.
 Open Agent library, support for most of our video/audio competitors as well.
-If you prefer Twilio, Cloudflare or Mediasoup you're welcome to use those.
+If you prefer Twilio, Cloudflare, Antmedia or Mediasoup you're welcome to use those.
 
 ## 🚀 Features
 
@@ -27,7 +27,45 @@ uv add openai python-dotenv getstream
 pip install openai python-dotenv getstream
 ```
 
-## ⚡ Quick Start
+## ⚡ Quick Start - Video AI Coach
+
+```python
+from agents import Agent
+
+# Roboflow for object detection (finetuned)
+# load docs from @ai-dota-coaching.md
+# use speech to speech (STS) gemini model
+agent = Agent(
+    instructions="Roast my in-game performance in a funny but encouraging manner. Follow coaching tips in @ai-dota-coaching.md",
+    pre_processors=[Roboflow(), dota_api("gameid")],
+    interval=1 second,
+    sts=GeminiSTS(), 
+    # turn_detection=your_turn_detector
+)
+
+# Join a Stream video call
+await agent.join(call)
+```
+
+## Video Transform
+
+Roboflow server side transform of video
+
+
+```python
+from agents import Agent
+
+
+# Create an agent with the exact syntax you requested
+agent = Agent(
+    video_transformer=RoboflowTransform() # transform live video from python (instead of on-device). use for AI avatars
+)
+
+# Join a Stream video call
+await agent.join(call)
+```
+
+## Quick Example - Voice AI (TTS, STT) and STS
 
 ```python
 from agents import Agent
@@ -41,20 +79,33 @@ model = OpenAIModel(
 
 # Create an agent with the exact syntax you requested
 agent = Agent(
-    instructions="Roast my in-game performance in a funny but encouraging manner",
-    tools=[dota_api("gameid")],
+    instructions="Talk to me about stock performance",
     pre_processors=[Roboflow()],
     model=model,
-    # stt=your_stt_service,
+    stt=your_stt_service,
     tts=your_tts_service,
-    # turn_detection=your_turn_detector
+    turn_detection=your_turn_detector
+)
+
+speechToSpeechtAgent = Agent(
+    instructions="Talk to me about stock performance",
+    sts=model,
 )
 
 # Join a Stream video call
 await agent.join(call)
 ```
 
+
 ## 📚 Examples
+
+Other example to build
+- Simple image
+- Simple video capture
+- Simple audio capture
+- Moderation example (AWS image. comarketing)
+- SIP with twilio
+- Cluely clone
 
 Check out the [`examples/`](./examples/) directory for complete working examples:
 

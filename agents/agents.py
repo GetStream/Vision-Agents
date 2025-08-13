@@ -81,8 +81,7 @@ class Agent:
     Example usage:
         agent = Agent(
             instructions="Roast my in-game performance in a funny but encouraging manner",
-            tools=[dota_api("gameid")],
-            pre_processors=[Roboflow()],
+            pre_processors=[Roboflow(), dota_api("gameid")],
             model=openai_model,
             stt=speech_to_text,
             tts=text_to_speech,
@@ -200,7 +199,6 @@ class Agent:
                             self.logger.error(
                                 f"❌ Error in image processor {type(processor).__name__}: {e}"
                             )
-                            self.logger.error(traceback.format_exc())
 
                 except Exception as e:
                     if "Connection closed" in str(e) or "Track ended" in str(e):
@@ -437,7 +435,6 @@ class Agent:
                         self._process_video_track(track_id, track_type, user)
                     )
 
-            # Register the track handler with the connection
             self._connection.on("track_added", on_track_added)
 
         if self.tts:
