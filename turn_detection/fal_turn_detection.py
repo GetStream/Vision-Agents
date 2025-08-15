@@ -104,7 +104,23 @@ class FalTurnDetection(BaseTurnDetector):
             self.logger.debug(f"Initialized audio buffer for user {user_id}")
 
         # Add audio data to user's buffer
-        self._user_buffers[user_id].extend(audio_data.data)
+        # Extract audio samples from PcmData object
+        if hasattr(audio_data, "samples"):
+            # PcmData NamedTuple - extract samples (numpy array)
+            samples = audio_data.samples
+            if hasattr(samples, "tolist"):
+                # Convert numpy array to list for extending buffer
+                audio_samples = samples.tolist()
+            else:
+                audio_samples = list(samples)
+            self._user_buffers[user_id].extend(audio_samples)
+        elif hasattr(audio_data, "data"):
+            # Fallback for data attribute
+            self._user_buffers[user_id].extend(audio_data.data)
+        else:
+            # Assume it's already iterable (bytes, list, etc.)
+            self._user_buffers[user_id].extend(audio_data)
+
         self._user_last_audio[user_id] = current_time
 
         # Check if we have enough audio to process

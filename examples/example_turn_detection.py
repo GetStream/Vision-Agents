@@ -63,7 +63,7 @@ def open_browser(api_key: str, token: str, call_id: str) -> str:
     return url
 
 
-class SimpleLLM:
+class MockLLM:
     """Simple LLM implementation for testing turn detection responses."""
 
     def __init__(self):
@@ -119,7 +119,7 @@ async def main() -> None:
     # Create services
     tts = ElevenLabsTTS() if os.getenv("ELEVENLABS_API_KEY") else None
     stt = DeepgramSTT() if os.getenv("DEEPGRAM_API_KEY") else None
-    llm = SimpleLLM()
+    llm = MockLLM()
 
     # Create FAL turn detection with custom settings
     turn_detection = FalTurnDetection(
