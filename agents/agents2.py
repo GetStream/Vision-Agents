@@ -115,6 +115,14 @@ class Agent:
     async def reply_to_audio(self):
         pass
 
+    def get_subscription_config(self):
+        return TrackSubscriptionConfig(
+            track_types=[
+                TrackType.TRACK_TYPE_VIDEO,
+                TrackType.TRACK_TYPE_AUDIO,
+            ]
+        )
+
     async def join(self, call) -> None:
         """Join a Stream video call."""
         if self._is_running:
@@ -150,12 +158,7 @@ class Agent:
             # Configure subscription for audio and video
             #TODO: load from nice config/functions
             subscription_config = SubscriptionConfig(
-                default=TrackSubscriptionConfig(
-                    track_types=[
-                        TrackType.TRACK_TYPE_VIDEO,
-                        TrackType.TRACK_TYPE_AUDIO,
-                    ]
-                )
+                default=self.get_subscription_config()
             )
 
             async with await rtc.join(
@@ -226,17 +229,8 @@ class Agent:
             self.logger.error(traceback.format_exc())
             raise
         finally:
-            self._is_running = False
-            if self.sts_mode:
-                self._sts_connection = None
-            else:
-                self._connection = None
-                # Clean up services
-                if self.stt and hasattr(self.stt, "close"):
-                    try:
-                        await self.stt.close()
-                    except Exception as e:
-                        self.logger.warning(f"Error closing STT service: {e}")
+            # Use the comprehensive cleanup method
+            await self.close()
 
     async def _setup_event_handlers(self) -> None:
         """Set up event handlers for the connection."""
@@ -403,6 +397,22 @@ class Agent:
         if self.llm is None:
             return False
         return getattr(self.llm, 'sts', False)
+    
+    @property
+    def publish_audio(self) -> bool:
+        if self.tts is not None or self.sts_mode:
+            return True
+        else:
+            return False
+        
+    @property
+    def publish_video(self) -> bool:
+        if self.video_transformer is not None:
+            return True
+        else:
+            return False
+        
+    
 
     def validate_configuration(self):
         """Validate the agent configuration."""
@@ -471,6 +481,36 @@ class Agent:
             self.logger.info("✅ STS audio forwarding configured")
         else:
             self.logger.warning("⚠️ STS connection doesn't support audio forwarding or audio track not available")
+
+    async def close(self):
+        """Clean up all connections and resources."""
+        self._is_running = False
+        
+        if self._sts_connection:
+            await self._sts_connection.__aexit__(None, None, None)
+            self._sts_connection = None
+        
+        if self._connection:
+            await self._connection.__aexit__(None, None, None)
+            self._connection = None
+        
+        if self.stt:
+            await self.stt.close()
+        
+        if self.tts:
+            await self.tts.close()
+        
+        if self._audio_track:
+            self._audio_track.stop()
+            self._audio_track = None
+        
+        if self._video_track:
+            self._video_track.stop()
+            self._video_track = None
+        
+        if self._interval_task:
+            self._interval_task.cancel()
+            self._interval_task = None
 
     def create_user(self):
         """Create user - placeholder for any user setup logic."""

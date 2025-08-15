@@ -92,7 +92,13 @@ async def main() -> None:
     except Exception as e:
         logging.error("❌ Error: %s", e)
     finally:
-        pass
+        # Clean up agent resources
+        if 'agent' in locals():
+            try:
+                await agent.close()
+                logging.info("✅ Agent cleanup completed")
+            except Exception as e:
+                logging.error(f"❌ Error during cleanup: {e}")
 
 
 if __name__ == "__main__":
