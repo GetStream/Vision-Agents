@@ -33,7 +33,6 @@ await agent.join(call)
 ```
 
 ### Turn Detection
-
 Turn detection is integrated via a simple, unified `TurnDetection` protocol that the `Agent` understands. Implementations provide event-based turn management:
 
 ```python
@@ -48,6 +47,7 @@ class MyTurnDetector(BaseTurnDetector):
 
 turn_detection = MyTurnDetector(mini_pause_duration=0.5, max_pause_duration=2.0)
 
+
 agent = Agent(
     stt=your_stt_service,
     llm=llm,
@@ -57,3 +57,4 @@ agent = Agent(
 ```
 
 The `TurnDetection` protocol requires: `start()`, `stop()`, `is_detecting()`, `process_audio()`, and event emission (`on`/`emit` from EventEmitter). The Agent automatically calls `process_audio()` with `PcmData` from Stream and listens for turn detection events.
+
