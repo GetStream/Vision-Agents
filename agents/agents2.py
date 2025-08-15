@@ -173,14 +173,14 @@ class Agent:
 
 
                 # Set up audio track if available
-                if self._audio_track:
+                if self.publish_audio:
                     await connection.add_tracks(audio=self._audio_track)
                     self.logger.info("🤖 Agent ready to speak")
 
                 # Set up video track if available
-                if self._video_track:
+                if self.publish_video:
                     await connection.add_tracks(video=self._video_track)
-                    self.logger.info("🎥 Agent ready to publish transformed video")
+                    self.logger.info("🎥 Agent ready to publish video")
 
                 # Set up STS audio forwarding if in STS mode
                 if self.sts_mode and self._sts_connection:
@@ -437,28 +437,20 @@ class Agent:
         self._is_running = False
         self._callback_executed = False
 
-        if self.sts_mode:
-            # STS mode - need audio track for forwarding STS audio
-            self._sts_connection = None
-            self._connection = None
-            self._audio_track = None  # Will be created in join() method
-            self._video_track = None
-        else:
-            # Traditional mode - set up audio/video tracks
-            self._connection: Optional[rtc.RTCConnection] = None
-            self._audio_track: Optional[audio_track.AudioStreamTrack] = None
-            self._video_track: Optional[TransformedVideoTrack] = None
-            self._sts_connection = None
+        self._connection: Optional[rtc.RTCConnection] = None
+        self._audio_track: Optional[audio_track.AudioStreamTrack] = None
+        self._video_track: Optional[TransformedVideoTrack] = None
 
-            # Set up audio track if TTS is available
+        # Set up audio track if TTS is available
+        if self.publish_audio:
+            self._audio_track = audio_track.AudioStreamTrack(framerate=16000)
             if self.tts:
-                self._audio_track = audio_track.AudioStreamTrack(framerate=16000)
                 self.tts.set_output_track(self._audio_track)
 
-            # Set up video track if video transformer is available
-            if self.video_transformer:
-                self._video_track = TransformedVideoTrack()
-                self.logger.info("🎥 Video track initialized for transformation publishing")
+        # Set up video track if video transformer is available
+        if self.publish_video:
+            self._video_track = TransformedVideoTrack()
+            self.logger.info("🎥 Video track initialized for transformation publishing")
 
 
     async def _setup_sts_audio_forwarding(self, sts_connection, rtc_connection):
