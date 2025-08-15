@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pyee import EventEmitter
 from getstream.models import User
+from getstream.video.rtc.track_util import PcmData
 
 
 class TurnEvent(Enum):
@@ -32,7 +33,7 @@ class TurnEventData:
 EventListener = Callable[[TurnEventData], None]
 
 
-class TurnDetectionProtocol(Protocol):
+class TurnDetection(Protocol):
     """Protocol defining the interface for turn detection implementations."""
 
     @property
@@ -76,55 +77,22 @@ class TurnDetectionProtocol(Protocol):
         """Stop detection (convenience alias to stop_detection)."""
         ...
 
-    def add_participant(
-        self, user: User
-    ) -> None:  # pragma: no cover - optional by implementation
-        """Register a participant for turn tracking."""
-        ...
-
     async def process_audio(
         self,
-        audio_data: Any,
+        audio_data: PcmData,
         user_id: str,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:  # pragma: no cover - optional by implementation
-        """Ingest raw PCM/bytes audio for a user."""
-        ...
+    ) -> None:
+        """Ingest PcmData audio for a user.
 
-    async def process_audio_track(
-        self, track: Any, user_id: str
-    ) -> None:  # pragma: no cover - optional by implementation
-        """Process audio directly from a WebRTC/Media track if supported."""
-        ...
+        The implementation should track participants internally as audio comes in.
+        Use the event system (emit/on) to notify when turns change.
 
-    def on_agent_turn(
-        self, callback: Callable
-    ) -> None:  # pragma: no cover - optional by implementation
-        """Register callback when it's the agent's turn to respond."""
-        ...
-
-    def on_participant_turn(
-        self, callback: Callable
-    ) -> None:  # pragma: no cover - optional by implementation
-        """Register callback when a participant starts a turn."""
-        ...
-
-    def detect_turn(
-        self, audio_data: bytes
-    ) -> bool:  # pragma: no cover - optional by implementation
-        """Simple polling gate indicating whether the agent should respond now."""
-        ...
-
-    def get_stats(
-        self,
-    ) -> Dict[str, Any]:  # pragma: no cover - optional by implementation
-        """Return implementation-specific stats for observability."""
-        ...
-
-    def get_insights(
-        self,
-    ) -> Dict[str, Any]:  # pragma: no cover - optional by implementation
-        """Return higher-level conversation insights if available."""
+        Args:
+            audio_data: PcmData object containing audio samples from Stream
+            user_id: Identifier for the user providing the audio
+            metadata: Optional additional metadata about the audio
+        """
         ...
 
 

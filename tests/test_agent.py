@@ -138,8 +138,17 @@ class MockVAD:
 class MockTurnDetection:
     """Mock turn detection service."""
 
-    def detect_turn(self, audio_data):
-        return True  # Always return True for testing
+    def __init__(self):
+        self._is_detecting = True
+
+    def is_detecting(self):
+        return self._is_detecting
+
+    def start(self):
+        self._is_detecting = True
+
+    def stop(self):
+        self._is_detecting = False
 
 
 class TestAgent:
@@ -245,23 +254,24 @@ class TestAgent:
 
     @pytest.mark.asyncio
     async def test_handle_audio_input_with_turn_detection_false(self):
-        """Test audio input handling when turn detection returns False."""
-        stt = MockSTT()
+        """Test audio input handling when turn detection is not active."""
+        stt = Mock()
+        stt.process_audio = AsyncMock()
         turn_detection = Mock()
-        turn_detection.detect_turn.return_value = False
+        turn_detection.is_detecting.return_value = False
 
         agent = Agent(stt=stt, turn_detection=turn_detection)
 
         # Mock PCM data and user
         mock_pcm = Mock()
-        mock_pcm.data = b"fake audio data"
         mock_user = Mock()
         mock_user.user_id = "test_user"
 
-        # Should not process audio when turn detection returns False
+        # Should still process audio through STT even when turn detection is false
         await agent._handle_audio_input(mock_pcm, mock_user)
 
-        turn_detection.detect_turn.assert_called_once_with(b"fake audio data")
+        # Verify STT was called (audio always goes through STT)
+        stt.process_audio.assert_called_once_with(mock_pcm, mock_user)
 
     @pytest.mark.asyncio
     async def test_handle_audio_input_full_pipeline(self):

@@ -18,11 +18,7 @@ except ImportError:
     TTS = None
     STS = None
 
-# Import turn detection adapter if available
-try:
-    from .turn_detection_adapter import TurnDetectionAdapter
-except Exception:
-    TurnDetectionAdapter = None
+# TurnDetectionAdapter removed - use TurnDetection protocol directly
 
 __all__ = [
     "Agent",
@@ -32,7 +28,6 @@ __all__ = [
     "STT",
     "TTS",
     "STS",
-    "TurnDetectionAdapter",
 ]
 
 __version__ = "0.1.0"

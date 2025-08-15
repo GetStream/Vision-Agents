@@ -34,14 +34,19 @@ await agent.join(call)
 
 ### Turn Detection
 
-Turn detection is integrated via a small, unified interface that the `Agent` understands. Most providers (Fal.ai, Krisp, etc.) can be wrapped by our adapter so your agent code stays simple:
+Turn detection is integrated via a simple, unified `TurnDetection` protocol that the `Agent` understands. Implementations provide event-based turn management:
 
 ```python
-from turn_detection import FalSmartTurnDetector
-from agents import TurnDetectionAdapter
+from turn_detection import BaseTurnDetector, TurnEvent
+from getstream.video.rtc.track_util import PcmData
 
-detector = FalSmartTurnDetector()
-turn_detection = TurnDetectionAdapter(detector, agent_user_id=agent.bot_id)
+class MyTurnDetector(BaseTurnDetector):
+    async def process_audio(self, audio_data: PcmData, user_id: str, metadata: dict = None):
+        # Analyze audio and emit events when turns change
+        # self._emit_turn_event(TurnEvent.TURN_STARTED, event_data)
+        pass
+
+turn_detection = MyTurnDetector(mini_pause_duration=0.5, max_pause_duration=2.0)
 
 agent = Agent(
     stt=your_stt_service,
@@ -51,4 +56,4 @@ agent = Agent(
 )
 ```
 
-Advanced detectors may also implement the interface directly. The Agent uses a small set of methods: `start/stop`, `add_participant`, `process_audio` or `process_audio_track`, and optional callbacks `on_agent_turn` / `on_participant_turn`.
+The `TurnDetection` protocol requires: `start()`, `stop()`, `is_detecting()`, `process_audio()`, and event emission (`on`/`emit` from EventEmitter). The Agent automatically calls `process_audio()` with `PcmData` from Stream and listens for turn detection events.
