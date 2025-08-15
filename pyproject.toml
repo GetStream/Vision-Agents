@@ -16,4 +16,5 @@ dependencies = [
     "pillow>=11.3.0",
     "aiortc>=1.13.0",
     "getstream-plugins-deepgram>=0.1.0",
+    "fal-client>=0.6.1",
 ]

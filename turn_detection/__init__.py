@@ -4,6 +4,7 @@ from .turn_detection import (
     BaseTurnDetector,
     TurnDetection,
 )
+from .fal_turn_detection import FalTurnDetection
 
 __all__ = [
     # Base classes and types
@@ -11,4 +12,6 @@ __all__ = [
     "TurnEventData",
     "BaseTurnDetector",
     "TurnDetection",
+    # Implementations
+    "FalTurnDetection",
 ]
