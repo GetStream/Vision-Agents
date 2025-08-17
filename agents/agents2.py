@@ -443,6 +443,12 @@ class Agent:
                     "STS mode detected: STT and TTS services will be ignored. "
                     "The STS model handles both speech-to-text and text-to-speech internally."
                 )
+                # STS mode - should not have separate STT/TTS
+            if self.stt or self.turn_detection:
+                self.logger.warning(
+                    "STS mode detected: STT, TTS and Turn Detection services will be ignored. "
+                    "The STS model handles both speech-to-text, text-to-speech and turn detection internally."
+                )
         else:
             # Traditional mode - need LLM and either STT/TTS or both
             if not self.llm:
