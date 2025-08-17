@@ -8,6 +8,7 @@ from uuid import uuid4
 from getstream.models import User
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
+from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
 from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
 from getstream.video.rtc.tracks import (
     SubscriptionConfig,
@@ -121,15 +122,7 @@ class Agent:
         return TrackSubscriptionConfig(
             track_types=[
                 TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_AUDIO,
-            ]
-        )
-
-    def get_subscription_config(self):
-        return TrackSubscriptionConfig(
-            track_types=[
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_AUDIO,
+                #TrackType.TRACK_TYPE_AUDIO,
             ]
         )
 
@@ -238,22 +231,12 @@ class Agent:
             return
 
         # Handle new participants joining
-        async def on_track_published(event):
+        async def on_track_published(event: events_pb2.TrackPublished):
             try:
-                user_id = "unknown"
-                if hasattr(event, "participant") and event.participant:
-                    user_id = getattr(event.participant, "user_id", "unknown")
-
-                track_id = getattr(event, "track_id", "unknown")
-                track_type = getattr(event, "track_type", "unknown")
 
                 self.logger.info(
-                    f"📢 Track published: {user_id} - {track_id} - {track_type}"
+                    f"📢 Track published: {event}"
                 )
-
-                if user_id and user_id != self.agent_user.id:
-                    self.logger.info(f"👋 New participant joined: {user_id}")
-
             except Exception as e:
                 self.logger.error(f"❌ Error handling track published event: {e}")
                 self.logger.error(traceback.format_exc())
