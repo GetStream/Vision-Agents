@@ -544,6 +544,11 @@ class Agent:
                 await self.tts.close()
         except Exception as e:
             self.logger.debug(f"Error closing TTS: {e}")
+        try:
+            if self.turn_detection and hasattr(self.turn_detection, "stop"):
+                self.turn_detection.stop()
+        except Exception as e:
+                self.logger.debug(f"Error closing turn detection: {e}")
 
         try:
             if self._audio_track and hasattr(self._audio_track, "stop"):
