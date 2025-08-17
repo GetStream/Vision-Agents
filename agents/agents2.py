@@ -29,9 +29,9 @@ from turn_detection import TurnEvent, TurnEventData
 
 """
 TODO
+- Screenshot integration (once a second). Somehow video doesn't work. not sure why
 - Reduce logging verbosity
 - User a better pcm_data alternative. https://github.com/GetStream/stream-py/blob/webrtc/getstream/video/rtc/track_util.py#L17
-- Screenshot integration (once a second)
 - Yolo integration (like https://github.com/GetStream/video-ai-samples/blob/ab4913a6e07301de50f83e4bf2b7b376a375af99/live_sports_coach/kickboxing_example.py#L369)
 """
 
@@ -322,16 +322,19 @@ class Agent:
                     self.logger.debug(f"🎵 Processing audio from {participant}")
                     await self.stt.process_audio(pcm_data, participant)
 
-    async def _process_track(self, track_id: str, track_type: str, participant: models_pb2.Participant):
+    async def _process_track(self, track_id: str, track_type: str, participant):
         """Process video frames from a specific track."""
         self.logger.info(
-            f"🎥 Processing track: {track_id} from user {participant.user_id} (type: {track_type})"
+            f"🎥 Processing track: {track_id} from user {getattr(participant, 'user_id', 'unknown')} (type: {track_type})"
         )
+        self.logger.info(f"🎥 Participant object: {participant}, type: {type(participant)}")
 
         # Only process video tracks - track_type might be numeric (2 for video)
-        if track_type != "video" and str(track_type) != "2":
+        if track_type != "video":
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
+
+        self.logger.info(f"🎥 Processing VIDEO track: {track_id}")
 
         # Subscribe to the video track
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
@@ -348,7 +351,7 @@ class Agent:
         self.logger.info(f"📸 Has image processors: {hasImageProcessers}, count: {len(self.image_processors)}")
 
         try:
-            self.logger.info(f"📸 Starting video processing loop for track {track_id}")
+            self.logger.info(f"📸 Starting video processing loop for track {track_id} {participant.user_id} {participant.name}")
             self.logger.info(f"📸 Track readyState: {getattr(track, 'readyState', 'unknown')}")
             self.logger.info(f"📸 Track kind: {getattr(track, 'kind', 'unknown')}")
             self.logger.info(f"📸 Track enabled: {getattr(track, 'enabled', 'unknown')}")
@@ -356,30 +359,32 @@ class Agent:
             # Use the exact same pattern as the working example
             while True:
                 try:
-                    self.logger.debug("📸 About to call track.recv()...")
-                    video_frame = await track.recv()
-                    self.logger.info(f"📸 Video frame received: {video_frame.time} - {video_frame.format}")
-                    
-                    if video_frame and hasImageProcessers:
-                        img = video_frame.to_image()
-                        self.logger.info(f"📸 Converted to PIL Image: {img.size}")
+                    self.logger.info(f"📸 Blocking on track.recv")
+                    video_frame = await asyncio.wait_for(track.recv(), timeout=5.0)
+                    if video_frame:
+                        self.logger.info(f"📸 Video frame received: {video_frame.time} - {video_frame.format}")
                         
-                        for processor in self.image_processors:
-                            try:
-                                await processor.process_image(img, participant.user_id)
-                            except Exception as e:
-                                self.logger.error(f"Error in image processor {type(processor).__name__}: {e}")
-                    
-                    # video processors
-                    for processor in self.video_processors:
-                        try:
-                            await processor.process_video(track, participant.user_id)
-                        except Exception as e:
-                            self.logger.error(f"Error in video processor {type(processor).__name__}: {e}")
+                        if hasImageProcessers:
+                            img = video_frame.to_image()
+                            self.logger.info(f"📸 Converted to PIL Image: {img.size}")
                             
+                            for processor in self.image_processors:
+                                try:
+                                    await processor.process_image(img, participant.user_id)
+                                except Exception as e:
+                                    self.logger.error(f"Error in image processor {type(processor).__name__}: {e}")
+                        
+                        # video processors
+                        for processor in self.video_processors:
+                            try:
+                                await processor.process_video(track, participant.user_id)
+                            except Exception as e:
+                                self.logger.error(f"Error in video processor {type(processor).__name__}: {e}")
+                                
                 except Exception as e:
-                    self.logger.error(f"📸 Error receiving track: {e} - {type(e)}")
-                    break
+                    # TODO: handle timouet differently, break on normal error
+                    self.logger.error(f"📸 Error receiving track: {e} - {type(e)}, trying again")
+                    await asyncio.sleep(0.5)
         except Exception as e:
             self.logger.error(f"Fatal error in track processing {track_id}: {e}")
             self.logger.error(traceback.format_exc())

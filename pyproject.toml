@@ -23,3 +23,8 @@ dependencies = [
     "ultralytics>=8.3.0",
     "opencv-python>=4.8.0",
 ]
+[tool.uv.workspace]
+members = [
+    "getstream/plugins/*",
+    "getstream/video"
+]
