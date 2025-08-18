@@ -85,6 +85,7 @@ class Agent:
         self.prepare_rtc()
         self.setup_stt()
         self.create_user()
+        self.setup_turn_detection()
 
     def setup_turn_detection(self):
         if self.turn_detection:
@@ -207,7 +208,7 @@ class Agent:
 
                 # Send initial greeting, if the LLM is configured to do so
                 if self.llm:
-                    await self.llm.conversation_started(self)
+                    self.llm.conversation_started(self)
 
                 # Keep the agent running and listening
                 self.logger.info("🎧 Agent is active - press Ctrl+C to stop")
@@ -386,11 +387,11 @@ class Agent:
     def _on_turn_started(self, event_data: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
         # todo(nash): If the participant starts speaking while TTS is streaming, we need to cancel it
-        self.logger.info("Turn started - participant speaking")
+        self.logger.info(f"👉 Turn started - participant speaking {event_data.speaker}")
 
     def _on_turn_ended(self, event_data: TurnEventData) -> None:
         """Handle when a participant ends their turn."""
-        self.logger.info("Turn ended - agent may respond")
+        self.logger.info(f"👉 Turn ended - agent may respond {event_data.duration}")
 
     async def _on_partial_transcript(self, text: str, user=None, metadata=None):
         """Handle partial transcript from STT service."""

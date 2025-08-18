@@ -54,6 +54,9 @@ class LLM(Protocol):
     async def generate(self, prompt: str, **kwargs) -> str:
         """Generate response from the model."""
         ...
+    def conversation_started(self, agent: Agent):
+        """Callback triggered when an LLM is in the call and the conversation is ready"""
+        ...
 
 
 # STT and TTS are now imported directly from stream-py package
