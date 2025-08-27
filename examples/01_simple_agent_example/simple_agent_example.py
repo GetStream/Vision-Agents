@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 from getstream.plugins import DeepgramSTT, ElevenLabsTTS
-from stream_agents.turn_detection import FalTurnDetection
+from plugins import KrispTurnDetection
 from stream_agents.llm import OpenAILLM
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
@@ -27,7 +27,7 @@ async def start_agent() -> None:
         ),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
-        turn_detection=FalTurnDetection(),
+        turn_detection=KrispTurnDetection(),
         processors=[], # processors can fetch extra data, check images/audio data or transform video
     )
 
