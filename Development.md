@@ -1,15 +1,30 @@
-## To instal:
+## Overview
+This project contains two parts, `examples` and `stream-agents/`.
+
+Examples is our folder for testing different use-cases and models with the `Agent` while all
+agent code including LLM support, turn detection, processors and observability lives in `stream-agents/`.
+
+The backlog is managed on [Linear](https://linear.app/stream/project/agents-sdk-v1-1f1fd71f626f/issues) and groomed twice a week (Monday and Wednesday).
+If a ticket is not assigned to anyone, please feel free to pick it up and share an update in #video_ai with the rest of the team.
+
+## To install:
+In the project root, run:
 ```bash
 uv venv --python 3.12.2
 uv sync --all-extras --dev
 ```
 
-To setup your .env 
+To setup your .env
 ```bash
 cp env.example .env 
 ```
 
-## Running 
+## Running
 ```bash
-uv run main.py
+uv run examples/01_simple_agent_example/01_simple_agent_example
 ```
+
+## General Guidelines
+1. We are experimenting and moving fast. Things may break, that is fine for now, but before merging to main, check that your code is running and if required, has tests.
+2. Communication: Things are moving quickly, communicate what you're working on and what's blocking early and frequently in #video_ai
+3. Avoid creating large PRs that's hard to review, break them up in to smaller reviewable PRs. 
