@@ -92,7 +92,17 @@ class Agent:
         self.setup_stt()
         self.setup_turn_detection()
 
-    def state_to_input(self) -> List[ResponseInputItemParam]:
+
+
+    def processor_inputs(self) -> List[ResponseInputItemParam]:
+        """
+        processor_inputs gets the inputs for the LLM from all processors
+        this is how you handle things like:
+        - input from APIs. game state, player stats, etc
+        - roboflow/yolo style image enrichment
+        By default we call processor.input(). if you need something more advanced you can gather info with
+        processor.state() and create a combined llm input
+        """
         process_inputs = []
         for processor in self.processors:
             state = processor.input()
@@ -100,10 +110,11 @@ class Agent:
 
         return process_inputs
 
-    async def create_response(self, input: List[ResponseInputItemParam] | str, participant: Participant = None):
-
-        # TODO: gather all processor state
-        processor_inputs = self.state_to_input()
+    async def create_response(self, input: List[ResponseInputItemParam] | str, participant: Participant = None, use_processor_input: bool = True):
+        # gather all processor state
+        processor_inputs = []
+        if use_processor_input:
+            processor_inputs = self.processor_inputs()
 
         # standardize on input
         if isinstance(input, str):
@@ -130,12 +141,12 @@ class Agent:
 
         # TODO: support list input here
         input = input + processor_inputs
+        # TODO: this returns text, doesn't seem right
         llm_response = await self.llm.generate(input)
-        import pdb; pdb.set_trace()
         # TODO: Route through the queue
         # Either resumse, pause, interrupt
         await self.queue.resume(
-            input[0]["content"]
+            llm_response
         )  # TODO: how does this get access to context/conversation?
 
     def setup_turn_detection(self):
