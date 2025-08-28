@@ -135,7 +135,7 @@ class OpenAILLM:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: Union[str, List[Any]],
         *,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
@@ -143,10 +143,10 @@ class OpenAILLM:
         **kwargs: Any,
     ) -> str:
         """
-        Generate a response from the model using a simple prompt.
+        Generate a response from the model using a simple prompt or structured input.
 
         Args:
-            prompt: The input prompt to generate a response for
+            prompt: The input prompt (string) or list of ResponseInputItemParam objects
             max_tokens: Maximum number of tokens to generate
             temperature: Sampling temperature (0.0 to 2.0)
             stop: Stop sequences to end generation
@@ -158,18 +158,146 @@ class OpenAILLM:
         Raises:
             Exception: If generation fails
         """
-        # Convert simple prompt to chat format with system instructions
-        messages = [
-            {"role": "system", "content": self.instructions},
-            {"role": "user", "content": prompt}
-        ]
-        return await self.generate_chat(
-            messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stop=stop,
-            **kwargs,
-        )
+        if isinstance(prompt, str):
+            # Convert simple prompt to chat format with system instructions
+            messages = [
+                {"role": "system", "content": self.instructions},
+                {"role": "user", "content": prompt}
+            ]
+        else:
+            # Handle list of ResponseInputItemParam objects
+            # Check if this looks like the official OpenAI responses.create format
+            has_image_content = any(
+                isinstance(item, dict) and 
+                isinstance(item.get("content"), list) and
+                any(content_item.get("type") == "input_image" for content_item in item.get("content", []))
+                for item in prompt
+            )
+            
+            if has_image_content:
+                # Use responses.create for image inputs
+                return await self._generate_with_responses_api(
+                    prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stop=stop,
+                    **kwargs,
+                )
+            else:
+                # Convert to chat format for text-only inputs
+                messages = [{"role": "system", "content": self.instructions}]
+                
+                for item in prompt:
+                    if isinstance(item, dict):
+                        # Convert ResponseInputItemParam to chat message format
+                        if item.get("type") == "message":
+                            messages.append({
+                                "role": item.get("role", "user"),
+                                "content": item.get("content", "")
+                            })
+                        else:
+                            # Handle other types if needed
+                            self.logger.warning(f"Unknown input item type: {item.get('type')}")
+                    elif isinstance(item, str):
+                        # Handle string items
+                        messages.append({"role": "user", "content": item})
+                    else:
+                        self.logger.warning(f"Unknown input item format: {type(item)}")
+                
+                return await self.generate_chat(
+                    messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stop=stop,
+                    **kwargs,
+                )
+
+    async def _generate_with_responses_api(
+        self,
+        input_items: List[Any],
+        *,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        stop: Optional[Union[str, List[str]]] = None,
+        **kwargs: Any,
+    ) -> str:
+        """
+        Generate a response using OpenAI's responses.create API for image inputs.
+
+        Args:
+            input_items: List of input items in OpenAI responses.create format
+            max_tokens: Maximum number of tokens to generate
+            temperature: Sampling temperature (0.0 to 2.0)
+            stop: Stop sequences to end generation
+            **kwargs: Additional OpenAI-specific parameters
+
+        Returns:
+            Generated response text
+
+        Raises:
+            Exception: If generation fails
+        """
+        try:
+            # Prepare parameters with defaults
+            params = {"model": self._name, "input": input_items, **kwargs}
+
+            # Use provided parameters or fall back to defaults
+            if max_tokens is not None:
+                params["max_output_tokens"] = max_tokens
+            elif self._default_max_tokens is not None:
+                params["max_output_tokens"] = self._default_max_tokens
+
+            if temperature is not None:
+                params["temperature"] = temperature
+            elif self._default_temperature is not None:
+                params["temperature"] = self._default_temperature
+
+            # Note: responses.create doesn't support stop sequences in the same way
+            # as chat completions, so we skip that parameter
+
+            self.logger.debug(
+                f"Generating response with responses.create API for {len(input_items)} input items"
+            )
+
+            # Make the API call
+            if self._is_async:
+                response = await self._client.responses.create(**params)
+            else:
+                # For sync client, we need to wrap in an async context
+                import asyncio
+
+                response = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: self._client.responses.create(**params)
+                )
+
+            # Extract the response content
+            if hasattr(response, 'output_text') and response.output_text:
+                content = response.output_text
+                self.logger.debug(f"Generated response: {len(content)} characters")
+                return content
+            elif hasattr(response, 'output') and response.output:
+                # Handle the response format with output array
+                output_items = response.output
+                if output_items and len(output_items) > 0:
+                    first_output = output_items[0]
+                    if hasattr(first_output, 'content') and first_output.content:
+                        content_items = first_output.content
+                        if content_items and len(content_items) > 0:
+                            first_content = content_items[0]
+                            if hasattr(first_content, 'text'):
+                                content = first_content.text
+                                self.logger.debug(f"Generated response: {len(content)} characters")
+                                return content
+                
+                self.logger.warning("No text content found in response output")
+                return str(response)
+            else:
+                self.logger.warning("No content in responses.create response")
+                return ""
+
+        except Exception as e:
+            self.logger.error(f"Error generating response with responses.create: {e}")
+            raise
 
     async def generate_chat(
         self,

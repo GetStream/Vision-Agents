@@ -7,6 +7,8 @@ adapting it to the new processor architecture.
 """
 
 import asyncio
+import base64
+import io
 import logging
 import numpy as np
 import cv2
@@ -16,6 +18,7 @@ from typing import Optional, Dict, Any
 from PIL import Image
 from aiortc import VideoStreamTrack
 import av
+from openai.types.responses import ResponseInputItemParam, EasyInputMessageParam
 
 from .base_processor import (
     AudioVideoProcessor,
@@ -163,6 +166,7 @@ class YOLOPoseProcessor(
         self.device = device
         self.enable_hand_tracking = enable_hand_tracking
         self.enable_wrist_highlights = enable_wrist_highlights
+        self._last_frame = None
 
         # Initialize YOLO model
         self._load_model()
@@ -232,6 +236,7 @@ class YOLOPoseProcessor(
 
             # Publish annotated frame to output track if available
             if self._video_track:
+                self._last_frame = annotated_image
                 await self._video_track.add_frame(annotated_image)
                 logger.debug(f"🎥 Published pose-annotated frame to video track")
 
@@ -258,7 +263,6 @@ class YOLOPoseProcessor(
             track: Video track to process
             user_id: ID of the user
         """
-        logger.info(f"🤖 YOLO pose video processing active for user {user_id}")
         # The actual frame processing happens in process_image method
         # called by the Agent for each frame
 
@@ -520,11 +524,34 @@ class YOLOPoseProcessor(
             "model_path": self.model_path,
             "confidence_threshold": self.conf_threshold,
             "device": self.device,
+            "last_frame": self._last_frame,
             "hand_tracking_enabled": self.enable_hand_tracking,
             "wrist_highlights_enabled": self.enable_wrist_highlights,
             "processing_interval": self.interval,
             "status": "active" if not self._shutdown else "shutdown",
         }
+
+    def input(self) -> ResponseInputItemParam | None:
+
+        if self._last_frame:
+            buffered = io.BytesIO()
+            self._last_frame.save(buffered, format="PNG")
+            image_data = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+            # TODO: this should be a utility method
+            # Return the official OpenAI responses.create format
+            return {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Current video frame from pose detection processor."},
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:image/png;base64,{image_data}",
+                    },
+                ]
+            }
+
+
 
     def cleanup(self):
         """Clean up resources."""

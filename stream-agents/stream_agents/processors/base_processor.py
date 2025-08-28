@@ -26,7 +26,8 @@ class ProcessorType(Enum):
     AUDIO_PUBLISHER = "create_audio_track"
 
 class BaseProcessor(Protocol):
-    pass
+    def state(self) -> Any:
+        pass
 
 class IntervalProcessor(BaseProcessor):
     # TODO: add interval loop

@@ -92,6 +92,52 @@ class Agent:
         self.setup_stt()
         self.setup_turn_detection()
 
+    def state_to_input(self) -> List[ResponseInputItemParam]:
+        process_inputs = []
+        for processor in self.processors:
+            state = processor.input()
+            process_inputs.append(state)
+
+        return process_inputs
+
+    async def create_response(self, input: List[ResponseInputItemParam] | str, participant: Participant = None):
+
+        # TODO: gather all processor state
+        processor_inputs = self.state_to_input()
+
+        # standardize on input
+        if isinstance(input, str):
+            role = "system"
+            if participant is not None:
+                role = "user"
+            input = [EasyInputMessageParam(content=input, role=role, type="message")]
+
+        logging.info("participant in create response is %s", participant)
+        if self.conversation:
+            for i in input:
+
+                if participant is not None:
+                    user_id = participant.user_id
+                else:
+                    if i["role"] == "assistant":
+                        user_id = self.agent_user.id
+                    else:
+                        #
+                        user_id = self.agent_user.id
+
+                if i["type"] == "message":
+                    self.conversation.add_message(i["content"], user_id)
+
+        # TODO: support list input here
+        input = input + processor_inputs
+        llm_response = await self.llm.generate(input)
+        import pdb; pdb.set_trace()
+        # TODO: Route through the queue
+        # Either resumse, pause, interrupt
+        await self.queue.resume(
+            input[0]["content"]
+        )  # TODO: how does this get access to context/conversation?
+
     def setup_turn_detection(self):
         if self.turn_detection:
             self.logger.info("🎙️ Setting up turn detection listeners")
@@ -115,42 +161,7 @@ class Agent:
     async def play_audio(self, pcm):
         await self.queue.send_audio(pcm)
 
-    async def create_response(self, input: List[ResponseInputItemParam] | str, participant: Participant = None):
 
-        #TODO: gather all processor state
-
-        # standardize on input
-        if isinstance(input, str):
-            role = "system"
-            if participant is not None:
-                role = "user"
-            input = [EasyInputMessageParam(content=input, role=role, type="message")]
-
-        logging.info("participant in create response is %s", participant)
-        if self.conversation:
-            for i in input:
-
-                if participant is not None:
-                    user_id = participant.user_id
-                else:
-                    if i["role"] == "assistant":
-                        user_id = self.agent_user.id
-                    else:
-                        #
-                        user_id = self.agent_user.id
-
-
-
-                if i["type"] == "message":
-                    self.conversation.add_message(i["content"], user_id)
-
-        # TODO: support list input here
-        llm_response = await self.llm.generate(input)
-        # TODO: Route through the queue
-        # Either resumse, pause, interrupt
-        await self.queue.resume(
-            input[0]["content"]
-        )  # TODO: how does this get access to context/conversation?
 
     def get_subscription_config(self):
         return TrackSubscriptionConfig(
@@ -413,16 +424,11 @@ class Agent:
         # Use the exact same pattern as the working example
         while True:
             try:
-                self.logger.info("📸 Blocking on track.recv")
                 video_frame = await asyncio.wait_for(track.recv(), timeout=5.0)
                 if video_frame:
-                    self.logger.info(
-                        f"📸 Video frame received: {video_frame.time} - {video_frame.format}"
-                    )
 
                     if hasImageProcessers:
                         img = video_frame.to_image()
-                        self.logger.info(f"📸 Converted to PIL Image: {img.size}")
 
                         for processor in self.image_processors:
                             try:
