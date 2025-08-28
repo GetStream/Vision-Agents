@@ -29,6 +29,9 @@ class BaseProcessor(Protocol):
     def state(self) -> Any:
         pass
 
+    def input(self) -> Any:
+        pass
+
 class IntervalProcessor(BaseProcessor):
     # TODO: add interval loop
     pass

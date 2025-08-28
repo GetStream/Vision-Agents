@@ -39,12 +39,18 @@ class LLM:
         pass
 
 class RealtimeLLM(LLM):
+    '''
+    We need to standardize connect and attaching audio in/ audio out and video in
+    '''
     sts : bool = True
 
     def connect(self):
         pass
 
     def attach_incoming_audio(self, track):
+        pass
+
+    def attach_incoming_video(self, track):
         pass
 
     def attach_outgoing_audio(self, track):

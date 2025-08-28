@@ -28,8 +28,10 @@ async def start_agent() -> None:
         ),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
-        turn_detection=FalTurnDetection(),
+        #turn_detection=FalTurnDetection(),
         processors=[YOLOPoseProcessor()], # processors can fetch extra data, check images/audio data or transform video
+        # Soccer: processors=[MatchStatistics()]
+        # DOTA: processors=[GameStats(), Yolo(), Image()]
     )
 
     # Create a call

@@ -29,6 +29,7 @@ dependencies = [
     "ultralytics>=8.3.0",
     "opencv-python>=4.8.0",
     "click>=8.0.0",
+    "stratz>=1.0.0",
 ]
 
 [project.urls]
