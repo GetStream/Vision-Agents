@@ -117,6 +117,8 @@ class Agent:
 
     async def create_response(self, input: List[ResponseInputItemParam] | str, participant: Participant = None):
 
+        #TODO: gather all processor state
+
         # standardize on input
         if isinstance(input, str):
             role = "system"
