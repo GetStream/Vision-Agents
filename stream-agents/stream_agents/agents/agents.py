@@ -124,7 +124,7 @@ class Agent:
             role = "system"
             if participant is not None:
                 role = "user"
-            input = [EasyInputMessageParam(content=input, role=role, type="message")]
+            input = [EasyInputMessageParam(content=input, role=role, type="text")]
 
         logging.info("participant in create response is %s", participant)
         if self.conversation:
@@ -487,6 +487,7 @@ class Agent:
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""
+        print("HEY ERROR", error);
         self.logger.error(f"❌ STT Error: {error}")
 
     async def _process_transcription(
