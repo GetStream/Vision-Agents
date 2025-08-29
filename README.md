@@ -276,8 +276,15 @@ Avoid using Union types or complicated composite types.
 Keep typing simple. Use the PcmAudio type instead of bytes when passing around audio.
 This prevents mistakes related to different audio formats. 
 
+### Testing
 
-## Observability
+Many of the underlying APIs change daily. To ensure things work we keep 2 sets of tests. Integration tests and unit tests.
+Integration tests run once a day to verify that changes to underlying APIs didn't break the framework. Some testing guidelines
+
+- Every plugin needs an integration test
+- Limit usage of response capturing style testing. (since they diverge from reality)
+
+### Observability
 
 - Traces and metrics go to Prometheus and OpenTelemetry
 - Metrics on performance of TTS, STT, LLM, Turn detection and connection to realtime edge.
