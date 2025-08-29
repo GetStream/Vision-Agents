@@ -9,16 +9,38 @@ import resampy
 from getstream.video.rtc.track_util import PcmData
 from stream_agents.turn_detection import BaseTurnDetector, TurnEvent, TurnEventData
 
+
+def _int_to_frame_duration(frame_dur: int):
+    """Convert integer frame duration to Krisp enum."""
+    durations = {
+        10: krisp_audio.FrameDuration.Fd10ms,
+        15: krisp_audio.FrameDuration.Fd15ms,
+        20: krisp_audio.FrameDuration.Fd20ms,
+        30: krisp_audio.FrameDuration.Fd30ms,
+        32: krisp_audio.FrameDuration.Fd32ms
+    }
+    return durations[frame_dur]
+
+
+def _resample(samples: np.ndarray) -> np.ndarray:
+    """Resample audio from 48 kHz to 16 kHz."""
+    return resampy.resample(samples, 48000, 16000).astype(np.int16)
+
+
+def log_callback(log_message, log_level):
+    print(f"[{log_level}] {log_message}", flush=True)
+
+
 class KrispTurnDetectionV2(BaseTurnDetector):
     def __init__(
             self,
             mini_pause_duration: float = 0.1,
             max_pause_duration: float = 0.5,
             model_path: Optional[str] = "./krisp-viva-tt-v1.kef",
-            frame_duration_ms: int = 10,
-            turn_start_threshold: float = 0.5,
+            frame_duration_ms: int = 15,
+            turn_start_threshold: float = 0.75,
             turn_end_threshold: float = 0.3,
-            confidence_threshold: float = 0.5
+
     ):
         super().__init__(mini_pause_duration, max_pause_duration)
         self.logger = logging.getLogger("KrispTurnDetectionV2")
@@ -26,22 +48,18 @@ class KrispTurnDetectionV2(BaseTurnDetector):
         self.frame_duration_ms = frame_duration_ms
         self.turn_start_threshold = turn_start_threshold
         self.turn_end_threshold = turn_end_threshold
-        self._confidence_threshold = confidence_threshold
         self._krisp_instance = None
-        self._buffer = bytearray()
+        self._buffer = None
         self._initialize_krisp()
-
-    def log_callback(self, log_message, log_level):
-        print(f"[{log_level}] {log_message}", flush=True)
 
     def _initialize_krisp(self):
         try:
-            krisp_audio.globalInit("", self.log_callback, krisp_audio.LogLevel.Debug)
+            krisp_audio.globalInit("", log_callback, krisp_audio.LogLevel.Debug)
             model_info = krisp_audio.ModelInfo()
             model_info.path = self.model_path
             tt_cfg = krisp_audio.TtSessionConfig()
-            tt_cfg.inputSampleRate = krisp_audio.SamplingRate.Sr16000Hz
-            tt_cfg.inputFrameDuration = krisp_audio.FrameDuration.Fd10ms
+            tt_cfg.inputSampleRate = krisp_audio.SamplingRate.Sr16000Hz  # We resample from 48khz
+            tt_cfg.inputFrameDuration = _int_to_frame_duration(self.frame_duration_ms)
             tt_cfg.modelInfo = model_info
             self._krisp_instance = krisp_audio.TtInt16.create(tt_cfg)
         except Exception as e:
@@ -57,10 +75,6 @@ class KrispTurnDetectionV2(BaseTurnDetector):
             raise ValueError("Sample array size not divisible by number of channels")
         samples = samples.reshape(-1, num_channels)
         return np.mean(samples, axis=1, dtype=np.int16)
-
-    def _resample(self, samples: np.ndarray) -> np.ndarray:
-        """Resample audio from 48 kHz to 16 kHz."""
-        return resampy.resample(samples, 48000, 16000).astype(np.int16)
 
     async def process_audio(
             self,
@@ -83,13 +97,15 @@ class KrispTurnDetectionV2(BaseTurnDetector):
 
         # Resample from 48 kHz to 16 kHz
         try:
-            samples = self._resample(audio_data.samples)
+            samples = _resample(audio_data.samples)
         except Exception as e:
             self.logger.error(f"Failed to resample audio: {e}")
             return
 
         # Infer number of channels (default to mono)
-        num_channels = metadata.get("channels", self._infer_channels(audio_data.format)) if metadata else self._infer_channels(audio_data.format)
+        num_channels = metadata.get("channels",
+                                    self._infer_channels(audio_data.format)) if metadata else self._infer_channels(
+            audio_data.format)
         if num_channels != 1:
             self.logger.debug(f"Converting {num_channels}-channel audio to mono")
             try:
@@ -106,13 +122,6 @@ class KrispTurnDetectionV2(BaseTurnDetector):
             pts=audio_data.pts,
             dts=audio_data.dts,
             time_base=audio_data.time_base
-        )
-
-        # Log PcmData details
-        self.logger.debug(
-            f"PcmData: input_sample_rate=48000 (resampled to 16000), format={audio_data.format}, "
-            f"samples_size={samples.size}, samples_shape={samples.shape}, "
-            f"num_channels={num_channels}, pts={audio_data.pts}, time_base={audio_data.time_base}"
         )
 
         try:
@@ -135,13 +144,13 @@ class KrispTurnDetectionV2(BaseTurnDetector):
     def process_pcm_turn_taking(self, pcm: PcmData, user_id: str, metadata: Optional[Dict[str, Any]] = None):
         SR = pcm.sample_rate  # Now 16000 Hz after resampling
         FRAME_MS = self.frame_duration_ms
-        SAMPLES_PER_FRAME = SR * FRAME_MS // 1000  # 160 samples for 10ms at 16 kHz
+        SAMPLES_PER_FRAME = SR * FRAME_MS // 1000
         FRAME_BYTES = SAMPLES_PER_FRAME * 2  # 2 bytes per int16 sample
 
         def process_frame(frame: np.ndarray) -> bool:
             score = self._krisp_instance.process(frame)
-            self.logger.debug(f"Frame score: {score:.3f}, is_speaking={score >= self._confidence_threshold}")
-            if not self._is_detecting and score >= self._confidence_threshold:
+            self.logger.info(f"Frame score: {score:.3f}, is_speaking={score >= self.turn_start_threshold}")
+            if not self._is_detecting and score >= self.turn_start_threshold:
                 self._is_detecting = True
                 event_data = TurnEventData(
                     timestamp=time.time(),
@@ -150,7 +159,7 @@ class KrispTurnDetectionV2(BaseTurnDetector):
                     custom=metadata or {}
                 )
                 self._emit_turn_event(TurnEvent.TURN_STARTED, event_data)
-            elif self._is_detecting and score < self._confidence_threshold:
+            elif self._is_detecting and score < self.turn_end_threshold:
                 self._is_detecting = False
                 event_data = TurnEventData(
                     timestamp=time.time(),
@@ -169,7 +178,7 @@ class KrispTurnDetectionV2(BaseTurnDetector):
             self._is_detecting = process_frame(frame)
 
         if self._buffer:
-            self.logger.debug(f"Accumulating {len(self._buffer)} bytes for next frame")
+            self.logger.info(f"Accumulating {len(self._buffer)} bytes for next frame")
 
     def start(self) -> None:
         self._buffer = bytearray()
