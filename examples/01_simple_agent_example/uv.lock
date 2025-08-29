@@ -736,7 +736,7 @@ wheels = [
 
 [[package]]
 name = "getstream-plugins-deepgram"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deepgram-sdk" },
@@ -745,7 +745,7 @@ dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/03/1f572f23341beb3f1c19b21b50347bcb5e44e21c582fa147a76c3f3b1960/getstream_plugins_deepgram-0.1.0-py3-none-any.whl", hash = "sha256:44a1741507bcebd2915c38317e39bffb77ffdcc76dfcaf3b4fee72351b2daf42", size = 16802, upload-time = "2025-07-04T13:42:32.858Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/6d/595a7870c092a30f8df56c7e09d4e6aca6f4f3ed5ffc453cc2281ed1100f/getstream_plugins_deepgram-0.1.1-py3-none-any.whl", hash = "sha256:5ed7a9a283fc5a897108a8ca6bb4e1b3289b12ef64aa1dff8520ca45d023cd18", size = 16802, upload-time = "2025-08-01T15:47:12.664Z" },
 ]
 
 [[package]]
