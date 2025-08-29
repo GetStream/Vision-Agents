@@ -30,6 +30,7 @@ dependencies = [
     "opencv-python>=4.8.0",
     "click>=8.0.0",
     "stratz>=1.0.0",
+    "daily-python>=0.19.8",
 ]
 
 [project.urls]
