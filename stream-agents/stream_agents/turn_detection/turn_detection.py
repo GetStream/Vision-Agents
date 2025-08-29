@@ -24,7 +24,6 @@ class TurnEventData:
     speaker_id: Optional[str] = None #User id of the speaker who just finished speaking
     duration: Optional[float] = None
     confidence: Optional[float] = None  # confidence level of speaker detection
-    audio_level: Optional[float] = None  # volume/energy level
     custom: Optional[Dict[str, Any]] = None  # extensible custom data
 
 
