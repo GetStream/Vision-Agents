@@ -38,8 +38,8 @@ class KrispTurnDetectionV2(BaseTurnDetector):
             max_pause_duration: float = 0.5,
             model_path: Optional[str] = "./krisp-viva-tt-v1.kef",
             frame_duration_ms: int = 15,
-            turn_start_threshold: float = 0.5,
-            turn_end_threshold: float = 0.8,
+            turn_start_threshold: float = 0.4,
+            turn_end_threshold: float = 0.7,
 
     ):
         super().__init__(mini_pause_duration, max_pause_duration)
@@ -152,7 +152,7 @@ class KrispTurnDetectionV2(BaseTurnDetector):
             # Ignore frames that are -1 since they are processing frames
             # Frames closer to 0 indicate an ongoing turn
             # Frames closer to 1 indicate an ending turn
-            if score > 0:
+            if score > 0.1:
                 if not self._is_detecting and score <= self.turn_start_threshold:
                     self._is_detecting = True
                     event_data = TurnEventData(
@@ -161,7 +161,6 @@ class KrispTurnDetectionV2(BaseTurnDetector):
                         confidence=score,
                         custom=metadata or {}
                     )
-                    self.logger.info(f"Frame score: {score:.3f}, ONGOING TURN")
                     self._emit_turn_event(TurnEvent.TURN_STARTED, event_data)
                 elif self._is_detecting and score > self.turn_end_threshold:
                     self._is_detecting = False
@@ -171,20 +170,19 @@ class KrispTurnDetectionV2(BaseTurnDetector):
                         confidence=score,
                         custom=metadata or {}
                     )
-                    self.logger.info(f"Frame score: {score:.3f}, ENDING TURN")
                     self._emit_turn_event(TurnEvent.TURN_ENDED, event_data)
                 return self._is_detecting
+            return self._is_detecting
 
-            self._buffer.extend(pcm.samples.tobytes())
-            while len(self._buffer) >= FRAME_BYTES:
-                frame_b = bytes(self._buffer[:FRAME_BYTES])
-                del self._buffer[:FRAME_BYTES]
-                frame = np.frombuffer(frame_b, dtype=np.int16)
-                process_frame(frame)
-                # TODO NASH
+        self._buffer.extend(pcm.samples.tobytes())
+        while len(self._buffer) >= FRAME_BYTES:
+            frame_b = bytes(self._buffer[:FRAME_BYTES])
+            del self._buffer[:FRAME_BYTES]
+            frame = np.frombuffer(frame_b, dtype=np.int16)
+            self._is_detecting = process_frame(frame)
 
-            if self._buffer:
-                self.logger.info(f"Accumulating {len(self._buffer)} bytes for next frame")
+        if self._buffer:
+            self.logger.info(f"Accumulating {len(self._buffer)} bytes for next frame")
 
     def start(self) -> None:
         self._buffer = bytearray()
