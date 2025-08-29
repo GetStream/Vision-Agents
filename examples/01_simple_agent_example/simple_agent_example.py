@@ -1,11 +1,13 @@
 import asyncio
+import logging
 from uuid import uuid4
 
 from dotenv import load_dotenv
 from getstream.plugins import DeepgramSTT, ElevenLabsTTS
-from plugins import KrispTurnDetection
+from stream_agents.turn_detection import KrispTurnDetection, TurnEvent
 from stream_agents.llm import OpenAILLM
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
+from stream_agents.turn_detection.krisp.krisp_2 import KrispTurnDetectionV2
 
 load_dotenv()
 
@@ -25,9 +27,13 @@ async def start_agent() -> None:
             name="gpt-4o",
             instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         ),
-        tts=ElevenLabsTTS(),
-        stt=DeepgramSTT(),
-        turn_detection=KrispTurnDetection(),
+        # tts=ElevenLabsTTS(),
+        # stt=DeepgramSTT(),
+        turn_detection=KrispTurnDetectionV2(
+            model_path="/Users/nash/git_projects/stream/video_ai/stream-agents/stream-agents/stream_agents/turn_detection/krisp/krisp-viva-tt-v1.kef",
+            frame_duration_ms=10,
+
+        ),
         processors=[], # processors can fetch extra data, check images/audio data or transform video
     )
 

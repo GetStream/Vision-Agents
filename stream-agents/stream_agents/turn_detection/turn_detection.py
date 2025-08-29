@@ -98,11 +98,12 @@ class TurnDetection(Protocol):
 class BaseTurnDetector(EventEmitter):
     """Base implementation for turn detection with common functionality."""
 
-    def __init__(self, mini_pause_duration: float, max_pause_duration: float) -> None:
+    def __init__(self, mini_pause_duration: float, max_pause_duration: float, confidence_threshold: float = 0.5) -> None:
         super().__init__()  # Initialize EventEmitter
         self._validate_durations(mini_pause_duration, max_pause_duration)
         self._mini_pause_duration = mini_pause_duration
         self._max_pause_duration = max_pause_duration
+        self._confidence_threshold = confidence_threshold
         self._is_detecting = False
 
     @staticmethod
@@ -137,19 +138,11 @@ class BaseTurnDetector(EventEmitter):
         """Emit a turn detection event."""
         self.emit(event_type.value, event_data)
 
-    def start_detection(self) -> None:
-        """Start the turn detection process."""
-        self._is_detecting = True
-
-    def stop_detection(self) -> None:
-        """Stop the turn detection process."""
-        self._is_detecting = False
-
     # Convenience aliases to align with the unified protocol expected by Agent
     def start(self) -> None:
         """Start detection (alias for start_detection)."""
-        self.start_detection()
+        ...
 
     def stop(self) -> None:
         """Stop detection (alias for stop_detection)."""
-        self.stop_detection()
+        ...

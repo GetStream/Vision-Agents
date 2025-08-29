@@ -95,9 +95,9 @@ class Agent:
     def setup_turn_detection(self):
         if self.turn_detection:
             self.logger.info("🎙️ Setting up turn detection listeners")
+            self.turn_detection.start()
             self.turn_detection.on(TurnEvent.TURN_STARTED.value, self._on_turn_started)
             self.turn_detection.on(TurnEvent.TURN_ENDED.value, self._on_turn_ended)
-            self.turn_detection.start()
 
     def setup_stt(self):
         if self.stt:
@@ -451,13 +451,13 @@ class Agent:
         self.queue.pause()
         # todo(nash): If the participant starts speaking while TTS is streaming, we need to cancel it
         self.logger.info(
-            f"👉 Turn started - participant speaking {event_data.speaker_id}"
+            f"👉 Turn started - participant speaking {event_data.speaker_id} : {event_data.confidence}"
         )
 
     def _on_turn_ended(self, event_data: TurnEventData) -> None:
         """Handle when a participant ends their turn."""
         self.logger.info(
-            f"👉 Turn ended - participant {event_data.speaker_id} finished (duration: {event_data.duration})"
+            f"👉 Turn ended - participant {event_data.speaker_id} finished (duration: {event_data.confidence})"
         )
 
     async def _on_partial_transcript(
