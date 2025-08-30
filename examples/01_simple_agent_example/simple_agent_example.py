@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from uuid import uuid4
 
 from dotenv import load_dotenv

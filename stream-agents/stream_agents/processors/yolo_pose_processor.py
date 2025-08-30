@@ -18,7 +18,6 @@ from typing import Optional, Dict, Any
 from PIL import Image
 from aiortc import VideoStreamTrack
 import av
-from openai.types.responses import ResponseInputItemParam, EasyInputMessageParam
 
 
 from .base_processor import (

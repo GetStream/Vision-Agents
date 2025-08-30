@@ -4,7 +4,6 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from getstream.plugins import DeepgramSTT, ElevenLabsTTS
 from stream_agents.processors import YOLOPoseProcessor
-from stream_agents.turn_detection import FalTurnDetection
 from stream_agents.llm import OpenAILLM
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
