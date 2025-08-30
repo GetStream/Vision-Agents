@@ -22,7 +22,7 @@ def _int_to_frame_duration(frame_dur: int):
     return durations[frame_dur]
 
 
-def _resample(samples: np.ndarray) -> np.ndarray:
+def _resample(samples: np.ndarray) -> np.ndarray[np.int16, ...]:
     """Resample audio from 48 kHz to 16 kHz."""
     return resampy.resample(samples, 48000, 16000).astype(np.int16)
 
@@ -49,7 +49,7 @@ class KrispTurnDetection(BaseTurnDetector):
         self.turn_start_threshold = turn_start_threshold
         self.turn_end_threshold = turn_end_threshold
         self._krisp_instance = None
-        self._buffer = None
+        self._buffer: Optional[bytearray] = None
         self._initialize_krisp()
 
     def _initialize_krisp(self):
@@ -142,12 +142,18 @@ class KrispTurnDetection(BaseTurnDetector):
             return 1
 
     def process_pcm_turn_taking(self, pcm: PcmData, user_id: str, metadata: Optional[Dict[str, Any]] = None):
+        if self._buffer is None:
+            self.logger.error("Buffer not initialized. Call start() first.")
+            return
         SR = pcm.sample_rate  # Now 16000 Hz after resampling
         FRAME_MS = self.frame_duration_ms
         SAMPLES_PER_FRAME = SR * FRAME_MS // 1000
         FRAME_BYTES = SAMPLES_PER_FRAME * 2  # 2 bytes per int16 sample
 
         def process_frame(frame: np.ndarray) -> bool:
+            if self._krisp_instance is None:
+                self.logger.error("Krisp instance not initialized")
+                return False
             score = self._krisp_instance.process(frame)
             # Ignore frames that are -1 since they are processing frames
             # Frames closer to 0 indicate an ongoing turn
@@ -193,4 +199,5 @@ class KrispTurnDetection(BaseTurnDetector):
             self._krisp_instance = None
             krisp_audio.globalDestroy()
             self.logger.info("Krisp resources released")
-        self._buffer.clear()
+        if self._buffer is not None:
+            self._buffer.clear()
