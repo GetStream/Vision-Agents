@@ -12,12 +12,6 @@ from typing import Any, Dict, List, Optional, Union, AsyncIterator
 from openai import OpenAI, AsyncOpenAI
 
 
-
-
-
-
-
-
 class OpenAILLM:
     """
     OpenAI implementation of the Model protocol.
@@ -72,7 +66,7 @@ class OpenAILLM:
         self._name = name
         self.instructions = instructions or "You are a helpful AI assistant."
         self.logger = logging.getLogger(f"OpenAIModel[{name}]")
-        
+
         # Mark this as a traditional LLM (not STS)
         self.sts = False
 
@@ -112,8 +106,10 @@ class OpenAILLM:
     async def conversation_started(self, agent):
         """Called when the conversation starts."""
         try:
-            response = await self.generate("Say a brief greeting to welcome the user to the call.")
-            if hasattr(agent, 'tts') and agent.tts:
+            response = await self.generate(
+                "Say a brief greeting to welcome the user to the call."
+            )
+            if hasattr(agent, "tts") and agent.tts:
                 await agent.tts.send(response)
         except Exception as e:
             self.logger.error(f"Error in conversation_started: {e}")
@@ -162,18 +158,28 @@ class OpenAILLM:
             # Convert simple prompt to chat format with system instructions
             messages = [
                 {"role": "system", "content": self.instructions},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt},
             ]
+            return await self.generate_chat(
+                messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stop=stop,
+                **kwargs,
+            )
         else:
             # Handle list of ResponseInputItemParam objects
             # Check if this looks like the official OpenAI responses.create format
             has_image_content = any(
-                isinstance(item, dict) and 
-                isinstance(item.get("content"), list) and
-                any(content_item.get("type") == "input_image" for content_item in item.get("content", []))
+                isinstance(item, dict)
+                and isinstance(item.get("content"), list)
+                and any(
+                    content_item.get("type") == "input_image"
+                    for content_item in item.get("content", [])
+                )
                 for item in prompt
             )
-            
+
             if has_image_content:
                 # Use responses.create for image inputs
                 return await self._generate_with_responses_api(
@@ -186,24 +192,28 @@ class OpenAILLM:
             else:
                 # Convert to chat format for text-only inputs
                 messages = [{"role": "system", "content": self.instructions}]
-                
+
                 for item in prompt:
                     if isinstance(item, dict):
                         # Convert ResponseInputItemParam to chat message format
                         if item.get("type") == "message":
-                            messages.append({
-                                "role": item.get("role", "user"),
-                                "content": item.get("content", "")
-                            })
+                            messages.append(
+                                {
+                                    "role": item.get("role", "user"),
+                                    "content": item.get("content", ""),
+                                }
+                            )
                         else:
                             # Handle other types if needed
-                            self.logger.warning(f"Unknown input item type: {item.get('type')}")
+                            self.logger.warning(
+                                f"Unknown input item type: {item.get('type')}"
+                            )
                     elif isinstance(item, str):
                         # Handle string items
                         messages.append({"role": "user", "content": item})
                     else:
                         self.logger.warning(f"Unknown input item format: {type(item)}")
-                
+
                 return await self.generate_chat(
                     messages,
                     max_tokens=max_tokens,
@@ -271,24 +281,26 @@ class OpenAILLM:
                 )
 
             # Extract the response content
-            if hasattr(response, 'output_text') and response.output_text:
+            if hasattr(response, "output_text") and response.output_text:
                 content = response.output_text
                 self.logger.debug(f"Generated response: {len(content)} characters")
                 return content
-            elif hasattr(response, 'output') and response.output:
+            elif hasattr(response, "output") and response.output:
                 # Handle the response format with output array
                 output_items = response.output
                 if output_items and len(output_items) > 0:
                     first_output = output_items[0]
-                    if hasattr(first_output, 'content') and first_output.content:
+                    if hasattr(first_output, "content") and first_output.content:
                         content_items = first_output.content
                         if content_items and len(content_items) > 0:
                             first_content = content_items[0]
-                            if hasattr(first_content, 'text'):
+                            if hasattr(first_content, "text"):
                                 content = first_content.text
-                                self.logger.debug(f"Generated response: {len(content)} characters")
+                                self.logger.debug(
+                                    f"Generated response: {len(content)} characters"
+                                )
                                 return content
-                
+
                 self.logger.warning("No text content found in response output")
                 return str(response)
             else:

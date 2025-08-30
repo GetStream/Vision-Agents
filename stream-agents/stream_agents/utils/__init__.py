@@ -16,27 +16,36 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def open_demo(call: Call) -> str:
     client = call.client.stream
 
     # Create a human user for testing
     human_id = f"user-{uuid4()}"
 
-    client.upsert_users(
-        UserRequest(id=human_id, name= "Human User"))
+    client.upsert_users(UserRequest(id=human_id, name="Human User"))
 
     # Create user token for browser access
     token = client.create_token(human_id, expiration=3600)
 
     """Helper function to open browser with Stream call link."""
-    base_url = f"{os.getenv('EXAMPLE_BASE_URL', 'https://getstream.io/video/demos')}/join/"
-    params = {"api_key": client.api_key, "token": token, "skip_lobby": "true", "video_encoder": "vp8", "bitrate": 2000000, "w": 1920, "h": 1080}
+    base_url = (
+        f"{os.getenv('EXAMPLE_BASE_URL', 'https://getstream.io/video/demos')}/join/"
+    )
+    params = {
+        "api_key": client.api_key,
+        "token": token,
+        "skip_lobby": "true",
+        "video_encoder": "vp8",
+        "bitrate": 2000000,
+        "w": 1920,
+        "h": 1080,
+    }
 
     url = f"{base_url}{call.id}?{urlencode(params)}"
     print(f"🌐 Opening browser to: {url}")
 
     try:
-
         webbrowser.open(url)
         print("✅ Browser opened successfully!")
     except Exception as e:
@@ -69,7 +78,8 @@ def open_pronto(api_key: str, token: str, call_id: str):
         logger.error(f"❌ Failed to open browser: {e}")
         logger.info(f"Please manually open this URL: {url}")
 
+
 __all__ = [
     "open_demo",
-    "open_pronto", 
+    "open_pronto",
 ]

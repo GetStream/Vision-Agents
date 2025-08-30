@@ -1,17 +1,17 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs", "setuptools-scm"]
 build-backend = "hatchling.build"
 
 [project]
 name = "stream-agents"
-version = "0.1.0"
 description = "Open video agents. Build low latency video and voice agents on any realtime edge network."
-readme = "../README.md"
+readme = "README.md"
 keywords = ["video AI", "AI", "voice AI", "video agents", "voice agents", "agents", "AI"]
+dynamic = ["version"]
 
 requires-python = ">=3.13"
 dependencies = [
-    "getstream[webrtc]==2.3.0a5",
+    "getstream[webrtc] @ git+https://github.com/GetStream/stream-py.git@webrtc#egg=getstream",
     "getstream-plugins-elevenlabs>=0.1.0",
     "python-dotenv>=1.1.1",
     "pre-commit>=4.3.0",
@@ -43,8 +43,13 @@ dev = ["pytest", "mypy", "ruff"]
 xai = ["stream-agents-plugin-xai"]
 
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.version]
-path = "stream-agents/getstream/agents/version.py"
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["stream_agents"]
@@ -54,3 +59,4 @@ include = ["/stream-agents"]
 
 [tool.uv.sources]
 "krisp-audio" = { path = "./stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
+"stream-agents" = {path = "../../stream-agents", editable=true}

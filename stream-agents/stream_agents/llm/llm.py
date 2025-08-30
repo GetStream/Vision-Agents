@@ -1,4 +1,3 @@
-
 '''
 Requirements
 - support image, text, functools etc as input
@@ -31,6 +30,7 @@ async def play_audio(audio_in_queue, audio_track):
 
 '''
 
+
 class LLM:
     sts: bool = False
 
@@ -38,11 +38,13 @@ class LLM:
         # Follow openAI style response?
         pass
 
+
 class RealtimeLLM(LLM):
-    '''
+    """
     We need to standardize connect and attaching audio in/ audio out and video in
-    '''
-    sts : bool = True
+    """
+
+    sts: bool = True
 
     def connect(self):
         pass
@@ -55,4 +57,3 @@ class RealtimeLLM(LLM):
 
     def attach_outgoing_audio(self, track):
         pass
-

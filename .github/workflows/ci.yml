@@ -1,0 +1,18 @@
+name: CI (unit)
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  unit:
+    uses: ./.github/workflows/run_tests.yml
+    with:
+      marker: 'not integration'
+
+
+# Cancel in-flight runs for the same branch/PR when new commits arrive
+concurrency:
+  group: ci-unit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

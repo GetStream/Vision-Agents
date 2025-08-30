@@ -10,15 +10,14 @@ load_dotenv()
 
 
 async def start_agent() -> None:
-
     # create a stream client and a user object
     client = Stream.from_env()
     agent_user = client.create_user(name="My happy AI friend")
 
     # Create the agent
     agent = Agent(
-        edge=StreamEdge(), # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-        agent_user=agent_user, # the user object for the agent (name, image etc)
+        edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
+        agent_user=agent_user,  # the user object for the agent (name, image etc)
         # tts, llm, stt more. see the realtime example for sts
         llm=OpenAILLM(
             name="gpt-4o",
@@ -27,7 +26,6 @@ async def start_agent() -> None:
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
         #turn_detection=FalTurnDetection(),
-        processors=[], # processors can fetch extra data, check images/audio data or transform video
         # Soccer: processors=[MatchStatistics()]
         # DOTA: processors=[GameStats(), Yolo(), Image()]
     )
