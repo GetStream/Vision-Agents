@@ -6,6 +6,7 @@ when a speaker has completed their turn in a conversation.
 """
 
 import asyncio
+import os
 import logging
 import tempfile
 import time
@@ -68,7 +69,7 @@ class FalTurnDetection(BaseTurnDetector):
 
         # Configure FAL client
         if self.api_key:
-            fal_client.api_key = self.api_key
+            os.environ["FAL_KEY"] = self.api_key
 
         self.logger.info(
             f"Initialized FAL turn detection (buffer: {buffer_duration}s, threshold: {confidence_threshold})"

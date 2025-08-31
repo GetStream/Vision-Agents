@@ -330,7 +330,7 @@ class Agent:
 
                 pdb.set_trace()
 
-            if self.turn_detection and hasattr(self.turn_detection, 'process_audio'):
+            if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
             await self.reply_to_audio(pcm, participant)

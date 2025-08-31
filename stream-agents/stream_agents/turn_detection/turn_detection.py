@@ -100,6 +100,24 @@ class BaseTurnDetector(EventEmitter):
         """Emit a turn detection event."""
         self.emit(event_type.value, event_data)
 
+    async def process_audio(
+            self,
+            audio_data: PcmData,
+            user_id: str,
+            metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Ingest PcmData audio for a user.
+
+        The implementation should track participants internally as audio comes in.
+        Use the event system (emit/on) to notify when turns change.
+
+        Args:
+            audio_data: PcmData object containing audio samples from Stream
+            user_id: Identifier for the user providing the audio
+            metadata: Optional additional metadata about the audio
+        """
+    ...
+
     # Convenience aliases to align with the unified protocol expected by Agent
     def start(self) -> None:
         """Start detection (alias for start_detection)."""
