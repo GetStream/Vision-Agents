@@ -31,14 +31,14 @@ class FalTurnDetection(BaseTurnDetector):
     """
 
     def __init__(
-        self,
-        api_key: Optional[str] = None,
-        buffer_duration: float = 2.0,
-        prediction_threshold: float = 0.5,
-        mini_pause_duration: float = 0.5,
-        max_pause_duration: float = 3.0,
-        sample_rate: int = 16000,
-        channels: int = 1,
+            self,
+            api_key: Optional[str] = None,
+            buffer_duration: float = 2.0,
+            prediction_threshold: float = 0.5,
+            mini_pause_duration: float = 0.5,
+            max_pause_duration: float = 3.0,
+            sample_rate: int = 16000,
+            channels: int = 1,
     ):
         """
         Initialize FAL turn detection.
@@ -82,10 +82,10 @@ class FalTurnDetection(BaseTurnDetector):
         )
 
     async def process_audio(
-        self,
-        audio_data: PcmData,
-        user_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+            self,
+            audio_data: PcmData,
+            user_id: str,
+            metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Process incoming audio data for turn detection.
@@ -98,46 +98,24 @@ class FalTurnDetection(BaseTurnDetector):
         if not self.is_detecting():
             return
 
-        current_time = time.time()
-
         # Initialize buffer for new user
-        if user_id not in self._user_buffers:
-            self._user_buffers[user_id] = []
-            self.logger.debug(f"Initialized audio buffer for user {user_id}")
+        self._user_buffers.setdefault(user_id, [])
+        self._user_last_audio[user_id] = time.time()
 
-        # Add audio data to user's buffer
-        # Extract audio samples from PcmData object
-        if hasattr(audio_data, "samples"):
-            # PcmData NamedTuple - extract samples (numpy array)
-            samples = audio_data.samples
-            if hasattr(samples, "tolist"):
-                # Convert numpy array to list for extending buffer
-                audio_samples = samples.tolist()
-            else:
-                audio_samples = list(samples)
-            self._user_buffers[user_id].extend(audio_samples)
-        elif hasattr(audio_data, "data"):
-            # Fallback for data attribute
-            self._user_buffers[user_id].extend(audio_data.data)
-        else:
-            # Assume it's already iterable (bytes, list, etc.)
-            self._user_buffers[user_id].extend(audio_data)
+        # Extract and append audio samples
+        samples = audio_data.samples
+        audio_samples = samples.tolist() if hasattr(samples, "tolist") else list(samples)
+        self._user_buffers[user_id].extend(audio_samples)
 
-        self._user_last_audio[user_id] = current_time
-
-        # Check if we have enough audio to process
+        # Process audio if buffer is large enough and no task is running
         buffer_size = len(self._user_buffers[user_id])
         required_samples = int(self.buffer_duration * self.sample_rate)
-
-        if buffer_size >= required_samples:
-            # Start processing task if not already running
-            if (
-                user_id not in self._processing_tasks
-                or self._processing_tasks[user_id].done()
-            ):
-                self._processing_tasks[user_id] = asyncio.create_task(
-                    self._process_user_audio(user_id)
-                )
+        if buffer_size >= required_samples and (
+                user_id not in self._processing_tasks or self._processing_tasks[user_id].done()
+        ):
+            self._processing_tasks[user_id] = asyncio.create_task(
+                self._process_user_audio(user_id)
+            )
 
     async def _process_user_audio(self, user_id: str) -> None:
         """
@@ -234,7 +212,7 @@ class FalTurnDetection(BaseTurnDetector):
         return filepath
 
     async def _process_turn_prediction(
-        self, user_id: str, result: Dict[str, Any]
+            self, user_id: str, result: Dict[str, Any]
     ) -> None:
         """
         Process the turn prediction result from FAL API.
@@ -299,15 +277,12 @@ class FalTurnDetection(BaseTurnDetector):
                 f"Error processing turn prediction for {user_id}: {e}", exc_info=True
             )
 
-    def start_detection(self) -> None:
+    def start(self) -> None:
         """Start turn detection."""
-        super().start_detection()
         self.logger.info("FAL turn detection started")
 
-    def stop_detection(self) -> None:
+    def stop(self) -> None:
         """Stop turn detection and clean up."""
-        super().stop_detection()
-
         # Cancel any running processing tasks
         for task in self._processing_tasks.values():
             if not task.done():
