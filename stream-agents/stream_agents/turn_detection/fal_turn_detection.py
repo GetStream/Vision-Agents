@@ -31,14 +31,11 @@ class FalTurnDetection(BaseTurnDetector):
     """
 
     def __init__(
-            self,
-            api_key: Optional[str] = None,
+            self, api_key: Optional[str] = None,
             buffer_duration: float = 2.0,
-            prediction_threshold: float = 0.5,
-            mini_pause_duration: float = 0.5,
-            max_pause_duration: float = 3.0,
+            confidence_threshold: float = 0.5,
             sample_rate: int = 16000,
-            channels: int = 1,
+            channels: int = 1
     ):
         """
         Initialize FAL turn detection.
@@ -46,18 +43,16 @@ class FalTurnDetection(BaseTurnDetector):
         Args:
             api_key: FAL API key (if None, uses FAL_KEY env var)
             buffer_duration: Duration in seconds to buffer audio before processing
-            prediction_threshold: Probability threshold for "complete" predictions
-            mini_pause_duration: Duration for mini pause detection
-            max_pause_duration: Duration for max pause detection
+            confidence_threshold: Probability threshold for "complete" predictions
             sample_rate: Audio sample rate (Hz)
             channels: Number of audio channels
         """
-        super().__init__(mini_pause_duration, max_pause_duration)
 
+        super().__init__()
         self.logger = logging.getLogger("FalTurnDetection")
         self.api_key = api_key
         self.buffer_duration = buffer_duration
-        self.prediction_threshold = prediction_threshold
+        self._confidence_threshold = confidence_threshold
         self.sample_rate = sample_rate
         self.channels = channels
 
@@ -73,12 +68,10 @@ class FalTurnDetection(BaseTurnDetector):
 
         # Configure FAL client
         if self.api_key:
-            # Set API key via environment or client configuration
-            import os
-            os.environ["FAL_KEY"] = self.api_key
+            fal_client.api_key = self.api_key
 
         self.logger.info(
-            f"Initialized FAL turn detection (buffer: {buffer_duration}s, threshold: {prediction_threshold})"
+            f"Initialized FAL turn detection (buffer: {buffer_duration}s, threshold: {confidence_threshold})"
         )
 
     async def process_audio(
@@ -243,7 +236,7 @@ class FalTurnDetection(BaseTurnDetector):
             )
 
             # Determine if this is a turn completion
-            is_complete = prediction == 1 and probability >= self.prediction_threshold
+            is_complete = prediction == 1 and probability >= self._confidence_threshold
 
             if is_complete:
                 self.logger.info(

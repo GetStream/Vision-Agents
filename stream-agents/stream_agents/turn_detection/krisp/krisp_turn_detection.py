@@ -34,20 +34,16 @@ def log_callback(log_message, log_level):
 class KrispTurnDetection(BaseTurnDetector):
     def __init__(
             self,
-            mini_pause_duration: float = 0.1,
-            max_pause_duration: float = 0.5,
             model_path: Optional[str] = "./krisp-viva-tt-v1.kef",
             frame_duration_ms: int = 15,
-            turn_start_threshold: float = 0.4,
-            turn_end_threshold: float = 0.7,
-
+            confidence_threshold: float = 0.5,
     ):
-        super().__init__(mini_pause_duration, max_pause_duration)
+        super().__init__()
         self.logger = logging.getLogger("KrispTurnDetection")
         self.model_path = model_path
         self.frame_duration_ms = frame_duration_ms
-        self.turn_start_threshold = turn_start_threshold
-        self.turn_end_threshold = turn_end_threshold
+        self.turn_start_threshold = 1 - confidence_threshold  # For Krisp Model, 0 is speaking, 1 is non-speaking
+        self.turn_end_threshold = 0.75
         self._krisp_instance = None
         self._buffer: Optional[bytearray] = None
         self._initialize_krisp()
@@ -74,7 +70,9 @@ class KrispTurnDetection(BaseTurnDetector):
             self.logger.error(f"Invalid sample array size {samples.size} for {num_channels} channels")
             raise ValueError("Sample array size not divisible by number of channels")
         samples = samples.reshape(-1, num_channels)
-        return np.mean(samples, axis=1, dtype=np.int16)
+        mono_samples = np.mean(samples, axis=1, dtype=np.int16)
+        # Ensure we always return an array, not a scalar
+        return np.asarray(mono_samples, dtype=np.int16)
 
     async def process_audio(
             self,

@@ -32,16 +32,6 @@ EventListener = Callable[[TurnEventData], None]
 class TurnDetection(Protocol):
     """Protocol defining the interface for turn detection implementations."""
 
-    @property
-    def mini_pause_duration(self) -> float:
-        """Get the mini pause duration in seconds."""
-        ...
-
-    @property
-    def max_pause_duration(self) -> float:
-        """Get the max pause duration in seconds."""
-        ...
-
     def is_detecting(self) -> bool:
         """Check if turn detection is currently active."""
         ...
@@ -95,35 +85,10 @@ class TurnDetection(Protocol):
 class BaseTurnDetector(EventEmitter):
     """Base implementation for turn detection with common functionality."""
 
-    def __init__(self, mini_pause_duration: float, max_pause_duration: float, confidence_threshold: float = 0.5) -> None:
+    def __init__(self, confidence_threshold: float = 0.5) -> None:
         super().__init__()  # Initialize EventEmitter
-        self._validate_durations(mini_pause_duration, max_pause_duration)
-        self._mini_pause_duration = mini_pause_duration
-        self._max_pause_duration = max_pause_duration
         self._confidence_threshold = confidence_threshold
         self._is_detecting = False
-
-    @staticmethod
-    def _validate_durations(
-        mini_pause_duration: float, max_pause_duration: float
-    ) -> None:
-        """Validate the pause duration parameters."""
-        if mini_pause_duration <= 0:
-            raise ValueError("mini_pause_duration must be positive")
-        if max_pause_duration <= 0:
-            raise ValueError("max_pause_duration must be positive")
-        if mini_pause_duration >= max_pause_duration:
-            raise ValueError("mini_pause_duration must be less than max_pause_duration")
-
-    @property
-    def mini_pause_duration(self) -> float:
-        """Get the mini pause duration in seconds."""
-        return self._mini_pause_duration
-
-    @property
-    def max_pause_duration(self) -> float:
-        """Get the max pause duration in seconds."""
-        return self._max_pause_duration
 
     def is_detecting(self) -> bool:
         """Check if turn detection is currently active."""
