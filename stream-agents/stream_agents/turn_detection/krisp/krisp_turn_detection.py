@@ -22,7 +22,7 @@ def _int_to_frame_duration(frame_dur: int):
     return durations[frame_dur]
 
 
-def _resample(samples: np.ndarray) -> np.ndarray[np.int16, ...]:
+def _resample(samples: np.ndarray) -> np.ndarray:
     """Resample audio from 48 kHz to 16 kHz."""
     return resampy.resample(samples, 48000, 16000).astype(np.int16)
 

@@ -8,12 +8,8 @@ from getstream.video.rtc.track_util import PcmData
 class TurnEvent(Enum):
     """Events that can occur during turn detection."""
 
-    SPEECH_STARTED = "speech_started"
-    SPEECH_ENDED = "speech_ended"
     TURN_STARTED = "turn_started"
     TURN_ENDED = "turn_ended"
-    MINI_PAUSE_DETECTED = "mini_pause_detected"
-    MAX_PAUSE_REACHED = "max_pause_reached"
 
 
 @dataclass
