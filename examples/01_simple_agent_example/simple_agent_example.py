@@ -1,9 +1,10 @@
 import asyncio
+import os
 from uuid import uuid4
 
 from dotenv import load_dotenv
 from getstream.plugins import DeepgramSTT, ElevenLabsTTS
-from stream_agents.turn_detection import KrispTurnDetection
+from stream_agents.turn_detection import FalTurnDetection
 from stream_agents.llm import OpenAILLM
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
@@ -26,12 +27,8 @@ async def start_agent() -> None:
         ),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
-        turn_detection=KrispTurnDetection(
-            model_path="/Users/nash/git_projects/stream/video_ai/stream-agents/stream-agents/stream_agents/turn_detection/krisp/krisp-viva-tt-v1.kef",
-            frame_duration_ms=10,
-
-        ),
-        processors=[], # processors can fetch extra data, check images/audio data or transform video
+        turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
+        processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
     # Create a call
