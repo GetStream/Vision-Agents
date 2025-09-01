@@ -34,24 +34,24 @@ def log_callback(log_message, log_level):
     print(f"[{log_level}] {log_message}", flush=True)
 
 
-class KrispTurnDetection(BaseTurnDetector, ABC):
+class KrispTurnDetection(BaseTurnDetector):
     def __init__(
-        self,
-        model_path: Optional[str] = os.getcwd() + "/krisp-viva-tt-v1.kef",
-        frame_duration_ms: int = 15,
-        confidence_threshold: float = 0.5,
+            self,
+            model_path: Optional[str] = os.getcwd() + "/krisp-viva-tt-v1.kef",
+            frame_duration_ms: int = 15,
+            confidence_threshold: float = 0.5,
     ):
-        super().__init__()
+        super().__init__(confidence_threshold=confidence_threshold)
         self.logger = logging.getLogger("KrispTurnDetection")
         self.model_path = model_path
         self.frame_duration_ms = frame_duration_ms
         self.turn_start_threshold = (
-            1 - confidence_threshold
+                1 - confidence_threshold
         )  # For Krisp Model, 0 is speaking, 1 is non-speaking
         self.turn_end_threshold = 0.75
         self._krisp_instance = None
         self._buffer: Optional[bytearray] = None
-        self._initialize_krisp()
+        self._turn_in_progress = False
 
     def _initialize_krisp(self):
         try:
@@ -66,17 +66,25 @@ class KrispTurnDetection(BaseTurnDetector, ABC):
             tt_cfg.modelInfo = model_info
             self._krisp_instance = krisp_audio.TtInt16.create(tt_cfg)
         except Exception as e:
-            self.logger.error(f"Failed to initialize Krisp: {e}")
-            raise RuntimeError(f"Krisp initialization failed: {e}")
+            exception_string = str(e)
+            self.logger.error(f"Failed to initialize Krisp: {exception_string}")
+            raise RuntimeError(f"Krisp initialization failed: {exception_string}")
+
+    def is_detecting(self) -> bool:
+        """Check if turn detection is currently active."""
+        return self._is_detecting
 
     async def process_audio(
-        self,
-        audio_data: PcmData,
-        user_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+            self,
+            audio_data: PcmData,
+            user_id: str,
+            metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
+        if not self.is_detecting():
+            return
+
         if self._krisp_instance is None:
-            self.logger.error("Krisp instance is not initialized")
+            self.logger.error("Krisp instance is not initialized. Call start() first.")
             return
 
         # Validate sample format
@@ -87,8 +95,8 @@ class KrispTurnDetection(BaseTurnDetector, ABC):
             )
             return
         if (
-            not isinstance(audio_data.samples, np.ndarray)
-            or audio_data.samples.dtype != np.int16
+                not isinstance(audio_data.samples, np.ndarray)
+                or audio_data.samples.dtype != np.int16
         ):
             self.logger.error(
                 f"Invalid sample dtype: {audio_data.samples.dtype}. Expected int16."
@@ -146,7 +154,7 @@ class KrispTurnDetection(BaseTurnDetector, ABC):
             return 1
 
     def process_pcm_turn_taking(
-        self, pcm: PcmData, user_id: str, metadata: Optional[Dict[str, Any]] = None
+            self, pcm: PcmData, user_id: str, metadata: Optional[Dict[str, Any]] = None
     ):
         if self._buffer is None:
             self.logger.error("Buffer not initialized. Call start() first.")
@@ -156,17 +164,18 @@ class KrispTurnDetection(BaseTurnDetector, ABC):
         samples_per_frame = sr * frame_ms // 1000
         frame_bytes = samples_per_frame * 2  # 2 bytes per int16 sample
 
-        def process_frame(incoming_frame: np.ndarray) -> bool:
+        def process_frame(incoming_frame: np.ndarray) -> None:
             if self._krisp_instance is None:
                 self.logger.error("Krisp instance not initialized")
-                return False
+                return
             score = self._krisp_instance.process(incoming_frame)
+            self.logger.info(f"Score from turn {score}")
             # Ignore frames that are -1 since they are processing frames
             # Frames closer to 0 indicate an ongoing turn
             # Frames closer to 1 indicate an ending turn
             if score > 0.1:
-                if not self._is_detecting and score <= self.turn_start_threshold:
-                    self._is_detecting = True
+                if not self._turn_in_progress and score <= self.turn_start_threshold:
+                    self._turn_in_progress = True
                     event_data = TurnEventData(
                         timestamp=time.time(),
                         speaker_id=user_id,
@@ -174,8 +183,8 @@ class KrispTurnDetection(BaseTurnDetector, ABC):
                         custom=metadata or {},
                     )
                     self._emit_turn_event(TurnEvent.TURN_STARTED, event_data)
-                elif self._is_detecting and score > self.turn_end_threshold:
-                    self._is_detecting = False
+                elif self._turn_in_progress and score > self.turn_end_threshold:
+                    self._turn_in_progress = False
                     event_data = TurnEventData(
                         timestamp=time.time(),
                         speaker_id=user_id,
@@ -183,27 +192,31 @@ class KrispTurnDetection(BaseTurnDetector, ABC):
                         custom=metadata or {},
                     )
                     self._emit_turn_event(TurnEvent.TURN_ENDED, event_data)
-                return self._is_detecting
-            return self._is_detecting
 
         self._buffer.extend(pcm.samples.tobytes())
         while len(self._buffer) >= frame_bytes:
             frame_b = bytes(self._buffer[:frame_bytes])
             del self._buffer[:frame_bytes]
             frame = np.frombuffer(frame_b, dtype=np.int16)
-            self._is_detecting = process_frame(frame)
-
-        if self._buffer:
-            self.logger.info(f"Accumulating {len(self._buffer)} bytes for next frame")
+            process_frame(frame)
 
     def start(self) -> None:
+        if self._is_detecting:
+            return
+        self._initialize_krisp()
         self._buffer = bytearray()
+        self._is_detecting = True
         self.logger.info("KrispTurnDetection started")
 
     def stop(self) -> None:
+        if not self._is_detecting:
+            return
+        self._is_detecting = False
         if self._krisp_instance:
             self._krisp_instance = None
             krisp_audio.globalDestroy()
             self.logger.info("Krisp resources released")
         if self._buffer is not None:
             self._buffer.clear()
+        self._turn_in_progress = False
+        self.logger.info("KrispTurnDetection stopped")

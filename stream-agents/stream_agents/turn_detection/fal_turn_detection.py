@@ -50,11 +50,10 @@ class FalTurnDetection(BaseTurnDetector):
             channels: Number of audio channels
         """
 
-        super().__init__()
+        super().__init__(confidence_threshold=confidence_threshold)
         self.logger = logging.getLogger("FalTurnDetection")
         self.api_key = api_key
         self.buffer_duration = buffer_duration
-        self._confidence_threshold = confidence_threshold
         self.sample_rate = sample_rate
         self.channels = channels
 
@@ -75,6 +74,10 @@ class FalTurnDetection(BaseTurnDetector):
         self.logger.info(
             f"Initialized FAL turn detection (buffer: {buffer_duration}s, threshold: {confidence_threshold})"
         )
+
+    def is_detecting(self) -> bool:
+        """Check if turn detection is currently active."""
+        return self._is_detecting
 
     async def process_audio(
         self,
@@ -190,7 +193,7 @@ class FalTurnDetection(BaseTurnDetector):
         filepath = self._temp_dir / filename
 
         # Convert samples to bytes if needed
-        if isinstance(samples[0], int):
+        if samples and isinstance(samples[0], int):
             # Convert int16 samples to bytes
             audio_bytes_array = bytearray()
             for sample in samples:
@@ -279,10 +282,12 @@ class FalTurnDetection(BaseTurnDetector):
 
     def start(self) -> None:
         """Start turn detection."""
+        self._is_detecting = True
         self.logger.info("FAL turn detection started")
 
     def stop(self) -> None:
         """Stop turn detection and clean up."""
+        self._is_detecting = False
         # Cancel any running processing tasks
         for task in self._processing_tasks.values():
             if not task.done():
