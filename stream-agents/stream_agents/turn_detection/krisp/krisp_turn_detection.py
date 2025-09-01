@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from typing import Optional, Dict, Any
 import asyncio
@@ -34,7 +35,7 @@ def log_callback(log_message, log_level):
 class KrispTurnDetection(BaseTurnDetector):
     def __init__(
             self,
-            model_path: Optional[str] = "./krisp-viva-tt-v1.kef",
+            model_path: Optional[str] = os.getcwd() + "/krisp-viva-tt-v1.kef",
             frame_duration_ms: int = 15,
             confidence_threshold: float = 0.5,
     ):
