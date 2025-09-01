@@ -31,7 +31,7 @@ dependencies = [
     "click>=8.0.0",
     "stratz>=1.0.0",
     "daily-python>=0.19.8",
-    "krisp_audio"
+    "krisp-audio",
 ]
 
 [project.urls]
@@ -58,6 +58,9 @@ packages = ["stream_agents"]
 [tool.hatch.build.targets.sdist]
 include = ["/stream-agents"]
 
+
+[tool.uv]
+find-links = ["./stream_agents/turn_detection/krisp/wheels"]
+
 [tool.uv.sources]
-"krisp-audio" = { path = "./stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
 "stream-agents" = {path = "../../stream-agents", editable=true}

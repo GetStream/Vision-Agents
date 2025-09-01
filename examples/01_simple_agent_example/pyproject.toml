@@ -9,9 +9,10 @@ dependencies = [
   "getstream[webrtc]==2.3.0a5",
   "stream-agents",
   "krisp_audio",
-  "resampy",
 ]
+
+[tool.uv]
+find-links = ["./stream_agents/turn_detection/krisp/wheels"]
 
 [tool.uv.sources]
 "stream-agents" = {path = "../../stream-agents", editable=true}
-krisp-audio = { path = "../../stream-agents/getstream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
