@@ -7,6 +7,7 @@ from getstream.plugins import DeepgramSTT, ElevenLabsTTS
 from stream_agents.turn_detection import FalTurnDetection
 from stream_agents.llm import OpenAILLM
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
+from stream_agents.turn_detection.krisp.krisp_turn_detection import KrispTurnDetection
 
 load_dotenv()
 
@@ -27,7 +28,9 @@ async def start_agent() -> None:
         ),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
-        turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
+        turn_detection=FalTurnDetection(
+            api_key=os.getenv("FAL_KEY")
+        ),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

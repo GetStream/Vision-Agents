@@ -15,9 +15,17 @@ from typing import Dict, Optional, Any
 from pathlib import Path
 
 import fal_client
+import numpy as np
+from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
+from stream_agents.utils.utils import to_mono
 
 from .turn_detection import BaseTurnDetector, TurnEvent, TurnEventData
+
+
+def _resample(samples: np.ndarray) -> np.ndarray:
+    """Resample audio from 48 kHz to 16 kHz."""
+    return resample_audio(samples, 48000, 16000).astype(np.int16)
 
 
 class FalTurnDetection(BaseTurnDetector):
@@ -58,7 +66,7 @@ class FalTurnDetection(BaseTurnDetector):
         self.channels = channels
 
         # Audio buffering per user
-        self._user_buffers: Dict[str, list] = {}
+        self._user_buffers: Dict[str, bytearray] = {}
         self._user_last_audio: Dict[str, float] = {}
         self._current_speaker: Optional[str] = None
 
@@ -74,6 +82,17 @@ class FalTurnDetection(BaseTurnDetector):
         self.logger.info(
             f"Initialized FAL turn detection (buffer: {buffer_duration}s, threshold: {confidence_threshold})"
         )
+
+    def _infer_channels(self, format_str: str) -> int:
+        """Infer number of channels from PcmData format string."""
+        format_str = format_str.lower()
+        if "stereo" in format_str:
+            return 2
+        elif any(f in format_str for f in ["mono", "s16", "int16", "pcm_s16le"]):
+            return 1
+        else:
+            self.logger.warning(f"Unknown format string: {format_str}. Assuming mono.")
+            return 1
 
     def is_detecting(self) -> bool:
         """Check if turn detection is currently active."""
@@ -96,21 +115,54 @@ class FalTurnDetection(BaseTurnDetector):
         if not self.is_detecting():
             return
 
+        # Validate sample format
+        valid_formats = ["int16", "s16", "pcm_s16le"]
+        if audio_data.format not in valid_formats:
+            self.logger.error(
+                f"Invalid sample format: {audio_data.format}. Expected one of {valid_formats}."
+            )
+            return
+        if (
+            not isinstance(audio_data.samples, np.ndarray)
+            or audio_data.samples.dtype != np.int16
+        ):
+            self.logger.error(
+                f"Invalid sample dtype: {audio_data.samples.dtype}. Expected int16."
+            )
+            return
+
+        # Resample from 48 kHz to 16 kHz
+        try:
+            samples = _resample(audio_data.samples)
+        except Exception as e:
+            self.logger.error(f"Failed to resample audio: {e}")
+            return
+
+        # Infer number of channels (default to mono)
+        num_channels = (
+            metadata.get("channels", self._infer_channels(audio_data.format))
+            if metadata
+            else self._infer_channels(audio_data.format)
+        )
+        if num_channels != 1:
+            self.logger.debug(f"Converting {num_channels}-channel audio to mono")
+            try:
+                samples = to_mono(samples, num_channels)
+            except ValueError as e:
+                self.logger.error(f"Failed to convert to mono: {e}")
+                return
+
         # Initialize buffer for new user
-        self._user_buffers.setdefault(user_id, [])
+        self._user_buffers.setdefault(user_id, bytearray())
         self._user_last_audio[user_id] = time.time()
 
-        # Extract and append audio samples
-        samples = audio_data.samples
-        audio_samples = (
-            samples.tolist() if hasattr(samples, "tolist") else list(samples)
-        )
-        self._user_buffers[user_id].extend(audio_samples)
+        # Convert samples to bytes and append to buffer
+        self._user_buffers[user_id].extend(samples.tobytes())
 
         # Process audio if buffer is large enough and no task is running
         buffer_size = len(self._user_buffers[user_id])
-        required_samples = int(self.buffer_duration * self.sample_rate)
-        if buffer_size >= required_samples and (
+        required_bytes = int(self.buffer_duration * self.sample_rate * 2)  # 2 bytes per int16 sample
+        if buffer_size >= required_bytes and (
             user_id not in self._processing_tasks
             or self._processing_tasks[user_id].done()
         ):
@@ -130,15 +182,18 @@ class FalTurnDetection(BaseTurnDetector):
             if user_id not in self._user_buffers:
                 return
 
-            audio_samples = self._user_buffers[user_id].copy()
-            required_samples = int(self.buffer_duration * self.sample_rate)
+            audio_buffer = self._user_buffers[user_id]
+            required_bytes = int(self.buffer_duration * self.sample_rate * 2)  # 2 bytes per int16 sample
 
-            if len(audio_samples) < required_samples:
+            if len(audio_buffer) < required_bytes:
                 return
 
-            # Take the required samples and clear processed portion
-            process_samples = audio_samples[:required_samples]
-            self._user_buffers[user_id] = audio_samples[required_samples:]
+            # Take the required bytes and clear processed portion
+            process_bytes = bytes(audio_buffer[:required_bytes])
+            del audio_buffer[:required_bytes]
+            
+            # Convert bytes back to samples for WAV creation
+            process_samples = np.frombuffer(process_bytes, dtype=np.int16).tolist()
 
             self.logger.debug(
                 f"Processing {len(process_samples)} audio samples for user {user_id}"
@@ -192,17 +247,13 @@ class FalTurnDetection(BaseTurnDetector):
         filename = f"audio_{user_id}_{timestamp}.wav"
         filepath = self._temp_dir / filename
 
-        # Convert samples to bytes if needed
-        if samples and isinstance(samples[0], int):
-            # Convert int16 samples to bytes
-            audio_bytes_array = bytearray()
-            for sample in samples:
-                audio_bytes_array.extend(
-                    sample.to_bytes(2, byteorder="little", signed=True)
-                )
-            audio_bytes = bytes(audio_bytes_array)
-        else:
-            audio_bytes = bytes(samples)
+        # Convert samples to bytes - samples are already a list of int16 values
+        audio_bytes_array = bytearray()
+        for sample in samples:
+            audio_bytes_array.extend(
+                sample.to_bytes(2, byteorder="little", signed=True)
+            )
+        audio_bytes = bytes(audio_bytes_array)
 
         # Create WAV file
         with wave.open(str(filepath), "wb") as wav_file:
@@ -282,12 +333,17 @@ class FalTurnDetection(BaseTurnDetector):
 
     def start(self) -> None:
         """Start turn detection."""
+        if self._is_detecting:
+            return
         self._is_detecting = True
         self.logger.info("FAL turn detection started")
 
     def stop(self) -> None:
         """Stop turn detection and clean up."""
+        if not self._is_detecting:
+            return
         self._is_detecting = False
+        
         # Cancel any running processing tasks
         for task in self._processing_tasks.values():
             if not task.done():
@@ -295,6 +351,8 @@ class FalTurnDetection(BaseTurnDetector):
         self._processing_tasks.clear()
 
         # Clear buffers
+        for buffer in self._user_buffers.values():
+            buffer.clear()
         self._user_buffers.clear()
         self._user_last_audio.clear()
         self._current_speaker = None
