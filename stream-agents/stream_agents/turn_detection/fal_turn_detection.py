@@ -32,11 +32,12 @@ class FalTurnDetection(BaseTurnDetector):
     """
 
     def __init__(
-            self, api_key: Optional[str] = None,
-            buffer_duration: float = 2.0,
-            confidence_threshold: float = 0.5,
-            sample_rate: int = 16000,
-            channels: int = 1
+        self,
+        api_key: Optional[str] = None,
+        buffer_duration: float = 2.0,
+        confidence_threshold: float = 0.5,
+        sample_rate: int = 16000,
+        channels: int = 1,
     ):
         """
         Initialize FAL turn detection.
@@ -76,10 +77,10 @@ class FalTurnDetection(BaseTurnDetector):
         )
 
     async def process_audio(
-            self,
-            audio_data: PcmData,
-            user_id: str,
-            metadata: Optional[Dict[str, Any]] = None,
+        self,
+        audio_data: PcmData,
+        user_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Process incoming audio data for turn detection.
@@ -98,14 +99,17 @@ class FalTurnDetection(BaseTurnDetector):
 
         # Extract and append audio samples
         samples = audio_data.samples
-        audio_samples = samples.tolist() if hasattr(samples, "tolist") else list(samples)
+        audio_samples = (
+            samples.tolist() if hasattr(samples, "tolist") else list(samples)
+        )
         self._user_buffers[user_id].extend(audio_samples)
 
         # Process audio if buffer is large enough and no task is running
         buffer_size = len(self._user_buffers[user_id])
         required_samples = int(self.buffer_duration * self.sample_rate)
         if buffer_size >= required_samples and (
-                user_id not in self._processing_tasks or self._processing_tasks[user_id].done()
+            user_id not in self._processing_tasks
+            or self._processing_tasks[user_id].done()
         ):
             self._processing_tasks[user_id] = asyncio.create_task(
                 self._process_user_audio(user_id)
@@ -190,7 +194,9 @@ class FalTurnDetection(BaseTurnDetector):
             # Convert int16 samples to bytes
             audio_bytes_array = bytearray()
             for sample in samples:
-                audio_bytes_array.extend(sample.to_bytes(2, byteorder="little", signed=True))
+                audio_bytes_array.extend(
+                    sample.to_bytes(2, byteorder="little", signed=True)
+                )
             audio_bytes = bytes(audio_bytes_array)
         else:
             audio_bytes = bytes(samples)
@@ -206,7 +212,7 @@ class FalTurnDetection(BaseTurnDetector):
         return filepath
 
     async def _process_turn_prediction(
-            self, user_id: str, result: Dict[str, Any]
+        self, user_id: str, result: Dict[str, Any]
     ) -> None:
         """
         Process the turn prediction result from FAL API.

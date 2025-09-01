@@ -1,4 +1,5 @@
 from typing import Optional, Dict, Any, Union, Callable, Protocol
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pyee import EventEmitter
@@ -30,18 +31,10 @@ EventListener = Callable[[TurnEventData], None]
 
 
 class TurnDetection(Protocol):
-    """Protocol defining the interface for turn detection implementations."""
+    """Turn Detection shape definition used by the Agent class"""
 
     def is_detecting(self) -> bool:
         """Check if turn detection is currently active."""
-        ...
-
-    def start_detection(self) -> None:
-        """Start the turn detection process."""
-        ...
-
-    def stop_detection(self) -> None:
-        """Stop the turn detection process."""
         ...
 
     def on(
@@ -82,7 +75,7 @@ class TurnDetection(Protocol):
         ...
 
 
-class BaseTurnDetector(EventEmitter):
+class BaseTurnDetector(ABC, EventEmitter):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(self, confidence_threshold: float = 0.5) -> None:
@@ -90,6 +83,7 @@ class BaseTurnDetector(EventEmitter):
         self._confidence_threshold = confidence_threshold
         self._is_detecting = False
 
+    @abstractmethod
     def is_detecting(self) -> bool:
         """Check if turn detection is currently active."""
         return self._is_detecting
@@ -100,11 +94,12 @@ class BaseTurnDetector(EventEmitter):
         """Emit a turn detection event."""
         self.emit(event_type.value, event_data)
 
+    @abstractmethod
     async def process_audio(
-            self,
-            audio_data: PcmData,
-            user_id: str,
-            metadata: Optional[Dict[str, Any]] = None,
+        self,
+        audio_data: PcmData,
+        user_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Ingest PcmData audio for a user.
 
@@ -116,13 +111,16 @@ class BaseTurnDetector(EventEmitter):
             user_id: Identifier for the user providing the audio
             metadata: Optional additional metadata about the audio
         """
+
     ...
 
     # Convenience aliases to align with the unified protocol expected by Agent
+    @abstractmethod
     def start(self) -> None:
         """Start detection (alias for start_detection)."""
         ...
 
+    @abstractmethod
     def stop(self) -> None:
         """Stop detection (alias for stop_detection)."""
         ...

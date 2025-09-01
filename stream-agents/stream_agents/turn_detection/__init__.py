@@ -15,5 +15,5 @@ __all__ = [
     "TurnDetection",
     # Implementations
     "FalTurnDetection",
-    "KrispTurnDetection"
+    "KrispTurnDetection",
 ]

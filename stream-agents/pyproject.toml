@@ -31,6 +31,7 @@ dependencies = [
     "click>=8.0.0",
     "stratz>=1.0.0",
     "daily-python>=0.19.8",
+    "krisp_audio"
 ]
 
 [project.urls]
