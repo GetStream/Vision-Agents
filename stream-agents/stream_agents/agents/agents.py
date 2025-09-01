@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
 
+
 class Agent:
     def __init__(
         self,
@@ -116,9 +117,13 @@ class Agent:
         # standardize on input
         if isinstance(input, str):
             if participant is not None:
-                input = [EasyInputMessageParam(content=input, role="user", type="message")]
+                input = [
+                    EasyInputMessageParam(content=input, role="user", type="message")
+                ]
             else:
-                input = [EasyInputMessageParam(content=input, role="system", type="message")]
+                input = [
+                    EasyInputMessageParam(content=input, role="system", type="message")
+                ]
 
         logging.info("participant in create response is %s", participant)
         if self.conversation:
@@ -252,7 +257,7 @@ class Agent:
                 asyncio.create_task(process_sts_events())
 
             # Send initial greeting, if the LLM is configured to do so
-            if self.llm and hasattr(self.llm, 'conversation_started'):
+            if self.llm and hasattr(self.llm, "conversation_started"):
                 await self.llm.conversation_started(self)
 
             # Keep the agent running and listening
@@ -412,7 +417,7 @@ class Agent:
         if self._connection is None:
             self.logger.error("❌ No active connection")
             return
-        
+
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
         if not track:
             self.logger.error(f"❌ Failed to subscribe to track: {track_id}")

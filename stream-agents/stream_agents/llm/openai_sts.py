@@ -86,7 +86,9 @@ class OpenAIRealtimeModel:
         if self.turn_detection:
             extra_session["turn_detection"] = [self.turn_detection]
         if self.input_audio_transcription:
-            extra_session["input_audio_transcription"] = [self.input_audio_transcription]
+            extra_session["input_audio_transcription"] = [
+                self.input_audio_transcription
+            ]
         if self.kwargs:
             extra_session.update(self.kwargs)
 

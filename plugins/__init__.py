@@ -1,5 +1,3 @@
 from .krisp import KrispTurnDetection
 
-__all__ = [
-    "KrispTurnDetection"
-]
+__all__ = ["KrispTurnDetection"]

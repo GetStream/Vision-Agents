@@ -156,9 +156,7 @@ class YOLOPoseProcessor(
             enable_hand_tracking: Whether to draw detailed hand connections
             enable_wrist_highlights: Whether to highlight wrist positions
         """
-        super().__init__(
-            interval=interval, receive_audio=False, receive_video=True
-        )
+        super().__init__(interval=interval, receive_audio=False, receive_video=True)
 
         if not YOLO_AVAILABLE:
             raise ImportError(
@@ -214,7 +212,10 @@ class YOLOPoseProcessor(
         return self._video_track
 
     async def process_image(
-        self, image: Image.Image, user_id: str, metadata: Optional[dict[Any, Any]] = None
+        self,
+        image: Image.Image,
+        user_id: str,
+        metadata: Optional[dict[Any, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Process a single image with pose detection.

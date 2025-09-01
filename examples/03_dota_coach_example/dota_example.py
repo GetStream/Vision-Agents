@@ -25,7 +25,7 @@ async def start_agent() -> None:
         ),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
-        #turn_detection=FalTurnDetection(),
+        # turn_detection=FalTurnDetection(),
         # Soccer: processors=[MatchStatistics()]
         # DOTA: processors=[GameStats(), Yolo(), Image()]
     )
@@ -38,7 +38,7 @@ async def start_agent() -> None:
 
     # Have the agent join the call/room
     with await agent.join(call):
-        await agent.finish() # run till the call ends
+        await agent.finish()  # run till the call ends
 
 
 if __name__ == "__main__":

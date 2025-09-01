@@ -200,7 +200,7 @@ class DotaGameProcessor(BaseProcessor):
                 else:
                     self.logger.error("Unexpected GraphQL response structure")
                     return None
-            else:   
+            else:
                 self.logger.error(
                     f"GraphQL request failed with status: {response.status_code}"
                 )

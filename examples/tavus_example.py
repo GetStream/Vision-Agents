@@ -31,12 +31,10 @@ logger = logging.getLogger(__name__)
 try:
     from stream_agents.processors.tavus_processor import TavusProcessor
 
-
     PROCESSOR_AVAILABLE = True
 except ImportError as e:
     PROCESSOR_AVAILABLE = False
     logger.error(f"TavusProcessor not available: {e}")
-
 
 
 async def run_tavus_example():
@@ -44,7 +42,6 @@ async def run_tavus_example():
     if not PROCESSOR_AVAILABLE:
         logger.error("Cannot run example - TavusProcessor not available")
         return
-
 
     # Get configuration from environment
     api_key = os.getenv("TAVUS_KEY")
@@ -108,7 +105,7 @@ async def run_tavus_example():
         import traceback
 
         traceback.print_exc()
-        
+
     finally:
         # Clean up
         if processor:
@@ -157,11 +154,9 @@ async def run_audio_only_example():
     except Exception as e:
         logger.error(f"❌ Error in audio-only example: {e}")
 
-
     finally:
         if processor:
             await processor.cleanup()
-
 
 
 async def main():

@@ -42,7 +42,6 @@ async def start_agent() -> None:
 
     # Have the agent join the call/room
     with await agent.join(call):
-
         await agent.finish()  # run till the call ends
 
 

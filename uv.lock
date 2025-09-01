@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -1162,6 +1162,14 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/99/dd/841e9a66c4715477ea0abc78da039832fbb09dac5c35c58dc4c41a407b8a/kiwisolver-1.4.9-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:aedff62918805fb62d43a4aa2ecd4482c380dc76cd31bd7c8878588a61bd0369", size = 2391835, upload-time = "2025-08-10T21:27:34.23Z" },
     { url = "https://files.pythonhosted.org/packages/0c/28/4b2e5c47a0da96896fdfdb006340ade064afa1e63675d01ea5ac222b6d52/kiwisolver-1.4.9-cp314-cp314t-win_amd64.whl", hash = "sha256:1fa333e8b2ce4d9660f2cda9c0e1b6bafcfb2457a9d259faa82289e73ec24891", size = 79988, upload-time = "2025-08-10T21:27:35.587Z" },
     { url = "https://files.pythonhosted.org/packages/80/be/3578e8afd18c88cdf9cb4cffde75a96d2be38c5a903f1ed0ceec061bd09e/kiwisolver-1.4.9-cp314-cp314t-win_arm64.whl", hash = "sha256:4a48a2ce79d65d363597ef7b567ce3d14d68783d2b2263d98db3d9477805ba32", size = 70260, upload-time = "2025-08-10T21:27:36.606Z" },
+]
+
+[[package]]
+name = "krisp-audio"
+version = "1.4.0"
+source = { path = "stream-agents/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
+wheels = [
+    { filename = "krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:24b0a4771adaef57543082cae26f272b1e234ce7eabf89b54d2d56a95a8126f0" },
 ]
 
 [[package]]
@@ -2343,6 +2351,7 @@ dependencies = [
     { name = "getstream-plugins-deepgram" },
     { name = "getstream-plugins-elevenlabs" },
     { name = "google-genai" },
+    { name = "krisp-audio" },
     { name = "numpy" },
     { name = "openai" },
     { name = "opencv-python" },
@@ -2377,6 +2386,7 @@ requires-dist = [
     { name = "getstream-plugins-deepgram", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", specifier = ">=0.1.0" },
     { name = "google-genai", specifier = ">=0.3.0" },
+    { name = "krisp-audio", path = "stream-agents/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "openai", specifier = "==1.101.0" },
@@ -2684,7 +2694,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e4/e8/6ff5e6bc22095cfc59b6ea711b687e2b7ed4bdb373f7eeec370a97d7392f/urllib3-1.26.20.tar.gz", hash = "sha256:40c2dc0c681e47eb8f90e7e27bf6ff7df2e677421fd46756da1161c39ca70d32", size = 307380, upload-time = "2024-08-29T15:43:11.37Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/cf/8435d5a7159e2a9c83a95896ed596f68cf798005fe107cc655b5c5c14704/urllib3-1.26.20-py2.py3-none-any.whl", hash = "sha256:0ed14ccfbf1c30a9072c7ca157e4319b70d65f623e91e7b32fadb2853431016e", size = 144225, upload-time = "2024-08-29T15:43:08.921Z" },
-
 ]
 
 [[package]]
