@@ -1167,7 +1167,7 @@ wheels = [
 [[package]]
 name = "krisp-audio"
 version = "1.4.0"
-source = { path = "stream-agents/stream_agents/turn_detection/krisp/wheels/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
+source = { path = "stream-agents/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
 wheels = [
     { filename = "krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:24b0a4771adaef57543082cae26f272b1e234ce7eabf89b54d2d56a95a8126f0" },
 ]
@@ -2386,8 +2386,7 @@ requires-dist = [
     { name = "getstream-plugins-deepgram", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", specifier = ">=0.1.0" },
     { name = "google-genai", specifier = ">=0.3.0" },
-    { name = "krisp-audio", path = "stream-agents/stream_agents/turn_detection/krisp/wheels/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
-    { name = "krisp-audio", marker = "sys_platform != 'win32'", path = "stream-agents/stream_agents/turn_detection/krisp/wheels/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
+    { name = "krisp-audio", path = "stream-agents/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "openai", specifier = "==1.101.0" },
