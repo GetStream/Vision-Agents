@@ -19,6 +19,7 @@ runs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@v6
       with:
+        python-version: "3.13"
         version: "latest"
         enable-cache: true
         cache-dependency-glob: "uv.lock"
