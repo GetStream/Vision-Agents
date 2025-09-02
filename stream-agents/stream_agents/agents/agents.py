@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
 
+
 class Agent:
     def __init__(
         self,
@@ -116,9 +117,13 @@ class Agent:
         # standardize on input
         if isinstance(input, str):
             if participant is not None:
-                input = [EasyInputMessageParam(content=input, role="user", type="message")]
+                input = [
+                    EasyInputMessageParam(content=input, role="user", type="message")
+                ]
             else:
-                input = [EasyInputMessageParam(content=input, role="system", type="message")]
+                input = [
+                    EasyInputMessageParam(content=input, role="system", type="message")
+                ]
 
         logging.info("participant in create response is %s", participant)
         if self.conversation:
@@ -191,6 +196,7 @@ class Agent:
             self.logger.info("🎤 Using traditional STT/TTS mode")
 
         stsContextManager = None
+
         if self.sts_mode and self.llm is not None:
             stsContextManager = await self.llm.connect(call, self.agent_user.id)
 
@@ -251,7 +257,7 @@ class Agent:
                 asyncio.create_task(process_sts_events())
 
             # Send initial greeting, if the LLM is configured to do so
-            if self.llm and hasattr(self.llm, 'conversation_started'):
+            if self.llm and hasattr(self.llm, "conversation_started"):
                 await self.llm.conversation_started(self)
 
             # Keep the agent running and listening
@@ -329,7 +335,7 @@ class Agent:
 
                 pdb.set_trace()
 
-            if self.turn_detection and hasattr(self.turn_detection, 'process_audio'):
+            if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
             await self.reply_to_audio(pcm, participant)
@@ -411,7 +417,7 @@ class Agent:
         if self._connection is None:
             self.logger.error("❌ No active connection")
             return
-        
+
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
         if not track:
             self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
@@ -475,13 +481,13 @@ class Agent:
         self.queue.pause()
         # todo(nash): If the participant starts speaking while TTS is streaming, we need to cancel it
         self.logger.info(
-            f"👉 Turn started - participant speaking {event_data.speaker_id}"
+            f"👉 Turn started - participant speaking {event_data.speaker_id} : {event_data.confidence}"
         )
 
     def _on_turn_ended(self, event_data: TurnEventData) -> None:
         """Handle when a participant ends their turn."""
         self.logger.info(
-            f"👉 Turn ended - participant {event_data.speaker_id} finished (duration: {event_data.duration})"
+            f"👉 Turn ended - participant {event_data.speaker_id} finished (duration: {event_data.confidence})"
         )
 
     async def _on_partial_transcript(

@@ -13,7 +13,9 @@ from typing import Optional
 import click
 
 
-def run(command: str, env: Optional[dict] = None, check: bool = True) -> subprocess.CompletedProcess:
+def run(
+    command: str, env: Optional[dict] = None, check: bool = True
+) -> subprocess.CompletedProcess:
     """Run a shell command with automatic argument parsing."""
     click.echo(f"Running: {command}")
 
@@ -89,37 +91,43 @@ def mypy():
 def mypy_plugins():
     """Run mypy type checks on all plugins."""
     click.echo("Running mypy on plugins...")
-    run("uv run mypy --install-types --non-interactive --explicit-package-bases plugins")
+    run(
+        "uv run mypy --install-types --non-interactive --explicit-package-bases plugins"
+    )
 
 
 @cli.command()
 def mypy_xai():
     """Run mypy type checks on xai plugin specifically."""
     click.echo("Running mypy on xai plugin...")
-    run("uv run mypy --install-types --non-interactive --explicit-package-bases plugins/xai")
+    run(
+        "uv run mypy --install-types --non-interactive --explicit-package-bases plugins/xai"
+    )
 
 
 @cli.command()
 def check():
     """Run full check: ruff, mypy, and unit tests."""
     click.echo("Running full development check...")
-    
+
     # Run ruff
     click.echo("\n=== 1. Ruff Linting ===")
     run("uv run ruff check .")
-    
+
     # Run mypy on main package
     click.echo("\n=== 2. MyPy Type Checking ===")
     run("uv run mypy --install-types --non-interactive -p stream_agents")
-    
+
     # Run mypy on plugins
     click.echo("\n=== 3. MyPy Plugin Type Checking ===")
-    run("uv run mypy --install-types --non-interactive --explicit-package-bases plugins")
-    
+    run(
+        "uv run mypy --install-types --non-interactive --explicit-package-bases plugins"
+    )
+
     # Run unit tests
     click.echo("\n=== 4. Unit Tests ===")
     run("uv run py.test -m 'not integration'")
-    
+
     click.echo("\n✅ All checks passed!")
 
 

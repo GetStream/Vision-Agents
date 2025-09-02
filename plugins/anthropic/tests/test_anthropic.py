@@ -14,10 +14,8 @@ load_dotenv()
 class TestTavus:
     """Integration tests for XAI plugin that make actual API calls."""
 
-
     async def test_not_integration(self):
         assert True
-
 
     @pytest.mark.integration
     async def test_chat_creation_with_system_message(self):
@@ -31,8 +29,8 @@ class TestTavus:
             messages=[
                 {
                     "role": "user",
-                    "content": "What should I search for to find the latest developments in renewable energy?"
+                    "content": "What should I search for to find the latest developments in renewable energy?",
                 }
-            ]
+            ],
         )
         print(message.content)

@@ -26,7 +26,6 @@ async def start_agent() -> None:
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
         # turn_detection=FalTurnDetection(),
-        processors=[],  # processors can fetch extra data, check images/audio data or transform video
         # Soccer: processors=[MatchStatistics()]
         # DOTA: processors=[GameStats(), Yolo(), Image()]
     )

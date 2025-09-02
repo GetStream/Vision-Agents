@@ -5,6 +5,7 @@ from .turn_detection import (
     TurnDetection,
 )
 from .fal_turn_detection import FalTurnDetection
+from .krisp.krisp_turn_detection import KrispTurnDetection
 
 __all__ = [
     # Base classes and types
@@ -14,4 +15,5 @@ __all__ = [
     "TurnDetection",
     # Implementations
     "FalTurnDetection",
+    "KrispTurnDetection",
 ]
