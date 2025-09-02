@@ -156,9 +156,7 @@ class ImageCapture(AudioVideoProcessor, ImageProcessorMixin):
     def __init__(
         self, output_dir: str = "captured_frames", interval: int = 3, *args, **kwargs
     ):
-        super().__init__(
-            interval=interval, receive_audio=False, receive_video=True
-        )
+        super().__init__(interval=interval, receive_audio=False, receive_video=True)
         self.output_dir = Path(output_dir)
         self.frame_count = 0
 
@@ -167,7 +165,10 @@ class ImageCapture(AudioVideoProcessor, ImageProcessorMixin):
         logging.info(f"📁 Saving captured frames to: {self.output_dir.absolute()}")
 
     async def process_image(
-        self, image: Image.Image, user_id: str, metadata: Optional[dict[Any, Any]] = None
+        self,
+        image: Image.Image,
+        user_id: str,
+        metadata: Optional[dict[Any, Any]] = None,
     ):
         # Check if enough time has passed since last capture
         if not self.should_process():

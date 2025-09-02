@@ -1,4 +1,5 @@
 import asyncio
+import os
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -26,7 +27,9 @@ async def start_agent() -> None:
         ),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
-        turn_detection=FalTurnDetection(),
+        turn_detection=FalTurnDetection(
+            api_key=os.getenv("FAL_KEY")
+        ),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

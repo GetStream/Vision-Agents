@@ -6,6 +6,7 @@ from stream_agents.utils import open_demo as open_demo
 
 
 from importlib import metadata
+
 try:
     __version__ = metadata.version("stream_agents")
 except metadata.PackageNotFoundError:  # editable/checkout scenarios

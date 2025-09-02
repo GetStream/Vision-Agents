@@ -126,7 +126,8 @@ class GeminiLiveModel(RealtimeLLM):
         try:
             # Get the async context manager for Gemini Live API
             self._session_manager = self._client.aio.live.connect(
-                model=self.model, config=config  # type: ignore
+                model=self.model,
+                config=config,  # type: ignore
             )
 
             self._is_connected = True
