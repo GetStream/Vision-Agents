@@ -1,0 +1,14 @@
+[project]
+name = "custom-agent-example"
+version = "0.1.0"
+description = "Example demonstrating custom agents with function calling"
+requires-python = ">=3.13"
+dependencies = [
+  "python-dotenv>=1.0",
+  "getstream[webrtc]==2.3.0a5",
+  "stream-agents",
+]
+
+[tool.uv.sources]
+"stream-agents" = {path = "../../stream-agents", editable=true}
+"getstream" = {path = "../../../stream-py", editable=true}

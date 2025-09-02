@@ -6,19 +6,14 @@ This module provides an OpenAI implementation of the Model protocol.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Optional, Union, AsyncIterator
 
 from openai import OpenAI, AsyncOpenAI
+from .llm import LLM
 
-
-
-
-
-
-
-
-class OpenAILLM:
+class OpenAILLM(LLM):
     """
     OpenAI implementation of the Model protocol.
 
@@ -69,9 +64,9 @@ class OpenAILLM:
             default_stop: Default stop sequences for generation
             **kwargs: Additional client configuration options
         """
+        super().__init__()
         self._name = name
         self.instructions = instructions or "You are a helpful AI assistant."
-        self.logger = logging.getLogger(f"OpenAIModel[{name}]")
         
         # Mark this as a traditional LLM (not STS)
         self.sts = False
@@ -178,6 +173,7 @@ class OpenAILLM:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         stop: Optional[Union[str, List[str]]] = None,
+        use_functions: bool = True,
         **kwargs: Any,
     ) -> str:
         """
@@ -188,6 +184,7 @@ class OpenAILLM:
             max_tokens: Maximum number of tokens to generate
             temperature: Sampling temperature (0.0 to 2.0)
             stop: Stop sequences to end generation
+            use_functions: Whether to enable function calling
             **kwargs: Additional OpenAI-specific parameters
 
         Returns:
@@ -199,6 +196,11 @@ class OpenAILLM:
         try:
             # Prepare parameters with defaults
             params = {"model": self._name, "messages": messages, **kwargs}
+            
+            # Add function tools if available and requested
+            if use_functions and self.function_registry._functions:
+                params["tools"] = self.function_registry.get_openai_tools()
+                params["tool_choice"] = "auto"
 
             # Use provided parameters or fall back to defaults
             if max_tokens is not None:
@@ -231,6 +233,13 @@ class OpenAILLM:
                     None, lambda: self._client.chat.completions.create(**params)
                 )
 
+            # Handle function calls
+            if response.choices[0].message.tool_calls:
+                return await self._handle_function_calls(
+                    response.choices[0].message.tool_calls, 
+                    messages
+                )
+            
             # Extract the response content
             if response.choices and response.choices[0].message.content:
                 content = response.choices[0].message.content
@@ -243,6 +252,67 @@ class OpenAILLM:
         except Exception as e:
             self.logger.error(f"Error generating chat response: {e}")
             raise
+
+    async def _handle_function_calls(
+        self, 
+        tool_calls: List[Any], 
+        messages: List[Dict[str, str]]
+    ) -> str:
+        """Handle function calls and return results."""
+        # Add assistant message with tool calls
+        messages.append({
+            "role": "assistant", 
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.function.name,
+                        "arguments": call.function.arguments
+                    }
+                }
+                for call in tool_calls
+            ]
+        })
+        
+        # Execute function calls
+        for call in tool_calls:
+            try:
+                function_name = call.function.name
+                arguments = json.loads(call.function.arguments)
+                
+                self.logger.info(f"Calling function: {function_name} with args: {arguments}")
+                result = await self.function_registry.call_function(
+                    function_name, 
+                    arguments
+                )
+                
+                # Add function result to messages
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": json.dumps(result)
+                })
+                
+            except Exception as e:
+                self.logger.error(f"Error executing function {call.function.name}: {e}")
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": f"Error: {str(e)}"
+                })
+        
+        # Generate final response with function results
+        return await self.generate_chat(messages, use_functions=False)
+
+    async def generate_with_functions(
+        self, 
+        messages: List[Dict[str, str]], 
+        **kwargs
+    ) -> str:
+        """Generate response with function calling support."""
+        return await self.generate_chat(messages, use_functions=True, **kwargs)
 
     async def generate_stream(
         self,

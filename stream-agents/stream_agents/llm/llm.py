@@ -1,52 +1,90 @@
 
-'''
-Requirements
-- support image, text, functools etc as input
+"""
+Base LLM classes with function calling support.
 
-Questions
-- Do we expose incoming audio as a track or queue, or just a callback?
+This module provides the base classes for LLM implementations with
+automatic function calling capabilities.
+"""
 
-Audio is forwarded like this atm in the kickboxing_example
+from typing import List, Dict, Any, Optional, Union, AsyncIterator
+import logging
+from .function_registry import FunctionRegistry
 
-@ai_connection.on("audio")
-async def on_audio(pcm: PcmData, user):
-    if user.user_id == player_user_id and g_session:
-        await g_session.send_realtime_input(
-            audio=types.Blob(
-                data=pcm.samples.astype(np.int16).tobytes(),
-                mime_type="audio/pcm;rate=48000"
-            )
-        )
-
-In the kickboxing example it does this for playout
-
-audio_in_queue.put_nowait(data)
-
-asyncio.create_task(play_audio(audio_in_queue, audio_track))
-async def play_audio(audio_in_queue, audio_track):
-    """Play audio responses from Gemini Live"""
-    while True:
-        bytestream = await audio_in_queue.get()
-        await audio_track.write(bytestream)
-
-'''
 
 class LLM:
-    sts: bool = False
+    """
+    Base class for LLM implementations with function calling support.
+    
+    All LLM implementations should inherit from this class to get
+    automatic function calling capabilities.
+    """
+    
+    def __init__(self):
+        self.function_registry = FunctionRegistry()
+        self.sts: bool = False
+        self.logger = logging.getLogger(f"{self.__class__.__name__}")
+    
+    def function(self, description: str = "", name: Optional[str] = None):
+        """
+        Decorator to register a function for LLM calling.
+        
+        Args:
+            description: Human-readable description of what the function does
+            name: Optional custom name for the function (defaults to function name)
+        
+        Example:
+            @llm.function("Get weather for a location")
+            async def get_weather(location: str) -> str:
+                return f"Weather in {location}: sunny"
+        """
+        return self.function_registry.function(description, name)
+    
+    async def generate_with_functions(
+        self, 
+        messages: List[Dict[str, str]], 
+        **kwargs
+    ) -> str:
+        """
+        Generate response with function calling support.
+        
+        This method should be implemented by each LLM subclass to handle
+        function calling in a provider-specific way.
+        """
+        raise NotImplementedError("Subclasses must implement generate_with_functions")
+    
+    def get_available_functions(self) -> List[str]:
+        """Get list of available function names."""
+        return self.function_registry.list_functions()
+    
+    def get_function_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get information about a registered function."""
+        return self.function_registry.get_function_info(name)
 
-    def create_response(self, *args, **kwargs):
-        # Follow openAI style response?
-        pass
 
 class RealtimeLLM(LLM):
-    sts : bool = True
-
-    def connect(self):
-        pass
-
+    """
+    Base class for real-time LLM implementations (Speech-to-Speech).
+    
+    These LLMs handle audio directly and support real-time conversation.
+    """
+    
+    def __init__(self):
+        super().__init__()
+        self.sts: bool = True
+    
+    async def connect(self, call, agent_user_id: str = "assistant"):
+        """
+        Connect to a video call for real-time communication.
+        
+        This method should be implemented by each real-time LLM subclass.
+        """
+        raise NotImplementedError("Subclasses must implement connect")
+    
     def attach_incoming_audio(self, track):
-        pass
-
+        """Attach incoming audio track for processing."""
+        raise NotImplementedError("Subclasses must implement attach_incoming_audio")
+    
     def attach_outgoing_audio(self, track):
-        pass
+        """Attach outgoing audio track for responses."""
+        raise NotImplementedError("Subclasses must implement attach_outgoing_audio")
 

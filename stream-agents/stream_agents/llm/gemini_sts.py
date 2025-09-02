@@ -25,8 +25,10 @@ except ImportError:
     genai = None
     types = None
 
+from .llm import RealtimeLLM
 
-class GeminiLiveModel:
+
+class GeminiLiveModel(RealtimeLLM):
     """
     Gemini Live implementation for use with Stream Agents.
 
@@ -70,6 +72,8 @@ class GeminiLiveModel:
             voice_config: Voice configuration settings
             **kwargs: Additional configuration options
         """
+        super().__init__()
+        
         if genai is None:
             raise ImportError(
                 "google-genai package is required for Gemini Live API. "
@@ -86,15 +90,9 @@ class GeminiLiveModel:
 
         self.model = model
         self.instructions = instructions
-        self.tools = tools or []
         self.response_modalities = response_modalities or ["AUDIO"]
         self.voice_config = voice_config or {}
         self.kwargs = kwargs
-
-        # Mark this as an STS model
-        self.sts = True
-
-        self.logger = logging.getLogger(f"GeminiLiveModel[{model}]")
 
         # Initialize the Google GenAI client
         self._client = genai.Client(api_key=self.api_key)
@@ -124,8 +122,10 @@ class GeminiLiveModel:
         if self.instructions:
             config["system_instruction"] = self.instructions
             
-        if self.tools:
-            config["tools"] = self.tools
+        # Add function tools if available
+        gemini_tools = self.function_registry.get_gemini_tools()
+        if gemini_tools:
+            config["tools"] = gemini_tools
             
         # Add any additional configuration
         config.update(self.kwargs)
@@ -242,9 +242,11 @@ class GeminiLiveConnection:
                         except Exception as e:
                             self.logger.error(f"Error in audio callback: {e}")
                 
-                # Check for other response types
+                # Check for function calls
                 if hasattr(response, 'server_content') and response.server_content:
-                    if hasattr(response.server_content, 'model_turn') and response.server_content.model_turn:
+                    if hasattr(response.server_content, 'function_call') and response.server_content.function_call:
+                        await self._handle_function_call(response.server_content.function_call)
+                    elif hasattr(response.server_content, 'model_turn') and response.server_content.model_turn:
                         self.logger.debug("📝 Received model turn from Gemini Live")
                     elif hasattr(response.server_content, 'turn_complete') and response.server_content.turn_complete:
                         self.logger.debug("✅ Turn complete from Gemini Live")
@@ -272,6 +274,40 @@ class GeminiLiveConnection:
             import traceback
             self.logger.error(traceback.format_exc())
             raise StopAsyncIteration
+
+    async def _handle_function_call(self, function_call):
+        """Handle function calls from Gemini Live."""
+        try:
+            function_name = function_call.name
+            arguments = function_call.args
+            
+            self.logger.info(f"Gemini calling function: {function_name} with args: {arguments}")
+            
+            # Execute the function
+            result = await self.sts_model.function_registry.call_function(
+                function_name, 
+                arguments
+            )
+            
+            # Send function result back to Gemini
+            await self.session.send_realtime_input(
+                function_response=types.FunctionResponse(
+                    name=function_name,
+                    response=result
+                )
+            )
+            
+            self.logger.info(f"Function {function_name} executed successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error executing function {function_call.name}: {e}")
+            # Send error response back to Gemini
+            await self.session.send_realtime_input(
+                function_response=types.FunctionResponse(
+                    name=function_call.name,
+                    response={"error": str(e)}
+                )
+            )
 
     @property
     def connection(self):
