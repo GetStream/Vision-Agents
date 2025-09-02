@@ -354,6 +354,7 @@ async def test_deepgram_end_to_end(audio_data, mia_metadata):
     await stt.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_deepgram_with_real_api(
     audio_data, mia_metadata, deepgram_api_key, deepgram_model, deepgram_language
@@ -393,10 +394,6 @@ async def test_deepgram_with_real_api(
     @stt.on("transcript")
     def on_transcript(event):
         transcripts.append((event.text, event.user_metadata, {"is_final": True}))
-
-    @stt.on("partial_transcript")
-    def on_partial(event):
-        partial_transcripts.append((event.text, event.user_metadata, {"is_final": False}))
 
     @stt.on("error")
     def on_error(event):
@@ -650,6 +647,7 @@ async def test_deepgram_close_message():
     assert connection.finished, "Connection not marked as finished after close"
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_deepgram_with_real_api_keep_alive():
     """
@@ -734,6 +732,7 @@ async def test_deepgram_with_real_api_keep_alive():
         await stt.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_deepgram_real_integration():
     """

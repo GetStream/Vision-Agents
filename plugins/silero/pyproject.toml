@@ -32,3 +32,20 @@ dev = [
     "torchaudio>=2.7.1",
     "scipy>=1.15.3,<1.16",
 ]
+
+[tool.uv.workspace]
+members = [
+    "getstream/plugins/*",
+    "examples/test",
+]
+ exclude = [
+    "**/__pycache__",
+    "**/tests/__pycache__",
+    "**/*.pyc",
+    "**/dist/",
+    "**/*.egg-info/",
+    "**/.pytest_cache/",
+    "**/.mypy_cache/",
+    "**/.ruff_cache/",
+    "examples/",
+ ]

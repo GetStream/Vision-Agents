@@ -12,6 +12,7 @@ except Exception:
     pass
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_gemini_live_with_real_api():
     """

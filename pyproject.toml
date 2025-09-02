@@ -2,6 +2,15 @@
 name = "stream-agents"
 version = "0.1.0"
 description = "GetStream Agents AI Python SDK - Add AI agents into your video calling applications"
+requires-python = ">=3.10,<4.0.0"
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "getstream[webrtc]==2.3.0a6"
 ]

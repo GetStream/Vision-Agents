@@ -614,6 +614,7 @@ async def test_moonshine_with_mia_audio_mocked(mia_audio_data, mia_metadata):
 
 
 # Integration test with real Moonshine (if available)
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_moonshine_real_integration(mia_audio_data, mia_metadata):
     """

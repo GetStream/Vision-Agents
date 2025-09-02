@@ -139,6 +139,7 @@ async def test_cartesia_send_without_track_raises():
 ############################
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_cartesia_with_real_api():
     """Integration test against Cartesia cloud – skipped if CARTESIA_API_KEY unset."""

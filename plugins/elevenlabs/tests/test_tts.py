@@ -185,6 +185,7 @@ async def test_elevenlabs_tts_stop_method_handles_exceptions():
     track.flush.assert_called_once()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_elevenlabs_with_real_api():
     """
