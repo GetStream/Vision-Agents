@@ -1,0 +1,40 @@
+name: _run-tests
+on:
+  workflow_call:
+    inputs:
+      marker:
+        description: 'pytest -m expression (e.g., `not integration` or `integration`)'
+        required: true
+        type: string
+    secrets: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    name: Ruff & mypy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/python-uv-setup
+      - name: Run Ruff
+        run: uv run ruff check .
+      - name: Mypy main
+        run: uv run mypy --install-types --non-interactive -p stream_agents
+      - name: Mypy plugins
+        run: uv run mypy --install-types --non-interactive --explicit-package-bases plugins
+
+  test:
+    name: Test "${{ inputs.marker }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/python-uv-setup
+      - name: Run test
+        run: uv run pytest -n auto -m "${{ inputs.marker }}"
+      - name: Run plugin test
+        run: uv run pytest plugins/*/tests/*.py -n auto -m "${{ inputs.marker }}"
+

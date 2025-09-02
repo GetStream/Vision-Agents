@@ -14,3 +14,4 @@ dependencies = [
 
 [tool.uv.sources]
 "stream-agents" = {path = "../../stream-agents", editable=true}
+"getstream" = {path = "../../../stream-py", editable=true}

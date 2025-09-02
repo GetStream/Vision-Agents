@@ -15,8 +15,6 @@ from getstream.plugins.openai.sts import OpenAIRealtime
 
 
 class OpenAIRealtimeModel:
-
-
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -52,7 +50,7 @@ class OpenAIRealtimeModel:
         self.turn_detection = turn_detection
         self.input_audio_transcription = input_audio_transcription
         self.kwargs = kwargs
-        
+
         # Mark this as an STS model
         self.sts = True
 
@@ -86,9 +84,9 @@ class OpenAIRealtimeModel:
         if self.tools:
             extra_session["tools"] = self.tools
         if self.turn_detection:
-            extra_session["turn_detection"] = self.turn_detection
+            extra_session["turn_detection"] = [self.turn_detection]
         if self.input_audio_transcription:
-            extra_session["input_audio_transcription"] = self.input_audio_transcription
+            extra_session["input_audio_transcription"] = [self.input_audio_transcription]
         if self.kwargs:
             extra_session.update(self.kwargs)
 

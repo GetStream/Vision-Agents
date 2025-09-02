@@ -420,6 +420,17 @@ wheels = [
 ]
 
 [[package]]
+name = "daily-python"
+version = "0.19.8"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/33/21029ca23df6bae54dfa4e8af550fdcc557f053dc924a554cfa0e32b2904/daily_python-0.19.8-cp37-abi3-macosx_10_15_x86_64.whl", hash = "sha256:cccd2eb8b223299408a9f1269a6f1a257d03aba749ef9fa97678010474c2b40b", size = 13692303, upload-time = "2025-08-27T21:24:36.567Z" },
+    { url = "https://files.pythonhosted.org/packages/14/5b/c795498ffe7cbdca72530b71b4102c4ef43c2f528a72f0deb2d4c3af1cac/daily_python-0.19.8-cp37-abi3-macosx_11_0_arm64.whl", hash = "sha256:2c1010d44238d492cee3a6af231ff613899efb54943fe3a191f5b84d6af3330d", size = 12047872, upload-time = "2025-08-27T21:24:39.097Z" },
+    { url = "https://files.pythonhosted.org/packages/94/fd/145d65d6902873f3b44f3da7918d1bbbeeb6228e260e2aeb163311a33aa2/daily_python-0.19.8-cp37-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d2b2fedf92e84b599f18d424ede423116eabffbe01ec6434f478d0b577d8bec3", size = 14111600, upload-time = "2025-08-27T21:24:40.962Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/b6/a0123f00003cee45e488467649e2d69f09058f7815a4c590b4827992d3ef/daily_python-0.19.8-cp37-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:faec30ae64e233384d8bb96ad13de871843bb02f67bf3aa793a6bce9722734c5", size = 14582824, upload-time = "2025-08-27T21:24:43.148Z" },
+]
+
+[[package]]
 name = "dataclasses-json"
 version = "0.6.7"
 source = { registry = "https://pypi.org/simple" }
@@ -616,7 +627,8 @@ wheels = [
 
 [[package]]
 name = "getstream"
-source = { editable = "../../../stream-py" }
+version = "2.3.0a5"
+source = { git = "https://github.com/GetStream/stream-py.git?rev=webrtc#bf3bb43c35e11baeba210afb826a5be029729b43" }
 dependencies = [
     { name = "aiohttp" },
     { name = "aiortc" },
@@ -662,65 +674,6 @@ webrtc = [
     { name = "twirp" },
     { name = "websocket-client" },
     { name = "websockets" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.11.16" },
-    { name = "aiortc", specifier = ">=1.13.0" },
-    { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.10.1" },
-    { name = "cartesia", specifier = ">=2.0.5" },
-    { name = "dataclasses-json", specifier = ">=0.6.0,<0.7" },
-    { name = "deepgram-sdk", specifier = ">=4.7.0" },
-    { name = "elevenlabs", specifier = ">=2.8.0" },
-    { name = "fal-client", specifier = ">=0.7.0" },
-    { name = "google-genai", specifier = ">=1.30.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "marshmallow", specifier = ">=3.21.0,<4" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "numpy", marker = "extra == 'webrtc'", specifier = ">=2.2.6,<2.3" },
-    { name = "openai", extras = ["realtime"], marker = "extra == 'openai-realtime'", specifier = ">=1.93.0" },
-    { name = "ping3", specifier = ">=4.0.8" },
-    { name = "protobuf", specifier = ">=6.31.1" },
-    { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=4.25.1" },
-    { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "pydantic-settings", specifier = ">=2.9.1" },
-    { name = "pyee", marker = "extra == 'webrtc'", specifier = ">=13.0.0" },
-    { name = "pyjwt", specifier = ">=2.8.0,<3" },
-    { name = "pytest-timeout", specifier = ">=2.3.1" },
-    { name = "python-dateutil", specifier = ">=2.8.2" },
-    { name = "python-dateutil", marker = "extra == 'webrtc'", specifier = ">=2.8.2" },
-    { name = "scipy", specifier = ">=1.15.3" },
-    { name = "scipy", marker = "extra == 'webrtc'", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "soundfile", marker = "extra == 'webrtc'", specifier = ">=0.13.1" },
-    { name = "structlog", specifier = ">=23.3.0" },
-    { name = "structlog", marker = "extra == 'webrtc'", specifier = "<24" },
-    { name = "tenacity", specifier = ">=9.1.2" },
-    { name = "torch", specifier = ">=2.7.1" },
-    { name = "torch", marker = "extra == 'webrtc'", specifier = ">=2.7.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
-    { name = "torchaudio", marker = "extra == 'webrtc'", specifier = ">=2.7.1" },
-    { name = "twirp", specifier = ">=0.0.7" },
-    { name = "twirp", marker = "extra == 'webrtc'", specifier = ">=0.0.7" },
-    { name = "websocket-client", specifier = ">=1.8.0" },
-    { name = "websocket-client", marker = "extra == 'webrtc'", specifier = ">=1.8.0" },
-    { name = "websockets", specifier = ">=15.0.1" },
-    { name = "websockets", marker = "extra == 'webrtc'", specifier = ">=15.0.1,<16" },
-]
-provides-extras = ["openai-realtime", "webrtc"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "grpcio-tools", specifier = ">=1.73.1" },
-    { name = "mypy-protobuf", specifier = "==3.5.0" },
-    { name = "pre-commit", specifier = ">=4.2.0" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "python-dateutil", specifier = ">=2.8.2,<3" },
-    { name = "python-dotenv", specifier = ">=1.1.1,<2" },
-    { name = "ruff", specifier = ">=0.12.1" },
 ]
 
 [[package]]
@@ -1936,7 +1889,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["webrtc"], editable = "../../../stream-py" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "stream-agents", editable = "../../stream-agents" },
 ]
@@ -1979,12 +1932,21 @@ wheels = [
 ]
 
 [[package]]
+name = "stratz"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/45/cb417952940c71c78546b89e7959234de3507e69677b2f4895edeb91aae7/stratz-1.0.1.tar.gz", hash = "sha256:161f21d0ced966a82e8c0d2dec207db34763ec0c1d7d38c76b60af2e915daeae", size = 2383, upload-time = "2021-11-17T18:41:01.589Z" }
+
+[[package]]
 name = "stream-agents"
-version = "0.1.0"
 source = { editable = "../../stream-agents" }
 dependencies = [
     { name = "aiortc" },
     { name = "click" },
+    { name = "daily-python" },
     { name = "fal-client" },
     { name = "getstream", extra = ["webrtc"] },
     { name = "getstream-plugins-deepgram" },
@@ -1999,6 +1961,7 @@ dependencies = [
     { name = "pytest-asyncio" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "stratz" },
     { name = "ultralytics" },
     { name = "websockets" },
 ]
@@ -2007,8 +1970,9 @@ dependencies = [
 requires-dist = [
     { name = "aiortc", specifier = ">=1.13.0" },
     { name = "click", specifier = ">=8.0.0" },
+    { name = "daily-python", specifier = ">=0.19.8" },
     { name = "fal-client", specifier = ">=0.6.1" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=webrtc" },
     { name = "getstream-plugins-deepgram", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", specifier = ">=0.1.0" },
     { name = "google-genai", specifier = ">=0.3.0" },
@@ -2024,6 +1988,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruff", specifier = ">=0.12.8" },
     { name = "ruff", marker = "extra == 'dev'" },
+    { name = "stratz", specifier = ">=1.0.0" },
     { name = "stream-agents-plugin-xai", marker = "extra == 'xai'", editable = "../../plugins/xai" },
     { name = "ultralytics", specifier = ">=8.3.0" },
     { name = "websockets", specifier = ">=12.0" },

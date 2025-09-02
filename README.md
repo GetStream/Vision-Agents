@@ -2,10 +2,10 @@
 
 Video/Vision AI agents on [Stream's edge network](https://getstream.io/video/).
 
--  **Low Latency**: Quickly join (500ms) and fast audio latency (30ms)
 -  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with realtime models
+-  **Low Latency**: Quickly join (500ms) and fast audio latency (30ms)
 -  **Open**: Built by Stream, but use any video edge network that you like
--  **Video / Voice & Chat**: Conversation history, turn keeping in addition to video AI
+-  **Voice & Chat**: Conversation history and turn keeping in addition to video AI
 
 Open Agent library. Goal is to support most of our video/audio competitors. (See adding support section)
 SDKs for React, Android, iOS, Flutter, React, React Native and Unity.
@@ -43,6 +43,24 @@ Demo video
 
 Demo video
 
+## OpenAI Proxy mode vs Stream agents
+
+** OpenAI Proxy mode **:
+
+For use cases that only require you to connect openAI & Stream you can consider
+https://getstream.io/video/voice-agents/
+This is a direct proxy written in Go and maintained by Stream. 
+You can use it with any programming language/ SDK.
+
+Benefits:
+
+* Hosted
+* Faster/lowest latency
+* All programming languages
+
+** Stream agents **
+
+This python framework gives you full control. 
 
 ## 📦 Installation
 
@@ -258,8 +276,15 @@ Avoid using Union types or complicated composite types.
 Keep typing simple. Use the PcmAudio type instead of bytes when passing around audio.
 This prevents mistakes related to different audio formats. 
 
+### Testing
 
-## Observability
+Many of the underlying APIs change daily. To ensure things work we keep 2 sets of tests. Integration tests and unit tests.
+Integration tests run once a day to verify that changes to underlying APIs didn't break the framework. Some testing guidelines
+
+- Every plugin needs an integration test
+- Limit usage of response capturing style testing. (since they diverge from reality)
+
+### Observability
 
 - Traces and metrics go to Prometheus and OpenTelemetry
 - Metrics on performance of TTS, STT, LLM, Turn detection and connection to realtime edge.

@@ -5,7 +5,6 @@ from contextlib import nullcontext
 from typing import Optional, List, Any
 from uuid import uuid4
 
-from aiohttp import ClientSession
 from aiortc import VideoStreamTrack
 from openai.types.responses import EasyInputMessageParam, ResponseInputItemParam
 
@@ -35,9 +34,11 @@ from getstream.video.rtc.tracks import (
 from .conversation import Conversation
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
+from typing import TYPE_CHECKING
 
 
-
+if TYPE_CHECKING:
+    from .agent_session import AgentSessionContextManager
 
 class Agent:
     def __init__(
@@ -52,7 +53,7 @@ class Agent:
         turn_detection: Optional[BaseTurnDetector] = None,
         # the agent's user info
         agent_user: Optional[UserRequest] = None,
-        # for video test123. gather data at an interval
+        # for video gather data at an interval
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
@@ -85,80 +86,82 @@ class Agent:
         self.processors = processors or []
         self.queue = ReplyQueue(self)
 
+        # Initialize state variables
+        self._is_running: bool = False
+        self._current_frame = None
+        self._interval_task = None
+        self._callback_executed = False
+        self._connection: Optional[rtc.RTCConnection] = None
+        self._audio_track: Optional[audio_track.AudioStreamTrack] = None
+        self._video_track: Optional[VideoStreamTrack] = None
+
         # validation time
-        self.validate_configuration()
+        self._validate_configuration()
 
-        self.prepare_rtc()
-        self.setup_stt()
-        self.setup_turn_detection()
+        self._prepare_rtc()
+        self._setup_stt()
+        self._setup_turn_detection()
 
-    def setup_turn_detection(self):
-        if self.turn_detection:
-            self.logger.info("🎙️ Setting up turn detection listeners")
-            self.turn_detection.on(TurnEvent.TURN_STARTED.value, self._on_turn_started)
-            self.turn_detection.on(TurnEvent.TURN_ENDED.value, self._on_turn_ended)
-            self.turn_detection.start()
-
-    def setup_stt(self):
-        if self.stt:
-            self.logger.info("🎙️ Setting up STT event listeners")
-            self.stt.on("transcript", self._on_transcript)
-            self.stt.on("partial_transcript", self._on_partial_transcript)
-            self.stt.on("error", self._on_stt_error)
-            self._stt_setup = True
-        else:
-            self._stt_setup = False
-
-    async def say(self, text):
-        await self.queue.say_text(self, text)
-
-    async def play_audio(self, pcm):
-        await self.queue.send_audio(pcm)
-
-    async def create_response(self, input: List[ResponseInputItemParam] | str, participant: Participant = None):
-
-        #TODO: gather all processor state
+    async def create_response(
+        self,
+        input: List[ResponseInputItemParam] | str,
+        participant: Participant = None,
+        use_processor_input: bool = True,
+    ):
+        # gather all processor state
+        processor_inputs = []
+        if use_processor_input:
+            processor_inputs = self.processor_inputs()
 
         # standardize on input
         if isinstance(input, str):
-            role = "system"
             if participant is not None:
-                role = "user"
-            input = [EasyInputMessageParam(content=input, role=role, type="text")]
+                input = [EasyInputMessageParam(content=input, role="user", type="message")]
+            else:
+                input = [EasyInputMessageParam(content=input, role="system", type="message")]
 
         logging.info("participant in create response is %s", participant)
         if self.conversation:
             for i in input:
-
                 if participant is not None:
                     user_id = participant.user_id
                 else:
-                    if i["role"] == "assistant":
+                    if i.get("role") == "assistant":
                         user_id = self.agent_user.id
                     else:
-                        #
                         user_id = self.agent_user.id
 
-
-
                 if i["type"] == "message":
-                    self.conversation.add_message(i["content"], user_id)
+                    content = i["content"]
+                    if isinstance(content, str):
+                        self.conversation.add_message(content, user_id)
+                    else:
+                        # Convert complex content to string representation
+                        self.conversation.add_message(str(content), user_id)
 
-        # TODO: support list input here
-        llm_response = await self.llm.generate(input)
-        # TODO: Route through the queue
-        # Either resumse, pause, interrupt
-        await self.queue.resume(
-            input[0]["content"]
-        )  # TODO: how does this get access to context/conversation?
+        input = input + processor_inputs
+        # TODO: this returns text, doesn't seem right
+        if self.llm is not None:
+            llm_response = await self.llm.generate(input)
+        else:
+            llm_response = "No LLM configured"
+        await self.queue.resume(llm_response)
 
-    def get_subscription_config(self):
-        return TrackSubscriptionConfig(
-            track_types=[
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_AUDIO,
-            ]
-        )
+    def processor_inputs(self) -> List[ResponseInputItemParam]:
+        """
+        processor_inputs gets the inputs for the LLM from all processors
+        this is how you handle things like:
+        - input from APIs. game state, player stats, etc
+        - roboflow/yolo style image enrichment
+        By default we call processor.input(). if you need something more advanced you can gather info with
+        processor.state() and create a combined llm input
+        """
+        process_inputs = []
+        for processor in self.processors:
+            state = processor.input()
+            process_inputs.append(state)
+
+        return process_inputs
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
@@ -187,96 +190,115 @@ class Agent:
         else:
             self.logger.info("🎤 Using traditional STT/TTS mode")
 
-        try:
-            stsContextManager = None
+        stsContextManager = None
+        if self.sts_mode and self.llm is not None:
+            stsContextManager = await self.llm.connect(call, self.agent_user.id)
+
+        # Traditional mode - use WebRTC connection
+        # Configure subscription for audio and video
+        subscription_config = SubscriptionConfig(
+            default=self._get_subscription_config()
+        )
+
+        async with (
+            await rtc.join(
+                call, self.agent_user.id, subscription_config=subscription_config
+            ) as connection,
+            stsContextManager or nullcontext() as stsConnection,
+        ):
+            self._connection = connection
+            self._sts_connection = stsConnection
+            self._is_running = True
+
+            self.logger.info(f"🤖 Agent joined call: {call.id}")
+
+            # Set up audio and video tracks together to avoid SDP issues
+            audio_track = self._audio_track if self.publish_audio else None
+            video_track = self._video_track if self.publish_video else None
+
+            if audio_track or video_track:
+                await connection.add_tracks(audio=audio_track, video=video_track)
+                if audio_track:
+                    self.logger.debug("🤖 Agent ready to speak")
+                if video_track:
+                    self.logger.debug("🎥 Agent ready to publish video")
+
+            # Set up STS audio forwarding if in STS mode
+            if self.sts_mode and self._sts_connection:
+                self.logger.info("🎥 STS audio. Forward from openAI to Stream")
+                await self._setup_sts_audio_forwarding(stsConnection, connection)
+
+            # Set up event handlers for audio processing
+            await self._listen_to_audio_and_video()
+
+            # listen to what the realtime model says
             if self.sts_mode:
-                stsContextManager = await self.llm.connect(call, self.agent_user.id)
 
-            # Traditional mode - use WebRTC connection
-            # Configure subscription for audio and video
-            subscription_config = SubscriptionConfig(
-                default=self.get_subscription_config()
-            )
-
-            async with (
-                await rtc.join(
-                    call, self.agent_user.id, subscription_config=subscription_config
-                ) as connection,
-                stsContextManager or nullcontext() as stsConnection,
-            ):
-                self._connection = connection
-                self._sts_connection = stsConnection
-                self._is_running = True
-
-                self.logger.info(f"🤖 Agent joined call: {call.id}")
-
-                # Set up audio and video tracks together to avoid SDP issues
-                audio_track = self._audio_track if self.publish_audio else None
-                video_track = self._video_track if self.publish_video else None
-
-                if audio_track or video_track:
-                    await connection.add_tracks(audio=audio_track, video=video_track)
-                    if audio_track:
-                        self.logger.debug("🤖 Agent ready to speak")
-                    if video_track:
-                        self.logger.debug("🎥 Agent ready to publish video")
-
-                # Set up STS audio forwarding if in STS mode
-                if self.sts_mode and self._sts_connection:
-                    self.logger.info("🎥 STS audio. Forward from openAI to Stream")
-                    await self._setup_sts_audio_forwarding(stsConnection, connection)
-
-                # Set up event handlers for audio processing
-                await self.listen_to_audio_and_video()
-
-                # listen to what the realtime model says
-                if self.sts_mode:
-
-                    async def process_sts_events():
-                        try:
-                            # TODO: some method to receive audio
+                async def process_sts_events():
+                    try:
+                        # TODO: some method to receive audio
+                        if stsConnection is not None:
                             async for event in stsConnection:
                                 # also see https://platform.openai.com/docs/api-reference/realtime_server_events/input_audio_buffer/speech_stopped
                                 # TODO: implement https://github.com/openai/openai-python/blob/main/examples/realtime/push_to_talk_app.py#L167
                                 self.logger.debug(f"🔔 STS Event: {event.type}")
                                 # Handle any STS-specific events here if needed
-                        except Exception as e:
-                            self.logger.error(f"❌ Error processing STS events: {e}")
-                            self.logger.error(traceback.format_exc())
+                    except Exception as e:
+                        self.logger.error(f"❌ Error processing STS events: {e}")
+                        self.logger.error(traceback.format_exc())
 
-                    # Start STS event processing in background
-                    sts_task = asyncio.create_task(process_sts_events())
+                # Start STS event processing in background
+                asyncio.create_task(process_sts_events())
 
-                # Send initial greeting, if the LLM is configured to do so
-                if self.llm:
-                    self.llm.conversation_started(self)
+            # Send initial greeting, if the LLM is configured to do so
+            if self.llm and hasattr(self.llm, 'conversation_started'):
+                await self.llm.conversation_started(self)
 
-                # Keep the agent running and listening
-                self.logger.info("🎧 Agent is active - press Ctrl+C to stop")
-                try:
-                    # Wait for the connection to stay alive
-                    await connection.wait()
-                except Exception as e:
-                    self.logger.error(f"❌ Error while waiting for connection: {e}")
-                    self.logger.error(traceback.format_exc())
-
-                from .agent_session import AgentSessionContextManager
-
-                return AgentSessionContextManager(self)
-
-        except KeyboardInterrupt:
-            self.logger.info("👋 Shutting down agent...")
-        except Exception as e:
-            self.logger.error(f"❌ Error during agent operation: {e}")
-            self.logger.error(traceback.format_exc())
-        finally:
-            # Use the comprehensive cleanup method
+            # Keep the agent running and listening
+            self.logger.info("🎧 Agent is active - press Ctrl+C to stop")
             try:
-                await self.close()
+                # Wait for the connection to stay alive
+                await connection.wait()
             except Exception as e:
-                self.logger.debug(f"Error during cleanup: {e}")
+                self.logger.error(f"❌ Error while waiting for connection: {e}")
+                self.logger.error(traceback.format_exc())
 
-    async def listen_to_audio_and_video(self) -> None:
+            from .agent_session import AgentSessionContextManager
+
+            return AgentSessionContextManager(self)
+
+    async def say(self, text):
+        await self.queue.say_text(text)
+
+    async def play_audio(self, pcm):
+        await self.queue.send_audio(pcm)
+
+    def _setup_turn_detection(self):
+        if self.turn_detection:
+            self.logger.info("🎙️ Setting up turn detection listeners")
+            self.turn_detection.on(TurnEvent.TURN_STARTED.value, self._on_turn_started)
+            self.turn_detection.on(TurnEvent.TURN_ENDED.value, self._on_turn_ended)
+            self.turn_detection.start()
+
+    def _setup_stt(self):
+        if self.stt:
+            self.logger.info("🎙️ Setting up STT event listeners")
+            self.stt.on("transcript", self._on_transcript)
+            self.stt.on("partial_transcript", self._on_partial_transcript)
+            self.stt.on("error", self._on_stt_error)
+            self._stt_setup = True
+        else:
+            self._stt_setup = False
+
+    def _get_subscription_config(self):
+        return TrackSubscriptionConfig(
+            track_types=[
+                TrackType.TRACK_TYPE_VIDEO,
+                TrackType.TRACK_TYPE_AUDIO,
+            ]
+        )
+
+    async def _listen_to_audio_and_video(self) -> None:
         """Set up event handlers for the connection."""
         if not self._connection:
             self.logger.error("❌ No active connections found")
@@ -303,9 +325,11 @@ class Agent:
         @self._connection.on("audio")
         async def on_audio_received(pcm: PcmData, participant: Participant):
             if not participant:
-                import pdb;pdb.set_trace()
+                import pdb
 
-            if self.turn_detection:
+                pdb.set_trace()
+
+            if self.turn_detection and hasattr(self.turn_detection, 'process_audio'):
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
             await self.reply_to_audio(pcm, participant)
@@ -358,7 +382,7 @@ class Agent:
                 self.logger.error(f"Error processing audio for processors: {e}")
 
             # when in STS mode call the STS directly
-            if self.sts_mode:
+            if self.sts_mode and self.llm is not None:
                 if hasattr(self.llm, "send_audio"):
                     await self.llm.send_audio(pcm_data, participant)
             else:
@@ -384,6 +408,10 @@ class Agent:
         self.logger.info(f"🎥 Processing VIDEO track: {track_id}")
 
         # Subscribe to the video track
+        if self._connection is None:
+            self.logger.error("❌ No active connection")
+            return
+        
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
         if not track:
             self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
@@ -413,16 +441,10 @@ class Agent:
         # Use the exact same pattern as the working example
         while True:
             try:
-                self.logger.info("📸 Blocking on track.recv")
                 video_frame = await asyncio.wait_for(track.recv(), timeout=5.0)
                 if video_frame:
-                    self.logger.info(
-                        f"📸 Video frame received: {video_frame.time} - {video_frame.format}"
-                    )
-
                     if hasImageProcessers:
                         img = video_frame.to_image()
-                        self.logger.info(f"📸 Converted to PIL Image: {img.size}")
 
                         for processor in self.image_processors:
                             try:
@@ -487,7 +509,7 @@ class Agent:
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""
-        print("HEY ERROR", error);
+        print("HEY ERROR", error)
         self.logger.error(f"❌ STT Error: {error}")
 
     async def _process_transcription(
@@ -538,7 +560,7 @@ class Agent:
         """Get processors that can process images."""
         return filter_processors(self.processors, ProcessorType.IMAGE)
 
-    def validate_configuration(self):
+    def _validate_configuration(self):
         """Validate the agent configuration."""
         if self.sts_mode:
             # STS mode - should not have separate STT/TTS
@@ -572,16 +594,8 @@ class Agent:
                     "At least one processing capability (audio or video) is required"
                 )
 
-    def prepare_rtc(self):
-        # Initialize common variables
-        self._current_frame = None
-        self._interval_task = None
-        self._is_running = False
-        self._callback_executed = False
-
-        self._connection: Optional[rtc.RTCConnection] = None
-        self._audio_track: Optional[audio_track.AudioStreamTrack] = None
-        self._video_track: Optional[VideoStreamTrack] = None
+    def _prepare_rtc(self):
+        # Variables are now initialized in __init__
 
         # Set up audio track if TTS is available
         if self.publish_audio:
@@ -610,7 +624,8 @@ class Agent:
                         f"🎵 Forwarding {len(audio_data)} bytes of STS audio to WebRTC"
                     )
                     # Send audio data to the audio track
-                    await self._audio_track.send_audio(audio_data)
+                    if self._audio_track is not None:
+                        await self._audio_track.send_audio(audio_data)
                     self.logger.debug("✅ Audio forwarded successfully")
                 except Exception as e:
                     self.logger.error(f"Error forwarding STS audio: {e}")

@@ -1,0 +1,29 @@
+name: Python + uv setup
+description: Checkout, set up uv/Python, and sync dev deps
+inputs:
+  python-version:
+    description: Python version to install
+    required: false
+    default: "3.12"
+  sync-flags:
+    description: Extra flags for uv sync (e.g., --all-extras --dev)
+    required: false
+    default: "--all-extras --dev"
+  working-directory:
+    description: Directory to run in
+    required: false
+    default: "."
+runs:
+  using: composite
+  steps:
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: "latest"
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
+
+    - name: Install the project
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: uv sync --all-extras --dev

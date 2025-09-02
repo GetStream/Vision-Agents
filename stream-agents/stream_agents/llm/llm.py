@@ -1,6 +1,8 @@
-
 """
 Base LLM classes with function calling support.
+
+Requirements
+- support image, text, functools etc as input
 
 This module provides the base classes for LLM implementations with
 automatic function calling capabilities.
@@ -9,6 +11,7 @@ automatic function calling capabilities.
 from typing import List, Dict, Any, Optional, Union, AsyncIterator
 import logging
 from .function_registry import FunctionRegistry
+
 
 
 class LLM:
@@ -61,6 +64,7 @@ class LLM:
         return self.function_registry.get_function_info(name)
 
 
+
 class RealtimeLLM(LLM):
     """
     Base class for real-time LLM implementations (Speech-to-Speech).
@@ -88,3 +92,5 @@ class RealtimeLLM(LLM):
         """Attach outgoing audio track for responses."""
         raise NotImplementedError("Subclasses must implement attach_outgoing_audio")
 
+    def attach_outgoing_audio(self, track):
+        pass

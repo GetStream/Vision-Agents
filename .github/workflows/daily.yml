@@ -1,0 +1,13 @@
+name: Integration (daily)
+on:
+  schedule:
+    # Runs at 03:00 UTC daily — adjust as needed
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  integration:
+    uses: ./.github/workflows/run_tests.yml
+    with:
+      marker: 'integration'
+    secrets: inherit

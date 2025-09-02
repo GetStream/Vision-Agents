@@ -2,29 +2,34 @@ from typing import Optional, List
 from getstream.chat.client import ChatClient
 from getstream.models import Message, MessageRequest, ChannelResponse, MessageResponse
 
+
 class Conversation:
-    '''
+    """
     Manages conversation state and messaging for an agent.
 
     TODO:
     - stream-py support async
     - stream-py have a method to get a channel for a call
     - say text needs more data (type and author)
-    '''
+    """
+
     messages: List[Message]
     last_message: Optional[MessageResponse]
     channel: ChannelResponse
     chat_client: ChatClient
 
-
-    def __init__(self, messages: List[Message], channel: ChannelResponse, chat_client: ChatClient):
+    def __init__(
+        self, messages: List[Message], channel: ChannelResponse, chat_client: ChatClient
+    ):
         self.messages = messages
         self.channel = channel
         self.chat_client = chat_client
         self.last_message = None
 
     def _send_message(self, message):
-        response = self.chat_client.send_message(self.channel.type, self.channel.id, message)
+        response = self.chat_client.send_message(
+            self.channel.type, self.channel.id, message
+        )
         return response
 
     def add_message(self, input_text: str, user_id: str):
@@ -40,7 +45,7 @@ class Conversation:
             self.chat_client.update_message_partial(
                 self.last_message.id,
                 user_id=self.last_message.user.id,
-                set={"text": text, "generating": False}
+                set={"text": text, "generating": False},
             )
             self.last_message = None
 
@@ -56,7 +61,7 @@ class Conversation:
             self.chat_client.update_message_partial(
                 self.last_message.id,
                 user_id=self.last_message.user.id,
-                set={"text": self.last_message.text, "generating": True}
+                set={"text": self.last_message.text, "generating": True},
             )
 
     def partial_update_message(self, text: str, user):

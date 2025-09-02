@@ -1658,6 +1658,19 @@ wheels = [
 ]
 
 [[package]]
+name = "python-opendota"
+version = "3.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e1/ec/251ee5b93c2bc12962098052db6a0d43ef41e7281b5f52a6ca05ebef8c57/python_opendota-3.0.0.tar.gz", hash = "sha256:ee06728d4f478c61fac41076de30cb0fc936a67a157ed715ba274cda29dff3bc", size = 212425, upload-time = "2023-02-04T13:31:14.776Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/f3/a0a3fd85fac82a9451948d009bb6f1cac64ada7045ed7ad923b190e6b25a/python_opendota-3.0.0-py3-none-any.whl", hash = "sha256:0daec864d2a7087874e537ab572d4030fe3afa17b46472e52657964d60e80309", size = 463794, upload-time = "2023-02-04T13:31:12.726Z" },
+]
+
+[[package]]
 name = "pytz"
 version = "2025.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1831,6 +1844,7 @@ dependencies = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "python-dotenv" },
+    { name = "python-opendota" },
     { name = "ruff" },
     { name = "ultralytics" },
     { name = "websockets" },
@@ -1847,7 +1861,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=0.3.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
-    { name = "openai", specifier = ">=1.99.8" },
+    { name = "openai", specifier = "==1.101.0" },
     { name = "opencv-python", specifier = ">=4.8.0" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pre-commit", specifier = ">=4.3.0" },
@@ -1855,6 +1869,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", specifier = ">=1.1.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "python-opendota", specifier = ">=3.0.0" },
     { name = "ruff", specifier = ">=0.12.8" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "stream-agents-plugin-xai", marker = "extra == 'xai'", editable = "../../plugins/xai" },
@@ -1871,6 +1886,7 @@ dependencies = [
     { name = "av" },
     { name = "getstream", extra = ["webrtc"] },
     { name = "python-dotenv" },
+    { name = "python-opendota" },
     { name = "stream-agents" },
     { name = "ultralytics" },
 ]
@@ -1880,6 +1896,7 @@ requires-dist = [
     { name = "av", specifier = ">=14.4.0" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "python-opendota", specifier = ">=3.0.0" },
     { name = "stream-agents", editable = "../../stream-agents" },
     { name = "ultralytics", specifier = ">=8.3.184" },
 ]
@@ -2112,11 +2129,11 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.5.0"
+version = "1.26.20"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/e8/6ff5e6bc22095cfc59b6ea711b687e2b7ed4bdb373f7eeec370a97d7392f/urllib3-1.26.20.tar.gz", hash = "sha256:40c2dc0c681e47eb8f90e7e27bf6ff7df2e677421fd46756da1161c39ca70d32", size = 307380, upload-time = "2024-08-29T15:43:11.37Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+    { url = "https://files.pythonhosted.org/packages/33/cf/8435d5a7159e2a9c83a95896ed596f68cf798005fe107cc655b5c5c14704/urllib3-1.26.20-py2.py3-none-any.whl", hash = "sha256:0ed14ccfbf1c30a9072c7ca157e4319b70d65f623e91e7b32fadb2853431016e", size = 144225, upload-time = "2024-08-29T15:43:08.921Z" },
 ]
 
 [[package]]

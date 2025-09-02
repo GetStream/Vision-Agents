@@ -73,7 +73,9 @@ class FalTurnDetection(BaseTurnDetector):
 
         # Configure FAL client
         if self.api_key:
-            fal_client.api_key = self.api_key
+            # Set API key via environment or client configuration
+            import os
+            os.environ["FAL_KEY"] = self.api_key
 
         self.logger.info(
             f"Initialized FAL turn detection (buffer: {buffer_duration}s, threshold: {prediction_threshold})"
@@ -168,7 +170,7 @@ class FalTurnDetection(BaseTurnDetector):
 
             try:
                 # Upload to FAL
-                audio_url = await fal_client.upload_file_async(str(temp_file))
+                audio_url = await fal_client.upload_file_async(temp_file)
                 self.logger.debug(
                     f"Uploaded audio file for user {user_id}: {audio_url}"
                 )
@@ -214,9 +216,10 @@ class FalTurnDetection(BaseTurnDetector):
         # Convert samples to bytes if needed
         if isinstance(samples[0], int):
             # Convert int16 samples to bytes
-            audio_bytes = bytearray()
+            audio_bytes_array = bytearray()
             for sample in samples:
-                audio_bytes.extend(sample.to_bytes(2, byteorder="little", signed=True))
+                audio_bytes_array.extend(sample.to_bytes(2, byteorder="little", signed=True))
+            audio_bytes = bytes(audio_bytes_array)
         else:
             audio_bytes = bytes(samples)
 

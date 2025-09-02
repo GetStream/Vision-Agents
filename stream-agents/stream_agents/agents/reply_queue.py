@@ -1,7 +1,3 @@
-
-
-
-
 class ReplyQueue:
     """
     When a user interrupts the LLM, there are a few different behaviours that should be supported.
@@ -21,22 +17,23 @@ class ReplyQueue:
         # TODO: some audio fade
         pass
 
-    async def resume(self, text):
+    async def resume(self, llm_response):
         # Some logic to either refresh (clear old) or simply resume
-        response = await self.agent.llm.generate(text)
-        self.agent.conversation.add_message(response, self.agent.agent_user.id)
+        self.agent.conversation.add_message(llm_response, self.agent.agent_user.id)
 
         # TODO: streaming here to update messages
 
-        await self.say_text(response)
+        await self.say_text(llm_response)
 
     def _clear(self):
         pass
 
     async def say_text(self, text):
         # TODO: Stream and buffer
-        await self.agent.tts.send(text)
+        if self.agent.tts is not None:
+            await self.agent.tts.send(text)
 
     async def send_audio(self, pcm):
         # TODO: stream & buffer
-        await self.agent._audio_track.send_audio(pcm)
+        if self.agent._audio_track is not None:
+            await self.agent._audio_track.send_audio(pcm)

@@ -1962,6 +1962,15 @@ wheels = [
 ]
 
 [[package]]
+name = "stratz"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/45/cb417952940c71c78546b89e7959234de3507e69677b2f4895edeb91aae7/stratz-1.0.1.tar.gz", hash = "sha256:161f21d0ced966a82e8c0d2dec207db34763ec0c1d7d38c76b60af2e915daeae", size = 2383, upload-time = "2021-11-17T18:41:01.589Z" }
+
+[[package]]
 name = "stream-agents"
 version = "0.1.0"
 source = { editable = "../../stream-agents" }
@@ -1982,6 +1991,7 @@ dependencies = [
     { name = "pytest-asyncio" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "stratz" },
     { name = "ultralytics" },
     { name = "websockets" },
 ]
@@ -2007,6 +2017,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruff", specifier = ">=0.12.8" },
     { name = "ruff", marker = "extra == 'dev'" },
+    { name = "stratz", specifier = ">=1.0.0" },
     { name = "stream-agents-plugin-xai", marker = "extra == 'xai'", editable = "../../plugins/xai" },
     { name = "ultralytics", specifier = ">=8.3.0" },
     { name = "websockets", specifier = ">=12.0" },
