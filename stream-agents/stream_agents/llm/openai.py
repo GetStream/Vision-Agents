@@ -403,7 +403,7 @@ class OpenAILLM(LLM):
     async def _handle_function_calls(
         self, 
         tool_calls: List[Any], 
-        messages: List[Dict[str, str]]
+        messages: List[Dict[str, Any]]
     ) -> str:
         """Handle function calls and return results."""
         # Add assistant message with tool calls

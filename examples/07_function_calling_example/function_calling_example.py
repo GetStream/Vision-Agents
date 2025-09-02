@@ -7,9 +7,8 @@ decorators and schemas are automatically inferred from function signatures.
 """
 
 import asyncio
-import logging
 from uuid import uuid4
-from typing import List, Optional
+from typing import List
 from enum import Enum
 
 from dotenv import load_dotenv
@@ -224,7 +223,6 @@ async def main():
     
     # Create Stream client
     client = Stream.from_env()
-    agent_user = client.create_user(name="AI Assistant with Functions")
     
     # Choose which agent to use
     use_gemini = False  # Set to True to use Gemini Live instead

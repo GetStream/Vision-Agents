@@ -8,10 +8,9 @@ for LLM function calling across all providers.
 from __future__ import annotations
 
 import inspect
-import json
 import logging
 from typing import Dict, List, Callable, Any, Optional, Union, get_type_hints, get_origin, get_args
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -110,17 +109,17 @@ class FunctionRegistry:
             return {"type": "string"}  # Default fallback
         
         # Handle direct types
-        if type_hint == str:
+        if type_hint is str:
             return {"type": "string"}
-        elif type_hint == int:
+        elif type_hint is int:
             return {"type": "integer"}
-        elif type_hint == float:
+        elif type_hint is float:
             return {"type": "number"}
-        elif type_hint == bool:
+        elif type_hint is bool:
             return {"type": "boolean"}
-        elif type_hint == list:
+        elif type_hint is list:
             return {"type": "array"}
-        elif type_hint == dict:
+        elif type_hint is dict:
             return {"type": "object"}
         
         # Handle Union types (including Optional)

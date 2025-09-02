@@ -8,7 +8,6 @@ with the Agent class for Speech-to-Speech functionality with native audio mode.
 from __future__ import annotations
 
 import base64
-import logging
 import os
 from typing import Any, Dict, List, Optional
 
@@ -299,24 +298,26 @@ class GeminiLiveConnection:
             )
             
             # Send function result back to Gemini
-            await self.session.send_realtime_input(
-                function_response=types.FunctionResponse(
-                    name=function_name,
-                    response=result
+            if self.session:
+                await self.session.send_realtime_input(
+                    function_response=types.FunctionResponse(
+                        name=function_name,
+                        response=result
+                    )
                 )
-            )
             
             self.logger.info(f"Function {function_name} executed successfully")
             
         except Exception as e:
             self.logger.error(f"Error executing function {function_call.name}: {e}")
             # Send error response back to Gemini
-            await self.session.send_realtime_input(
-                function_response=types.FunctionResponse(
-                    name=function_call.name,
-                    response={"error": str(e)}
+            if self.session:
+                await self.session.send_realtime_input(
+                    function_response=types.FunctionResponse(
+                        name=function_call.name,
+                        response={"error": str(e)}
+                    )
                 )
-            )
 
     @property
     def connection(self):

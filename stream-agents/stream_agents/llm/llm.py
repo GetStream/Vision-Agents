@@ -8,7 +8,7 @@ This module provides the base classes for LLM implementations with
 automatic function calling capabilities.
 """
 
-from typing import List, Dict, Any, Optional, Union, AsyncIterator
+from typing import List, Dict, Any, Optional
 import logging
 from .function_registry import FunctionRegistry
 
@@ -91,6 +91,3 @@ class RealtimeLLM(LLM):
     def attach_outgoing_audio(self, track):
         """Attach outgoing audio track for responses."""
         raise NotImplementedError("Subclasses must implement attach_outgoing_audio")
-
-    def attach_outgoing_audio(self, track):
-        pass

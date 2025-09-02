@@ -6,7 +6,6 @@ This is a minimal example showing how to create a custom agent with function cal
 
 import asyncio
 from uuid import uuid4
-from typing import List, Dict
 
 from dotenv import load_dotenv
 from getstream import Stream
@@ -95,7 +94,6 @@ async def main():
     
     # Create Stream client
     client = Stream.from_env()
-    agent_user = client.create_user(name="Task Assistant")
     
     # Create the custom agent
     agent = SimpleTaskAgent(
