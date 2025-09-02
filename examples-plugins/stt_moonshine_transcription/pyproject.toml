@@ -1,0 +1,17 @@
+[project]
+name = "stt-moonshine-transcription-example"
+version = "0.1.0"
+description = "Example: Real-time Call Transcription with Moonshine STT"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "getstream[webrtc]>=2.3.0a0",
+    "getstream-plugins-moonshine>=0.1.0",
+    "getstream-plugins-silero>=0.1.0",
+    "python-dotenv>=1.1.1",
+    "useful-moonshine-onnx",
+]
+
+[tool.uv.sources]
+useful-moonshine-onnx = { git = "https://github.com/usefulsensors/moonshine.git", subdirectory = "moonshine-onnx" }

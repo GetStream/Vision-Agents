@@ -1,11 +1,14 @@
-
-
+[project]
+name = "stream-agents"
+version = "0.1.0"
+description = "GetStream Agents AI Python SDK - Add AI agents into your video calling applications"
+dependencies = [
+    "getstream[webrtc]==2.3.0a6"
+]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs", "setuptools-scm"]
 build-backend = "hatchling.build"
-
-
 
 [tool.uv.sources]
 stream-agents = { workspace = true }
@@ -27,6 +30,7 @@ dev = [
     "hatch-vcs",
     "hatchling",
 ]
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
