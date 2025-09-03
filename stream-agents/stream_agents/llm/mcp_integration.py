@@ -75,7 +75,6 @@ class MCPIntegration:
                     env=self.config.env or {}
                 )
                 
-                # Connect to server using a simpler approach
                 # We'll create a new connection for each session to avoid context issues
                 self._server_params = server_params
                 self._http_context = None  # Not used for stdio

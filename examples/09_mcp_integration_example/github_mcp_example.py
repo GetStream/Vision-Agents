@@ -20,7 +20,6 @@ This example shows:
 
 import asyncio
 import os
-import tempfile
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -84,12 +83,6 @@ async def setup_github_mcp_server() -> MCPServerConfig:
             "Authorization": f"Bearer {github_token}"
         }
     )
-
-
-
-
-
-
 
 
 async def main():
