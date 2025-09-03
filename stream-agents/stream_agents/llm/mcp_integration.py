@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     from mcp import ClientSession, StdioServerParameters, stdio_client
+    from mcp.client.streamable_http import streamablehttp_client
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -19,6 +20,8 @@ except ImportError:
     class ClientSession:
         pass
     class StdioServerParameters:
+        pass
+    def streamablehttp_client(*args, **kwargs):
         pass
 
 from .types import FunctionDefinition, MCPServerConfig
@@ -42,7 +45,9 @@ class MCPIntegration:
         self._read_stream = None
         self._write_stream = None
         self._stdio_context = None
+        self._http_context = None
         self._session_context = None
+        self._get_session_id = None
     
     async def connect(self) -> None:
         """Connect to the MCP server and discover available tools."""
@@ -50,19 +55,33 @@ class MCPIntegration:
             return
         
         try:
-            # Create server parameters
-            server_params = StdioServerParameters(
-                command=self.config.command,
-                args=self.config.args or [],
-                env=self.config.env or {}
-            )
-            
-            # Connect to server using a simpler approach
-            # We'll create a new connection for each session to avoid context issues
-            self._server_params = server_params
-            
-            # Create a new connection for this session
-            await self._create_session()
+            # Check if this is an HTTP-based MCP server
+            if self.config.command == "http" and self.config.args:
+                # HTTP-based MCP server
+                url = self.config.args[0]
+                headers = self.config.env or {}
+                
+                # Create HTTP client context
+                self._http_context = streamablehttp_client(url, headers=headers)
+                self._server_params = None  # Not used for HTTP
+                
+                # Create a new connection for this session
+                await self._create_session()
+            else:
+                # Stdio-based MCP server 
+                server_params = StdioServerParameters(
+                    command=self.config.command,
+                    args=self.config.args or [],
+                    env=self.config.env or {}
+                )
+                
+                # Connect to server using a simpler approach
+                # We'll create a new connection for each session to avoid context issues
+                self._server_params = server_params
+                self._http_context = None  # Not used for stdio
+                
+                # Create a new connection for this session
+                await self._create_session()
             
             self._connected = True
             self.logger.info(f"Connected to MCP server '{self.config.name}' with {len(self.tools)} tools")
@@ -76,9 +95,15 @@ class MCPIntegration:
         if hasattr(self, '_session_context') and self._session_context:
             await self._cleanup_session()
         
-        # Create a new connection
-        self._stdio_context = stdio_client(self._server_params)
-        self._read_stream, self._write_stream = await self._stdio_context.__aenter__()
+        if self._http_context:
+            # HTTP-based MCP server
+            # streamablehttp_client returns (read_stream, write_stream, get_session_id_callback)
+            self._read_stream, self._write_stream, self._get_session_id = await self._http_context.__aenter__()
+            self._stdio_context = None  # Not used for HTTP
+        else:
+            # Stdio-based MCP server
+            self._stdio_context = stdio_client(self._server_params)
+            self._read_stream, self._write_stream = await self._stdio_context.__aenter__()
         
         # Create a new session
         self._session_context = ClientSession(self._read_stream, self._write_stream)
@@ -106,6 +131,13 @@ class MCPIntegration:
             except Exception as e:
                 self.logger.warning(f"Error closing stdio context: {e}")
             self._stdio_context = None
+        
+        if self._http_context:
+            try:
+                await self._http_context.__aexit__(None, None, None)
+            except Exception as e:
+                self.logger.warning(f"Error closing HTTP context: {e}")
+            self._http_context = None
             
         self._read_stream = None
         self._write_stream = None
