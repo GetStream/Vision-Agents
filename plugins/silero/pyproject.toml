@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "getstream[webrtc]",
+    "getstream[webrtc]==2.3.0a5",
     "getstream-plugins-common",
     "silero>=0.4.1",
     "torch>=2.7.1",
@@ -21,7 +21,6 @@ dependencies = [
 packages = ["."]
 
 [tool.uv.sources]
-getstream = { workspace = true }
 getstream-plugins-common = { workspace = true }
 
 [dependency-groups]
@@ -32,20 +31,3 @@ dev = [
     "torchaudio>=2.7.1",
     "scipy>=1.15.3,<1.16",
 ]
-
-[tool.uv.workspace]
-members = [
-    "getstream/plugins/*",
-    "examples/test",
-]
- exclude = [
-    "**/__pycache__",
-    "**/tests/__pycache__",
-    "**/*.pyc",
-    "**/dist/",
-    "**/*.egg-info/",
-    "**/.pytest_cache/",
-    "**/.mypy_cache/",
-    "**/.ruff_cache/",
-    "examples/",
- ]

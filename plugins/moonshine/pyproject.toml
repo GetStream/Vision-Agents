@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "getstream[webrtc]>=2.3.0a4",
+    "getstream[webrtc]==2.3.0a5",
     "getstream-plugins-common>=0.1.1",
     "onnxruntime>=1.22.0",
     "numpy>=2.2.6,<2.3",
@@ -24,7 +24,6 @@ packages = ["."]
 allow-direct-references = true
 
 [tool.uv.sources]
-getstream = { workspace = true }
 getstream-plugins-common = { workspace = true }
 
 [dependency-groups]

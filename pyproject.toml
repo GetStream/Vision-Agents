@@ -24,7 +24,19 @@ stream-agents = { workspace = true }
 stream-agents-plugin-xai = { workspace = true }
 
 [tool.uv.workspace]
-members = ["plugins/xai", "plugins/anthropic"]
+members = ["plugins/*"]
+exclude = [
+"**/__pycache__",
+"**/tests/__pycache__",
+"**/*.pyc",
+"**/dist/",
+"**/*.egg-info/",
+"**/.pytest_cache/",
+"**/.mypy_cache/",
+"**/.ruff_cache/",
+"examples/",
+"**/test*",
+]
 
 [dependency-groups]
 dev = [

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "getstream[webrtc]",
+    "getstream[webrtc]==2.3.0a5",
     "getstream-plugins-common",
     "cartesia>=2.0.5",
 ]
@@ -19,7 +19,6 @@ dependencies = [
 packages = ["."]
 
 [tool.uv.sources]
-getstream = { workspace = true }
 getstream-plugins-common = { workspace = true }
 
 [dependency-groups]

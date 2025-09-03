@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "getstream[webrtc]",
+    "getstream[webrtc]==2.3.0a5",
     "getstream-plugins-common",
     "kokoro>=0.9.4",
     "misaki[en]>=0.9.4",
@@ -21,7 +21,6 @@ dependencies = [
 packages = ["."]
 
 [tool.uv.sources]
-getstream = { workspace = true }
 getstream-plugins-common = { workspace = true }
 
 [dependency-groups]

@@ -10,14 +10,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "getstream[webrtc]>=2.3.0a6",
+    "getstream[webrtc]==2.3.0a5",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
-
-[tool.uv.sources]
-getstream = { workspace = true }
 
 [dependency-groups]
 dev = [
