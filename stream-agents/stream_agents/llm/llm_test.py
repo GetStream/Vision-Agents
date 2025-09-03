@@ -27,7 +27,7 @@ from anthropic import AsyncAnthropic
 from anthropic.types import Message
 from openai import OpenAI
 
-from stream_agents.llm.llm import ClaudeLLM, LLMResponse
+from stream_agents.llm.llm import ClaudeLLM, OpenAILLM, LLMResponse
 
 
 # Load environment variables at module level
@@ -40,31 +40,36 @@ class TestClaudeLLM:
     def test_init_with_client(self):
         """Test ClaudeLLM initialization with a provided client."""
         custom_client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", "test-key"))
-        llm = ClaudeLLM(client=custom_client)
+        llm = ClaudeLLM(model="claude-3-5-sonnet-20241022", client=custom_client)
         assert llm.client == custom_client
+        assert llm.model == "claude-3-5-sonnet-20241022"
     
     def test_init_with_no_arguments(self):
         """Test ClaudeLLM initialization with no arguments (should use env vars)."""
         # This test assumes ANTHROPIC_API_KEY is set in environment or .env file
         # If not set, AsyncAnthropic will still initialize but API calls will fail
-        llm = ClaudeLLM()
+        llm = ClaudeLLM(model="claude-3-5-sonnet-20241022")
         assert isinstance(llm.client, AsyncAnthropic)
-
-        OpenAI(api_key=os.getenv("ANTHROPIC_API_KEY", "test-key")).responses.create()
+        assert llm.model == "claude-3-5-sonnet-20241022"
     
     def test_init_with_api_key(self):
         """Test ClaudeLLM initialization with an API key."""
         test_api_key = os.getenv("ANTHROPIC_API_KEY", "test-api-key-123")
-        llm = ClaudeLLM(api_key=test_api_key)
+        llm = ClaudeLLM(model="claude-3-5-sonnet-20241022", api_key=test_api_key)
         assert isinstance(llm.client, AsyncAnthropic)
+        assert llm.model == "claude-3-5-sonnet-20241022"
     
     @pytest.mark.integration
-    async def test_create_response_say_hi(self):
-        """Test create_response method with 'say hi' input using real API."""
-        llm = ClaudeLLM()
+    async def test_create_message_say_hi(self):
+        """Test create_message method with 'say hi' input using real API."""
+        llm = ClaudeLLM(model="claude-3-5-sonnet-20241022")
         
-        # Call create_response with real API
-        response = await llm.create_response("say hi")
+        # Call create_message with real API - Claude requires messages and max_tokens
+        response = await llm.create_message(
+            messages=[{"role": "user", "content": "say hi"}],
+            max_tokens=1000,
+            model="claude-3-5-sonnet-20241022"
+        )
         
         # Assertions
         assert isinstance(response, LLMResponse)
@@ -114,3 +119,105 @@ class TestClaudeLLM:
         response_text = response.original.content[0].text.lower()
         assert response_text  # Should have some text
         print(f"Image analysis: {response.original.content[0].text[:200]}...")
+
+
+class TestOpenAILLM:
+    """Test suite for OpenAILLM class with real API calls."""
+    
+    def test_init_with_client(self):
+        """Test OpenAILLM initialization with a provided client."""
+        custom_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "test-key"))
+        llm = OpenAILLM(model="gpt-4o", client=custom_client)
+        assert llm.client == custom_client
+        assert llm.model == "gpt-4o"
+    
+    def test_init_with_no_arguments(self):
+        """Test OpenAILLM initialization with no arguments (should use env vars)."""
+        # This test assumes OPENAI_API_KEY is set in environment or .env file
+        # If not set, OpenAI will still initialize but API calls will fail
+        llm = OpenAILLM(model="gpt-4o")
+        assert isinstance(llm.client, OpenAI)
+        assert llm.model == "gpt-4o"
+    
+    def test_init_with_api_key(self):
+        """Test OpenAILLM initialization with an API key."""
+        test_api_key = os.getenv("OPENAI_API_KEY", "test-api-key-123")
+        llm = OpenAILLM(model="gpt-4o", api_key=test_api_key)
+        assert isinstance(llm.client, OpenAI)
+        assert llm.model == "gpt-4o"
+    
+    @pytest.mark.integration
+    async def test_create_response_say_hi(self):
+        """Test create_response method with 'say hi' input using real API."""
+        llm = OpenAILLM(model="gpt-4o")
+        
+        # Call create_response with real API
+        response = await llm.create_response(
+            input="say hi",
+            instructions="You are a helpful assistant."
+        )
+        
+        # Assertions
+        assert isinstance(response, LLMResponse)
+        assert hasattr(response.original, 'id')  # OpenAI response has id
+        print(f"Response ID: {response.original.id}")
+    
+    @pytest.mark.integration
+    async def test_create_response_with_model_override(self):
+        """Test create_response with model override in kwargs."""
+        llm = OpenAILLM(model="gpt-4o")
+        
+        # Override the model in kwargs
+        response = await llm.create_response(
+            input="What is 2+2?",
+            instructions="You are a math tutor.",
+            model="gpt-3.5-turbo"  # Override the default model
+        )
+        
+        # Assertions
+        assert isinstance(response, LLMResponse)
+        assert hasattr(response.original, 'id')
+        print(f"Response with model override: {response.original.id}")
+    
+    @pytest.mark.integration
+    async def test_simple_response_with_conversation(self):
+        """Test simple_response method with conversation context."""
+        from stream_agents.agents import Conversation
+
+        llm = OpenAILLM(model="gpt-4o")
+
+        # Create a conversation with required parameters
+        conversation = Conversation(
+            instructions="You are a helpful coding assistant. Keep responses concise.",
+            messages=[],
+            channel="test",
+            chat_client="test_client"
+        )
+
+        # Test simple_response
+        response = await llm.simple_response(
+            text="Write a Python function to calculate fibonacci numbers",
+            conversation=conversation
+        )
+
+        # Assertions
+        assert isinstance(response, LLMResponse)
+        assert hasattr(response.original, 'id')
+        print(f"Simple response with conversation: {response.original.id}")
+
+    
+    @pytest.mark.integration
+    async def test_create_response_with_custom_parameters(self):
+        """Test create_response with various OpenAI-specific parameters."""
+        llm = OpenAILLM(model="gpt-4o")
+        
+        # Test with valid OpenAI parameters (only input and instructions are supported)
+        response = await llm.create_response(
+            input="Explain quantum computing in simple terms",
+            instructions="You are a science educator. Use analogies."
+        )
+        
+        # Assertions
+        assert isinstance(response, LLMResponse)
+        assert hasattr(response.original, 'id')
+        print(f"Response with custom parameters: {response.original.id}")

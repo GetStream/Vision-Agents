@@ -9,7 +9,6 @@ from anthropic.types import Message
 from google import genai
 from openai import OpenAI
 
-from stream_agents.agents import Conversation
 from stream_agents.processors import BaseProcessor
 
 class LLM:
@@ -26,10 +25,18 @@ class ClaudeResponse(LLMResponse):
 
 class OpenAILLM(LLM):
     '''
-    Use the conversation feature
+    The goal is to standardize the minimal feature set thats needed for the agent integration
+    That means
+
+    - sharing instructions
+    - keeping conversation history
+    - response normalization
+
+    Other than that we aim to give access to the native API methods from openAI as much as possible
     '''
     def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[OpenAI] = None):
         self.model = model
+        self.openai_conversation = None
 
         if client is not None:
             self.client = client
@@ -37,23 +44,23 @@ class OpenAILLM(LLM):
             # If no api_key provided, AsyncAnthropic will look for ANTHROPIC_API_KEY env var
             self.client = OpenAI()
 
-    async def create_response(self, *args, **kwargs) -> ClaudeResponse:
-        # TODO: both create response and simple response need to know about history/conversation
-        # TODO: both need to know about the "instructions"
-        # TODO: upon the first message we could create the conversation? or on init?
+    async def create_response(self, *args, **kwargs) -> LLMResponse:
         if "model" not in kwargs:
             kwargs["model"] = self.model
 
         response = self.client.responses.create(
-            instructions="You are a coding assistant that talks like a pirate.",
-            input="How do I check if a Python object is an instance of a class?",
+            *args, **kwargs
         )
-        # TODO: update message history here with response
-        return ClaudeResponse(response)
+        # TODO: do we have the response or a standardized response here?
+        return LLMResponse(response)
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, conversation: Conversation =None):
+    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, conversation: 'Conversation' = None):
+        if not self.openai_conversation:
+            self.openai_conversation = self.client.conversations.create()
         return await self.create_response(
-            input=text
+            input=text,
+            instructions=conversation.instructions,
+            conversation=self.openai_conversation.id,
         )
 
 
