@@ -72,7 +72,7 @@ class TestClaudeLLM:
     @pytest.mark.integration
     async def test_create_message_with_system_and_image(self):
         """Test create_message with system instructions and image URL using real API."""
-        llm = ClaudeLLM()
+        llm = ClaudeLLM("claude-3-5-sonnet-20241022")
         
         # Prepare messages with system prompt and image
         messages = [

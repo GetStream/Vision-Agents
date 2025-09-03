@@ -1,5 +1,5 @@
 import functools
-from typing import List, ParamSpec, TypeVar, Optional, Any, Callable, Protocol, overload, Awaitable
+from typing import List, ParamSpec, TypeVar, Optional, Any, Callable, Protocol, overload, Awaitable, Generic
 import os
 
 import anthropic
@@ -46,13 +46,13 @@ class ClaudeLLM(LLM):
             self.client = anthropic.AsyncAnthropic(api_key=api_key)
 
         # TODO: some defaults here like model?
+        self.create_message= bind( AsyncMessages.create)
 
 
     # Type-preserving wrapper that forwards to client.messages.create
     # This preserves the exact parameter types and return type
     # The signature matches client.messages.create exactly
-    @wraps_claude
-    async def create_message(self, *args: P.args, **kwargs: P.kwargs) -> ClaudeResponse:
+    async def _create_message(self, *args: P.args, **kwargs: P.kwargs) -> ClaudeResponse:
         # TODO: store message history here
         if "model" not in kwargs:
             kwargs["model"] = self.model
@@ -88,3 +88,4 @@ class GeminiLLM(LLM):
         response = self.client.generate(*args, **kwargs)
 
         return LLMResponse(response)
+
