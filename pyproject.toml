@@ -20,6 +20,7 @@ exclude = [
 dev = [
     "ruff",
     "mypy",
+    "pip>=25.2",
     "pytest",
     "pytest-xdist",
     "pytest-asyncio",
