@@ -111,12 +111,7 @@ class Agent:
         self,
         input: List[ResponseInputItemParam] | str,
         participant: Participant = None,
-        use_processor_input: bool = True,
     ):
-        # gather all processor state
-        processor_inputs = []
-        if use_processor_input:
-            processor_inputs = self.processor_inputs()
 
         # standardize on input
         if isinstance(input, str):
@@ -148,12 +143,7 @@ class Agent:
                         # Convert complex content to string representation
                         self.conversation.add_message(str(content), user_id)
 
-        input = input + processor_inputs
-        # TODO: this returns text, doesn't seem right
-        if self.llm is not None:
-            llm_response = await self.llm.simple_response(input, self.processors, conversation=self.conversation)
-        else:
-            llm_response = "No LLM configured"
+        llm_response = await self.llm.simple_response(input, self.processors, conversation=self.conversation)
         await self.queue.resume(llm_response)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":

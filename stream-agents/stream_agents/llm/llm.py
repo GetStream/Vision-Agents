@@ -16,8 +16,9 @@ class LLM:
         pass
 
 class LLMResponse:
-    def __init__(self, original):
+    def __init__(self, original, text: str):
         self.original = original
+        self.text = text
 
 class ClaudeResponse(LLMResponse):
     original : Message
@@ -52,7 +53,7 @@ class OpenAILLM(LLM):
             *args, **kwargs
         )
         # TODO: do we have the response or a standardized response here?
-        return LLMResponse(response)
+        return LLMResponse(response, response.output_text)
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, conversation: 'Conversation' = None):
         if not self.openai_conversation:
