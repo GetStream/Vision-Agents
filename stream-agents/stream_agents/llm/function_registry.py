@@ -18,7 +18,7 @@ try:
 except ImportError:
     MCP_AVAILABLE = False
     # Create dummy classes for type hints when MCP is not available
-    class MCPManager:
+    class MCPManager:  # type: ignore
         pass
 
 from .types import FunctionDefinition, MCPServerConfig
@@ -32,6 +32,7 @@ class FunctionRegistry:
         self.logger = logging.getLogger("FunctionRegistry")
         
         # MCP integration
+        self.mcp_manager: Optional[MCPManager]
         if MCP_AVAILABLE:
             self.mcp_manager = MCPManager()
         else:

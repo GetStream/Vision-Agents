@@ -17,11 +17,11 @@ try:
 except ImportError:
     MCP_AVAILABLE = False
     # Create dummy classes for type hints when MCP is not available
-    class ClientSession:
+    class ClientSession:  # type: ignore
         pass
-    class StdioServerParameters:
+    class StdioServerParameters:  # type: ignore
         pass
-    def streamablehttp_client(*args, **kwargs):
+    def streamablehttp_client(*args, **kwargs):  # type: ignore
         pass
 
 from .types import FunctionDefinition, MCPServerConfig
@@ -42,12 +42,13 @@ class MCPIntegration:
         self.tools: Dict[str, Dict[str, Any]] = {}
         self.logger = logging.getLogger(f"{self.__class__.__name__}.{config.name}")
         self._connected = False
-        self._read_stream = None
-        self._write_stream = None
-        self._stdio_context = None
-        self._http_context = None
-        self._session_context = None
-        self._get_session_id = None
+        self._read_stream: Optional[Any] = None
+        self._write_stream: Optional[Any] = None
+        self._stdio_context: Optional[Any] = None
+        self._http_context: Optional[Any] = None
+        self._session_context: Optional[Any] = None
+        self._get_session_id: Optional[Any] = None
+        self._server_params: Optional[StdioServerParameters] = None
     
     async def connect(self) -> None:
         """Connect to the MCP server and discover available tools."""
@@ -101,10 +102,14 @@ class MCPIntegration:
             self._stdio_context = None  # Not used for HTTP
         else:
             # Stdio-based MCP server
+            if self._server_params is None:
+                raise ValueError("Server parameters not set for stdio connection")
             self._stdio_context = stdio_client(self._server_params)
             self._read_stream, self._write_stream = await self._stdio_context.__aenter__()
         
         # Create a new session
+        if self._read_stream is None or self._write_stream is None:
+            raise ValueError("Failed to establish read/write streams")
         self._session_context = ClientSession(self._read_stream, self._write_stream)
         self.session = await self._session_context.__aenter__()
         
@@ -178,6 +183,8 @@ class MCPIntegration:
                 await self._create_session()
             
             # Call the tool
+            if self.session is None:
+                raise ValueError("Failed to create MCP session")
             result = await self.session.call_tool(name, arguments)
             
             # Extract content from result
@@ -199,6 +206,8 @@ class MCPIntegration:
             try:
                 self.logger.info(f"Attempting to recreate session for tool '{name}'")
                 await self._create_session()
+                if self.session is None:
+                    raise ValueError("Failed to recreate MCP session")
                 result = await self.session.call_tool(name, arguments)
                 
                 if result.content:
