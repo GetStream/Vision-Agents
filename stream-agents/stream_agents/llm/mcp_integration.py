@@ -12,8 +12,7 @@ from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 
 try:
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
+    from mcp import ClientSession, StdioServerParameters, stdio_client
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -23,7 +22,22 @@ except ImportError:
     class StdioServerParameters:
         pass
 
-from .function_registry import FunctionDefinition
+# Import FunctionDefinition locally to avoid circular imports
+try:
+    from .function_registry import FunctionDefinition
+except ImportError:
+    # Define a minimal FunctionDefinition if import fails
+    from dataclasses import dataclass
+    from typing import Callable, Any, Optional
+    
+    @dataclass
+    class FunctionDefinition:
+        name: str
+        description: str
+        parameters: dict
+        handler: Callable
+        is_async: bool
+        return_type: Optional[type] = None
 
 
 @dataclass

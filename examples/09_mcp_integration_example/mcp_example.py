@@ -24,7 +24,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from getstream import Stream
 from getstream.plugins import DeepgramSTT, ElevenLabsTTS
-from stream_agents.turn_detection import FalTurnDetection
+#from stream_agents.turn_detection import FalTurnDetection
 from stream_agents.agents import Agent
 from stream_agents.edge import StreamEdge
 from stream_agents.llm import OpenAILLM

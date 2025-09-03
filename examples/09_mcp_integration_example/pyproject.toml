@@ -4,9 +4,10 @@ version = "0.1.0"
 description = "Example demonstrating MCP integration with Stream Agents"
 requires-python = ">=3.13"
 dependencies = [
-    "stream-agents",
-    "python-dotenv>=1.0",
-    "mcp>=1.0.0",
+  "python-dotenv>=1.0",
+  "getstream[webrtc]==2.3.0a5",
+  "stream-agents",
+  "mcp>=1.13.1",
 ]
 
 [tool.uv.sources]
