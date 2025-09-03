@@ -32,6 +32,7 @@ from getstream.video.rtc.tracks import (
 )
 
 from .conversation import Conversation
+from ..llm2.max_llm import LLM
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING
@@ -47,7 +48,7 @@ class Agent:
         # edge network for video & audio
         edge: Optional[EdgeTransport] = None,
         # llm, optionally with sts capabilities
-        llm: Optional[Any] = None,
+        llm: Optional[LLM] = None,
         # setup stt, tts, and turn detection if not using realtime/sts
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
@@ -147,26 +148,10 @@ class Agent:
         input = input + processor_inputs
         # TODO: this returns text, doesn't seem right
         if self.llm is not None:
-            llm_response = await self.llm.generate(input)
+            llm_response = await self.llm.create_response(input, self.processors)
         else:
             llm_response = "No LLM configured"
         await self.queue.resume(llm_response)
-
-    def processor_inputs(self) -> List[ResponseInputItemParam]:
-        """
-        processor_inputs gets the inputs for the LLM from all processors
-        this is how you handle things like:
-        - input from APIs. game state, player stats, etc
-        - roboflow/yolo style image enrichment
-        By default we call processor.input(). if you need something more advanced you can gather info with
-        processor.state() and create a combined llm input
-        """
-        process_inputs = []
-        for processor in self.processors:
-            state = processor.input()
-            process_inputs.append(state)
-
-        return process_inputs
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
@@ -390,7 +375,7 @@ class Agent:
             # when in STS mode call the STS directly
             if self.sts_mode and self.llm is not None:
                 if hasattr(self.llm, "send_audio"):
-                    await self.llm.send_audio(pcm_data, participant)
+                    await self.llm.send_audio_pcm(pcm_data, participant)
             else:
                 # Process audio through STT
                 if self.stt:

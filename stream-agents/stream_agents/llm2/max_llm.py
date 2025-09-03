@@ -49,6 +49,16 @@ TStreamItem = TypeVar("TStreamItem")
 
 logger = logging.getLogger(__name__)
 
+'''
+TODO
+- Connect create response to agent class. Params don't entirely align
+- Expose raw/native create_response, create_message, generate methods
+- Chat API research. (some messages should be hidden. tool calls. images shared frequently)
+- self.llm.conversation_started(self)?
+
+STS integration
+
+'''
 
 class LLM(
     AsyncIOEventEmitter,
@@ -514,68 +524,3 @@ class RealtimeLLM(LLM[TMessage, TTool, TOptions, TSyncResult, TStreamItem]):
             await self.disconnect("service_closed")
         await super().close()
 
-
-class Conversation:
-    """Lightweight helper to accumulate messages for turn-based interactions.
-
-    This is purely optional and provider-agnostic; it helps build a message list to
-    pass into LLM.generate/stream.
-    """
-
-    def __init__(self, system: Optional[str] = None):
-        self.messages: List[Message] = []
-        if system:
-            self.add_system(system)
-
-    def add_system(self, text: str) -> None:
-        self.messages.append(
-            {
-                "role": Role.SYSTEM,
-                "content": [{"type": "text", "text": text}],
-            }
-        )
-
-    def add_user_text(self, text: str) -> None:
-        self.messages.append(
-            {
-                "role": Role.USER,
-                "content": [{"type": "text", "text": text}],
-            }
-        )
-
-    def add_user_image(
-        self,
-        *,
-        data: Optional[bytes] = None,
-        url: Optional[str] = None,
-        mime_type: Optional[str] = None,
-    ) -> None:
-        if (data is None) == (url is None):
-            raise ValueError("Provide exactly one of data or url for image input")
-
-        image_part: Union[ImageBytesPart, ImageURLPart]
-        if data is not None:
-            image_part = {"type": "image", "data": data}
-        else:
-            image_part = {"type": "image", "url": url}  # type: ignore[arg-type]
-
-        if mime_type is not None:
-            image_part["mime_type"] = mime_type
-
-        self.messages.append(
-            {
-                "role": Role.USER,
-                "content": [image_part],
-            }
-        )
-
-    def add_assistant_text(self, text: str) -> None:
-        self.messages.append(
-            {
-                "role": Role.ASSISTANT,
-                "content": [{"type": "text", "text": text}],
-            }
-        )
-
-    def to_messages(self) -> List[Message]:
-        return list(self.messages)
