@@ -75,7 +75,6 @@ uv run mypy --install-types --non-interactive --explicit-package-bases plugins/x
 git tag -a v0.0.1 -m "Release 0.0.1" && git push --tags
 ```
 
-
 ## General Guidelines
 1. We are experimenting and moving fast. Things may break, that is fine for now, but before merging to main, check that your code is running and if required, has tests.
 2. Communication: Things are moving quickly, communicate what you're working on and what's blocking early and frequently in #video_ai

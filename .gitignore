@@ -27,5 +27,4 @@ pyrightconfig.json
 *.egg-info/
 *.egg
 *.pt
-*.whl
 *.kef

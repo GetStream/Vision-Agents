@@ -6,6 +6,7 @@ import numpy as np
 from daily import CallClient, Daily, EventHandler
 from aiortc import AudioStreamTrack, VideoStreamTrack
 import av
+
 from stream_agents.processors.base_processor import (
     AudioVideoProcessor,
     AudioPublisherMixin,
@@ -341,7 +342,7 @@ class TavusClient:
                         f"Could not parse error response as JSON: {json_error}"
                     )
                     self.logger.error(f"Raw response text: {e.response.text}")
-                    content_str = e.response.content.decode('utf-8', errors='replace')
+                    content_str = e.response.content.decode("utf-8", errors="replace")
                     self.logger.error(f"Response content: {content_str}")
             else:
                 self.logger.error("No response object available in exception")
@@ -620,7 +621,9 @@ class TavusProcessor(AudioVideoProcessor, AudioPublisherMixin, VideoPublisherMix
 
             # Log current participants and start forwarding if we find the Tavus replica
             try:
-                participants = self.daily_client.participants() if self.daily_client else {}
+                participants = (
+                    self.daily_client.participants() if self.daily_client else {}
+                )
                 self.logger.info(f"📊 Current participants: {participants}")
 
                 # Look for the Tavus replica participant
@@ -670,7 +673,9 @@ class TavusProcessor(AudioVideoProcessor, AudioPublisherMixin, VideoPublisherMix
         try:
             while self._call_joined and self.daily_audio_track:
                 # Get participants and their tracks
-                participants = self.daily_client.participants() if self.daily_client else {}
+                participants = (
+                    self.daily_client.participants() if self.daily_client else {}
+                )
                 participant = participants.get(participant_id)
 
                 if not participant:
@@ -700,7 +705,9 @@ class TavusProcessor(AudioVideoProcessor, AudioPublisherMixin, VideoPublisherMix
         try:
             while self._call_joined and self.daily_video_track:
                 # Get participants and their tracks
-                participants = self.daily_client.participants() if self.daily_client else {}
+                participants = (
+                    self.daily_client.participants() if self.daily_client else {}
+                )
                 participant = participants.get(participant_id)
 
                 if not participant:

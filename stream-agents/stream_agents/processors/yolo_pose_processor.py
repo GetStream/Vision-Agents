@@ -27,17 +27,8 @@ from .base_processor import (
     VideoPublisherMixin,
 )
 
-# Optional YOLO import with fallback
-try:
-    from ultralytics import YOLO
-
-    YOLO_AVAILABLE = True
-except ImportError:
-    YOLO_AVAILABLE = False
-    YOLO = None
 
 logger = logging.getLogger(__name__)
-
 
 class YOLOPoseVideoTrack(VideoStreamTrack):
     """Custom video track for YOLO pose detection output."""
@@ -156,15 +147,7 @@ class YOLOPoseProcessor(
             enable_hand_tracking: Whether to draw detailed hand connections
             enable_wrist_highlights: Whether to highlight wrist positions
         """
-        super().__init__(
-            interval=interval, receive_audio=False, receive_video=True
-        )
-
-        if not YOLO_AVAILABLE:
-            raise ImportError(
-                "ultralytics package is required for YOLOPoseProcessor. "
-                "Install it with: pip install ultralytics"
-            )
+        super().__init__(interval=interval, receive_audio=False, receive_video=True)
 
         self.model_path = model_path
         self.conf_threshold = conf_threshold
@@ -189,22 +172,25 @@ class YOLOPoseProcessor(
         logger.info(f"🤖 YOLO Pose Processor initialized with model: {model_path}")
 
     def _load_model(self):
-        """Load the YOLO pose model."""
         try:
-            # Check if model file exists
-            if not Path(self.model_path).exists():
-                logger.warning(
-                    f"Model file {self.model_path} not found. YOLO will download it automatically."
-                )
-
-            self.pose_model = YOLO(self.model_path)
-            self.pose_model.to(self.device)
-            logger.info(
-                f"✅ YOLO pose model loaded: {self.model_path} on {self.device}"
+            from ultralytics import YOLO
+        except ImportError:
+            raise ImportError(
+                "ultralytics package is required for YOLOPoseProcessor. "
+                "Install it with: pip install ultralytics"
             )
-        except Exception as e:
-            logger.error(f"❌ Failed to load YOLO model: {e}")
-            raise
+
+        """Load the YOLO pose model."""
+        if not Path(self.model_path).exists():
+            logger.warning(
+                f"Model file {self.model_path} not found. YOLO will download it automatically."
+            )
+
+        self.pose_model = YOLO(self.model_path)
+        self.pose_model.to(self.device)
+        logger.info(
+            f"✅ YOLO pose model loaded: {self.model_path} on {self.device}"
+        )
 
     def create_video_track(self):
         """Create a video track for publishing pose-annotated frames."""
@@ -214,7 +200,10 @@ class YOLOPoseProcessor(
         return self._video_track
 
     async def process_image(
-        self, image: Image.Image, user_id: str, metadata: Optional[dict[Any, Any]] = None
+        self,
+        image: Image.Image,
+        user_id: str,
+        metadata: Optional[dict[Any, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Process a single image with pose detection.
