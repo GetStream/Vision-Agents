@@ -109,7 +109,7 @@ class Agent:
         self._current_frame = None
         self._interval_task = None
         self._callback_executed = False
-        self._connection: Optional[rtc.RTCConnection] = None
+        self._connection: Optional[rtc.ConnectionManager] = None
         self._audio_track: Optional[audio_track.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
         self._sts_connection = None
@@ -117,6 +117,7 @@ class Agent:
         # validation time
         self._validate_configuration()
 
+        self._event_handlers = {}
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
@@ -124,6 +125,46 @@ class Agent:
 
     def before_response(self, input):
         pass
+
+    def on(self, event: str):
+        def decorator(func):
+            self._event_handlers[event] = func
+            #self._connection.on(event, func)
+            return func
+        return decorator
+
+    async def create_response(
+        self,
+        input: List[ResponseInputItemParam] | str,
+        participant: Participant | None = None,
+        use_processor_input: bool = True,
+    ):
+        # gather all processor state
+        processor_inputs = []
+        if use_processor_input:
+            processor_inputs = self.processor_inputs()
+
+        # standardize on input
+        if isinstance(input, str):
+            if participant is not None:
+                input = [
+                    EasyInputMessageParam(content=input, role="user", type="message")
+                ]
+            else:
+                input = [
+                    EasyInputMessageParam(content=input, role="system", type="message")
+                ]
+
+        logging.info("participant in create response is %s", participant)
+        if self.conversation:
+            for i in input:
+                if participant is not None:
+                    user_id = participant.user_id
+                else:
+                    if i.get("role") == "assistant":
+                        user_id = self.agent_user.id
+                    else:
+                        user_id = self.agent_user.id
 
     async def after_response(self, llm_response):
         # In Realtime (STS) mode or when not joined to a call, conversation may be None.
@@ -221,6 +262,10 @@ class Agent:
         connection = await connection_cm.__aenter__()
         self._connection = connection
         self._is_running = True
+
+        for event, handler in self._event_handlers.items():
+            self.logger.info(f"All handlers are registered {event} - {handler}")
+            self._connection.ws_client.on_wildcard(event, handler)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 

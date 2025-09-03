@@ -30,6 +30,10 @@ async def start_agent() -> None:
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
+    @agent.on("*")
+    def my_handler(event, data):
+        agent.logger.info(f"handled event {event}, {data}")
+
     # Create a call
     call = client.video.call("default", str(uuid4()))
 
