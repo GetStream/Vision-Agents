@@ -12,7 +12,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "getstream[webrtc]==2.3.0a6"
+    "getstream[webrtc]==2.3.0a5"
 ]
 
 [build-system]
@@ -24,7 +24,7 @@ stream-agents = { workspace = true }
 stream-agents-plugin-xai = { workspace = true }
 
 [tool.uv.workspace]
-members = ["stream-agents", "plugins/xai", "plugins/anthropic"]
+members = ["plugins/xai", "plugins/anthropic"]
 
 [dependency-groups]
 dev = [
