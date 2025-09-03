@@ -48,7 +48,6 @@ all-plugins = [
   "google-genai>=0.3.0",
 ]
 
-
 [tool.hatch.metadata]
 allow-direct-references = true
 

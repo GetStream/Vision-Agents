@@ -1,9 +1,8 @@
 [tool.uv.sources]
 stream-agents = { workspace = true }
-stream-agents-plugin-xai = { workspace = true }
 
 [tool.uv.workspace]
-members = ["stream-agents", "stream-plugins/*"]
+members = ["stream-agents", "plugins/*"]
 exclude = [
 "**/__pycache__",
 "**/tests/__pycache__",

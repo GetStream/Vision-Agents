@@ -972,11 +972,11 @@ wheels = [
 
 [[package]]
 name = "fsspec"
-version = "2025.7.0"
+version = "2025.9.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8b/02/0835e6ab9cfc03916fe3f78c0956cfcdb6ff2669ffa6651065d5ebf7fc98/fsspec-2025.7.0.tar.gz", hash = "sha256:786120687ffa54b8283d942929540d8bc5ccfa820deb555a2b5d0ed2b737bf58", size = 304432, upload-time = "2025-07-15T16:05:21.19Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/e0/bab50af11c2d75c9c4a2a26a5254573c0bd97cea152254401510950486fa/fsspec-2025.9.0.tar.gz", hash = "sha256:19fd429483d25d28b65ec68f9f4adc16c17ea2c7c7bf54ec61360d478fb19c19", size = 304847, upload-time = "2025-09-02T19:10:49.215Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2f/e0/014d5d9d7a4564cf1c40b5039bc882db69fd881111e03ab3657ac0b218e2/fsspec-2025.7.0-py3-none-any.whl", hash = "sha256:8b012e39f63c7d5f10474de957f3ab793b47b45ae7d39f2fb735f8bbe25c0e21", size = 199597, upload-time = "2025-07-15T16:05:19.529Z" },
+    { url = "https://files.pythonhosted.org/packages/47/71/70db47e4f6ce3e5c37a607355f80da8860a33226be640226ac52cb05ef2e/fsspec-2025.9.0-py3-none-any.whl", hash = "sha256:530dc2a2af60a414a832059574df4a6e10cce927f6f4a78209390fe38955cfb7", size = 199289, upload-time = "2025-09-02T19:10:47.708Z" },
 ]
 
 [[package]]
@@ -1033,7 +1033,7 @@ webrtc = [
 [[package]]
 name = "getstream-plugins-cartesia"
 version = "0.1.0"
-source = { editable = "stream-plugins/cartesia" }
+source = { editable = "plugins/cartesia" }
 dependencies = [
     { name = "cartesia" },
     { name = "getstream", extra = ["webrtc"] },
@@ -1050,7 +1050,7 @@ dev = [
 requires-dist = [
     { name = "cartesia", specifier = ">=2.0.5" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
 ]
 
 [package.metadata.requires-dev]
@@ -1062,7 +1062,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-common"
 version = "0.2.0"
-source = { editable = "stream-plugins/common" }
+source = { editable = "plugins/common" }
 dependencies = [
     { name = "getstream", extra = ["webrtc"] },
 ]
@@ -1085,7 +1085,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-deepgram"
 version = "0.1.1"
-source = { editable = "stream-plugins/deepgram" }
+source = { editable = "plugins/deepgram" }
 dependencies = [
     { name = "deepgram-sdk" },
     { name = "getstream", extra = ["webrtc"] },
@@ -1106,7 +1106,7 @@ dev = [
 requires-dist = [
     { name = "deepgram-sdk", specifier = ">=4.5.0" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
 ]
 
@@ -1122,7 +1122,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-elevenlabs"
 version = "0.1.0"
-source = { editable = "stream-plugins/elevenlabs" }
+source = { editable = "plugins/elevenlabs" }
 dependencies = [
     { name = "elevenlabs" },
     { name = "getstream", extra = ["webrtc"] },
@@ -1139,7 +1139,7 @@ dev = [
 requires-dist = [
     { name = "elevenlabs", specifier = ">=2.5.0" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
 ]
 
 [package.metadata.requires-dev]
@@ -1151,7 +1151,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-fal"
 version = "0.1.1"
-source = { editable = "stream-plugins/fal" }
+source = { editable = "plugins/fal" }
 dependencies = [
     { name = "fal-client" },
     { name = "getstream", extra = ["webrtc"] },
@@ -1169,7 +1169,7 @@ dev = [
 requires-dist = [
     { name = "fal-client", specifier = ">=0.7.0" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
 ]
 
 [package.metadata.requires-dev]
@@ -1182,7 +1182,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-gemini"
 version = "0.1.0"
-source = { editable = "stream-plugins/gemini" }
+source = { editable = "plugins/gemini" }
 dependencies = [
     { name = "getstream", extra = ["webrtc"] },
     { name = "getstream-plugins-common" },
@@ -1200,7 +1200,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
     { name = "google-genai", specifier = ">=1.29.0" },
     { name = "numpy", specifier = ">=2.2.6" },
 ]
@@ -1215,7 +1215,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-kokoro"
 version = "0.1.0"
-source = { editable = "stream-plugins/kokoro" }
+source = { editable = "plugins/kokoro" }
 dependencies = [
     { name = "getstream", extra = ["webrtc"] },
     { name = "getstream-plugins-common" },
@@ -1233,7 +1233,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
     { name = "kokoro", specifier = ">=0.9.4" },
     { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
@@ -1248,7 +1248,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-moonshine"
 version = "0.1.1"
-source = { editable = "stream-plugins/moonshine" }
+source = { editable = "plugins/moonshine" }
 dependencies = [
     { name = "getstream", extra = ["webrtc"] },
     { name = "getstream-plugins-common" },
@@ -1266,7 +1266,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.22.0" },
     { name = "soundfile", specifier = ">=0.13.1" },
@@ -1281,7 +1281,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-openai"
 version = "0.1.1"
-source = { editable = "stream-plugins/openai" }
+source = { editable = "plugins/openai" }
 dependencies = [
     { name = "getstream", extra = ["webrtc"] },
     { name = "getstream-plugins-common" },
@@ -1297,7 +1297,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
     { name = "openai", extras = ["realtime"], specifier = ">=1.97.1" },
 ]
 
@@ -1310,7 +1310,7 @@ dev = [
 [[package]]
 name = "getstream-plugins-silero"
 version = "0.1.0"
-source = { editable = "stream-plugins/silero" }
+source = { editable = "plugins/silero" }
 dependencies = [
     { name = "getstream", extra = ["webrtc"] },
     { name = "getstream-plugins-common" },
@@ -1331,7 +1331,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "stream-plugins/common" },
+    { name = "getstream-plugins-common", editable = "plugins/common" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "silero", specifier = ">=0.4.1" },
     { name = "torch", specifier = ">=2.7.1" },
@@ -3631,12 +3631,12 @@ requires-dist = [
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
     { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=webrtc" },
-    { name = "getstream-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "stream-plugins/deepgram" },
-    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", editable = "stream-plugins/deepgram" },
-    { name = "getstream-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "stream-plugins/elevenlabs" },
-    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "stream-plugins/elevenlabs" },
-    { name = "getstream-plugins-openai", marker = "extra == 'all-plugins'", editable = "stream-plugins/openai" },
-    { name = "getstream-plugins-openai", marker = "extra == 'openai'", editable = "stream-plugins/openai" },
+    { name = "getstream-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
+    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", editable = "plugins/deepgram" },
+    { name = "getstream-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "plugins/elevenlabs" },
+    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "plugins/elevenlabs" },
+    { name = "getstream-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
+    { name = "getstream-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
     { name = "google-genai", marker = "extra == 'all-plugins'", specifier = ">=0.3.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=0.3.0" },
     { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'", path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
@@ -3659,7 +3659,7 @@ provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemin
 
 [[package]]
 name = "stream-agents-plugin-anthropic"
-source = { editable = "stream-plugins/anthropic" }
+source = { editable = "plugins/anthropic" }
 dependencies = [
     { name = "anthropic" },
     { name = "stream-agents" },
@@ -3673,7 +3673,7 @@ requires-dist = [
 
 [[package]]
 name = "stream-agents-plugin-xai"
-source = { editable = "stream-plugins/xai" }
+source = { editable = "plugins/xai" }
 dependencies = [
     { name = "stream-agents" },
     { name = "xai-sdk" },
