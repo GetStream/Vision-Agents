@@ -169,56 +169,11 @@ async def create_gemini_agent_with_functions():
     
     return agent
 
-
-async def test_function_calling():
-    """Test function calling with a simple conversation."""
-    
-    # Create OpenAI agent
-    llm = OpenAILLM(
-        name="gpt-4o",
-        instructions="You are a helpful assistant. Use the available functions when appropriate."
-    )
-    
-    @llm.function("Get weather information")
-    async def get_weather(location: str) -> str:
-        """Get weather for a location."""
-        return f"Weather in {location}: 25°C, sunny"
-    
-    @llm.function("Send notification")
-    def send_notification(message: str, urgent: bool = False) -> str:
-        """Send a notification message."""
-        prefix = "🚨 URGENT: " if urgent else "📢 "
-        print(f"{prefix}{message}")
-        return f"Notification sent: {message}"
-    
-    # Test the functions
-    print("🧪 Testing function calling...")
-    
-    # Test 1: Weather query
-    response = await llm.generate("What's the weather like in Tokyo?")
-    print(f"Response: {response}")
-    
-    # Test 2: Notification
-    response = await llm.generate("Send an urgent notification that the server is down")
-    print(f"Response: {response}")
-    
-    # Test 3: List available functions
-    print(f"Available functions: {llm.get_available_functions()}")
-    for func_name in llm.get_available_functions():
-        info = llm.get_function_info(func_name)
-        print(f"  - {func_name}: {info['description']}")
-
-
 async def main():
     """Main function to run the function calling example."""
     
     print("🚀 Function Calling Example")
     print("=" * 50)
-    
-    # Test function calling first
-    await test_function_calling()
-    
-    print("\n" + "=" * 50)
     print("🎥 Starting video call with function calling...")
     
     # Create Stream client
