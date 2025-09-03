@@ -34,10 +34,7 @@ dev = [
     "pytest-xdist",
     "pytest-asyncio",
     "python-dotenv",
-    "pip>=25.2",
-    "hatch",
-    "hatch-vcs",
-    "hatchling",
+    "pre-commit",
 ]
 
 [tool.hatch.metadata]
