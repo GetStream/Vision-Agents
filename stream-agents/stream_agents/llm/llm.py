@@ -1,24 +1,143 @@
-import functools
-from typing import List, ParamSpec, TypeVar, Optional, Any, Callable, Protocol, overload, Awaitable, Generic
-import os
+from typing import List, Optional, Any, TypeVar
+import abc
+import uuid
+from typing import Dict
 
+from pyee.asyncio import AsyncIOEventEmitter
+
+from stream_agents.processors import BaseProcessor
+
+from .event_utils import register_global_event
+from .events import (
+    LLMErrorEvent,
+    LLMRequestEvent,
+    LLMResponseEvent,
+    PluginClosedEvent,
+    PluginInitializedEvent,
+)
+from ..agents.conversation import Conversation
 import anthropic
 from anthropic import AsyncAnthropic
-from anthropic.resources import AsyncMessages
 from anthropic.types import Message
 from google import genai
 from openai import OpenAI
 
-from stream_agents.processors import BaseProcessor
-
-class LLM:
-    def create_response(self, text, processors: List[BaseProcessor]):
-        pass
 
 class LLMResponse:
     def __init__(self, original, text: str):
         self.original = original
         self.text = text
+
+class LLM(
+    AsyncIOEventEmitter,
+    abc.ABC,
+):
+    """Base class for multimodal LLM providers.
+
+    Responsibilities:
+    - Normalize requests (messages/options when needed)
+    - Emit structured events (request, response, error)
+    - Provide a simple non-streaming API via abstract provider hook
+    """
+
+    def __init__(
+        self,
+        provider_name: str,
+        model: str,
+        client: Optional[TypeVar('C')] = None,
+        system_prompt: Optional[str] = None,
+    ):
+        super().__init__()
+        self.session_id = str(uuid.uuid4())
+        self.provider_name = provider_name or self.__class__.__name__
+        self.model = model
+        self.client: Optional[TypeVar('C')] = client
+        self.system_prompt = system_prompt
+        
+        # Emit initialization event
+        init_event = PluginInitializedEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            plugin_type="LLM",
+            provider=self.provider_name,
+            configuration={"model": self.model} if self.model else None,
+        )
+        register_global_event(init_event)
+        self.emit("initialized", init_event)
+
+        # Default: not realtime/STS
+        self.sts: bool = False
+
+    async def create_response(
+        self,
+        text: str,
+        processors: Optional[List[BaseProcessor]] = None,
+    ) -> LLMResponse:
+        """The general response to be used by an Agent.
+        
+        Request a non-streaming response.
+
+        Emits LLM_REQUEST and then either LLM_RESPONSE or LLM_ERROR.
+        """
+        req_event = LLMRequestEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            model_name=self.model,
+            messages=text,
+        )
+        register_global_event(req_event)
+        self.emit("request", req_event)
+
+        try:
+            result_text = await self._create_response_impl(
+                text=text,
+                processors=processors,
+            )
+
+            resp_event = LLMResponseEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                normalized_response=None,
+                raw=result_text,
+            )
+            register_global_event(resp_event)
+            self.emit("response", resp_event)
+
+            return result_text
+        except Exception as e:
+            err_event = LLMErrorEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                error=e,
+                context="create_response",
+            )
+            register_global_event(err_event)
+            self.emit("error", err_event)
+            raise
+
+    @abc.abstractmethod
+    async def _create_response_impl(
+        self,
+        *,
+        text: str,
+        processors: Optional[List[BaseProcessor]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Provider-specific non-streaming implementation returning plain text."""
+        ...
+
+    async def close(self):
+        """Close the LLM and release any resources."""
+        close_event = PluginClosedEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            plugin_type="LLM",
+            provider=self.provider_name,
+            cleanup_successful=True,
+        )
+        register_global_event(close_event)
+        self.emit("closed", close_event)
+        
 
 class ClaudeResponse(LLMResponse):
     original : Message

@@ -20,11 +20,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from .llm_types import (
-    NormalizedOutputItem,
-    NormalizedResponse,
-    ResponseFormat,
-)
+from .llm_types import NormalizedOutputItem, NormalizedResponse, ResponseFormat
 
 
 class EventType(Enum):
