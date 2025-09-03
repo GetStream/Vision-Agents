@@ -12,6 +12,15 @@ from typing import List, Dict, Any, Optional
 import logging
 from .function_registry import FunctionRegistry
 
+try:
+    from .mcp_integration import MCPServerConfig
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+    # Create dummy class for type hints when MCP is not available
+    class MCPServerConfig:
+        pass
+
 
 
 class LLM:
@@ -41,6 +50,32 @@ class LLM:
                 return f"Weather in {location}: sunny"
         """
         return self.function_registry.function(description, name)
+    
+    def add_mcp_server(self, config: MCPServerConfig) -> None:
+        """
+        Add an MCP server to the LLM's function registry.
+        
+        Args:
+            config: MCP server configuration
+        
+        Example:
+            config = MCPServerConfig(
+                name="filesystem",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/directory"]
+            )
+            llm.add_mcp_server(config)
+        """
+        if not MCP_AVAILABLE:
+            raise ImportError(
+                "MCP package not available. Install with: pip install mcp"
+            )
+        
+        self.function_registry.add_mcp_server(config)
+    
+    async def connect_mcp_servers(self) -> None:
+        """Connect to all configured MCP servers and register their tools."""
+        await self.function_registry.connect_mcp_servers()
     
     async def generate_with_functions(
         self, 

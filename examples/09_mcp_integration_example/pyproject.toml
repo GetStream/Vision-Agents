@@ -1,0 +1,13 @@
+[project]
+name = "mcp-integration-example"
+version = "0.1.0"
+description = "Example demonstrating MCP integration with Stream Agents"
+requires-python = ">=3.13"
+dependencies = [
+    "stream-agents",
+    "python-dotenv>=1.0",
+    "mcp>=1.0.0",
+]
+
+[tool.uv.sources]
+"stream-agents" = {path = "../../stream-agents", editable=true}

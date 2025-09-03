@@ -13,6 +13,17 @@ from typing import Dict, List, Callable, Any, Optional, Union, get_type_hints, g
 from dataclasses import dataclass
 from enum import Enum
 
+try:
+    from .mcp_integration import MCPManager, MCPServerConfig
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+    # Create dummy classes for type hints when MCP is not available
+    class MCPManager:
+        pass
+    class MCPServerConfig:
+        pass
+
 
 @dataclass
 class FunctionDefinition:
@@ -26,11 +37,17 @@ class FunctionDefinition:
 
 
 class FunctionRegistry:
-    """Registry for LLM-callable functions with automatic schema inference."""
+    """Registry for LLM-callable functions with automatic schema inference and MCP support."""
     
     def __init__(self):
         self._functions: Dict[str, FunctionDefinition] = {}
         self.logger = logging.getLogger("FunctionRegistry")
+        
+        # MCP integration
+        if MCP_AVAILABLE:
+            self.mcp_manager = MCPManager()
+        else:
+            self.mcp_manager = None
     
     def function(self, description: str = "", name: Optional[str] = None):
         """
@@ -64,6 +81,42 @@ class FunctionRegistry:
             return func
         
         return decorator
+    
+    def add_mcp_server(self, config: MCPServerConfig) -> None:
+        """
+        Add an MCP server to the function registry.
+        
+        Args:
+            config: MCP server configuration
+        """
+        if not MCP_AVAILABLE:
+            raise ImportError(
+                "MCP package not available. Install with: pip install mcp"
+            )
+        
+        if not self.mcp_manager:
+            raise RuntimeError("MCP manager not initialized")
+        
+        self.mcp_manager.add_server(config)
+        self.logger.info(f"Added MCP server: {config.name}")
+    
+    async def connect_mcp_servers(self) -> None:
+        """Connect to all configured MCP servers and register their tools."""
+        if not self.mcp_manager:
+            return
+        
+        try:
+            await self.mcp_manager.connect_all()
+            
+            # Register MCP tools as functions
+            mcp_tools = self.mcp_manager.get_all_tool_definitions()
+            for tool_def in mcp_tools:
+                self._functions[tool_def.name] = tool_def
+                self.logger.info(f"Registered MCP tool: {tool_def.name}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to connect to MCP servers: {e}")
+            raise
     
     def _infer_schema(self, func: Callable) -> Dict[str, Any]:
         """Infer JSON schema from function signature and type hints."""
@@ -251,7 +304,15 @@ class FunctionRegistry:
     async def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
         """Execute a registered function with given arguments."""
         if name not in self._functions:
-            raise ValueError(f"Function '{name}' not registered")
+            # Check if it's an MCP tool
+            if self.mcp_manager and name.startswith("mcp_"):
+                try:
+                    return await self.mcp_manager.call_tool(name, arguments)
+                except Exception as e:
+                    self.logger.error(f"Error executing MCP tool {name}: {e}")
+                    raise
+            else:
+                raise ValueError(f"Function '{name}' not registered")
         
         func_def = self._functions[name]
         
