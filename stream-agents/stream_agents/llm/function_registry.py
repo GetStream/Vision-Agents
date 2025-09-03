@@ -10,30 +10,18 @@ from __future__ import annotations
 import inspect
 import logging
 from typing import Dict, List, Callable, Any, Optional, Union, get_type_hints, get_origin, get_args
-from dataclasses import dataclass
 from enum import Enum
 
 try:
-    from .mcp_integration import MCPManager, MCPServerConfig
+    from .mcp_integration import MCPManager
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
     # Create dummy classes for type hints when MCP is not available
     class MCPManager:
         pass
-    class MCPServerConfig:
-        pass
 
-
-@dataclass
-class FunctionDefinition:
-    """Definition of a function that can be called by an LLM."""
-    name: str
-    description: str
-    parameters: Dict[str, Any]
-    handler: Callable
-    is_async: bool
-    return_type: Optional[type] = None
+from .types import FunctionDefinition, MCPServerConfig
 
 
 class FunctionRegistry:

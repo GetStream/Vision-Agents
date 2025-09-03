@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
-from dataclasses import dataclass
 
 try:
     from mcp import ClientSession, StdioServerParameters, stdio_client
@@ -22,32 +21,7 @@ except ImportError:
     class StdioServerParameters:
         pass
 
-# Import FunctionDefinition locally to avoid circular imports
-try:
-    from .function_registry import FunctionDefinition
-except ImportError:
-    # Define a minimal FunctionDefinition if import fails
-    from dataclasses import dataclass
-    from typing import Callable, Any, Optional
-    
-    @dataclass
-    class FunctionDefinition:
-        name: str
-        description: str
-        parameters: dict
-        handler: Callable
-        is_async: bool
-        return_type: Optional[type] = None
-
-
-@dataclass
-class MCPServerConfig:
-    """Configuration for an MCP server connection."""
-    name: str
-    command: str
-    args: Optional[List[str]] = None
-    env: Optional[Dict[str, str]] = None
-    auth_token: Optional[str] = None
+from .types import FunctionDefinition, MCPServerConfig
 
 
 class MCPIntegration:
@@ -65,6 +39,10 @@ class MCPIntegration:
         self.tools: Dict[str, Dict[str, Any]] = {}
         self.logger = logging.getLogger(f"{self.__class__.__name__}.{config.name}")
         self._connected = False
+        self._read_stream = None
+        self._write_stream = None
+        self._stdio_context = None
+        self._session_context = None
     
     async def connect(self) -> None:
         """Connect to the MCP server and discover available tools."""
@@ -79,23 +57,58 @@ class MCPIntegration:
                 env=self.config.env or {}
             )
             
-            # Connect to server
-            async with stdio_client(server_params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    self.session = session
-                    
-                    # Initialize the session
-                    await session.initialize()
-                    
-                    # Discover available tools
-                    await self._discover_tools()
-                    
-                    self._connected = True
-                    self.logger.info(f"Connected to MCP server '{self.config.name}' with {len(self.tools)} tools")
+            # Connect to server using a simpler approach
+            # We'll create a new connection for each session to avoid context issues
+            self._server_params = server_params
+            
+            # Create a new connection for this session
+            await self._create_session()
+            
+            self._connected = True
+            self.logger.info(f"Connected to MCP server '{self.config.name}' with {len(self.tools)} tools")
                     
         except Exception as e:
             self.logger.error(f"Failed to connect to MCP server '{self.config.name}': {e}")
             raise
+    
+    async def _create_session(self) -> None:
+        """Create a new MCP session."""
+        if hasattr(self, '_session_context') and self._session_context:
+            await self._cleanup_session()
+        
+        # Create a new connection
+        self._stdio_context = stdio_client(self._server_params)
+        self._read_stream, self._write_stream = await self._stdio_context.__aenter__()
+        
+        # Create a new session
+        self._session_context = ClientSession(self._read_stream, self._write_stream)
+        self.session = await self._session_context.__aenter__()
+        
+        # Initialize the session
+        await self.session.initialize()
+        
+        # Discover available tools
+        await self._discover_tools()
+    
+    async def _cleanup_session(self) -> None:
+        """Clean up the current session."""
+        if self._session_context:
+            try:
+                await self._session_context.__aexit__(None, None, None)
+            except Exception as e:
+                self.logger.warning(f"Error closing session: {e}")
+            self._session_context = None
+            self.session = None
+            
+        if self._stdio_context:
+            try:
+                await self._stdio_context.__aexit__(None, None, None)
+            except Exception as e:
+                self.logger.warning(f"Error closing stdio context: {e}")
+            self._stdio_context = None
+            
+        self._read_stream = None
+        self._write_stream = None
     
     async def _discover_tools(self) -> None:
         """Discover available tools from the MCP server."""
@@ -125,13 +138,14 @@ class MCPIntegration:
         if not self._connected:
             await self.connect()
         
-        if not self.session:
-            raise RuntimeError("Not connected to MCP server")
-        
         if name not in self.tools:
             raise ValueError(f"Tool '{name}' not found in MCP server '{self.config.name}'")
         
         try:
+            # Ensure we have a valid session
+            if not self.session:
+                await self._create_session()
+            
             # Call the tool
             result = await self.session.call_tool(name, arguments)
             
@@ -150,7 +164,25 @@ class MCPIntegration:
                 
         except Exception as e:
             self.logger.error(f"Failed to call tool '{name}': {e}")
-            raise
+            # Try to recreate the session and retry once
+            try:
+                self.logger.info(f"Attempting to recreate session for tool '{name}'")
+                await self._create_session()
+                result = await self.session.call_tool(name, arguments)
+                
+                if result.content:
+                    content = result.content[0]
+                    if hasattr(content, 'text'):
+                        return content.text
+                    elif hasattr(content, 'data'):
+                        return content.data
+                    else:
+                        return str(content)
+                else:
+                    return None
+            except Exception as retry_e:
+                self.logger.error(f"Failed to call tool '{name}' after retry: {retry_e}")
+                raise
     
     def get_tool_definitions(self) -> List[FunctionDefinition]:
         """Get FunctionDefinition objects for all discovered tools."""
@@ -204,11 +236,9 @@ class MCPIntegration:
     
     async def disconnect(self) -> None:
         """Disconnect from the MCP server."""
-        if self.session:
-            # The session will be closed automatically when exiting the context manager
-            self.session = None
-            self._connected = False
-            self.logger.info(f"Disconnected from MCP server '{self.config.name}'")
+        await self._cleanup_session()
+        self._connected = False
+        self.logger.info(f"Disconnected from MCP server '{self.config.name}'")
 
 
 class MCPManager:

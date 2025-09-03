@@ -11,16 +11,13 @@ automatic function calling capabilities.
 from typing import List, Dict, Any, Optional
 import logging
 from .function_registry import FunctionRegistry
+from .types import MCPServerConfig
 
 try:
-    from .mcp_integration import MCPServerConfig
+    from .mcp_integration import MCPManager  # noqa: F401
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-    # Create dummy class for type hints when MCP is not available
-    class MCPServerConfig:
-        pass
-
 
 
 class LLM:
