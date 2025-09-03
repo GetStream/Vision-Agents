@@ -32,7 +32,7 @@ from getstream.video.rtc.tracks import (
 )
 
 from .conversation import Conversation
-from ..llm2.max_llm import LLM
+from ..llm.llm import LLM
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING
@@ -49,7 +49,9 @@ class Agent:
         edge: Optional[EdgeTransport] = None,
         # llm, optionally with sts capabilities
         llm: Optional[LLM] = None,
-        # setup stt, tts, and turn detection if not using realtime/sts
+        # instructions
+        instructions: str = "Keep your replies short and dont use special characters.",
+        # setup stt, tts, and turn detection if not using an llm with realtime/sts
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
         turn_detection: Optional[BaseTurnDetector] = None,
@@ -61,6 +63,7 @@ class Agent:
         # - state from each processor is passed to the LLM
         processors: Optional[List[BaseProcessor]] = None,
     ):
+        self.instructions = instructions
         if edge is None:
             edge = StreamEdge()
         self.edge = edge
@@ -148,7 +151,7 @@ class Agent:
         input = input + processor_inputs
         # TODO: this returns text, doesn't seem right
         if self.llm is not None:
-            llm_response = await self.llm.create_response(input, self.processors)
+            llm_response = await self.llm.simple_response(input, self.processors, conversation=self.conversation)
         else:
             llm_response = "No LLM configured"
         await self.queue.resume(llm_response)
@@ -167,7 +170,7 @@ class Agent:
                 call.id,
                 data=ChannelInput(created_by_id=self.agent_user.id),
             )
-            self.conversation = Conversation([], self.channel.data.channel, chat_client)
+            self.conversation = Conversation(self.instructions, [], self.channel.data.channel, chat_client)
 
         """Join a Stream video call."""
         if self._is_running:
@@ -240,10 +243,6 @@ class Agent:
 
                 # Start STS event processing in background
                 asyncio.create_task(process_sts_events())
-
-            # Send initial greeting, if the LLM is configured to do so
-            if self.llm and hasattr(self.llm, "conversation_started"):
-                await self.llm.conversation_started(self)
 
             # Keep the agent running and listening
             self.logger.info("🎧 Agent is active - press Ctrl+C to stop")

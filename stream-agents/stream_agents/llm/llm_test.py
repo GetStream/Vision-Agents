@@ -24,9 +24,10 @@ import pytest
 from dotenv import load_dotenv
 
 from anthropic import AsyncAnthropic
-from anthropic.types import Message, TextBlock
+from anthropic.types import Message
+from openai import OpenAI
 
-from stream_agents.llm2.llm import ClaudeLLM, LLMResponse
+from stream_agents.llm.llm import ClaudeLLM, LLMResponse
 
 
 # Load environment variables at module level
@@ -48,6 +49,8 @@ class TestClaudeLLM:
         # If not set, AsyncAnthropic will still initialize but API calls will fail
         llm = ClaudeLLM()
         assert isinstance(llm.client, AsyncAnthropic)
+
+        OpenAI(api_key=os.getenv("ANTHROPIC_API_KEY", "test-key")).responses.create()
     
     def test_init_with_api_key(self):
         """Test ClaudeLLM initialization with an API key."""
