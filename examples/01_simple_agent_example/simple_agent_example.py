@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 from getstream.plugins.elevenlabs.tts import ElevenLabsTTS
 from plugins.deepgram.stt import DeepgramSTT
-from src.stream_agents.llm.llm import OpenAILLM
+from stream_agents.llm.llm import OpenAILLM
 from stream_agents.turn_detection import FalTurnDetection
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
