@@ -444,12 +444,6 @@ class SileroVAD(VAD):
                 speech_probability=avg_speech_prob,
                 frame_count=len(speech_data) // self.frame_size,
                 user_metadata=user,
-                # Silero-specific additions
-                start_speech_probability=self._speech_start_probability,
-                end_speech_probability=self._speech_end_probability,
-                avg_inference_time_ms=self._get_avg_inference_time(),
-                total_inferences=self._inference_count,
-                model_confidence=avg_speech_prob,
             )
             register_global_event(audio_event)
             self.emit("audio", audio_event)  # Structured event
@@ -465,10 +459,6 @@ class SileroVAD(VAD):
                 total_speech_duration_ms=total_speech_duration,
                 total_frames=self.total_speech_frames,
                 user_metadata=user,
-                # Silero-specific additions
-                avg_speech_probability=self._get_avg_speech_probability(),
-                inference_performance_ms=self._get_avg_inference_time(),
-                model_confidence=self._speech_end_probability,
             )
             register_global_event(speech_end_event)
             self.emit("speech_end", speech_end_event)
@@ -543,10 +533,6 @@ class SileroVAD(VAD):
                 activation_threshold=self.activation_th,
                 frame_count=1,
                 user_metadata=user,
-                # Silero-specific additions
-                inference_time_ms=self._get_avg_inference_time(),
-                model_confidence=speech_prob,
-                window_samples=self.window_samples,
             )
             register_global_event(speech_start_event)
             self.emit("speech_start", speech_start_event)
@@ -588,9 +574,6 @@ class SileroVAD(VAD):
                     frame_count=len(current_samples) // self.frame_size,
                     is_speech_active=True,
                     user_metadata=user,
-                    # Silero-specific additions
-                    inference_time_ms=self._get_avg_inference_time(),
-                    model_confidence=speech_prob,
                 )
                 register_global_event(partial_event)
                 self.emit("partial", partial_event)
