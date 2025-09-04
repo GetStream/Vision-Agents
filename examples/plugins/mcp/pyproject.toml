@@ -1,0 +1,14 @@
+[project]
+name = "getstream-example-mcp"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "getstream[webrtc]>=2.3.0a5",
+    "getstream-plugins-deepgram>=0.1.1",
+    "getstream-plugins-elevenlabs>=0.1.0",
+    "fastmcp>=2.10.1",
+    "python-dotenv>=1.1.1",
+    "openai>=1.93.0",
+    "httpx>=0.28.1",
+]

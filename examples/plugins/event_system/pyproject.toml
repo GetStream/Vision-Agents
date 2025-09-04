@@ -1,0 +1,13 @@
+[project]
+name = "getstream-events-system-example"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "getstream[webrtc]>=2.3.0a5",
+    "getstream-plugins-common>=0.2.0"
+]
+
+[tool.uv.sources]
+getstream = { path = "../../", editable = true }
+getstream-plugins-common = { path = "../../getstream/plugins/common", editable = true }
