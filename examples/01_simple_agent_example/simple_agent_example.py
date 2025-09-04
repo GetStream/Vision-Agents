@@ -4,7 +4,8 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 from getstream.plugins import DeepgramSTT, ElevenLabsTTS
-from stream_agents.llm.llm import OpenAILLM
+from stream_agents.llm.openai_llm import OpenAILLM
+
 from stream_agents.turn_detection import FalTurnDetection
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
@@ -36,9 +37,20 @@ async def start_agent() -> None:
 
     # Have the agent join the call/room
     with await agent.join(call):
-        # example of sending a system instruction. supports full openAI inputs
-        await agent.create_response(
-            "please say hi to the user and ask how their day is"
+        # example of sending a system instruction. supports full openAI input
+        # await agent.llm.simple_response( "please say hi to the user and ask how their day is")
+        # Note how you can use native APIs. create response (openAI), create message (claude) and generate_content (gemini)
+        img_url = "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2670&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
+        await agent.llm.create_response(model="gpt-4o-mini",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Tell me a short poem about this image"},
+                        {"type": "input_image", "image_url": f"{img_url}"},
+                    ],
+                }
+            ]
         )
 
         await agent.finish()  # run till the call ends

@@ -1,126 +1,50 @@
-import functools
-from typing import List, ParamSpec, TypeVar, Optional, Any, Callable, Protocol, overload, Awaitable, Generic
-import os
+from typing import List, TypeVar, Optional, Any, Callable, Protocol, overload, Awaitable, Generic
 
-import anthropic
-from anthropic import AsyncAnthropic
-from anthropic.resources import AsyncMessages
-from anthropic.types import Message
-from google import genai
-from openai import OpenAI
+from av.dictionary import Dictionary
 
 from stream_agents.processors import BaseProcessor
 
-class LLM:
-    def create_response(self, text, processors: List[BaseProcessor]):
-        pass
+T = TypeVar("T")
 
-class LLMResponse:
-    def __init__(self, original, text: str):
+class LLMResponse(Generic[T]):
+    def __init__(self, original: T, text: str):
         self.original = original
         self.text = text
 
-class ClaudeResponse(LLMResponse):
-    original : Message
+BeforeCb = Callable[[List[Dictionary]], None]
+AfterCb  = Callable[[LLMResponse], None]
 
 
-class OpenAILLM(LLM):
-    '''
-    The goal is to standardize the minimal feature set thats needed for the agent integration
-    That means
 
-    - sharing instructions
-    - keeping conversation history
-    - response normalization
+class LLM:
+    # if we want to use realtime/ sts behaviour
+    sts: bool = False
 
-    Other than that we aim to give access to the native API methods from openAI as much as possible
-    '''
-    def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[OpenAI] = None):
-        self.model = model
-        self.openai_conversation = None
-
-        if client is not None:
-            self.client = client
-        else:
-            # If no api_key provided, AsyncAnthropic will look for ANTHROPIC_API_KEY env var
-            self.client = OpenAI()
-
-    async def create_response(self, *args, **kwargs) -> LLMResponse:
-        if "model" not in kwargs:
-            kwargs["model"] = self.model
-
-        response = self.client.responses.create(
-            *args, **kwargs
-        )
-        # TODO: do we have the response or a standardized response here?
-        return LLMResponse(response, response.output_text)
-
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, conversation: 'Conversation' = None):
-        if not self.openai_conversation:
-            self.openai_conversation = self.client.conversations.create()
-        return await self.create_response(
-            input=text,
-            instructions=conversation.instructions,
-            conversation=self.openai_conversation.id,
-        )
+    before_response_listener: BeforeCb
+    after_response_listener: AfterCb
+    agent: Optional["Agent"]
 
 
-class ClaudeLLM(LLM):
-    '''
-    Manually keep history
-    '''
-    def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[AsyncAnthropic] = None):
-        self.model = model
+    def __init__(self):
+        self.agent = None
 
-        if client is not None:
-            self.client = client
-        else:
-            # If no api_key provided, AsyncAnthropic will look for ANTHROPIC_API_KEY env var
-            self.client = anthropic.AsyncAnthropic(api_key=api_key)
+    def simple_response(self, text, processors: List[BaseProcessor]) -> LLMResponse[Any]:
+        pass
 
-    async def create_message(self, *args, **kwargs) -> ClaudeResponse:
-        # TODO: store message history here
-        if "model" not in kwargs:
-            kwargs["model"] = self.model
+    def attach_agent(self, agent):
+        self.agent = agent
+        self.before_response_listener = lambda x: agent.add_to_conversation(x)
+        self.after_response_listener = lambda x: agent.after_response(x)
 
-        original = await self.client.messages.create(*args, **kwargs)
-        # TODO: update message history here with response
-        return ClaudeResponse(original)
+    def set_before_response_listener(self, before_response_listener: BeforeCb):
+        self.before_response_listener = before_response_listener
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None):
-        return await self.create_message(
-            input=text
-        )
+    def set_after_response_listener(self, after_response_listener: AfterCb):
+        self.after_response_listener = after_response_listener
 
-class GeminiLLM(LLM):
-    '''
-    Use the SDK to keep history. (which is partially manual)
-    '''
-    client: genai.Client
 
-    def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[genai.Client] = None):
-        self.model = model
 
-        if client is not None:
-            self.client = client
-        else:
-            self.client = genai.Client()
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None):
-        return await self.generate_content(
-            contents=text
-        )
-    # basically wrap the Gemini native endpoint
-    def generate_content(self, *args, **kwargs):
-        if "model" not in kwargs:
-            kwargs["model"] = self.model
 
-        client = genai.Client()
-        chat = client.chats.create(model="gemini-2.5-flash")
 
-        response = chat.send_message("I have 2 dogs in my house.")
-
-        response = self.client.generate_content(*args, **kwargs)
-
-        return LLMResponse(response)
 

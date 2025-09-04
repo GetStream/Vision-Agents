@@ -33,6 +33,7 @@ from getstream.video.rtc.tracks import (
 
 from .conversation import Conversation
 from ..llm.llm import LLM
+from ..llm.openai_llm import OpenAILLM
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING
@@ -48,7 +49,7 @@ class Agent:
         # edge network for video & audio
         edge: Optional[EdgeTransport] = None,
         # llm, optionally with sts capabilities
-        llm: Optional[LLM] = None,
+        llm: Optional[ OpenAILLM | LLM] = None,
         # instructions
         instructions: str = "Keep your replies short and dont use special characters.",
         # setup stt, tts, and turn detection if not using an llm with realtime/sts
@@ -90,6 +91,7 @@ class Agent:
         self.turn_detection = turn_detection
         self.processors = processors or []
         self.queue = ReplyQueue(self)
+        self.llm.attach_agent(self)
 
         # Initialize state variables
         self._is_running: bool = False
@@ -107,43 +109,12 @@ class Agent:
         self._setup_stt()
         self._setup_turn_detection()
 
-    async def create_response(
-        self,
-        input: List[ResponseInputItemParam] | str,
-        participant: Participant = None,
-    ):
+    def add_to_conversation(self, input):
+        for i in input:
+            # TODO user id?
+            self.conversation.add_message(i["content"], "missing")
 
-        # standardize on input
-        if isinstance(input, str):
-            if participant is not None:
-                input = [
-                    EasyInputMessageParam(content=input, role="user", type="message")
-                ]
-            else:
-                input = [
-                    EasyInputMessageParam(content=input, role="system", type="message")
-                ]
-
-        logging.info("participant in create response is %s", participant)
-        if self.conversation:
-            for i in input:
-                if participant is not None:
-                    user_id = participant.user_id
-                else:
-                    if i.get("role") == "assistant":
-                        user_id = self.agent_user.id
-                    else:
-                        user_id = self.agent_user.id
-
-                if i["type"] == "message":
-                    content = i["content"]
-                    if isinstance(content, str):
-                        self.conversation.add_message(content, user_id)
-                    else:
-                        # Convert complex content to string representation
-                        self.conversation.add_message(str(content), user_id)
-
-        llm_response = await self.llm.simple_response(input, self.processors, conversation=self.conversation)
+    async def after_response(self, llm_response):
         await self.queue.resume(llm_response)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
@@ -495,7 +466,7 @@ class Agent:
     async def _process_transcription(
         self, text: str, participant: Participant = None
     ) -> None:
-        await self.create_response(text, participant)
+        await self.llm.simple_response(text=text, processors=self.processors, participant=participant, conversation=self.conversation)
 
     @property
     def sts_mode(self) -> bool:
