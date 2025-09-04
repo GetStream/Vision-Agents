@@ -598,7 +598,9 @@ async def test_moonshine_with_mia_audio_mocked(mia_audio_data, mia_metadata):
 
         # Verify metadata structure
         assert metadata["model_name"] == "moonshine/base"
-        assert metadata["confidence"] is None  # Moonshine doesn't provide confidence scores
+        assert (
+            metadata["confidence"] is None
+        )  # Moonshine doesn't provide confidence scores
         assert metadata["target_sample_rate"] == 16000
         assert "processing_time_ms" in metadata
         assert "original_sample_rate" in metadata
@@ -705,9 +707,9 @@ async def test_moonshine_real_integration(mia_audio_data, mia_metadata):
                 print(f"Error {i + 1}: {error}")
 
         # We should either get transcripts or errors, but not silence
-        assert (
-            len(transcripts) > 0 or len(errors) > 0
-        ), "No transcripts or errors received"
+        assert len(transcripts) > 0 or len(errors) > 0, (
+            "No transcripts or errors received"
+        )
 
         # If we got transcripts, verify they contain reasonable content
         if transcripts:
@@ -746,14 +748,14 @@ async def test_moonshine_real_integration(mia_audio_data, mia_metadata):
             print(f"Key words found: {found_key_words}")
 
             # We should find at least some key words from the story
-            assert (
-                len(found_key_words) >= 2
-            ), f"Expected to find at least 2 key words from {key_words}, but only found {found_key_words}"
+            assert len(found_key_words) >= 2, (
+                f"Expected to find at least 2 key words from {key_words}, but only found {found_key_words}"
+            )
 
             # Check that we got a reasonable amount of text
-            assert (
-                len(actual_words) >= 10
-            ), f"Expected at least 10 words, but got {len(actual_words)}: {combined_text}"
+            assert len(actual_words) >= 10, (
+                f"Expected at least 10 words, but got {len(actual_words)}: {combined_text}"
+            )
 
             # Verify metadata structure
             assert "processing_time_ms" in metadata

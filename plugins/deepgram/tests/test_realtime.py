@@ -113,7 +113,9 @@ async def test_real_time_transcript_emission():
 
     @stt.on("partial_transcript")
     def on_partial_transcript(event):
-        partial_transcript_events.append((event.text, event.user_metadata, {"is_final": False}))
+        partial_transcript_events.append(
+            (event.text, event.user_metadata, {"is_final": False})
+        )
 
     @stt.on("error")
     def on_error(event):
@@ -162,7 +164,9 @@ async def test_real_time_partial_transcript_emission():
 
     @stt.on("partial_transcript")
     def on_partial_transcript(event):
-        partial_transcript_events.append((event.text, event.user_metadata, {"is_final": False}))
+        partial_transcript_events.append(
+            (event.text, event.user_metadata, {"is_final": False})
+        )
 
     # Send some audio data to ensure the connection is active
     pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
@@ -188,18 +192,18 @@ async def test_real_time_partial_transcript_emission():
 
     # Check that we received the partial transcript events
     assert len(partial_transcript_events) == 2, "Expected 2 partial transcript events"
-    assert (
-        partial_transcript_events[0][0] == "typing in prog"
-    ), "Incorrect partial transcript text"
-    assert (
-        partial_transcript_events[1][0] == "typing in progress"
-    ), "Incorrect partial transcript text"
+    assert partial_transcript_events[0][0] == "typing in prog", (
+        "Incorrect partial transcript text"
+    )
+    assert partial_transcript_events[1][0] == "typing in progress", (
+        "Incorrect partial transcript text"
+    )
 
     # Check that we received the final transcript event
     assert len(transcript_events) == 1, "Expected 1 final transcript event"
-    assert (
-        transcript_events[0][0] == "typing in progress complete"
-    ), "Incorrect final transcript text"
+    assert transcript_events[0][0] == "typing in progress complete", (
+        "Incorrect final transcript text"
+    )
 
     # Cleanup
     await stt.close()

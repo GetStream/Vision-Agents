@@ -161,7 +161,9 @@ class FalTurnDetection(BaseTurnDetector):
 
         # Process audio if buffer is large enough and no task is running
         buffer_size = len(self._user_buffers[user_id])
-        required_bytes = int(self.buffer_duration * self.sample_rate * 2)  # 2 bytes per int16 sample
+        required_bytes = int(
+            self.buffer_duration * self.sample_rate * 2
+        )  # 2 bytes per int16 sample
         if buffer_size >= required_bytes and (
             user_id not in self._processing_tasks
             or self._processing_tasks[user_id].done()
@@ -183,7 +185,9 @@ class FalTurnDetection(BaseTurnDetector):
                 return
 
             audio_buffer = self._user_buffers[user_id]
-            required_bytes = int(self.buffer_duration * self.sample_rate * 2)  # 2 bytes per int16 sample
+            required_bytes = int(
+                self.buffer_duration * self.sample_rate * 2
+            )  # 2 bytes per int16 sample
 
             if len(audio_buffer) < required_bytes:
                 return
@@ -191,7 +195,7 @@ class FalTurnDetection(BaseTurnDetector):
             # Take the required bytes and clear processed portion
             process_bytes = bytes(audio_buffer[:required_bytes])
             del audio_buffer[:required_bytes]
-            
+
             # Convert bytes back to samples for WAV creation
             process_samples = np.frombuffer(process_bytes, dtype=np.int16).tolist()
 
@@ -343,7 +347,7 @@ class FalTurnDetection(BaseTurnDetector):
         if not self._is_detecting:
             return
         self._is_detecting = False
-        
+
         # Cancel any running processing tasks
         for task in self._processing_tasks.values():
             if not task.done():

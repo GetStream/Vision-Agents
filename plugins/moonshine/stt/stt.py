@@ -89,7 +89,9 @@ class MoonshineSTT(STT):
         self.target_dbfs = target_dbfs
 
         # Track current user context
-        self._current_user = None
+        self._current_user: Optional[Dict[str, Any]] = None
+        # Local explicit state flags for mypy visibility
+        self._is_closed: bool = False
 
         logger.info(
             "Initialized Moonshine STT",

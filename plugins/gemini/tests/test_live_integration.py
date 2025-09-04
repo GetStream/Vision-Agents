@@ -2,6 +2,7 @@ import os
 import asyncio
 
 import pytest
+from typing import List, TypedDict
 
 try:
     from dotenv import load_dotenv
@@ -32,7 +33,11 @@ async def test_gemini_live_with_real_api():
     from getstream.plugins.gemini.live.live import GeminiLive
 
     # Set up instance and event capture
-    events = {"audio": [], "text": []}
+    class _Events(TypedDict):
+        audio: List[bytes]
+        text: List[str]
+
+    events: _Events = {"audio": [], "text": []}
     sts = GeminiLive(api_key=api_key)
 
     @sts.on("audio")  # type: ignore[arg-type]
@@ -58,8 +63,8 @@ async def test_gemini_live_with_real_api():
         await asyncio.sleep(0.2)
 
     try:
-        assert (
-            events["audio"] or events["text"]
-        ), "No response received from Gemini Live"
+        assert events["audio"] or events["text"], (
+            "No response received from Gemini Live"
+        )
     finally:
         await sts.close()

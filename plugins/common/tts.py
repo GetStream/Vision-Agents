@@ -9,8 +9,12 @@ from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 from .events import (
-    TTSAudioEvent, TTSSynthesisStartEvent, TTSSynthesisCompleteEvent, TTSErrorEvent,
-    PluginInitializedEvent, PluginClosedEvent
+    TTSAudioEvent,
+    TTSSynthesisStartEvent,
+    TTSSynthesisCompleteEvent,
+    TTSErrorEvent,
+    PluginInitializedEvent,
+    PluginClosedEvent,
 )
 from .event_utils import register_global_event
 
@@ -146,7 +150,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                 plugin_name=self.provider_name,
                 text=text,
                 synthesis_id=synthesis_id,
-                user_metadata=user
+                user_metadata=user,
             )
             register_global_event(start_event)
             self.emit("synthesis_start", start_event)
@@ -174,7 +178,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                     synthesis_id=synthesis_id,
                     text_source=text,
                     user_metadata=user,
-                    sample_rate=self._track.framerate if self._track else 16000
+                    sample_rate=self._track.framerate if self._track else 16000,
                 )
                 register_global_event(audio_event)
                 self.emit("audio", audio_event)  # Structured event
@@ -195,7 +199,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                             user_metadata=user,
                             chunk_index=audio_chunks - 1,
                             is_final_chunk=False,  # We don't know if it's final yet
-                            sample_rate=self._track.framerate if self._track else 16000
+                            sample_rate=self._track.framerate if self._track else 16000,
                         )
                         register_global_event(audio_event)
                         self.emit("audio", audio_event)  # Structured event
@@ -214,7 +218,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                             user_metadata=user,
                             chunk_index=audio_chunks - 1,
                             is_final_chunk=False,  # We don't know if it's final yet
-                            sample_rate=self._track.framerate if self._track else 16000
+                            sample_rate=self._track.framerate if self._track else 16000,
                         )
                         register_global_event(audio_event)
                         self.emit("audio", audio_event)  # Structured event
@@ -236,7 +240,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                         user_metadata=user,
                         chunk_index=audio_chunks - 1,
                         is_final_chunk=False,  # We don't know if it's final yet
-                        sample_rate=self._track.framerate if self._track else 16000
+                        sample_rate=self._track.framerate if self._track else 16000,
                     )
                     register_global_event(audio_event)
                     self.emit("audio", audio_event)  # Structured event
@@ -257,7 +261,8 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
 
             real_time_factor = (
                 (synthesis_time * 1000) / estimated_audio_duration_ms
-                if estimated_audio_duration_ms > 0 else None
+                if estimated_audio_duration_ms > 0
+                else None
             )
 
             # Emit synthesis completion event
@@ -271,7 +276,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                 synthesis_time_ms=synthesis_time * 1000,
                 audio_duration_ms=estimated_audio_duration_ms,
                 chunk_count=audio_chunks,
-                real_time_factor=real_time_factor
+                real_time_factor=real_time_factor,
             )
             register_global_event(completion_event)
             self.emit("synthesis_complete", completion_event)
@@ -300,7 +305,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                 context="synthesis",
                 text_source=text,
                 synthesis_id=synthesis_id,
-                user_metadata=user
+                user_metadata=user,
             )
             register_global_event(error_event)
             self.emit("error", error_event)  # New structured event
@@ -316,7 +321,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
             plugin_name=self.provider_name,
             plugin_type="TTS",
             provider=self.provider_name,
-            cleanup_successful=True
+            cleanup_successful=True,
         )
         register_global_event(close_event)
         self.emit("closed", close_event)

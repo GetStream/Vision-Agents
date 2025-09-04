@@ -9,7 +9,11 @@ from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.track_util import PcmData
 
 from .events import (
-    STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent, PluginInitializedEvent, PluginClosedEvent
+    STTTranscriptEvent,
+    STTPartialTranscriptEvent,
+    STTErrorEvent,
+    PluginInitializedEvent,
+    PluginClosedEvent,
 )
 from .event_utils import register_global_event
 
@@ -106,7 +110,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             plugin_name=self.provider_name,
             plugin_type="STT",
             provider=self.provider_name,
-            configuration={"sample_rate": sample_rate}
+            configuration={"sample_rate": sample_rate},
         )
         register_global_event(init_event)
         self.emit("initialized", init_event)
@@ -220,7 +224,12 @@ class STT(AsyncIOEventEmitter, abc.ABC):
         register_global_event(event)
         self.emit("partial_transcript", event)  # Structured event
 
-    def _emit_error_event(self, error: Exception, context: str = "", user_metadata: Optional[Dict[str, Any]] = None):
+    def _emit_error_event(
+        self,
+        error: Exception,
+        context: str = "",
+        user_metadata: Optional[Dict[str, Any]] = None,
+    ):
         """
         Emit an error event with structured data.
 
@@ -235,8 +244,8 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             error=error,
             context=context,
             user_metadata=user_metadata,
-            error_code=getattr(error, 'error_code', None),
-            is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt))
+            error_code=getattr(error, "error_code", None),
+            is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt)),
         )
 
         logger.error(
@@ -362,7 +371,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
                 plugin_name=self.provider_name,
                 plugin_type="STT",
                 provider=self.provider_name,
-                cleanup_successful=True
+                cleanup_successful=True,
             )
             register_global_event(close_event)
             self.emit("closed", close_event)

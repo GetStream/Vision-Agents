@@ -109,7 +109,7 @@ class OpenAIRealtime(STS):
             • ``disconnected`` – after normal closure or error
         """
 
-        if self._is_connected:
+        if self.is_connected:
             raise RuntimeError("AI agent already connected")
 
         # Build session presets
@@ -145,14 +145,14 @@ class OpenAIRealtime(STS):
 
     async def update_session(self, **session_fields):
         """Wrapper around ``connection.session.update()``."""
-        if not self._is_connected or not self._connection:
+        if not self.is_connected or not self._connection:
             raise RuntimeError("Not connected")
 
         await self._connection.session.update(session=session_fields)
 
     async def send_function_call_output(self, tool_call_id: str, output: str):
         """Send a tool call output to the conversation."""
-        if not self._is_connected or not self._connection:
+        if not self.is_connected or not self._connection:
             raise RuntimeError("Not connected")
 
         await self._connection.conversation.item.create(
@@ -165,7 +165,7 @@ class OpenAIRealtime(STS):
 
     async def send_user_message(self, text: str):
         """Send a text message from the *human* side to the conversation."""
-        if not self._is_connected or not self._connection:
+        if not self.is_connected or not self._connection:
             raise RuntimeError("Not connected")
 
         await self._connection.conversation.item.create(

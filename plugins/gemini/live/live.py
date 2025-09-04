@@ -10,7 +10,7 @@ import contextlib
 import io
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from aiortc.mediastreams import MediaStreamTrack
 
@@ -116,6 +116,7 @@ class GeminiLive(STS):
         self._audio_receiver_task: Optional[asyncio.Task] = None
         self._connect_task: Optional[asyncio.Task] = None
         self._playback_enabled: bool = True
+        self._is_connected: bool = False
         # Barge-in control
         self._barge_in_enabled: bool = barge_in
         self._silence_timeout_ms: int = silence_timeout_ms
@@ -178,7 +179,7 @@ class GeminiLive(STS):
         if speech_cfg:
             cfg["speech_config"] = speech_cfg
 
-        return LiveConnectConfigDict(**cfg)
+        return cast(LiveConnectConfigDict, cfg)
 
     async def _require_session(self) -> AsyncSession:
         """Ensure the live session is connected and return it.

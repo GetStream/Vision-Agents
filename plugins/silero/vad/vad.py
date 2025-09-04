@@ -9,7 +9,7 @@ from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
 from getstream.plugins.common.events import VADAudioEvent
 from getstream.plugins.common.event_utils import register_global_event
-            
+
 
 try:
     import onnxruntime as ort
@@ -41,7 +41,7 @@ class SileroVAD(VAD):
     def __init__(
         self,
         sample_rate: int = 48000,
-        frame_size: int = None,
+        frame_size: Optional[int] = None,
         activation_th: float = 0.4,
         deactivation_th: float = 0.2,
         speech_pad_ms: int = 300,
@@ -96,6 +96,10 @@ class SileroVAD(VAD):
         self.window_samples = window_samples
         self.device_name = device
         self.use_onnx = use_onnx and has_onnx
+        # Default device annotation for type checkers; will be set in loader
+        self.device: torch.device = torch.device("cpu")
+        # Buffer used by base class; annotate for type-checker
+        self.speech_buffer: bytearray = bytearray()
 
         # Verify window size is correct for the Silero model
         if self.model_rate == 16000 and self.window_samples != 512:
@@ -118,8 +122,11 @@ class SileroVAD(VAD):
         self._resampled = np.array([], dtype=np.float32)
 
         # ONNX session and model
-        self.onnx_session = None
-        self.model = None
+        self.onnx_session: Optional["ort.InferenceSession"] = None
+        # The Silero VAD torch model is a torch.nn.Module with callable forward
+        self.model: Optional[torch.nn.Module] = None
+        # ONNX input name if ONNX is used
+        self.onnx_input_name: Optional[str] = None
 
         # Load the appropriate model
         self._load_model()
@@ -148,6 +155,7 @@ class SileroVAD(VAD):
         )
 
         # Set model to evaluation mode
+        assert self.model is not None
         self.model.eval()
 
         # Try to use the specified device, fall back to CPU if not available
@@ -223,7 +231,7 @@ class SileroVAD(VAD):
                 # Export the model
                 torch.onnx.export(
                     model,
-                    dummy_input,
+                    (dummy_input,),
                     tmp.name,
                     input_names=["input"],
                     output_names=["output"],
@@ -240,6 +248,7 @@ class SileroVAD(VAD):
                 )
 
                 # Get input name
+                assert self.onnx_session is not None
                 self.onnx_input_name = self.onnx_session.get_inputs()[0].name
 
             logger.info("Silero VAD ONNX model loaded successfully")
@@ -321,7 +330,9 @@ class SileroVAD(VAD):
 
                         # Get model predictions using PyTorch
                         with torch.no_grad():
-                            speech_prob = self.model(tensor, self.model_rate)
+                            assert self.model is not None
+                            # Silero VAD model returns a tensor-like; cast to float afterwards
+                            speech_prob = self.model(tensor, self.model_rate)  # type: ignore[call-arg]
                             speech_prob = float(speech_prob.item())
 
                     # Calculate real-time factor (RTF)
@@ -385,7 +396,7 @@ class SileroVAD(VAD):
                 duration_ms=duration_ms,
                 speech_probability=0.8,  # Default value, could be enhanced
                 frame_count=len(speech_data) // self.frame_size,
-                user_metadata=user
+                user_metadata=user,
             )
             register_global_event(audio_event)
             self.emit("audio", audio_event)  # Structured event

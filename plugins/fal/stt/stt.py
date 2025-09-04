@@ -28,6 +28,7 @@ import os
 import tempfile
 import time
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
 import wave
 
@@ -109,11 +110,11 @@ class FalWizperSTT(STT):
         """
         if self._is_closed:
             logger.debug("connection is closed, ignoring audio")
-            return
+            return None
 
         if pcm_data.samples.size == 0:
             logger.debug("No audio data to process")
-            return
+            return None
 
         try:
             logger.debug(
@@ -140,7 +141,7 @@ class FalWizperSTT(STT):
                     input_params["language"] = self.target_language
 
                 # Upload file and get URL
-                audio_url = await self._fal_client.upload_file(temp_file_path)
+                audio_url = await self._fal_client.upload_file(Path(temp_file_path))
                 input_params["audio_url"] = audio_url
 
                 # Use regular subscribe since streaming isn't supported
@@ -166,6 +167,7 @@ class FalWizperSTT(STT):
         except Exception as e:
             logger.error(f"FalWizper processing error: {str(e)}")
             self._emit_error_event(e, "FalWizper processing")
+            return None
 
     async def close(self):
         """Close the STT service and release any resources."""

@@ -56,7 +56,12 @@ class KokoroTTS(TTS):
         chunks: List[bytes] = await loop.run_in_executor(
             None, lambda: list(self._generate_chunks(text))
         )
-        return chunks
+
+        async def _aiter():
+            for chunk in chunks:
+                yield chunk
+
+        return _aiter()
 
     async def stop_audio(self) -> None:
         """
@@ -68,7 +73,6 @@ class KokoroTTS(TTS):
             return
         except Exception as e:
             logging.error(f"Error flushing audio track: {e}")
-
 
     def _generate_chunks(self, text: str):
         for _gs, _ps, audio in self._pipeline(

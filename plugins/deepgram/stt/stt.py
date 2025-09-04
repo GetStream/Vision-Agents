@@ -80,7 +80,7 @@ class DeepgramSTT(STT):
         # Initialize DeepgramClient with the API key
         logger.info("Initializing Deepgram client")
         self.deepgram = client if client is not None else DeepgramClient(api_key)
-        self.dg_connection = None
+        self.dg_connection: Optional[Any] = None
         self.options = options or LiveOptions(
             model="nova-2",
             language=language,
@@ -93,13 +93,13 @@ class DeepgramSTT(STT):
         # Keep-alive mechanism
         self.keep_alive_interval = keep_alive_interval
         self.last_activity_time = time.time()
-        self.keep_alive_task = None
-        self._running = False
-        self._setup_attempted = False
-        self._is_closed = False
+        self.keep_alive_task: Optional[asyncio.Task[Any]] = None
+        self._running: bool = False
+        self._setup_attempted: bool = False
+        self._is_closed: bool = False
 
         # Track current user context for associating transcripts with users
-        self._current_user = None
+        self._current_user: Optional[Dict[str, Any]] = None
 
         self._setup_connection()
 
@@ -137,6 +137,7 @@ class DeepgramSTT(STT):
             # Use the newer websocket interface instead of deprecated live
             logger.debug("Setting up Deepgram WebSocket connection")
             self.dg_connection = self.deepgram.listen.websocket.v("1")
+            assert self.dg_connection is not None
 
             # Handler for transcript results
             def handle_transcript(conn, result=None):
@@ -265,7 +266,7 @@ class DeepgramSTT(STT):
 
     async def send_keep_alive(self):
         """Send a keep-alive message to maintain the connection."""
-        if not self.dg_connection:
+        if self.dg_connection is None:
             logger.warning("Cannot send keep-alive: no connection available")
             return False
 
@@ -355,6 +356,7 @@ class DeepgramSTT(STT):
                 "Sending audio data to Deepgram",
                 extra={"audio_bytes": len(audio_data)},
             )
+            assert self.dg_connection is not None
             self.dg_connection.send(audio_data)
         except Exception as e:
             # Raise exception to be handled by base class

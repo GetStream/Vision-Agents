@@ -30,6 +30,7 @@ from .base_processor import (
 
 logger = logging.getLogger(__name__)
 
+
 class YOLOPoseVideoTrack(VideoStreamTrack):
     """Custom video track for YOLO pose detection output."""
 
@@ -188,9 +189,7 @@ class YOLOPoseProcessor(
 
         self.pose_model = YOLO(self.model_path)
         self.pose_model.to(self.device)
-        logger.info(
-            f"✅ YOLO pose model loaded: {self.model_path} on {self.device}"
-        )
+        logger.info(f"✅ YOLO pose model loaded: {self.model_path} on {self.device}")
 
     def create_video_track(self):
         """Create a video track for publishing pose-annotated frames."""

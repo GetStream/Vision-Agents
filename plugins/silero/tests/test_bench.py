@@ -161,6 +161,6 @@ async def test_vad_benchmark_onnx():
     print(f"  Speech segments detected: {results['speech_segments']}")
 
     # Verify that the ONNX implementation is reasonably efficient
-    assert (
-        results["rtf"] < 2.0
-    ), f"ONNX VAD performance too slow: RTF = {results['rtf']:.3f}"
+    assert results["rtf"] < 2.0, (
+        f"ONNX VAD performance too slow: RTF = {results['rtf']:.3f}"
+    )

@@ -35,17 +35,17 @@ def log_callback(log_message, log_level):
 
 class KrispTurnDetection(BaseTurnDetector):
     def __init__(
-            self,
-            model_path: Optional[str] = os.getcwd() + "/krisp-viva-tt-v1.kef",
-            frame_duration_ms: int = 15,
-            confidence_threshold: float = 0.5,
+        self,
+        model_path: Optional[str] = os.getcwd() + "/krisp-viva-tt-v1.kef",
+        frame_duration_ms: int = 15,
+        confidence_threshold: float = 0.5,
     ):
         super().__init__(confidence_threshold=confidence_threshold)
         self.logger = logging.getLogger("KrispTurnDetection")
         self.model_path = model_path
         self.frame_duration_ms = frame_duration_ms
         self.turn_start_threshold = (
-                1 - confidence_threshold
+            1 - confidence_threshold
         )  # For Krisp Model, 0 is speaking, 1 is non-speaking
         self.turn_end_threshold = 0.75
         self._krisp_instance = None
@@ -74,10 +74,10 @@ class KrispTurnDetection(BaseTurnDetector):
         return self._is_detecting
 
     async def process_audio(
-            self,
-            audio_data: PcmData,
-            user_id: str,
-            metadata: Optional[Dict[str, Any]] = None,
+        self,
+        audio_data: PcmData,
+        user_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not self.is_detecting():
             return
@@ -94,8 +94,8 @@ class KrispTurnDetection(BaseTurnDetector):
             )
             return
         if (
-                not isinstance(audio_data.samples, np.ndarray)
-                or audio_data.samples.dtype != np.int16
+            not isinstance(audio_data.samples, np.ndarray)
+            or audio_data.samples.dtype != np.int16
         ):
             self.logger.error(
                 f"Invalid sample dtype: {audio_data.samples.dtype}. Expected int16."
@@ -153,7 +153,7 @@ class KrispTurnDetection(BaseTurnDetector):
             return 1
 
     def process_pcm_turn_taking(
-            self, pcm: PcmData, user_id: str, metadata: Optional[Dict[str, Any]] = None
+        self, pcm: PcmData, user_id: str, metadata: Optional[Dict[str, Any]] = None
     ):
         if self._buffer is None:
             self.logger.error("Buffer not initialized. Call start() first.")

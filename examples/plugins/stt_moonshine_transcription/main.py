@@ -139,15 +139,15 @@ async def main() -> None:  # noqa: D401
                     user = event.user_metadata["user"]
                     user_info = str(user)
                 print(f"[{ts}] {user_info}: {event.text}")
-                if hasattr(event, 'confidence') and event.confidence:
+                if hasattr(event, "confidence") and event.confidence:
                     print(f"    └─ confidence: {event.confidence:.2%}")
-                if hasattr(event, 'processing_time_ms') and event.processing_time_ms:
+                if hasattr(event, "processing_time_ms") and event.processing_time_ms:
                     print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
 
             @stt.on("error")
             async def _on_error(event):
                 print(f"\n❌ STT Error: {event.error_message}")
-                if hasattr(event, 'context') and event.context:
+                if hasattr(event, "context") and event.context:
                     print(f"    └─ context: {event.context}")
 
             print("🎧 Listening for audio… (Press Ctrl+C to stop)")

@@ -102,7 +102,7 @@ async def run_bot(call: Call, bot_user_id: str):
                 @stt.on("error")
                 async def on_stt_error(event):
                     logging.error("STT error: %s", event.error_message)
-                    if hasattr(event, 'context') and event.context:
+                    if hasattr(event, "context") and event.context:
                         logging.error("Context: %s", event.context)
 
                 logging.info("🎧 Bot is listening… (Ctrl-C to stop)")

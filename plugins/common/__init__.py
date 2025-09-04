@@ -13,20 +13,17 @@ from .events import (
     ConnectionState,
     AudioFormat,
     BaseEvent,
-
     # STT Events
     STTTranscriptEvent,
     STTPartialTranscriptEvent,
     STTErrorEvent,
     STTConnectionEvent,
-
     # TTS Events
     TTSAudioEvent,
     TTSSynthesisStartEvent,
     TTSSynthesisCompleteEvent,
     TTSErrorEvent,
     TTSConnectionEvent,
-
     # STS Events
     STSConnectedEvent,
     STSDisconnectedEvent,
@@ -36,14 +33,12 @@ from .events import (
     STSResponseEvent,
     STSConversationItemEvent,
     STSErrorEvent,
-
     # VAD Events
     VADSpeechStartEvent,
     VADSpeechEndEvent,
     VADAudioEvent,
     VADPartialEvent,
     VADErrorEvent,
-
     # Generic Events
     PluginInitializedEvent,
     PluginClosedEvent,
@@ -58,7 +53,11 @@ from .event_utils import (
     get_global_logger,
 )
 from .event_serialization import serialize_event, serialize_events, deserialize_event
-from .event_metrics import calculate_stt_metrics, calculate_tts_metrics, calculate_vad_metrics
+from .event_metrics import (
+    calculate_stt_metrics,
+    calculate_tts_metrics,
+    calculate_vad_metrics,
+)
 from .events import create_event
 
 __all__ = [
@@ -67,26 +66,22 @@ __all__ = [
     "TTS",
     "VAD",
     "STS",
-
     # Event system
     "EventType",
     "ConnectionState",
     "AudioFormat",
     "BaseEvent",
-
     # STT Events
     "STTTranscriptEvent",
     "STTPartialTranscriptEvent",
     "STTErrorEvent",
     "STTConnectionEvent",
-
     # TTS Events
     "TTSAudioEvent",
     "TTSSynthesisStartEvent",
     "TTSSynthesisCompleteEvent",
     "TTSErrorEvent",
     "TTSConnectionEvent",
-
     # STS Events
     "STSConnectedEvent",
     "STSDisconnectedEvent",
@@ -96,19 +91,16 @@ __all__ = [
     "STSResponseEvent",
     "STSConversationItemEvent",
     "STSErrorEvent",
-
     # VAD Events
     "VADSpeechStartEvent",
     "VADSpeechEndEvent",
     "VADAudioEvent",
     "VADPartialEvent",
     "VADErrorEvent",
-
     # Generic Events
     "PluginInitializedEvent",
     "PluginClosedEvent",
     "PluginErrorEvent",
-
     # Event utilities
     "EventFilter",
     "EventRegistry",
@@ -117,12 +109,10 @@ __all__ = [
     "get_global_registry",
     "get_global_logger",
     "create_event",
-
     # Event serialization
     "serialize_event",
     "serialize_events",
     "deserialize_event",
-
     # Event metrics
     "calculate_stt_metrics",
     "calculate_tts_metrics",

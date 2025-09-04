@@ -52,7 +52,6 @@ try:
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-
     # Re-export fixtures
     __all__ = [
         "get_asset_path",

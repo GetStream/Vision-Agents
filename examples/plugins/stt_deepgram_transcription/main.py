@@ -136,9 +136,9 @@ async def main():
                     user = event.user_metadata["user"]
                     user_info = user.name if hasattr(user, "name") else str(user)
                 print(f"[{timestamp}] {user_info}: {event.text}")
-                if hasattr(event, 'confidence') and event.confidence:
+                if hasattr(event, "confidence") and event.confidence:
                     print(f"    └─ confidence: {event.confidence:.2%}")
-                if hasattr(event, 'processing_time_ms') and event.processing_time_ms:
+                if hasattr(event, "processing_time_ms") and event.processing_time_ms:
                     print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
 
             @stt.on("partial_transcript")
@@ -155,7 +155,7 @@ async def main():
             @stt.on("error")
             async def on_stt_error(event):
                 print(f"\n❌ STT Error: {event.error_message}")
-                if hasattr(event, 'context') and event.context:
+                if hasattr(event, "context") and event.context:
                     print(f"    └─ context: {event.context}")
 
             # Keep the connection alive and wait for audio

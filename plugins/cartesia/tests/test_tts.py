@@ -47,7 +47,7 @@ class MockAsyncCartesia:
 class MockAudioTrack(AudioStreamTrack):
     def __init__(self, framerate: int = 16000):
         self.framerate = framerate
-        self.written_data = []
+        self.written_data: list[bytes] = []
 
     async def write(self, data: bytes):
         self.written_data.append(data)

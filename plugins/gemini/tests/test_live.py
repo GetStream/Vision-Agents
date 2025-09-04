@@ -2,7 +2,7 @@ import asyncio
 import importlib
 import sys
 import types
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, cast, TypedDict
 from unittest.mock import AsyncMock
 
 import numpy as np
@@ -56,6 +56,12 @@ class _FakeVideoTrack:
 
 
 # --- Pytest fixtures ---
+class _Events(TypedDict):
+    connected: bool
+    audio: List[bytes]
+    text: List[str]
+
+
 @pytest.fixture
 def fake_image(monkeypatch):
     import getstream.plugins.gemini.live.live as live_mod
@@ -256,7 +262,7 @@ async def test_connect_emits_events_and_forwards_audio_and_text(
     responses = [(b"abc", "hello"), (b"def", None)]
     patch_genai_client(responses)
 
-    events = {"connected": False, "audio": [], "text": []}
+    events: _Events = {"connected": False, "audio": [], "text": []}
 
     sts = GeminiLive(api_key="key", model="model", provider_config=None)
 

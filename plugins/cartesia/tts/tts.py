@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, cast
 
 from cartesia import AsyncCartesia
-from cartesia.tts import OutputFormat_Raw
+from cartesia.tts import (
+    OutputFormat_RawParams,
+    TtsRequestIdSpecifierParams,
+    TtsRequestEmbeddingSpecifierParams,
+)
 
 from getstream.plugins.common import TTS
 from getstream.video.rtc.audio_track import AudioStreamTrack
@@ -37,9 +41,14 @@ class CartesiaTTS(TTS):
         if not self.api_key:
             raise ValueError("CARTESIA_API_KEY env var or api_key parameter required")
 
-        self.client = client if client is not None else AsyncCartesia(api_key=self.api_key)
+        self.client = (
+            client if client is not None else AsyncCartesia(api_key=self.api_key)
+        )
         self.model_id = model_id
-        self.voice_id = voice_id
+        # Ensure voice_id is always provided for API typing and calls
+        self.voice_id: str = (
+            voice_id if voice_id is not None else "f9836c6e-a0bd-460e-9d3c-f7299fa60f94"
+        )
         self.sample_rate = sample_rate
 
     def set_output_track(self, track: AudioStreamTrack) -> None:  # noqa: D401
@@ -52,21 +61,25 @@ class CartesiaTTS(TTS):
     async def stream_audio(self, text: str, *_, **__) -> bytes:  # noqa: D401
         """Generate speech and yield raw PCM chunks."""
 
-        output_format: OutputFormat_Raw = {
+        output_format: OutputFormat_RawParams = {
             "container": "raw",
             "encoding": "pcm_s16le",
             "sample_rate": self.sample_rate,
-        }  # type: ignore[assignment]
+        }
 
         # ``/tts/bytes`` is the lowest-latency endpoint and returns an *async*
         # iterator when used with ``AsyncCartesia``. Each item yielded is
         # a raw ``bytes`` / ``bytearray`` containing PCM samples (new Cartesia SDK)
 
+        voice_param: (
+            TtsRequestIdSpecifierParams | TtsRequestEmbeddingSpecifierParams
+        ) = cast(TtsRequestIdSpecifierParams, {"id": self.voice_id})
+
         response = self.client.tts.bytes(
             model_id=self.model_id,
             transcript=text,
-            voice={"id": self.voice_id} if self.voice_id else {},
             output_format=output_format,
+            voice=voice_param,
         )
 
         async def _audio_chunk_stream():  # noqa: D401
@@ -84,9 +97,8 @@ class CartesiaTTS(TTS):
             None
         """
         try:
-            await self.track.flush(),
+            (await self.track.flush(),)
             logging.info("🎤 Stopping audio track for TTS")
             return
         except Exception as e:
             logging.error(f"Error flushing audio track: {e}")
-
