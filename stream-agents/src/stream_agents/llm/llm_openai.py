@@ -28,7 +28,7 @@ class OpenAILLM(LLM):
             self.client = client
         else:
             self.client = AsyncOpenAI()
-        super().__init__(provider_name="openai", model=model, client=client)
+        super().__init__(model=model, client=client)
 
     async def _create_response_impl(
         self,

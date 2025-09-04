@@ -32,7 +32,8 @@ from getstream.video.rtc.tracks import (
 )
 
 from .conversation import Conversation
-from ..llm.llm import LLM, OpenAILLM
+from ..llm.llm import LLM
+from ..llm.openai_llm import OpenAILLM
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING
