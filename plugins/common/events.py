@@ -51,6 +51,7 @@ class EventType(Enum):
     VAD_SPEECH_END = "vad_speech_end"
     VAD_AUDIO = "vad_audio"
     VAD_PARTIAL = "vad_partial"
+    VAD_INFERENCE = "vad_inference"
     VAD_ERROR = "vad_error"
 
     # Generic Plugin Events
@@ -361,6 +362,10 @@ class VADSpeechStartEvent(BaseEvent):
     speech_probability: float = 0.0
     activation_threshold: float = 0.0
     frame_count: int = 1
+    # Silero-specific enhancements
+    inference_time_ms: float = 0.0
+    model_confidence: float = 0.0
+    window_samples: int = 0
 
 
 @dataclass
@@ -372,6 +377,10 @@ class VADSpeechEndEvent(BaseEvent):
     deactivation_threshold: float = 0.0
     total_speech_duration_ms: float = 0.0
     total_frames: int = 0
+    # Silero-specific enhancements
+    avg_speech_probability: float = 0.0
+    inference_performance_ms: float = 0.0
+    model_confidence: float = 0.0
 
 
 @dataclass
@@ -386,6 +395,12 @@ class VADAudioEvent(BaseEvent):
     duration_ms: Optional[float] = None
     speech_probability: Optional[float] = None
     frame_count: int = 0
+    # Silero-specific enhancements
+    start_speech_probability: float = 0.0
+    end_speech_probability: float = 0.0
+    avg_inference_time_ms: float = 0.0
+    total_inferences: int = 0
+    model_confidence: float = 0.0
 
 
 @dataclass
@@ -401,6 +416,24 @@ class VADPartialEvent(BaseEvent):
     speech_probability: Optional[float] = None
     frame_count: int = 0
     is_speech_active: bool = True
+    # Silero-specific enhancements
+    inference_time_ms: float = 0.0
+    model_confidence: float = 0.0
+
+
+@dataclass
+class VADInferenceEvent(BaseEvent):
+    """Event emitted after each VAD inference window."""
+
+    event_type: EventType = field(default=EventType.VAD_INFERENCE, init=False)
+    speech_probability: float = 0.0
+    inference_time_ms: float = 0.0
+    window_samples: int = 0
+    model_rate: int = 16000
+    real_time_factor: float = 0.0
+    is_speech_active: bool = False
+    accumulated_speech_duration_ms: float = 0.0
+    accumulated_silence_duration_ms: float = 0.0
 
 
 @dataclass
@@ -489,6 +522,7 @@ EVENT_CLASS_MAP = {
     EventType.VAD_SPEECH_END: VADSpeechEndEvent,
     EventType.VAD_AUDIO: VADAudioEvent,
     EventType.VAD_PARTIAL: VADPartialEvent,
+    EventType.VAD_INFERENCE: VADInferenceEvent,
     EventType.VAD_ERROR: VADErrorEvent,
     EventType.PLUGIN_INITIALIZED: PluginInitializedEvent,
     EventType.PLUGIN_CLOSED: PluginClosedEvent,
