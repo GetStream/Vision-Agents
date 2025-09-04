@@ -8,12 +8,9 @@ from uuid import uuid4
 from aiortc import VideoStreamTrack
 from openai.types.responses import EasyInputMessageParam, ResponseInputItemParam
 
-from getstream.plugins.common import (
-    TTS,
-    STT,
-    STTTranscriptEvent,
-    STTPartialTranscriptEvent,
-)
+from ..tts.tts import TTS
+from ..stt.stt import STT
+from ..events import STTTranscriptEvent, STTPartialTranscriptEvent
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from getstream.chat.client import ChatClient

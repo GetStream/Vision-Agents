@@ -4,7 +4,7 @@ Test the base STT class consistency improvements.
 
 import pytest
 from unittest.mock import Mock
-from getstream.plugins.common import STT
+from stream_agents.stt.stt import STT
 from getstream.video.rtc.track_util import PcmData
 import numpy as np
 
