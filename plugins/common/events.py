@@ -583,6 +583,7 @@ __all__ = [
     "VADSpeechEndEvent",
     "VADAudioEvent",
     "VADPartialEvent",
+    "VADInferenceEvent",
     "VADErrorEvent",
     # Generic Events
     "PluginInitializedEvent",
