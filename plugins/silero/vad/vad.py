@@ -1,4 +1,6 @@
 import logging
+from dataclasses import dataclass, field
+
 import torch
 import numpy as np
 import warnings
@@ -13,7 +15,7 @@ from getstream.plugins.common.events import (
     VADSpeechEndEvent,
     VADPartialEvent,
     VADInferenceEvent,
-    AudioFormat,
+    AudioFormat, EventType,
 )
 from getstream.plugins.common.event_utils import register_global_event
 
@@ -28,6 +30,32 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class SileroVADEndEvent(VADSpeechEndEvent):
+    """Event emitted when speech ends."""
+
+    avg_speech_probability: float = 0.0
+    inference_performance_ms: float = 0.0
+    model_confidence: float = 0.0
+
+
+@dataclass
+class SileroVADAudioEvent(VADAudioEvent):
+    """Event emitted when VAD detects complete speech segment."""
+
+    start_speech_probability: float = 0.0
+    end_speech_probability: float = 0.0
+    avg_inference_time_ms: float = 0.0
+    total_inferences: int = 0
+    model_confidence: float = 0.0
+
+
+@dataclass
+class SileroVADPartialEvent(VADPartialEvent):
+    """Event emitted during ongoing speech detection."""
+
+    inference_time_ms: float = 0.0
+    model_confidence: float = 0.0
 
 class SileroVAD(VAD):
     """
@@ -438,7 +466,7 @@ class SileroVAD(VAD):
             # Calculate average speech probability during this segment
             avg_speech_prob = self._get_avg_speech_probability()
 
-            audio_event = VADAudioEvent(
+            audio_event = SileroVADAudioEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 audio_data=speech_data.tobytes(),
@@ -456,7 +484,7 @@ class SileroVAD(VAD):
         # Emit enhanced speech end event if we were actively detecting speech
         if self.is_speech_active and self._speech_start_time:
             total_speech_duration = (time.time() - self._speech_start_time) * 1000
-            speech_end_event = VADSpeechEndEvent(
+            speech_end_event = SileroVADEndEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 speech_probability=self._speech_end_probability,
@@ -567,7 +595,7 @@ class SileroVAD(VAD):
                 current_duration_ms = (len(current_samples) / self.sample_rate) * 1000
 
                 # Emit enhanced partial event
-                partial_event = VADPartialEvent(
+                partial_event = SileroVADPartialEvent(
                     session_id=self.session_id,
                     plugin_name=self.provider_name,
                     audio_data=current_bytes,
