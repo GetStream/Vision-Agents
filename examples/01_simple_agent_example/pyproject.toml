@@ -8,11 +8,13 @@ dependencies = [
   "python-dotenv>=1.0",
   "getstream[webrtc]==2.3.0a5",
   "stream-agents",
+  "openai>=1.101.0",
   "krisp-audio>=1.4.0; sys_platform == 'darwin' and platform_machine == 'aarch64'",
   "krisp-audio>=1.4.0; sys_platform == 'win32'",
   "krisp-audio>=1.4.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "krisp-audio>=1.4.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
   "anthropic>=0.66.0",
+  "google-genai>=1.33.0",
 ]
 
 [tool.uv.sources]

@@ -19,7 +19,11 @@ class Conversation:
     chat_client: ChatClient
 
     def __init__(
-        self, instructions : str, messages: List[Message], channel: ChannelResponse, chat_client: ChatClient
+        self,
+        instructions: str,
+        messages: List[Message],
+        channel: ChannelResponse,
+        chat_client: ChatClient,
     ):
         self.instructions = instructions
         self.messages = messages

@@ -15,6 +15,7 @@ def call_twice(func: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> tuple
 def greet(name: str, excited: bool = False) -> str:
     return f"Hello {name}{'!!!' if excited else ''}"
 
+
 result = call_twice(greet, "Thierry", excited=True)
 
 call_twice(greet, "hi", excited=1)

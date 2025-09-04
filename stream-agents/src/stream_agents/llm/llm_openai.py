@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Dict
+from typing import List, Optional
 from openai import AsyncOpenAI
 
 from stream_agents.processors import BaseProcessor
@@ -7,7 +7,7 @@ from .llm import LLM
 
 
 class OpenAILLM(LLM):
-    '''
+    """
     The goal is to standardize the minimal feature set thats needed for the agent integration
     That means
 
@@ -16,8 +16,14 @@ class OpenAILLM(LLM):
     - response normalization
 
     Other than that we aim to give access to the native API methods from openAI as much as possible
-    '''
-    def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[AsyncOpenAI] = None):
+    """
+
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        client: Optional[AsyncOpenAI] = None,
+    ):
         if client is not None:
             self.client = client
         else:

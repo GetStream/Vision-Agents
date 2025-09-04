@@ -10,9 +10,7 @@ import time
 from typing import Dict, Any, List, Optional, Callable
 from collections import defaultdict, deque
 
-from .events import (
-    BaseEvent, EventType
-)
+from .events import BaseEvent, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +24,7 @@ class EventFilter:
         session_ids: Optional[List[str]] = None,
         plugin_names: Optional[List[str]] = None,
         time_window_ms: Optional[int] = None,
-        min_confidence: Optional[float] = None
+        min_confidence: Optional[float] = None,
     ):
         """
         Initialize event filter.
@@ -68,7 +66,7 @@ class EventFilter:
 
         # Check confidence (strict filtering - events without confidence are excluded)
         if self.min_confidence is not None:
-            if not hasattr(event, 'confidence') or event.confidence is None:
+            if not hasattr(event, "confidence") or event.confidence is None:
                 return False  # Exclude events without confidence data
             if event.confidence < self.min_confidence:
                 return False  # Exclude low confidence events
@@ -113,7 +111,9 @@ class EventRegistry:
             except Exception as e:
                 logger.error(f"Error in event listener: {e}")
 
-    def add_listener(self, event_type: EventType, listener: Callable[[BaseEvent], None]):
+    def add_listener(
+        self, event_type: EventType, listener: Callable[[BaseEvent], None]
+    ):
         """Add a listener for a specific event type."""
         self.listeners[event_type].append(listener)
 
@@ -123,9 +123,7 @@ class EventRegistry:
             self.listeners[event_type].remove(listener)
 
     def get_events(
-        self,
-        filter_criteria: Optional[EventFilter] = None,
-        limit: Optional[int] = None
+        self, filter_criteria: Optional[EventFilter] = None, limit: Optional[int] = None
     ) -> List[BaseEvent]:
         """Get events matching the filter criteria."""
         events = list(self.events)
@@ -153,10 +151,8 @@ class EventRegistry:
             "error_rate": total_errors / total_events if total_events > 0 else 0,
             "error_breakdown": dict(self.error_counts),
             "most_common_errors": sorted(
-                self.error_counts.items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:10]
+                self.error_counts.items(), key=lambda x: x[1], reverse=True
+            )[:10],
         }
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -165,8 +161,7 @@ class EventRegistry:
 
         # Calculate event type distribution
         event_distribution = {
-            event_type.value: count
-            for event_type, count in self.event_counts.items()
+            event_type.value: count for event_type, count in self.event_counts.items()
         }
 
         # Calculate session statistics
@@ -179,8 +174,12 @@ class EventRegistry:
         if self.events:
             oldest_event = min(self.events, key=lambda e: e.timestamp)
             newest_event = max(self.events, key=lambda e: e.timestamp)
-            time_span_ms = (newest_event.timestamp - oldest_event.timestamp).total_seconds() * 1000
-            events_per_second = total_events / (time_span_ms / 1000) if time_span_ms > 0 else 0
+            time_span_ms = (
+                newest_event.timestamp - oldest_event.timestamp
+            ).total_seconds() * 1000
+            events_per_second = (
+                total_events / (time_span_ms / 1000) if time_span_ms > 0 else 0
+            )
         else:
             time_span_ms = 0
             events_per_second = 0
@@ -192,7 +191,7 @@ class EventRegistry:
             "avg_events_per_session": avg_events_per_session,
             "time_span_ms": time_span_ms,
             "events_per_second": events_per_second,
-            "error_summary": self.get_error_summary()
+            "error_summary": self.get_error_summary(),
         }
 
     def clear(self):
@@ -201,7 +200,6 @@ class EventRegistry:
         self.event_counts.clear()
         self.session_events.clear()
         self.error_counts.clear()
-
 
 
 class EventLogger:
@@ -225,24 +223,24 @@ class EventLogger:
         }
 
         # Add event-specific information
-        if hasattr(event, 'text'):
+        if hasattr(event, "text"):
             log_data["text_length"] = len(event.text) if event.text else 0
             log_data["text_preview"] = event.text[:100] if event.text else ""
 
-        if hasattr(event, 'confidence'):
+        if hasattr(event, "confidence"):
             log_data["confidence"] = event.confidence
 
-        if hasattr(event, 'processing_time_ms'):
+        if hasattr(event, "processing_time_ms"):
             log_data["processing_time_ms"] = event.processing_time_ms
 
-        if hasattr(event, 'audio_data') and event.audio_data is not None:
+        if hasattr(event, "audio_data") and event.audio_data is not None:
             # Handle numpy arrays and other array-like objects
-            if hasattr(event.audio_data, '__len__'):
+            if hasattr(event.audio_data, "__len__"):
                 log_data["audio_bytes"] = len(event.audio_data)
             else:
                 log_data["audio_bytes"] = 0
 
-        if hasattr(event, 'error'):
+        if hasattr(event, "error"):
             log_data["error_message"] = str(event.error)
             log_data["error_type"] = type(event.error).__name__
 

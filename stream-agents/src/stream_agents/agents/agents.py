@@ -112,7 +112,6 @@ class Agent:
         input: List[ResponseInputItemParam] | str,
         participant: Participant = None,
     ):
-
         # standardize on input
         if isinstance(input, str):
             if participant is not None:
@@ -143,7 +142,9 @@ class Agent:
                         # Convert complex content to string representation
                         self.conversation.add_message(str(content), user_id)
 
-        llm_response = await self.llm.simple_response(input, self.processors, conversation=self.conversation)
+        llm_response = await self.llm.simple_response(
+            input, self.processors, conversation=self.conversation
+        )
         await self.queue.resume(llm_response)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
@@ -160,7 +161,9 @@ class Agent:
                 call.id,
                 data=ChannelInput(created_by_id=self.agent_user.id),
             )
-            self.conversation = Conversation(self.instructions, [], self.channel.data.channel, chat_client)
+            self.conversation = Conversation(
+                self.instructions, [], self.channel.data.channel, chat_client
+            )
 
         """Join a Stream video call."""
         if self._is_running:

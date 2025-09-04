@@ -3,8 +3,7 @@ import os
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from getstream.plugins import DeepgramSTT, ElevenLabsTTS
-from stream_agents.llm.llm import OpenAILLM
+from getstream.plugins import DeepgramSTT, ElevenLabsTTS, GeminiLive
 from stream_agents.turn_detection import FalTurnDetection
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
@@ -22,7 +21,7 @@ async def start_agent() -> None:
         agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         # tts, llm, stt more. see the realtime example for sts
-        llm=OpenAILLM("gpt-4o"),
+        llm=GeminiLive(),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
         turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
