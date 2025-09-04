@@ -107,6 +107,11 @@ class SileroVAD(VAD):
         self.device: torch.device = torch.device("cpu")
         # Buffer used by base class; annotate for type-checker
         self.speech_buffer: bytearray = bytearray()
+        
+        # Type annotations for inherited attributes from base VAD class
+        self.is_speech_active: bool = False
+        self._speech_start_time: Optional[float] = None
+        self.total_speech_frames: int = 0
 
         # Verify window size is correct for the Silero model
         if self.model_rate == 16000 and self.window_samples != 512:
@@ -137,12 +142,12 @@ class SileroVAD(VAD):
 
         # Enhanced state tracking for events
         self._current_speech_probability = 0.0
-        self._inference_times = []  # Track inference performance
+        self._inference_times: list[float] = []  # Track inference performance
         self._speech_start_probability = 0.0
         self._speech_end_probability = 0.0
         self._total_inference_time = 0.0
         self._inference_count = 0
-        self._speech_probabilities = []  # Track probabilities during speech
+        self._speech_probabilities: list[float] = []  # Track probabilities during speech
 
         # Load the appropriate model
         self._load_model()
