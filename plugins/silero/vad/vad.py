@@ -15,7 +15,7 @@ from getstream.plugins.common.events import (
     VADSpeechEndEvent,
     VADPartialEvent,
     VADInferenceEvent,
-    AudioFormat, EventType,
+    AudioFormat,
 )
 from getstream.plugins.common.event_utils import register_global_event
 
