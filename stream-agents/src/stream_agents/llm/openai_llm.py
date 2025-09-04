@@ -55,20 +55,25 @@ class OpenAILLM(LLM):
             self.openai_conversation = self.client.conversations.create()
         kwargs["conversation"] = self.openai_conversation.id
 
-        self.before_response_listener(self._normalize_input(kwargs["input"]))
+        if hasattr(self, "before_response_listener"):
+            self.before_response_listener(self._normalize_input(kwargs["input"]))
         response = self.client.responses.create(
             *args, **kwargs
         )
 
         llm_response = LLMResponse[Response](response, response.output_text)
-        await self.after_response_listener(llm_response)
+        if hasattr(self, "after_response_listener"):
+            await self.after_response_listener(llm_response)
         return llm_response
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, conversation: 'Conversation' = None, participant: Participant = None):
+        instructions = None
+        if conversation is not None:
+            instructions = conversation.instructions
 
         return await self.create_response(
             input=text,
-            instructions=conversation.instructions,
+            instructions=instructions,
         )
 
     @staticmethod
