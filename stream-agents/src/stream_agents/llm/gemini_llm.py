@@ -10,32 +10,33 @@ class GeminiLLM(LLM):
     '''
     Use the SDK to keep history. (which is partially manual)
     '''
-    client: genai.Client
-
     def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[genai.Client] = None):
         super().__init__()
         self.model = model
+        self.chat = None
 
         if client is not None:
             self.client = client
         else:
-            self.client = genai.Client()
+            self.client = genai.Client(api_key=api_key)
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None):
-        return await self.generate_content(
-            contents=text
+        return await self.send_message(
+            message=text
         )
 
     # basically wrap the Gemini native endpoint
-    def generate_content(self, *args, **kwargs):
-        if "model" not in kwargs:
-            kwargs["model"] = self.model
+    async def send_message(self, *args, **kwargs):
+        #if "model" not in kwargs:
+        #    kwargs["model"] = self.model
 
-        client = genai.Client()
-        chat = client.chats.create(model="gemini-2.5-flash")
+        # initialize chat if needed
+        if self.chat is None:
+            self.chat = self.client.chats.create(model=self.model)
 
-        response = chat.send_message("I have 2 dogs in my house.")
+        # Generate content using the client
+        response = self.chat.send_message(*args, **kwargs)
 
-        response = self.client.generate_content(*args, **kwargs)
-
-        return LLMResponse(response)
+        # Extract text from Gemini's response format
+        text = response.text if response.text else ""
+        return LLMResponse(response, text)

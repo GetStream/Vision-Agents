@@ -2,6 +2,7 @@ from typing import List, TypeVar, Optional, Any, Callable, Protocol, overload, A
 
 from av.dictionary import Dictionary
 
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.processors import BaseProcessor
 
 T = TypeVar("T")
@@ -23,16 +24,18 @@ class LLM:
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
     agent: Optional["Agent"]
+    conversation: Optional["Conversation"]
 
 
     def __init__(self):
         self.agent = None
 
-    def simple_response(self, text, processors: List[BaseProcessor]) -> LLMResponse[Any]:
+    def simple_response(self, text, processors: List[BaseProcessor], participant: Participant = None) -> LLMResponse[Any]:
         pass
 
     def attach_agent(self, agent):
         self.agent = agent
+        self.conversation = agent.conversation
         self.before_response_listener = lambda x: agent.add_to_conversation(x)
         self.after_response_listener = lambda x: agent.after_response(x)
 

@@ -39,6 +39,8 @@ class OpenAILLM(LLM):
         super().__init__()
         self.model = model
         self.openai_conversation = None
+        self.conversation = None
+
 
         if client is not None:
             self.client = client
@@ -66,10 +68,10 @@ class OpenAILLM(LLM):
             await self.after_response_listener(llm_response)
         return llm_response
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, conversation: 'Conversation' = None, participant: Participant = None):
+    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, participant: Participant = None):
         instructions = None
-        if conversation is not None:
-            instructions = conversation.instructions
+        if self.conversation is not None:
+            instructions = self.conversation.instructions
 
         return await self.create_response(
             input=text,
