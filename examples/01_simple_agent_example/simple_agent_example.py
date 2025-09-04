@@ -25,6 +25,7 @@ async def start_agent() -> None:
         llm=OpenAILLM("gpt-4o"),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
+        turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

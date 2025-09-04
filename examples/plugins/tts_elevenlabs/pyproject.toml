@@ -1,0 +1,13 @@
+[project]
+name = "tts-elevenlabs-example"
+version = "0.1.0"
+description = "Stream Video + ElevenLabs TTS demo."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+    "getstream[webrtc]>=2.3.0a0",
+    "getstream-plugins-elevenlabs>=0.1.0",
+    "python-dotenv>=1.1.1",
+]
