@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import torch
 import numpy as np
@@ -15,7 +15,7 @@ from getstream.plugins.common.events import (
     VADSpeechEndEvent,
     VADPartialEvent,
     VADInferenceEvent,
-    AudioFormat,
+    AudioFormat
 )
 from getstream.plugins.common.event_utils import register_global_event
 
