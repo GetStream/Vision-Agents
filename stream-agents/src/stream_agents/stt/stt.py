@@ -8,14 +8,14 @@ from asyncio import AbstractEventLoop
 from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.track_util import PcmData
 
-from .events import (
+from ..events import (
     STTTranscriptEvent,
     STTPartialTranscriptEvent,
     STTErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
+    register_global_event,
 )
-from .event_utils import register_global_event
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pyee.asyncio import AsyncIOEventEmitter
 
-from .events import (
+from ..events import (
     STSConnectedEvent,
     STSDisconnectedEvent,
     STSAudioInputEvent,
@@ -17,8 +17,8 @@ from .events import (
     STSErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
+    register_global_event,
 )
-from .event_utils import register_global_event
 
 logger = logging.getLogger(__name__)
 
