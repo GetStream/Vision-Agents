@@ -91,7 +91,7 @@ class OpenAILLM(LLM):
         elif not isinstance(openai_input, List):
             openai_input = [openai_input]
 
-        messages = []
+        messages: List[Message] = []
         for i in openai_input:
             message = Message(original=i, content = i["content"])
             messages.append(message)

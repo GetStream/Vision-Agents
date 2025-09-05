@@ -8,7 +8,7 @@ from openai import OpenAI
 from stream_agents.llm.llm import LLMResponse
 from stream_agents.llm.openai_llm import OpenAILLM
 
-from src.stream_agents.agents.conversation import Message
+from stream_agents.agents.conversation import Message
 
 load_dotenv()
 
@@ -23,6 +23,8 @@ class TestOpenAILLM:
 
     def test_message(self, llm: OpenAILLM):
         messages = OpenAILLM._normalize_message("say hi")
+        from pprint import pprint
+        pprint(messages[0])
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
