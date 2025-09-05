@@ -5,7 +5,6 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from getstream.plugins.gemini.live import GeminiLive
-from stream_agents.turn_detection import FalTurnDetection
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
 load_dotenv()
