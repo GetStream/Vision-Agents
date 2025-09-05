@@ -16,6 +16,7 @@ from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from getstream.chat.client import ChatClient
 from getstream.models import User, ChannelInput, UserRequest
+from getstream.plugins.common import get_global_registry, EventType
 from getstream.video import rtc
 from getstream.video.call import Call
 from getstream.video.rtc import audio_track
@@ -117,7 +118,7 @@ class Agent:
         # validation time
         self._validate_configuration()
 
-        self._event_handlers = {}
+        #self._event_handlers = {}
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
@@ -126,10 +127,10 @@ class Agent:
     def before_response(self, input):
         pass
 
-    def on(self, event: str):
+    def on(self, event_type: EventType):
         def decorator(func):
-            self._event_handlers[event] = func
-            #self._connection.on(event, func)
+            registry = get_global_registry()
+            registry.add_listener(event_type, func)
             return func
         return decorator
 
@@ -279,7 +280,6 @@ class Agent:
                 self.logger.debug("🤖 Agent ready to speak")
             if video_track:
                 self.logger.debug("🎥 Agent ready to publish video")
-
             # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
             # Set up event handlers for audio processing

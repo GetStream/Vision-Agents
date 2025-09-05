@@ -7,12 +7,15 @@ and debugging across all plugin types.
 
 import logging
 import time
-from typing import Dict, Any, List, Optional, Callable
+from typing import TYPE_CHECKING, Dict, Any, List, Optional, Callable
+from functools import partial
 from collections import defaultdict, deque
 
 from .events import BaseEvent, EventType
 
 logger = logging.getLogger(__name__)
+
+from getstream.video import rtc
 
 
 class EventFilter:
@@ -110,6 +113,25 @@ class EventRegistry:
                 listener(event)
             except Exception as e:
                 logger.error(f"Error in event listener: {e}")
+
+    def register_call_event(self, event_dataclass, event_name, data):
+        logger.info(f"event call received {event_dataclass}, {event_name}")
+        logger.info(f"event {data}")
+        #self.register_event(event_dataclass)
+        pass
+
+    def add_connection_listeners(self, connection: rtc.ConnectionManager, event_mapping):
+        # add connection sfu listeners for events
+        # add connection.ws listeners for events
+        for event_type in self.listeners:
+            if not event_type.name.startswith("call_"):
+                continue
+            call_event_name = event_type.name.rstrip("call_", 1)
+            connection.ws_client.on(
+                call_event_name, partial(
+                    self.register_call_event, event_dataclass=event_mapping[event_type]
+                )
+            )
 
     def add_listener(
         self, event_type: EventType, listener: Callable[[BaseEvent], None]

@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from stream_agents.plugins import elevenlabs, deepgram, openai, silero
 from stream_agents.core import agents, edge, cli
 from getstream import Stream
+from getstream.plugins.common.events import EventType
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,9 +31,9 @@ async def start_agent() -> None:
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
-    @agent.on("*")
-    def my_handler(event, data):
-        agent.logger.info(f"handled event {event}, {data}")
+    @agent.on(EventType.CALL_MEMBER_ADDED)
+    def my_handler(event):
+        agent.logger.info(f"handled event {event}")
 
     # Create a call
     call = client.video.call("default", str(uuid4()))
