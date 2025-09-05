@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["video AI", "AI", "voice AI", "video agents", "voice agents", "agents", "AI"]
 dynamic = ["version"]
 
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "getstream[webrtc] @ git+https://github.com/GetStream/stream-py.git@webrtc#egg=getstream",
     "python-dotenv>=1.1.1",

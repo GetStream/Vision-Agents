@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from getstream import Stream
 from getstream.models import CallRequest, UserRequest
-from getstream.plugins import GeminiLive
+from getstream.plugins.gemini.live import GeminiLive
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import (

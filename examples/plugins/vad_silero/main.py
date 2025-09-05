@@ -30,7 +30,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
-from getstream.plugins import SileroVAD
+from getstream.plugins.silero.vad import SileroVAD
 
 # Logging setup – INFO level so we see joins / leaves, etc.
 logging.basicConfig(
