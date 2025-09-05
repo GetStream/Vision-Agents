@@ -5,12 +5,12 @@ from getstream.chat.client import ChatClient
 from getstream.models import MessageRequest, ChannelResponse, MessageResponse
 
 
-class Message(TypedDict, total=False):
+class Message:
     original: Any # the original openai, claude or gemini message
-    content: Required[str]
+    content: str
     role: str
     user_id: str
-    timestamp: Required[datetime.datetime]
+    timestamp: datetime.datetime
 
 
 

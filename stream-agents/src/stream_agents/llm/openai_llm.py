@@ -6,6 +6,8 @@ from openai.resources.responses import Responses
 from getstream.models import Response
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.llm.llm import LLM, LLMResponse
+
+from src.stream_agents.agents.conversation import Message
 from stream_agents.processors import BaseProcessor
 
 
@@ -58,7 +60,7 @@ class OpenAILLM(LLM):
         kwargs["conversation"] = self.openai_conversation.id
 
         if hasattr(self, "before_response_listener"):
-            self.before_response_listener(self._normalize_input(kwargs["input"]))
+            self.before_response_listener(self._normalize_message(kwargs["input"]))
         response = self.client.responses.create(
             *args, **kwargs
         )
@@ -79,7 +81,7 @@ class OpenAILLM(LLM):
         )
 
     @staticmethod
-    def _normalize_input(openai_input):
+    def _normalize_message(openai_input) -> Message:
         # standardize on input
         if isinstance(openai_input, str):
             openai_input = [

@@ -7,6 +7,7 @@ from openai import OpenAI
 from stream_agents.llm.llm import LLMResponse
 from stream_agents.llm.openai_llm import OpenAILLM
 
+from src.stream_agents.agents.conversation import Message
 
 load_dotenv()
 
@@ -19,11 +20,37 @@ class TestOpenAILLM:
         llm = OpenAILLM(model="gpt-4o")
         return llm
 
+    def test_message(self, llm: OpenAILLM):
+        message = OpenAILLM._normalize_message("say hi")
+        assert isinstance(message, Message)
+        assert message.original is not None
+        assert message.content is "say hi"
+
+        img_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
+
+        advanced = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "what do you see in this image?"},
+                    {"type": "input_image", "image_url": f"{img_url}"},
+                ],
+            }
+        ]
+        message = OpenAILLM._normalize_message(advanced)
+        assert message.original is not None
+
+
+
+
+
     @pytest.mark.integration
     async def test_simple(self, llm: OpenAILLM):
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
+
+
         assert response.text
 
     @pytest.mark.integration
