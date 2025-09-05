@@ -1,13 +1,3 @@
-"""Common abstract base classes and utilities shared by all Stream AI plugins.
-
-Moving forward, provider wheels (`stream-plugins-deepgram`, …) should depend on
-this package for the canonical definitions of STT, TTS, VAD, …
-"""
-
-from .stt import STT
-from .tts import TTS
-from .vad import VAD
-from .sts import STS
 from .events import (
     EventType,
     ConnectionState,
@@ -62,28 +52,19 @@ from .event_metrics import (
 from .events import create_event
 
 __all__ = [
-    # Base classes
-    "STT",
-    "TTS",
-    "VAD",
-    "STS",
-    # Event system
     "EventType",
     "ConnectionState",
     "AudioFormat",
     "BaseEvent",
-    # STT Events
     "STTTranscriptEvent",
     "STTPartialTranscriptEvent",
     "STTErrorEvent",
     "STTConnectionEvent",
-    # TTS Events
     "TTSAudioEvent",
     "TTSSynthesisStartEvent",
     "TTSSynthesisCompleteEvent",
     "TTSErrorEvent",
     "TTSConnectionEvent",
-    # STS Events
     "STSConnectedEvent",
     "STSDisconnectedEvent",
     "STSAudioInputEvent",
@@ -92,31 +73,27 @@ __all__ = [
     "STSResponseEvent",
     "STSConversationItemEvent",
     "STSErrorEvent",
-    # VAD Events
     "VADSpeechStartEvent",
     "VADSpeechEndEvent",
     "VADAudioEvent",
     "VADPartialEvent",
     "VADInferenceEvent",
     "VADErrorEvent",
-    # Generic Events
     "PluginInitializedEvent",
     "PluginClosedEvent",
     "PluginErrorEvent",
-    # Event utilities
     "EventFilter",
     "EventRegistry",
     "EventLogger",
     "register_global_event",
     "get_global_registry",
     "get_global_logger",
-    "create_event",
-    # Event serialization
     "serialize_event",
     "serialize_events",
     "deserialize_event",
-    # Event metrics
     "calculate_stt_metrics",
     "calculate_tts_metrics",
     "calculate_vad_metrics",
+    "create_event",
+    "EVENT_CLASS_MAP",
 ]

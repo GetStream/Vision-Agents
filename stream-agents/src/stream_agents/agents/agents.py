@@ -1,21 +1,15 @@
 import asyncio
 import logging
 import traceback
-from contextlib import nullcontext
 from typing import Optional, List, Any
 from uuid import uuid4
 
 from aiortc import VideoStreamTrack
-from openai.types.responses import EasyInputMessageParam, ResponseInputItemParam
 
-from getstream.plugins.common import (
-    TTS,
-    VAD,
-    STT,
-    STTTranscriptEvent,
-    STTPartialTranscriptEvent,
-)
-
+from ..tts.tts import TTS
+from ..stt.stt import STT
+from ..vad.vad import VAD
+from ..events import STTTranscriptEvent, STTPartialTranscriptEvent
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from getstream.chat.client import ChatClient
@@ -33,7 +27,10 @@ from getstream.video.rtc.tracks import (
     TrackType,
 )
 
-from .conversation import Conversation
+from .conversation import Conversation, StreamConversation
+from ..llm.llm import LLM
+from ..llm.sts import STS
+from ..llm.openai_llm import OpenAILLM
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING
@@ -49,8 +46,10 @@ class Agent:
         # edge network for video & audio
         edge: Optional[EdgeTransport] = None,
         # llm, optionally with sts capabilities
-        llm: Optional[Any] = None,
-        # setup stt, tts, and turn detection if not using realtime/sts
+        llm: Optional[LLM | STS] = None,
+        # instructions
+        instructions: str = "Keep your replies short and dont use special characters.",
+        # setup stt, tts, and turn detection if not using an llm with realtime/sts
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
         turn_detection: Optional[BaseTurnDetector] = None,
@@ -63,6 +62,7 @@ class Agent:
         # - state from each processor is passed to the LLM
         processors: Optional[List[BaseProcessor]] = None,
     ):
+        self.instructions = instructions
         if edge is None:
             edge = StreamEdge()
         self.edge = edge
@@ -90,6 +90,8 @@ class Agent:
         self.vad = vad
         self.processors = processors or []
         self.queue = ReplyQueue(self)
+        self.conversation = None
+        self.llm.attach_agent(self)
 
         # Initialize state variables
         self._is_running: bool = False
@@ -99,6 +101,7 @@ class Agent:
         self._connection: Optional[rtc.RTCConnection] = None
         self._audio_track: Optional[audio_track.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
+        self._sts_connection = None
 
         # validation time
         self._validate_configuration()
@@ -108,72 +111,11 @@ class Agent:
         self._setup_turn_detection()
         self._setup_vad()
 
-    async def create_response(
-        self,
-        input: List[ResponseInputItemParam] | str,
-        participant: Participant = None,
-        use_processor_input: bool = True,
-    ):
-        # gather all processor state
-        processor_inputs = []
-        if use_processor_input:
-            processor_inputs = self.processor_inputs()
+    def before_response(self, input):
+        pass
 
-        # standardize on input
-        if isinstance(input, str):
-            if participant is not None:
-                input = [
-                    EasyInputMessageParam(content=input, role="user", type="message")
-                ]
-            else:
-                input = [
-                    EasyInputMessageParam(content=input, role="system", type="message")
-                ]
-
-        logging.info("participant in create response is %s", participant)
-        if self.conversation:
-            for i in input:
-                if participant is not None:
-                    user_id = participant.user_id
-                else:
-                    if i.get("role") == "assistant":
-                        user_id = self.agent_user.id
-                    else:
-                        user_id = self.agent_user.id
-
-                if i["type"] == "message":
-                    content = i["content"]
-                    if isinstance(content, str):
-                        self.conversation.add_message(content, user_id)
-                    else:
-                        # Convert complex content to string representation
-                        self.conversation.add_message(str(content), user_id)
-
-        input = input + processor_inputs
-        # TODO: this returns text, doesn't seem right
-        if self.llm is not None:
-            llm_response = await self.llm.generate(input)
-        else:
-            llm_response = "No LLM configured"
+    async def after_response(self, llm_response):
         await self.queue.resume(llm_response)
-
-    def processor_inputs(self) -> List[ResponseInputItemParam]:
-        """
-        processor_inputs gets the inputs for the LLM from all processors
-        this is how you handle things like:
-        - input from APIs. game state, player stats, etc
-        - roboflow/yolo style image enrichment
-        By default we call processor.input(). if you need something more advanced you can gather info with
-        processor.state() and create a combined llm input
-        """
-        process_inputs = []
-        for processor in self.processors:
-            if processor is None:
-                continue
-            state = processor.input()
-            process_inputs.append(state)
-
-        return process_inputs
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
@@ -189,7 +131,10 @@ class Agent:
                 call.id,
                 data=ChannelInput(created_by_id=self.agent_user.id),
             )
-            self.conversation = Conversation([], self.channel.data.channel, chat_client)
+            self.conversation = StreamConversation(
+                self.instructions, [], self.channel.data.channel, chat_client
+            )
+            self.llm.conversation = self.conversation
 
         """Join a Stream video call."""
         if self._is_running:
@@ -202,10 +147,9 @@ class Agent:
         else:
             self.logger.info("🎤 Using traditional STT/TTS mode")
 
-        stsContextManager = None
-
-        if self.sts_mode and self.llm is not None:
-            stsContextManager = await self.llm.connect(call, self.agent_user.id)
+        # Ensure STS providers are ready before proceeding (they manage their own connection)
+        if self.sts_mode:
+            await self.llm.wait_until_ready()
 
         # Traditional mode - use WebRTC connection
         # Configure subscription for audio and video
@@ -216,11 +160,9 @@ class Agent:
         async with (
             await rtc.join(
                 call, self.agent_user.id, subscription_config=subscription_config
-            ) as connection,
-            stsContextManager or nullcontext() as stsConnection,
+            ) as connection
         ):
             self._connection = connection
-            self._sts_connection = stsConnection
             self._is_running = True
 
             self.logger.info(f"🤖 Agent joined call: {call.id}")
@@ -236,36 +178,12 @@ class Agent:
                 if video_track:
                     self.logger.debug("🎥 Agent ready to publish video")
 
-            # Set up STS audio forwarding if in STS mode
-            if self.sts_mode and self._sts_connection:
-                self.logger.info("🎥 STS audio. Forward from openAI to Stream")
-                await self._setup_sts_audio_forwarding(stsConnection, connection)
+            # In STS mode we directly publish the provider's output track; no extra forwarding needed
 
             # Set up event handlers for audio processing
             await self._listen_to_audio_and_video()
 
-            # listen to what the realtime model says
-            if self.sts_mode:
-
-                async def process_sts_events():
-                    try:
-                        # TODO: some method to receive audio
-                        if stsConnection is not None:
-                            async for event in stsConnection:
-                                # also see https://platform.openai.com/docs/api-reference/realtime_server_events/input_audio_buffer/speech_stopped
-                                # TODO: implement https://github.com/openai/openai-python/blob/main/examples/realtime/push_to_talk_app.py#L167
-                                self.logger.debug(f"🔔 STS Event: {event.type}")
-                                # Handle any STS-specific events here if needed
-                    except Exception as e:
-                        self.logger.error(f"❌ Error processing STS events: {e}")
-                        self.logger.error(traceback.format_exc())
-
-                # Start STS event processing in background
-                asyncio.create_task(process_sts_events())
-
-            # Send initial greeting, if the LLM is configured to do so
-            if self.llm and hasattr(self.llm, "conversation_started"):
-                await self.llm.conversation_started(self)
+            # STS providers manage their own event loops; nothing to do here
 
             # Keep the agent running and listening
             self.logger.info("🎧 Agent is active - press Ctrl+C to stop")
@@ -370,7 +288,7 @@ class Agent:
     async def reply_to_audio(
         self, pcm_data: PcmData, participant: models_pb2.Participant
     ) -> None:
-        if participant and participant != self.agent_user.id:
+        if participant and getattr(participant, "user_id", None) != self.agent_user.id:
             # first forward to processors
             try:
                 # Extract audio bytes for processors using the proper PCM data structure
@@ -392,9 +310,8 @@ class Agent:
                 self.logger.error(f"Error processing audio for processors: {e}")
 
             # when in STS mode call the STS directly
-            if self.sts_mode and self.llm is not None:
-                if hasattr(self.llm, "send_audio"):
-                    await self.llm.send_audio(pcm_data, participant)
+            if self.sts_mode:
+                await self.llm.send_audio_pcm(pcm_data)
             else:
                 # Process audio through STT
                 if self.stt:
@@ -433,6 +350,14 @@ class Agent:
 
         # Give the track a moment to be ready
         await asyncio.sleep(0.5)
+
+        # If STS provider supports video, forward frames upstream once per track
+        if self.sts_mode:
+            try:
+                await self.llm.start_video_sender(track)
+                self.logger.info("🎥 Forwarding video frames to STS provider")
+            except Exception as e:
+                self.logger.error(f"Error starting video sender to STS provider: {e}")
 
         hasImageProcessers = len(self.image_processors) > 0
         self.logger.info(
@@ -535,14 +460,14 @@ class Agent:
     async def _process_transcription(
         self, text: str, participant: Participant = None
     ) -> None:
-        await self.create_response(text, participant)
+        await self.llm.simple_response(text=text, processors=self.processors, participant=participant)
 
     @property
     def sts_mode(self) -> bool:
         """Check if the agent is in STS mode."""
-        if self.llm is None:
-            return False
-        return getattr(self.llm, "sts", False)
+        if self.llm is not None and isinstance(self.llm, STS):
+            return True
+        return False
 
     @property
     def publish_audio(self) -> bool:
@@ -619,9 +544,13 @@ class Agent:
 
         # Set up audio track if TTS is available
         if self.publish_audio:
-            self._audio_track = audio_track.AudioStreamTrack(framerate=16000)
-            if self.tts:
-                self.tts.set_output_track(self._audio_track)
+            if self.sts_mode:
+                self._audio_track = self.llm.output_track
+                self.logger.info("🎵 Using STS provider output track for audio")
+            else:
+                self._audio_track = audio_track.AudioStreamTrack(framerate=16000)
+                if self.tts:
+                    self.tts.set_output_track(self._audio_track)
 
         # Set up video track if video publishers are available
         if self.publish_video:

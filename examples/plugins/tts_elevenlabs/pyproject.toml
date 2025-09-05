@@ -11,3 +11,6 @@ dependencies = [
     "getstream-plugins-elevenlabs>=0.1.0",
     "python-dotenv>=1.1.1",
 ]
+
+[tool.uv.sources]
+getstream-plugins-elevenlabs = { path = "../../../plugins/elevenlabs", editable = true }

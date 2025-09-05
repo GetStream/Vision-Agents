@@ -1,59 +1,60 @@
-'''
-Requirements
-- support image, text, functools etc as input
+from __future__ import annotations
 
-Questions
-- Do we expose incoming audio as a track or queue, or just a callback?
+from typing import Optional, TYPE_CHECKING
+if TYPE_CHECKING:
+    from stream_agents.agents import Agent
 
-Audio is forwarded like this atm in the kickboxing_example
 
-@ai_connection.on("audio")
-async def on_audio(pcm: PcmData, user):
-    if user.user_id == player_user_id and g_session:
-        await g_session.send_realtime_input(
-            audio=types.Blob(
-                data=pcm.samples.astype(np.int16).tobytes(),
-                mime_type="audio/pcm;rate=48000"
-            )
-        )
+from typing import List, TypeVar, Optional, Any, Callable, Generic
 
-In the kickboxing example it does this for playout
+from av.dictionary import Dictionary
 
-audio_in_queue.put_nowait(data)
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from stream_agents.processors import BaseProcessor
 
-asyncio.create_task(play_audio(audio_in_queue, audio_track))
-async def play_audio(audio_in_queue, audio_track):
-    """Play audio responses from Gemini Live"""
-    while True:
-        bytestream = await audio_in_queue.get()
-        await audio_track.write(bytestream)
+T = TypeVar("T")
 
-'''
+class LLMResponse(Generic[T]):
+    def __init__(self, original: T, text: str):
+        self.original = original
+        self.text = text
+
+BeforeCb = Callable[[List[Dictionary]], None]
+AfterCb  = Callable[[LLMResponse], None]
+
 
 
 class LLM:
+    # if we want to use realtime/ sts behaviour
     sts: bool = False
 
-    def create_response(self, *args, **kwargs):
-        # Follow openAI style response?
+    before_response_listener: BeforeCb
+    after_response_listener: AfterCb
+    agent: Optional["Agent"]
+    _conversation: Optional["Conversation"]
+
+
+    def __init__(self):
+        self.agent = None
+
+    def simple_response(self, text, processors: List[BaseProcessor], participant: Participant = None) -> LLMResponse[Any]:
         pass
 
+    def attach_agent(self, agent: Agent):
+        self.agent = agent
+        self._conversation = agent.conversation
+        self.before_response_listener = lambda x: agent.before_response(x)
+        self.after_response_listener = lambda x: agent.after_response(x)
 
-class RealtimeLLM(LLM):
-    """
-    We need to standardize connect and attaching audio in/ audio out and video in
-    """
+    def set_before_response_listener(self, before_response_listener: BeforeCb):
+        self.before_response_listener = before_response_listener
 
-    sts: bool = True
+    def set_after_response_listener(self, after_response_listener: AfterCb):
+        self.after_response_listener = after_response_listener
 
-    def connect(self):
-        pass
 
-    def attach_incoming_audio(self, track):
-        pass
 
-    def attach_incoming_video(self, track):
-        pass
 
-    def attach_outgoing_audio(self, track):
-        pass
+
+
+

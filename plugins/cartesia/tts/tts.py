@@ -11,7 +11,7 @@ from cartesia.tts import (
     TtsRequestEmbeddingSpecifierParams,
 )
 
-from getstream.plugins.common import TTS
+from stream_agents.tts import TTS
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 

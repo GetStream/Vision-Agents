@@ -32,7 +32,7 @@ from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
 from getstream.models import CheckResponse, ModerationPayload
-from getstream.plugins import DeepgramSTT
+from getstream.plugins.deepgram.stt import DeepgramSTT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

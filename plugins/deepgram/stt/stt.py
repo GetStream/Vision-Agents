@@ -17,7 +17,7 @@ except ImportError:
     LiveOptions = None  # type: ignore
     _deepgram_available = False
 
-from getstream.plugins.common import STT
+from stream_agents.stt import STT
 from getstream.video.rtc.track_util import PcmData
 
 logger = logging.getLogger(__name__)

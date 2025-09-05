@@ -11,3 +11,6 @@ dependencies = [
     "getstream-plugins-fal>=0.1.0",
     "python-dotenv>=1.1.1",
 ]
+
+[tool.uv.sources]
+getstream-plugins-fal = { workspace = true }

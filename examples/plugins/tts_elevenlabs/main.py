@@ -28,7 +28,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from getstream.models import UserRequest
-from getstream.plugins import ElevenLabsTTS
+from getstream.plugins.elevenlabs.tts import ElevenLabsTTS
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
