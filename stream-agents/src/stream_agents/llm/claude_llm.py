@@ -1,3 +1,4 @@
+import datetime
 from typing import Optional, List, Iterable
 
 import anthropic
@@ -7,6 +8,7 @@ from anthropic.types import MessageParam
 from stream_agents.llm.llm import LLM, LLMResponse
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from src.stream_agents.agents.conversation import Message
 from stream_agents.processors import BaseProcessor
 
 
@@ -27,12 +29,17 @@ class ClaudeLLM(LLM):
         if "model" not in kwargs:
             kwargs["model"] = self.model
 
+
+        messages = self._normalize_input(kwargs["messages"])
+        self.conversation.add_messages(messages)
+
         if hasattr(self, "before_response_listener"):
-            messages = self._normalize_input(kwargs["messages"])
-            # TODO: figure this out
-            #for m in messages:
-            #    self.conversation.add_message(m["content"], "missing")
             self.before_response_listener(messages)
+
+        # ensure the AI remembers the past conversation
+        original_messages = [m["original"] for m in self.conversation.messages]
+        kwargs["messages"] = original_messages + kwargs["messages"]
+
         original = await self.client.messages.create(*args, **kwargs)
 
         # Extract text from Claude's response format
@@ -49,8 +56,14 @@ class ClaudeLLM(LLM):
         )
 
     @staticmethod
-    def _normalize_input(messages: Iterable[MessageParam]):
-        if isinstance(messages, str):
-            messages = [{"content": messages, "role": "user", "type": "text"}]
+    def _normalize_input(claude_messages: Iterable[Message]):
+        if isinstance(claude_messages, str):
+            claude_messages = [{"content": claude_messages, "role": "user", "type": "text"}]
+
+        messages : List[Message] = []
+        for m in claude_messages:
+            t = datetime.datetime.now()
+            message = Message(original=m, content=m["content"], role=m["role"], timestamp=t)
+            messages.append(message)
 
         return messages

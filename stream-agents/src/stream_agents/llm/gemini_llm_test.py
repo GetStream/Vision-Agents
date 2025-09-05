@@ -7,6 +7,7 @@ from google import genai
 from stream_agents.llm.llm import LLMResponse
 from stream_agents.llm.gemini_llm import GeminiLLM
 
+from src.stream_agents.agents.conversation import InMemoryConversation
 
 load_dotenv()
 
@@ -18,6 +19,7 @@ class TestGeminiLLM:
     def llm(self) -> GeminiLLM:
         """Test GeminiLLM initialization with a provided client."""
         llm = GeminiLLM(model="gemini-1.5-flash")
+        llm._conversation = InMemoryConversation("be friendly", [])
         return llm
 
     @pytest.mark.integration

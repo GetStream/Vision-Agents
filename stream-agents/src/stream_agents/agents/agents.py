@@ -109,10 +109,8 @@ class Agent:
         self._setup_stt()
         self._setup_turn_detection()
 
-    def add_to_conversation(self, input):
-        for i in input:
-            # TODO user id?
-            self.conversation.add_message(i["content"], "missing")
+    def before_response(self, input):
+        pass
 
     async def after_response(self, llm_response):
         await self.queue.resume(llm_response)

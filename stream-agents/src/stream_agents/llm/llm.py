@@ -24,7 +24,7 @@ class LLM:
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
     agent: Optional["Agent"]
-    conversation: Optional["Conversation"]
+    _conversation: Optional["Conversation"]
 
 
     def __init__(self):
@@ -35,8 +35,8 @@ class LLM:
 
     def attach_agent(self, agent):
         self.agent = agent
-        self.conversation = agent.conversation
-        self.before_response_listener = lambda x: agent.add_to_conversation(x)
+        self._conversation = agent.conversation
+        self.before_response_listener = lambda x: agent.before_response(x)
         self.after_response_listener = lambda x: agent.after_response(x)
 
     def set_before_response_listener(self, before_response_listener: BeforeCb):

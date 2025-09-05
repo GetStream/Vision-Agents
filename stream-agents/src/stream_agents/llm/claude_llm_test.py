@@ -8,6 +8,7 @@ from anthropic import AsyncAnthropic
 from stream_agents.llm.llm import LLMResponse
 from stream_agents.llm.claude_llm import ClaudeLLM
 
+from stream_agents.agents.conversation import InMemoryConversation
 
 load_dotenv()
 
@@ -19,6 +20,7 @@ class TestClaudeLLM:
     def llm(self) -> ClaudeLLM:
         """Test ClaudeLLM initialization with a provided client."""
         llm = ClaudeLLM(model="claude-3-5-sonnet-20241022")
+        llm._conversation = InMemoryConversation("be friendly", [])
         return llm
 
     @pytest.mark.integration
@@ -47,6 +49,7 @@ class TestClaudeLLM:
         response = await llm.simple_response(
             text="How many paws are there in the room?",
         )
+
         assert "8" in response.text or "eight" in response.text
 
     @pytest.mark.integration

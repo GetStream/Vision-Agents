@@ -83,9 +83,10 @@ from agents import Agent
 # use speech to speech (STS) gemini model
 agent = Agent(
     pre_processors=[Roboflow(), dota_api("gameid")],
-    interval=1 second,
-    llm=GeminiSTS(), 
-    # turn_detection=your_turn_detector
+    interval=1
+second,
+llm = GeminiSTS(),
+# turn_detection=your_turn_detector
 )
 
 # Join a Stream video call
@@ -95,7 +96,7 @@ await agent.join(call)
 agent.llm.client
 
 # history at
-agent.conversation
+agent._conversation
 ```
 
 

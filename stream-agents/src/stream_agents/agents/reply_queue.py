@@ -19,7 +19,7 @@ class ReplyQueue:
 
     async def resume(self, llm_response):
         # Some logic to either refresh (clear old) or simply resume
-        self.agent.conversation.add_message(llm_response.text, self.agent.agent_user.id)
+        self.agent._conversation.add_message(llm_response.text, self.agent.agent_user.id)
 
         # TODO: streaming here to update messages
 
