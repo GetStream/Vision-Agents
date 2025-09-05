@@ -3,7 +3,7 @@ import os
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from getstream.plugins import DeepgramSTT, ElevenLabsTTS
+from getstream.plugins import DeepgramSTT, ElevenLabsTTS, SileroVAD
 from stream_agents.turn_detection import FalTurnDetection
 from stream_agents.llm import OpenAILLM
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
@@ -27,6 +27,7 @@ async def start_agent() -> None:
         ),
         tts=ElevenLabsTTS(),
         stt=DeepgramSTT(),
+        vad=SileroVAD(),
         turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )

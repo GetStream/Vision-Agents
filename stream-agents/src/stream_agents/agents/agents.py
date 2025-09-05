@@ -10,10 +10,12 @@ from openai.types.responses import EasyInputMessageParam, ResponseInputItemParam
 
 from getstream.plugins.common import (
     TTS,
+    VAD,
     STT,
     STTTranscriptEvent,
     STTPartialTranscriptEvent,
 )
+
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from getstream.chat.client import ChatClient
@@ -52,6 +54,7 @@ class Agent:
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
         turn_detection: Optional[BaseTurnDetector] = None,
+        vad: Optional[VAD] = None,
         # the agent's user info
         agent_user: Optional[UserRequest] = None,
         # for video gather data at an interval
@@ -84,6 +87,7 @@ class Agent:
         self.stt = stt
         self.tts = tts
         self.turn_detection = turn_detection
+        self.vad = vad
         self.processors = processors or []
         self.queue = ReplyQueue(self)
 
@@ -102,6 +106,7 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
+        self._setup_vad()
 
     async def create_response(
         self,
@@ -163,6 +168,8 @@ class Agent:
         """
         process_inputs = []
         for processor in self.processors:
+            if processor is None:
+                continue
             state = processor.input()
             process_inputs.append(state)
 
@@ -279,6 +286,12 @@ class Agent:
     async def play_audio(self, pcm):
         await self.queue.send_audio(pcm)
 
+    def _setup_vad(self):
+        if self.vad:
+            self.logger.info("🎙️ Setting up VAD listeners")
+            self.vad.on("speech_start", self._on_vad_speech_start)
+            self.vad.on("speech_end", self._on_vad_speech_end)
+
     def _setup_turn_detection(self):
         if self.turn_detection:
             self.logger.info("🎙️ Setting up turn detection listeners")
@@ -360,23 +373,14 @@ class Agent:
         if participant and participant != self.agent_user.id:
             # first forward to processors
             try:
-                # TODO: remove this nonsense, we know its pcm
-                # Extract audio bytes for processors
-                audio_bytes = None
-                if hasattr(pcm_data, "samples"):
-                    samples = pcm_data.samples
-                    if hasattr(samples, "tobytes"):
-                        audio_bytes = samples.tobytes()
-                    else:
-                        audio_bytes = samples.astype("int16").tobytes()
-                elif isinstance(pcm_data, bytes):
-                    audio_bytes = pcm_data
-                else:
-                    self.logger.debug(f"Unknown PCM data format: {type(pcm_data)}")
-                    audio_bytes = pcm_data  # Try as-is
-
-                # Forward to audio processors
+                # Extract audio bytes for processors using the proper PCM data structure
+                # PCM data has: format, sample_rate, samples, pts, dts, time_base
+                audio_bytes = pcm_data.samples.tobytes()
+                asyncio.create_task(self.vad.process_audio(pcm_data, participant))
+                # Forward to audio processors (skip None values)
                 for processor in self.audio_processors:
+                    if processor is None:
+                        continue
                     try:
                         await processor.process_audio(audio_bytes, participant.user_id)
                     except Exception as e:
@@ -453,6 +457,8 @@ class Agent:
                         img = video_frame.to_image()
 
                         for processor in self.image_processors:
+                            if processor is None:
+                                continue
                             try:
                                 await processor.process_image(img, participant.user_id)
                             except Exception as e:
@@ -462,6 +468,8 @@ class Agent:
 
                     # video processors
                     for processor in self.video_processors:
+                        if processor is None:
+                            continue
                         try:
                             await processor.process_video(track, participant.user_id)
                         except Exception as e:
@@ -475,6 +483,12 @@ class Agent:
                     f"📸 Error receiving track: {e} - {type(e)}, trying again"
                 )
                 await asyncio.sleep(0.5)
+
+    def _on_vad_speech_start(self, event):
+        self.logger.info(f"============== VAD EVENT {event.speech_probability} ==============")
+
+    def _on_vad_speech_end(self, event):
+        self.logger.info(f"============== VAD EVENT {event} ==============")
 
     def _on_turn_started(self, event_data: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
