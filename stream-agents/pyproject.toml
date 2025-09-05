@@ -12,18 +12,9 @@ dynamic = ["version"]
 requires-python = ">=3.12"
 dependencies = [
     "getstream[webrtc] @ git+https://github.com/GetStream/stream-py.git@webrtc#egg=getstream",
-    "getstream-plugins-elevenlabs>=0.1.0",
     "python-dotenv>=1.1.1",
-    "pre-commit>=4.3.0",
-    "ruff>=0.12.8",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.1.0",
-    "openai==1.101.0",
     "pillow>=11.3.0",
     "aiortc>=1.13.0",
-    "getstream-plugins-deepgram>=0.1.0",
-    "fal-client>=0.6.1",
-    "google-genai>=0.3.0",
     "websockets>=12.0",
     "numpy>=1.24.0",
     "ultralytics>=8.3.0",
@@ -44,8 +35,18 @@ Source = "https://github.com/getstream/stream-agents"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff"]
-xai = ["stream-agents-plugin-xai"]
-
+openai = ["getstream-plugins-openai>=0.1.0", "openai==1.101.0"]
+deepgram = ["getstream-plugins-deepgram>=0.1.0"]
+elevenlabs = ["getstream-plugins-elevenlabs>=0.1.0"]
+fal = ["fal-client>=0.6.1"]
+gemini = ["google-genai>=0.3.0"]
+all-plugins = [
+  "getstream-plugins-openai>=0.1.0",
+  "getstream-plugins-deepgram>=0.1.0",
+  "getstream-plugins-elevenlabs>=0.1.0",
+  "fal-client>=0.6.1",
+  "google-genai>=0.3.0",
+]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -56,17 +57,27 @@ raw-options = { root = "..", search_parent_directories = true, fallback_version 
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["stream_agents"]
+packages = ["src/stream_agents"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/stream-agents"]
+include = ["src/stream_agents"]
 
 [tool.uv.sources]
+getstream-plugins-anthropic = { workspace = true }
+getstream-plugins-cartesia = { workspace = true }
+getstream-plugins-common = { workspace = true }
+getstream-plugins-deepgram = { workspace = true }
+getstream-plugins-elevenlabs = { workspace = true }
+getstream-plugins-fal = { workspace = true }
+getstream-plugins-gemini = { workspace = true }
+getstream-plugins-kokoro = { workspace = true }
+getstream-plugins-moonshine = { workspace = true }
+getstream-plugins-openai = { workspace = true }
+getstream-plugins-silero = { workspace = true }
+getstream-plugins-xai = { workspace = true }
 krisp-audio = [
-    { path = "./stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", marker = "sys_platform == 'darwin' and platform_machine == 'aarch64'" },
-    { path = "./stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-    { path = "./stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-    { path = "./stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32'" }
+    { path = "./src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", marker = "sys_platform == 'darwin' and platform_machine == 'aarch64'" },
+    { path = "./src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+    { path = "./src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+    { path = "./src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32'" }
 ]
-
-"stream-agents" = {path = "../../stream-agents", editable=true}

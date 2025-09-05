@@ -1,0 +1,19 @@
+{
+  "audio_file": "mia.mp3",
+  "language": "English",
+  "duration": 10,
+  "segments": [
+    {
+      "start_time": 0.0,
+      "end_time": 10.0,
+      "speaker": "Speaker 0",
+      "text": "In a quiet village where the sky brushes the fields in hues of gold, young Mia discovered a map leading to forgotten treasures."
+    }
+  ],
+  "metadata": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "word_count": 24,
+    "speakers": ["Speaker 0"]
+  }
+}
