@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "getstream-plugins-cartesia"
+name = "stream-agents-plugins-cartesia"
 version = "0.1.0"
 description = "Cartesia plugin for GetStream"
 readme = "README.md"

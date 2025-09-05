@@ -2,42 +2,42 @@ version = 1
 revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'darwin')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4.0' and platform_machine == 'aarch64' and sys_platform == 'darwin')",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'linux')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine == 'aarch64' and sys_platform == 'linux')",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "(python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine == 'x86_64' and sys_platform == 'linux')",
     "python_full_version == '3.11.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
     "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version >= '3.13' and python_full_version < '4' and sys_platform == 'win32'",
-    "(python_full_version == '3.12.*' and sys_platform == 'win32') or (python_full_version >= '4' and sys_platform == 'win32')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and sys_platform == 'win32'",
+    "(python_full_version == '3.12.*' and sys_platform == 'win32') or (python_full_version >= '4.0' and sys_platform == 'win32')",
     "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version < '3.11' and sys_platform == 'win32'",
-    "(python_full_version >= '3.13' and python_full_version < '4' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.13' and python_full_version < '4' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '3.13' and python_full_version < '4' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32') or (python_full_version >= '4' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "(python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '3.13' and python_full_version < '4.0' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4.0' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32') or (python_full_version >= '4.0' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
     "(python_full_version == '3.11.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.11.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
     "(python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
 ]
 
 [manifest]
 members = [
-    "getstream-plugins-cartesia",
-    "getstream-plugins-deepgram",
-    "getstream-plugins-elevenlabs",
-    "getstream-plugins-fal",
-    "getstream-plugins-gemini",
-    "getstream-plugins-kokoro",
-    "getstream-plugins-moonshine",
-    "getstream-plugins-openai",
-    "getstream-plugins-silero",
     "stream-agents",
-    "stream-agents-plugin-anthropic",
-    "stream-agents-plugin-xai",
+    "stream-agents-plugins-anthropic",
+    "stream-agents-plugins-cartesia",
+    "stream-agents-plugins-deepgram",
+    "stream-agents-plugins-elevenlabs",
+    "stream-agents-plugins-fal",
+    "stream-agents-plugins-gemini",
+    "stream-agents-plugins-kokoro",
+    "stream-agents-plugins-moonshine",
+    "stream-agents-plugins-openai",
+    "stream-agents-plugins-silero",
+    "stream-agents-plugins-xai",
 ]
 
 [manifest.dependency-groups]
@@ -448,7 +448,7 @@ version = "2.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "audioop-lts", marker = "python_full_version >= '3.13' and python_full_version < '4'" },
+    { name = "audioop-lts", marker = "python_full_version >= '3.13' and python_full_version < '4.0'" },
     { name = "httpx" },
     { name = "httpx-sse" },
     { name = "iterators" },
@@ -748,20 +748,20 @@ name = "contourpy"
 version = "1.3.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'darwin')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4.0' and platform_machine == 'aarch64' and sys_platform == 'darwin')",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'linux')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine == 'aarch64' and sys_platform == 'linux')",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "(python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine == 'x86_64' and sys_platform == 'linux')",
     "python_full_version == '3.11.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version >= '3.13' and python_full_version < '4' and sys_platform == 'win32'",
-    "(python_full_version == '3.12.*' and sys_platform == 'win32') or (python_full_version >= '4' and sys_platform == 'win32')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and sys_platform == 'win32'",
+    "(python_full_version == '3.12.*' and sys_platform == 'win32') or (python_full_version >= '4.0' and sys_platform == 'win32')",
     "python_full_version == '3.11.*' and sys_platform == 'win32'",
-    "(python_full_version >= '3.13' and python_full_version < '4' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.13' and python_full_version < '4' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '3.13' and python_full_version < '4' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32') or (python_full_version >= '4' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "(python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '3.13' and python_full_version < '4.0' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4.0' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32') or (python_full_version >= '4.0' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
     "(python_full_version == '3.11.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.11.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
 ]
 dependencies = [
@@ -1336,7 +1336,7 @@ wheels = [
 [[package]]
 name = "getstream"
 version = "2.3.0a5"
-source = { git = "https://github.com/GetStream/stream-py.git?rev=webrtc#bf3bb43c35e11baeba210afb826a5be029729b43" }
+source = { git = "https://github.com/GetStream/stream-py.git?rev=webrtc#b0882cdb0fc8f86d2f2ad61e49854f51fabab973" }
 dependencies = [
     { name = "aiohttp" },
     { name = "aiortc" },
@@ -1385,35 +1385,6 @@ webrtc = [
 ]
 
 [[package]]
-name = "getstream-plugins-cartesia"
-version = "0.1.0"
-source = { editable = "plugins/cartesia" }
-dependencies = [
-    { name = "cartesia" },
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cartesia", specifier = ">=2.0.5" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "stream-agents", editable = "stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
 name = "getstream-plugins-common"
 version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1427,265 +1398,41 @@ wheels = [
 [[package]]
 name = "getstream-plugins-deepgram"
 version = "0.1.1"
-source = { editable = "plugins/deepgram" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deepgram-sdk" },
     { name = "getstream", extra = ["webrtc"] },
+    { name = "getstream-plugins-common" },
     { name = "numpy" },
-    { name = "stream-agents" },
 ]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "scipy" },
-    { name = "soundfile" },
-    { name = "torchaudio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=4.5.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "stream-agents", editable = "stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/6d/595a7870c092a30f8df56c7e09d4e6aca6f4f3ed5ffc453cc2281ed1100f/getstream_plugins_deepgram-0.1.1-py3-none-any.whl", hash = "sha256:5ed7a9a283fc5a897108a8ca6bb4e1b3289b12ef64aa1dff8520ca45d023cd18", size = 16802, upload-time = "2025-08-01T15:47:12.664Z" },
 ]
 
 [[package]]
 name = "getstream-plugins-elevenlabs"
 version = "0.1.0"
-source = { editable = "plugins/elevenlabs" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "elevenlabs" },
     { name = "getstream", extra = ["webrtc"] },
-    { name = "stream-agents" },
+    { name = "getstream-plugins-common" },
 ]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "elevenlabs", specifier = ">=2.5.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "stream-agents", editable = "stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-fal"
-version = "0.1.1"
-source = { editable = "plugins/fal" }
-dependencies = [
-    { name = "fal-client" },
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "numpy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fal-client", specifier = ">=0.7.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "stream-agents", editable = "stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-gemini"
-version = "0.1.0"
-source = { editable = "plugins/gemini" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "google-genai" },
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "python-dotenv" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "google-genai", specifier = ">=1.29.0" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "stream-agents", editable = "stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-]
-
-[[package]]
-name = "getstream-plugins-kokoro"
-version = "0.1.0"
-source = { editable = "plugins/kokoro" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "kokoro" },
-    { name = "misaki", extra = ["en"] },
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "kokoro", specifier = ">=0.9.4" },
-    { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "stream-agents", editable = "stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-moonshine"
-version = "0.1.1"
-source = { editable = "plugins/moonshine" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "numpy" },
-    { name = "onnxruntime" },
-    { name = "soundfile" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "onnxruntime", specifier = ">=1.22.0" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "stream-agents", editable = "stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/01/58ce9ca0acbb81a80b92edea0fc1108e82ddcee49828e5e4d26bc621c661/getstream_plugins_elevenlabs-0.1.0-py3-none-any.whl", hash = "sha256:d4b94bf43dd9d1a2e374a3662a38c2a79db43a8b88d41ef28c7050597a3272eb", size = 6142, upload-time = "2025-07-04T13:42:34.989Z" },
 ]
 
 [[package]]
 name = "getstream-plugins-openai"
 version = "0.1.1"
-source = { editable = "plugins/openai" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "getstream", extra = ["webrtc"] },
     { name = "getstream-plugins-common" },
     { name = "openai", extra = ["realtime"] },
 ]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common" },
-    { name = "openai", extras = ["realtime"], specifier = ">=1.97.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-silero"
-version = "0.1.0"
-source = { editable = "plugins/silero" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "numpy" },
-    { name = "silero" },
-    { name = "stream-agents" },
-    { name = "torch" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "scipy" },
-    { name = "soundfile" },
-    { name = "torchaudio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "silero", specifier = ">=0.4.1" },
-    { name = "stream-agents", editable = "stream-agents" },
-    { name = "torch", specifier = ">=2.7.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/7e/c3f18ddb15e587e8e43496799fd6cb1d4a3b4c7381825e477325e4cc7bfd/getstream_plugins_openai-0.1.1-py3-none-any.whl", hash = "sha256:2fb665286402dc631f1d36fb6761416b6310f1a984b76152eda90348556259a0", size = 7473, upload-time = "2025-07-23T15:57:14.164Z" },
 ]
 
 [[package]]
@@ -2212,8 +1959,8 @@ name = "krisp-audio"
 version = "1.4.0"
 source = { path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }
 resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'linux')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine == 'aarch64' and sys_platform == 'linux')",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
@@ -2226,8 +1973,8 @@ name = "krisp-audio"
 version = "1.4.0"
 source = { path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }
 resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "(python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine == 'x86_64' and sys_platform == 'linux')",
     "python_full_version == '3.11.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
     "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
@@ -2240,8 +1987,8 @@ name = "krisp-audio"
 version = "1.4.0"
 source = { path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
 resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'darwin')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4.0' and platform_machine == 'aarch64' and sys_platform == 'darwin')",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
 ]
@@ -2254,8 +2001,8 @@ name = "krisp-audio"
 version = "1.4.0"
 source = { path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }
 resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and sys_platform == 'win32'",
-    "(python_full_version == '3.12.*' and sys_platform == 'win32') or (python_full_version >= '4' and sys_platform == 'win32')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and sys_platform == 'win32'",
+    "(python_full_version == '3.12.*' and sys_platform == 'win32') or (python_full_version >= '4.0' and sys_platform == 'win32')",
     "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version < '3.11' and sys_platform == 'win32'",
 ]
@@ -2782,20 +2529,20 @@ name = "networkx"
 version = "3.5"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'darwin')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4.0' and platform_machine == 'aarch64' and sys_platform == 'darwin')",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'linux')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "(python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine == 'aarch64' and sys_platform == 'linux')",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine == 'x86_64' and sys_platform == 'linux')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "(python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine == 'x86_64' and sys_platform == 'linux')",
     "python_full_version == '3.11.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version >= '3.13' and python_full_version < '4' and sys_platform == 'win32'",
-    "(python_full_version == '3.12.*' and sys_platform == 'win32') or (python_full_version >= '4' and sys_platform == 'win32')",
+    "python_full_version >= '3.13' and python_full_version < '4.0' and sys_platform == 'win32'",
+    "(python_full_version == '3.12.*' and sys_platform == 'win32') or (python_full_version >= '4.0' and sys_platform == 'win32')",
     "python_full_version == '3.11.*' and sys_platform == 'win32'",
-    "(python_full_version >= '3.13' and python_full_version < '4' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.13' and python_full_version < '4' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '3.13' and python_full_version < '4' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32') or (python_full_version >= '4' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "(python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.13' and python_full_version < '4.0' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '3.13' and python_full_version < '4.0' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '4.0' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version >= '4.0' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32') or (python_full_version >= '4.0' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
     "(python_full_version == '3.11.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'darwin') or (python_full_version == '3.11.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6c/4f/ccdb8ad3a38e583f214547fd2f7ff1fc160c43a75af88e6aec213404b96a/networkx-3.5.tar.gz", hash = "sha256:d4c6f9cf81f52d69230866796b82afbccdec3db7ae4fbd1b65ea750feed50037", size = 2471065, upload-time = "2025-05-29T11:35:07.804Z" }
@@ -4499,15 +4246,6 @@ dependencies = [
     { name = "click" },
     { name = "daily-python" },
     { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-cartesia" },
-    { name = "getstream-plugins-deepgram" },
-    { name = "getstream-plugins-elevenlabs" },
-    { name = "getstream-plugins-fal" },
-    { name = "getstream-plugins-gemini" },
-    { name = "getstream-plugins-kokoro" },
-    { name = "getstream-plugins-moonshine" },
-    { name = "getstream-plugins-openai" },
-    { name = "getstream-plugins-silero" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
@@ -4517,8 +4255,17 @@ dependencies = [
     { name = "pillow" },
     { name = "python-dotenv" },
     { name = "stratz" },
-    { name = "stream-agents-plugin-anthropic" },
-    { name = "stream-agents-plugin-xai" },
+    { name = "stream-agents-plugins-anthropic" },
+    { name = "stream-agents-plugins-cartesia" },
+    { name = "stream-agents-plugins-deepgram" },
+    { name = "stream-agents-plugins-elevenlabs" },
+    { name = "stream-agents-plugins-fal" },
+    { name = "stream-agents-plugins-gemini" },
+    { name = "stream-agents-plugins-kokoro" },
+    { name = "stream-agents-plugins-moonshine" },
+    { name = "stream-agents-plugins-openai" },
+    { name = "stream-agents-plugins-silero" },
+    { name = "stream-agents-plugins-xai" },
     { name = "ultralytics" },
     { name = "websockets" },
 ]
@@ -4526,10 +4273,10 @@ dependencies = [
 [package.optional-dependencies]
 all-plugins = [
     { name = "fal-client" },
-    { name = "getstream-plugins-deepgram" },
-    { name = "getstream-plugins-elevenlabs" },
-    { name = "getstream-plugins-openai" },
     { name = "google-genai" },
+    { name = "stream-agents-plugins-deepgram" },
+    { name = "stream-agents-plugins-elevenlabs" },
+    { name = "stream-agents-plugins-openai" },
 ]
 deepgram = [
     { name = "getstream-plugins-deepgram" },
@@ -4561,21 +4308,9 @@ requires-dist = [
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
     { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=webrtc" },
-    { name = "getstream-plugins-cartesia", editable = "plugins/cartesia" },
-    { name = "getstream-plugins-deepgram", editable = "plugins/deepgram" },
-    { name = "getstream-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
-    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", editable = "plugins/deepgram" },
-    { name = "getstream-plugins-elevenlabs", editable = "plugins/elevenlabs" },
-    { name = "getstream-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "plugins/elevenlabs" },
-    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "plugins/elevenlabs" },
-    { name = "getstream-plugins-fal", editable = "plugins/fal" },
-    { name = "getstream-plugins-gemini", editable = "plugins/gemini" },
-    { name = "getstream-plugins-kokoro", editable = "plugins/kokoro" },
-    { name = "getstream-plugins-moonshine", editable = "plugins/moonshine" },
-    { name = "getstream-plugins-openai", editable = "plugins/openai" },
-    { name = "getstream-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
-    { name = "getstream-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
-    { name = "getstream-plugins-silero", editable = "plugins/silero" },
+    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
+    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
+    { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },
     { name = "google-genai", marker = "extra == 'all-plugins'", specifier = ">=0.3.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=0.3.0" },
     { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'", path = "stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
@@ -4591,15 +4326,27 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "stratz", specifier = ">=1.0.0" },
-    { name = "stream-agents-plugin-anthropic", editable = "plugins/anthropic" },
-    { name = "stream-agents-plugin-xai", editable = "plugins/xai" },
+    { name = "stream-agents-plugins-anthropic", editable = "plugins/anthropic" },
+    { name = "stream-agents-plugins-cartesia", editable = "plugins/cartesia" },
+    { name = "stream-agents-plugins-deepgram", editable = "plugins/deepgram" },
+    { name = "stream-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
+    { name = "stream-agents-plugins-elevenlabs", editable = "plugins/elevenlabs" },
+    { name = "stream-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "plugins/elevenlabs" },
+    { name = "stream-agents-plugins-fal", editable = "plugins/fal" },
+    { name = "stream-agents-plugins-gemini", editable = "plugins/gemini" },
+    { name = "stream-agents-plugins-kokoro", editable = "plugins/kokoro" },
+    { name = "stream-agents-plugins-moonshine", editable = "plugins/moonshine" },
+    { name = "stream-agents-plugins-openai", editable = "plugins/openai" },
+    { name = "stream-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
+    { name = "stream-agents-plugins-silero", editable = "plugins/silero" },
+    { name = "stream-agents-plugins-xai", editable = "plugins/xai" },
     { name = "ultralytics", specifier = ">=8.3.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
 provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemini", "openai"]
 
 [[package]]
-name = "stream-agents-plugin-anthropic"
+name = "stream-agents-plugins-anthropic"
 source = { editable = "plugins/anthropic" }
 dependencies = [
     { name = "anthropic" },
@@ -4613,7 +4360,300 @@ requires-dist = [
 ]
 
 [[package]]
-name = "stream-agents-plugin-xai"
+name = "stream-agents-plugins-cartesia"
+version = "0.1.0"
+source = { editable = "plugins/cartesia" }
+dependencies = [
+    { name = "cartesia" },
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "stream-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cartesia", specifier = ">=2.0.5" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "stream-agents", editable = "stream-agents" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-deepgram"
+version = "0.1.1"
+source = { editable = "plugins/deepgram" }
+dependencies = [
+    { name = "deepgram-sdk" },
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "numpy" },
+    { name = "stream-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "scipy" },
+    { name = "soundfile" },
+    { name = "torchaudio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "deepgram-sdk", specifier = ">=4.5.0" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "stream-agents", editable = "stream-agents" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "stream-agents-plugins-elevenlabs"
+version = "0.1.0"
+source = { editable = "plugins/elevenlabs" }
+dependencies = [
+    { name = "elevenlabs" },
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "stream-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "elevenlabs", specifier = ">=2.5.0" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "stream-agents", editable = "stream-agents" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-fal"
+version = "0.1.1"
+source = { editable = "plugins/fal" }
+dependencies = [
+    { name = "fal-client" },
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "stream-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "numpy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fal-client", specifier = ">=0.7.0" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "stream-agents", editable = "stream-agents" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-gemini"
+version = "0.1.0"
+source = { editable = "plugins/gemini" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "google-genai" },
+    { name = "numpy" },
+    { name = "stream-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "python-dotenv" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "google-genai", specifier = ">=1.29.0" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "stream-agents", editable = "stream-agents" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "python-dotenv", specifier = ">=1.1.1" },
+]
+
+[[package]]
+name = "stream-agents-plugins-kokoro"
+version = "0.1.0"
+source = { editable = "plugins/kokoro" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "kokoro" },
+    { name = "misaki", extra = ["en"] },
+    { name = "numpy" },
+    { name = "stream-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "kokoro", specifier = ">=0.9.4" },
+    { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "stream-agents", editable = "stream-agents" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-moonshine"
+version = "0.1.1"
+source = { editable = "plugins/moonshine" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "soundfile" },
+    { name = "stream-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "onnxruntime", specifier = ">=1.22.0" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "stream-agents", editable = "stream-agents" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-openai"
+version = "0.1.1"
+source = { editable = "plugins/openai" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "getstream-plugins-common" },
+    { name = "openai", extra = ["realtime"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "getstream-plugins-common" },
+    { name = "openai", extras = ["realtime"], specifier = ">=1.97.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-silero"
+version = "0.1.0"
+source = { editable = "plugins/silero" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "numpy" },
+    { name = "silero" },
+    { name = "stream-agents" },
+    { name = "torch" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "scipy" },
+    { name = "soundfile" },
+    { name = "torchaudio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "silero", specifier = ">=0.4.1" },
+    { name = "stream-agents", editable = "stream-agents" },
+    { name = "torch", specifier = ">=2.7.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "stream-agents-plugins-xai"
 source = { editable = "plugins/xai" }
 dependencies = [
     { name = "stream-agents" },
@@ -4948,7 +4988,7 @@ wheels = [
 
 [[package]]
 name = "typer"
-version = "0.17.3"
+version = "0.17.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -4956,9 +4996,9 @@ dependencies = [
     { name = "shellingham" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/82/f4bfed3bc18c6ebd6f828320811bbe4098f92a31adf4040bee59c4ae02ea/typer-0.17.3.tar.gz", hash = "sha256:0c600503d472bcf98d29914d4dcd67f80c24cc245395e2e00ba3603c9332e8ba", size = 103517, upload-time = "2025-08-30T12:35:24.05Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/e8/2a73ccf9874ec4c7638f172efc8972ceab13a0e3480b389d6ed822f7a822/typer-0.17.4.tar.gz", hash = "sha256:b77dc07d849312fd2bb5e7f20a7af8985c7ec360c45b051ed5412f64d8dc1580", size = 103734, upload-time = "2025-09-05T18:14:40.746Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/e8/b3d537470e8404659a6335e7af868e90657efb73916ef31ddf3d8b9cb237/typer-0.17.3-py3-none-any.whl", hash = "sha256:643919a79182ab7ac7581056d93c6a2b865b026adf2872c4d02c72758e6f095b", size = 46494, upload-time = "2025-08-30T12:35:22.391Z" },
+    { url = "https://files.pythonhosted.org/packages/93/72/6b3e70d32e89a5cbb6a4513726c1ae8762165b027af569289e19ec08edd8/typer-0.17.4-py3-none-any.whl", hash = "sha256:015534a6edaa450e7007eba705d5c18c3349dcea50a6ad79a5ed530967575824", size = 46643, upload-time = "2025-09-05T18:14:39.166Z" },
 ]
 
 [[package]]
@@ -4997,7 +5037,7 @@ wheels = [
 
 [[package]]
 name = "ultralytics"
-version = "8.3.193"
+version = "8.3.194"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
@@ -5014,9 +5054,9 @@ dependencies = [
     { name = "torchvision" },
     { name = "ultralytics-thop" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/de/ba/300fba5b3c17527c2e6bc77af9bd149bfcaf9eb0f58ba3a99a8e6bdb2579/ultralytics-8.3.193.tar.gz", hash = "sha256:bec0001205b3298b099c94ec4988d41b225c07e7af57fb02b612eb1546ce3e6a", size = 914054, upload-time = "2025-09-04T11:53:09.064Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/37/29/528248b3524e1069fe4cffe27eb5cd06937e5c0320e0fc63d2421065205f/ultralytics-8.3.194.tar.gz", hash = "sha256:7d6d9a84fa0e9f6d02933e3ab6a520b4110df819e117812c79e1a323b4b54b77", size = 914566, upload-time = "2025-09-05T21:16:48.171Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/8a/26f3ac48bd88862fb7309181a3a650b6693996d18dabeee5f4a9bcdc3ec0/ultralytics-8.3.193-py3-none-any.whl", hash = "sha256:e76832da9e50b93fc38137e4bd8c664b1ed7463b09f855f5cf17408f3675a958", size = 1064853, upload-time = "2025-09-04T11:53:06.895Z" },
+    { url = "https://files.pythonhosted.org/packages/db/8e/9180f4c309cf7390484893d138d7abbed2e4918e235c0272d432ec858676/ultralytics-8.3.194-py3-none-any.whl", hash = "sha256:5796ddab90d96b5b297ac452843409bc418f1cfb10a2ac057f0da8ccbb789407", size = 1065719, upload-time = "2025-09-05T21:16:45.428Z" },
 ]
 
 [[package]]

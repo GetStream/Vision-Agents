@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from getstream.plugins.gemini.live import GeminiLive
+from stream_agents.plugins import gemini
 from getstream.video.rtc.track_util import PcmData
 
 
@@ -72,7 +72,7 @@ def fake_image(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_video_sender_sends_media_blob(fake_image):
-    g = GeminiLive(api_key="test", model="test-model")
+    g = gemini.Realtime(api_key="test", model="test-model")
     # Pretend we're connected and have a session
     fake = _FakeSession()
     g._session = fake  # type: ignore[attr-defined]
@@ -90,7 +90,7 @@ async def test_start_video_sender_sends_media_blob(fake_image):
 
 @pytest.mark.asyncio
 async def test_send_audio_pcm_sends_audio_blob():
-    g = GeminiLive(api_key="test", model="test-model")
+    g = gemini.Realtime(api_key="test", model="test-model")
     fake = _FakeSession()
     g._session = fake  # type: ignore[attr-defined]
     g._is_connected = True  # type: ignore[attr-defined]
@@ -105,7 +105,7 @@ async def test_send_audio_pcm_sends_audio_blob():
 
 @pytest.mark.asyncio
 async def test_stop_video_sender_cancels_task(fake_image):
-    g = GeminiLive(api_key="test", model="test-model")
+    g = gemini.Realtime(api_key="test", model="test-model")
     g._session = _FakeSession()  # type: ignore[attr-defined]
     g._is_connected = True  # type: ignore[attr-defined]
 
@@ -143,7 +143,9 @@ _types_mod.LiveConnectConfigDict = _DummyDict
 _types_mod.Blob = _DummyBlob
 _types_mod.Modality = _DummyModality
 _types_mod.AudioTranscriptionConfigDict = _DummyDict
-_types_mod.RealtimeInputConfigDict = _DummyDict
+_gemini_mod = types.ModuleType("gemini")
+_gemini_mod.RealtimeInputConfigDict = _DummyDict
+_types_mod.gemini = _gemini_mod
 _types_mod.TurnCoverage = _DummyTurnCoverage
 _types_mod.SpeechConfigDict = _DummyDict
 _types_mod.VoiceConfigDict = _DummyDict
@@ -264,7 +266,7 @@ async def test_connect_emits_events_and_forwards_audio_and_text(
 
     events: _Events = {"connected": False, "audio": [], "text": []}
 
-    sts = GeminiLive(api_key="key", model="model", provider_config=None)
+    sts = gemini.Realtime(api_key="key", model="model", provider_config=None)
 
     @sts.on("connected")  # type: ignore[arg-type]
     async def _on_connected():
@@ -303,7 +305,7 @@ async def test_connect_emits_events_and_forwards_audio_and_text(
 async def test_send_text_calls_underlying_session(patch_genai_client):
     patch_genai_client([])
 
-    sts = GeminiLive(api_key="key", model="model", provider_config=None)
+    sts = gemini.Realtime(api_key="key", model="model", provider_config=None)
     await sts.wait_until_ready(timeout=1.0)
 
     # Access dummy session to inspect sent calls
@@ -326,7 +328,7 @@ async def test_send_audio_pcm_resample_barge_in_and_silence_timeout(
     monkeypatch.setattr(gemini_live, "Blob", _DummyBlob)
     monkeypatch.setattr(gemini_live, "resample_audio", lambda arr, src, dst: arr)
 
-    sts = GeminiLive(
+    sts = gemini.Realtime(
         api_key="key",
         model="model",
         provider_config=None,
@@ -372,7 +374,7 @@ async def test_send_audio_pcm_resample_barge_in_and_silence_timeout(
 async def test_interrupt_and_resume_playback(patch_genai_client, spy_track_flush):
     patch_genai_client([])
 
-    sts = GeminiLive(api_key="key", model="model", provider_config=None)
+    sts = gemini.Realtime(api_key="key", model="model", provider_config=None)
     await sts.wait_until_ready(timeout=1.0)
 
     flush_spy = spy_track_flush(sts)
@@ -393,7 +395,7 @@ async def test_stop_response_listener_cancels_task(patch_genai_client):
     responses = [(b"x", None)]
     patch_genai_client(responses)
 
-    sts = GeminiLive(api_key="key", model="model", provider_config=None)
+    sts = gemini.Realtime(api_key="key", model="model", provider_config=None)
     await sts.wait_until_ready(timeout=1.0)
 
     # Ensure listener task exists

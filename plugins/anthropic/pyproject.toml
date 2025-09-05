@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugin-anthropic"
+name = "stream-agents-plugins-anthropic"
 description = "XAI for stream agents"
 dynamic = ["version"]
 license = "Apache-2.0"

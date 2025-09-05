@@ -36,14 +36,14 @@ from google.genai.types import (
 )
 
 from getstream.audio.utils import resample_audio
-from stream_agents.llm import STS
+from stream_agents import llm
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 
 logger = logging.getLogger(__name__)
 
 
-class GeminiLive(STS):
+class Realtime(llm.Realtime):
     """Speech-to-Speech wrapper for Google Gemini Live API."""
 
     def __init__(
@@ -415,4 +415,4 @@ class GeminiLive(STS):
                 await self._connect_task
 
 
-__all__ = ["GeminiLive"]
+__all__ = ["Realtime"]

@@ -26,17 +26,17 @@ dependencies = [
     "krisp-audio>=1.4.0; sys_platform == 'win32'",
     "krisp-audio>=1.4.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "krisp-audio>=1.4.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
-    "stream-agents-plugin-anthropic",
-    "getstream-plugins-cartesia",
-    "getstream-plugins-deepgram",
-    "getstream-plugins-elevenlabs",
-    "getstream-plugins-fal",
-    "getstream-plugins-gemini",
-    "getstream-plugins-kokoro",
-    "getstream-plugins-moonshine",
-    "getstream-plugins-openai",
-    "getstream-plugins-silero",
-    "stream-agents-plugin-xai"
+    "stream-agents-plugins-anthropic",
+    "stream-agents-plugins-cartesia",
+    "stream-agents-plugins-deepgram",
+    "stream-agents-plugins-elevenlabs",
+    "stream-agents-plugins-fal",
+    "stream-agents-plugins-gemini",
+    "stream-agents-plugins-kokoro",
+    "stream-agents-plugins-moonshine",
+    "stream-agents-plugins-openai",
+    "stream-agents-plugins-silero",
+    "stream-agents-plugins-xai"
 ]
 
 [project.urls]
@@ -52,9 +52,9 @@ elevenlabs = ["getstream-plugins-elevenlabs>=0.1.0"]
 fal = ["fal-client>=0.6.1"]
 gemini = ["google-genai>=0.3.0"]
 all-plugins = [
-  "getstream-plugins-openai>=0.1.0",
-  "getstream-plugins-deepgram>=0.1.0",
-  "getstream-plugins-elevenlabs>=0.1.0",
+  "stream-agents-plugins-openai>=0.1.0",
+  "stream-agents-plugins-deepgram>=0.1.0",
+  "stream-agents-plugins-elevenlabs>=0.1.0",
   "fal-client>=0.6.1",
   "google-genai>=0.3.0",
 ]

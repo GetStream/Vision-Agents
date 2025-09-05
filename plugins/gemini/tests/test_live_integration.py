@@ -30,15 +30,15 @@ async def test_gemini_live_with_real_api():
     except Exception as e:  # pragma: no cover - env-dependent
         pytest.skip(f"Required Google packages not available: {e}")
 
-    from getstream.plugins.gemini.live.live import GeminiLive
-
+    from stream_agents.plugins import gemini
+    
     # Set up instance and event capture
     class _Events(TypedDict):
         audio: List[bytes]
         text: List[str]
 
     events: _Events = {"audio": [], "text": []}
-    sts = GeminiLive(api_key=api_key)
+    sts = gemini.Realtime(api_key=api_key)
 
     @sts.on("audio")  # type: ignore[arg-type]
     async def _on_audio(data: bytes):

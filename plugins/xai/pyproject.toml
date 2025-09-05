@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugin-xai"
+name = "stream-agents-plugins-xai"
 dynamic = ["version"]
 description = "XAI for stream agents"
 license = "Apache-2.0"

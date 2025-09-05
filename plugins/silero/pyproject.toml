@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "getstream-plugins-silero"
+name = "stream-agents-plugins-silero"
 version = "0.1.0"
 description = "Silero plugin for GetStream"
 readme = "README.md"

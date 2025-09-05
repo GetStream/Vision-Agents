@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "getstream-plugins-gemini"
+name = "stream-agents-plugins-gemini"
 version = "0.1.0"
 description = "Google Gemini plugin for GetStream"
 readme = "README.md"

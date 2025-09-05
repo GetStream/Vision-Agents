@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "getstream-plugins-elevenlabs"
+name = "stream-agents-plugins-elevenlabs"
 version = "0.1.0"
 description = "ElevenLabs plugin for GetStream"
 readme = "README.md"

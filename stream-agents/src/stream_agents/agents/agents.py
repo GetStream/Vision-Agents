@@ -29,7 +29,7 @@ from getstream.video.rtc.tracks import (
 
 from .conversation import Conversation, StreamConversation
 from ..llm.llm import LLM
-from ..llm.sts import STS
+from ..llm.realtime import Realtime
 from ..llm.openai_llm import OpenAILLM
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
@@ -46,7 +46,7 @@ class Agent:
         # edge network for video & audio
         edge: Optional[EdgeTransport] = None,
         # llm, optionally with sts capabilities
-        llm: Optional[LLM | STS] = None,
+        llm: Optional[LLM | Realtime] = None,
         # instructions
         instructions: str = "Keep your replies short and dont use special characters.",
         # setup stt, tts, and turn detection if not using an llm with realtime/sts
@@ -140,11 +140,11 @@ class Agent:
         self.logger.info(f"🤖 Agent joining call: {call.id}")
 
         if self.sts_mode:
-            self.logger.info("🎤 Using STS (Speech-to-Speech) mode")
+            self.logger.info("🎤 Using Realtime (Speech-to-Speech) mode")
         else:
             self.logger.info("🎤 Using traditional STT/TTS mode")
 
-        # Ensure STS providers are ready before proceeding (they manage their own connection)
+        # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.sts_mode:
             await self.llm.wait_until_ready()
 
@@ -175,12 +175,12 @@ class Agent:
                 if video_track:
                     self.logger.debug("🎥 Agent ready to publish video")
 
-            # In STS mode we directly publish the provider's output track; no extra forwarding needed
+            # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
             # Set up event handlers for audio processing
             await self._listen_to_audio_and_video()
 
-            # STS providers manage their own event loops; nothing to do here
+            # Realtime providers manage their own event loops; nothing to do here
 
             # Keep the agent running and listening
             self.logger.info("🎧 Agent is active - press Ctrl+C to stop")
@@ -249,7 +249,7 @@ class Agent:
         except Exception as e:
             self.logger.error(f"Error setting up WebSocket event handlers: {e}")
 
-        # Handle audio data for STT or STS
+        # Handle audio data for STT or Realtime
         @self._connection.on("audio")
         async def on_audio_received(pcm: PcmData, participant: Participant):
             if not participant:
@@ -309,7 +309,7 @@ class Agent:
             except Exception as e:
                 self.logger.error(f"Error processing audio for processors: {e}")
 
-            # when in STS mode call the STS directly
+            # when in Realtime mode call the Realtime directly
             if self.sts_mode:
                 await self.llm.send_audio_pcm(pcm_data)
             else:
@@ -351,13 +351,13 @@ class Agent:
         # Give the track a moment to be ready
         await asyncio.sleep(0.5)
 
-        # If STS provider supports video, forward frames upstream once per track
+        # If Realtime provider supports video, forward frames upstream once per track
         if self.sts_mode:
             try:
                 await self.llm.start_video_sender(track)
-                self.logger.info("🎥 Forwarding video frames to STS provider")
+                self.logger.info("🎥 Forwarding video frames to Realtime provider")
             except Exception as e:
-                self.logger.error(f"Error starting video sender to STS provider: {e}")
+                self.logger.error(f"Error starting video sender to Realtime provider: {e}")
 
         hasImageProcessers = len(self.image_processors) > 0
         self.logger.info(
@@ -454,8 +454,8 @@ class Agent:
 
     @property
     def sts_mode(self) -> bool:
-        """Check if the agent is in STS mode."""
-        if self.llm is not None and isinstance(self.llm, STS):
+        """Check if the agent is in Realtime mode."""
+        if self.llm is not None and isinstance(self.llm, Realtime):
             return True
         return False
 
@@ -498,17 +498,17 @@ class Agent:
     def _validate_configuration(self):
         """Validate the agent configuration."""
         if self.sts_mode:
-            # STS mode - should not have separate STT/TTS
+            # Realtime mode - should not have separate STT/TTS
             if self.stt or self.tts:
                 self.logger.warning(
-                    "STS mode detected: STT and TTS services will be ignored. "
-                    "The STS model handles both speech-to-text and text-to-speech internally."
+                    "Realtime mode detected: STT and TTS services will be ignored. "
+                    "The Realtime model handles both speech-to-text and text-to-speech internally."
                 )
-                # STS mode - should not have separate STT/TTS
+                # Realtime mode - should not have separate STT/TTS
             if self.stt or self.turn_detection:
                 self.logger.warning(
-                    "STS mode detected: STT, TTS and Turn Detection services will be ignored. "
-                    "The STS model handles both speech-to-text, text-to-speech and turn detection internally."
+                    "Realtime mode detected: STT, TTS and Turn Detection services will be ignored. "
+                    "The Realtime model handles both speech-to-text, text-to-speech and turn detection internally."
                 )
         else:
             # Traditional mode - check if we have audio processing or just video processing
@@ -536,7 +536,7 @@ class Agent:
         if self.publish_audio:
             if self.sts_mode:
                 self._audio_track = self.llm.output_track
-                self.logger.info("🎵 Using STS provider output track for audio")
+                self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
                 self._audio_track = audio_track.AudioStreamTrack(framerate=16000)
                 if self.tts:
@@ -550,27 +550,27 @@ class Agent:
             self.logger.info("🎥 Video track initialized from video publisher")
 
     async def _setup_sts_audio_forwarding(self, sts_connection, rtc_connection):
-        """Set up audio forwarding from STS connection to WebRTC connection."""
-        self.logger.info("🔗 Setting up STS audio forwarding")
+        """Set up audio forwarding from Realtime connection to WebRTC connection."""
+        self.logger.info("🔗 Setting up Realtime audio forwarding")
 
-        # Set up audio forwarding from STS to WebRTC
+        # Set up audio forwarding from Realtime to WebRTC
         if self._audio_track:
 
             async def forward_sts_audio(audio_data):
-                """Forward audio from STS connection to WebRTC connection."""
+                """Forward audio from Realtime connection to WebRTC connection."""
                 try:
                     self.logger.info(
-                        f"🎵 Forwarding {len(audio_data)} bytes of STS audio to WebRTC"
+                        f"🎵 Forwarding {len(audio_data)} bytes of Realtime audio to WebRTC"
                     )
                     # Send audio data to the audio track
                     if self._audio_track is not None:
                         await self._audio_track.send_audio(audio_data)
                     self.logger.debug("✅ Audio forwarded successfully")
                 except Exception as e:
-                    self.logger.error(f"Error forwarding STS audio: {e}")
+                    self.logger.error(f"Error forwarding Realtime audio: {e}")
                     self.logger.error(traceback.format_exc())
 
-            # Check which type of STS connection we have
+            # Check which type of Realtime connection we have
             if hasattr(sts_connection, "on_audio") and callable(
                 getattr(sts_connection, "on_audio")
             ):
@@ -585,7 +585,7 @@ class Agent:
 
                 self.logger.info("✅ OpenAI audio forwarding configured")
             else:
-                self.logger.warning("⚠️ STS connection doesn't support audio forwarding")
+                self.logger.warning("⚠️ Realtime connection doesn't support audio forwarding")
         else:
             self.logger.warning("⚠️ Audio track not available for forwarding")
 
@@ -597,7 +597,7 @@ class Agent:
             if self._sts_connection and hasattr(self._sts_connection, "__aexit__"):
                 await self._sts_connection.__aexit__(None, None, None)
         except Exception as e:
-            self.logger.debug(f"Error closing STS connection: {e}")
+            self.logger.debug(f"Error closing Realtime connection: {e}")
         finally:
             self._sts_connection = None
 

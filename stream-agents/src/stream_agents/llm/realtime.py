@@ -30,18 +30,18 @@ from ..events import (
 T = TypeVar("T")
 
 
-class STSResponse(Generic[T]):
+class RealtimeResponse(Generic[T]):
     def __init__(self, original: T, text: str):
         self.original = original
         self.text = text
 
 BeforeCb = Callable[[List[Dictionary]], None]
-AfterCb  = Callable[[STSResponse], None]
+AfterCb  = Callable[[RealtimeResponse], None]
 
 logger = logging.getLogger(__name__)
 
 
-class STS(AsyncIOEventEmitter, abc.ABC):
+class Realtime(AsyncIOEventEmitter, abc.ABC):
     """Base class for Speech-to-Speech (STS) implementations.
 
     This abstract base class provides the foundation for implementing real-time
@@ -279,4 +279,4 @@ class STS(AsyncIOEventEmitter, abc.ABC):
 
 
 # Public re-export
-__all__ = ["STS"]
+__all__ = ["Realtime"]
