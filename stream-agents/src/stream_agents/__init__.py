@@ -11,6 +11,3 @@ try:
     __version__ = metadata.version("stream_agents")
 except metadata.PackageNotFoundError:  # editable/checkout scenarios
     __version__ = "0.0.0"
-
-# Extend namespace to allow for plugins
-__path__ = __import__('pkgutil').extend_path(__path__, __name__)
