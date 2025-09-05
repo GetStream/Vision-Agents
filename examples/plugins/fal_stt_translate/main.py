@@ -29,7 +29,8 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
-from getstream.plugins import FalWizperSTT, SileroVAD
+from getstream.plugins.fal.stt import FalWizperSTT
+from getstream.plugins.silero.vad import SileroVAD
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

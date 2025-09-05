@@ -6,7 +6,6 @@ from typing import Optional, List, Any
 from uuid import uuid4
 
 from aiortc import VideoStreamTrack
-from openai.types.responses import EasyInputMessageParam, ResponseInputItemParam
 
 from ..tts.tts import TTS
 from ..stt.stt import STT

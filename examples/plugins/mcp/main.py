@@ -10,7 +10,8 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.call import Call
-from getstream.plugins import DeepgramSTT, ElevenLabsTTS
+from getstream.plugins.deepgram.stt import DeepgramSTT
+from getstream.plugins.elevenlabs.tts import ElevenLabsTTS
 from getstream.video.rtc import audio_track
 from getstream.video.rtc.track_util import PcmData
 from agent import chat_with_tools

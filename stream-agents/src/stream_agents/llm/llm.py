@@ -1,4 +1,11 @@
-from typing import List, TypeVar, Optional, Any, Callable, Protocol, overload, Awaitable, Generic
+from __future__ import annotations
+
+from typing import Optional, TYPE_CHECKING
+if TYPE_CHECKING:
+    from stream_agents.agents import Agent
+
+
+from typing import List, TypeVar, Optional, Any, Callable, Generic
 
 from av.dictionary import Dictionary
 
@@ -33,7 +40,7 @@ class LLM:
     def simple_response(self, text, processors: List[BaseProcessor], participant: Participant = None) -> LLMResponse[Any]:
         pass
 
-    def attach_agent(self, agent):
+    def attach_agent(self, agent: Agent):
         self.agent = agent
         self._conversation = agent.conversation
         self.before_response_listener = lambda x: agent.before_response(x)
