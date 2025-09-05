@@ -28,7 +28,7 @@ from getstream.video.rtc.tracks import (
     TrackType,
 )
 
-from .conversation import Conversation
+from .conversation import Conversation, StreamConversation
 from ..llm.llm import LLM
 from ..llm.openai_llm import OpenAILLM
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
@@ -88,6 +88,7 @@ class Agent:
         self.turn_detection = turn_detection
         self.processors = processors or []
         self.queue = ReplyQueue(self)
+        self.conversation = None
         self.llm.attach_agent(self)
 
         # Initialize state variables
@@ -126,9 +127,10 @@ class Agent:
                 call.id,
                 data=ChannelInput(created_by_id=self.agent_user.id),
             )
-            self.conversation = Conversation(
+            self.conversation = StreamConversation(
                 self.instructions, [], self.channel.data.channel, chat_client
             )
+            self.llm.conversation = self.conversation
 
         """Join a Stream video call."""
         if self._is_running:
@@ -463,7 +465,7 @@ class Agent:
     async def _process_transcription(
         self, text: str, participant: Participant = None
     ) -> None:
-        await self.llm.simple_response(text=text, processors=self.processors, participant=participant, conversation=self.conversation)
+        await self.llm.simple_response(text=text, processors=self.processors, participant=participant)
 
     @property
     def sts_mode(self) -> bool:
