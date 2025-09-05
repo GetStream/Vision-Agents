@@ -8,7 +8,7 @@ from anthropic.types import MessageParam
 from stream_agents.llm.llm import LLM, LLMResponse
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from src.stream_agents.agents.conversation import Message
+from stream_agents.agents.conversation import Message
 from stream_agents.processors import BaseProcessor
 
 

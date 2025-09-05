@@ -4,7 +4,7 @@ from google import genai
 
 from stream_agents.llm.llm import LLM, LLMResponse
 
-from src.stream_agents.agents.conversation import Message
+from stream_agents.agents.conversation import Message
 from stream_agents.processors import BaseProcessor
 
 
