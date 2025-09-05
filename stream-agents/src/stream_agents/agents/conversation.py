@@ -3,14 +3,18 @@ from typing import Optional, List, TypedDict, Required, Any
 
 from getstream.chat.client import ChatClient
 from getstream.models import MessageRequest, ChannelResponse, MessageResponse
+from dataclasses import dataclass
 
-
+@dataclass
 class Message:
     original: Any # the original openai, claude or gemini message
     content: str
-    role: str
-    user_id: str
-    timestamp: datetime.datetime
+    timestamp: Optional[datetime.datetime] = None
+    role: Optional[str] = None
+    user_id: Optional[str] = None
+
+    def __post_init__(self):
+        self.timestamp = datetime.datetime.now()
 
 
 

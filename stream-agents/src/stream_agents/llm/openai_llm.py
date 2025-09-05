@@ -1,3 +1,4 @@
+import datetime
 from typing import Optional, List, ParamSpec, TypeVar, Callable
 
 from openai import OpenAI
@@ -81,7 +82,7 @@ class OpenAILLM(LLM):
         )
 
     @staticmethod
-    def _normalize_message(openai_input) -> Message:
+    def _normalize_message(openai_input) -> List[Message]:
         # standardize on input
         if isinstance(openai_input, str):
             openai_input = [
@@ -90,6 +91,9 @@ class OpenAILLM(LLM):
         elif not isinstance(openai_input, List):
             openai_input = [openai_input]
 
-        filtered_inputs = [i for i in openai_input if i["type"] == "message"]
+        messages = []
+        for i in openai_input:
+            message = Message(original=i, content = i["content"])
+            messages.append(message)
 
-        return filtered_inputs
+        return messages

@@ -10,6 +10,8 @@ from stream_agents.llm.claude_llm import ClaudeLLM
 
 from stream_agents.agents.conversation import InMemoryConversation
 
+from src.stream_agents.agents.conversation import Message
+
 load_dotenv()
 
 
@@ -22,6 +24,18 @@ class TestClaudeLLM:
         llm = ClaudeLLM(model="claude-3-5-sonnet-20241022")
         llm._conversation = InMemoryConversation("be friendly", [])
         return llm
+
+    def test_message(self, llm: ClaudeLLM):
+        messages = ClaudeLLM._normalize_message("say hi")
+        assert isinstance(messages[0], Message)
+        message = messages[0]
+        assert message.original is not None
+        assert message.content is "say hi"
+
+    def test_advanced_message(self, llm: ClaudeLLM):
+        advanced = {"role": "user", "content": "Explain quantum entanglement in simple terms."}
+        messages2 = ClaudeLLM._normalize_message(advanced)
+        assert messages2[0].original is not None
 
     @pytest.mark.integration
     async def test_simple(self, llm: ClaudeLLM):

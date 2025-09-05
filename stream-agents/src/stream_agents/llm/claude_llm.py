@@ -29,16 +29,15 @@ class ClaudeLLM(LLM):
         if "model" not in kwargs:
             kwargs["model"] = self.model
 
+        # ensure the AI remembers the past conversation
+        new_messages =  kwargs["messages"]
+        old_messages = [m.original for m in self._conversation.messages]
+        kwargs["messages"] = old_messages + new_messages
 
-        messages = self._normalize_input(kwargs["messages"])
-        self.conversation.add_messages(messages)
+        self._conversation.add_messages(self._normalize_message(new_messages))
 
         if hasattr(self, "before_response_listener"):
-            self.before_response_listener(messages)
-
-        # ensure the AI remembers the past conversation
-        original_messages = [m["original"] for m in self.conversation.messages]
-        kwargs["messages"] = original_messages + kwargs["messages"]
+            self.before_response_listener(new_messages)
 
         original = await self.client.messages.create(*args, **kwargs)
 
@@ -56,14 +55,16 @@ class ClaudeLLM(LLM):
         )
 
     @staticmethod
-    def _normalize_input(claude_messages: Iterable[Message]):
+    def _normalize_message(claude_messages: Iterable[Message]) -> List[Message]:
         if isinstance(claude_messages, str):
             claude_messages = [{"content": claude_messages, "role": "user", "type": "text"}]
 
+        if not isinstance(claude_messages, List):
+            claude_messages = [claude_messages]
+
         messages : List[Message] = []
         for m in claude_messages:
-            t = datetime.datetime.now()
-            message = Message(original=m, content=m["content"], role=m["role"], timestamp=t)
+            message = Message(original=m, content=m["content"], role=m["role"])
             messages.append(message)
 
         return messages

@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import pytest
 from dotenv import load_dotenv
@@ -21,8 +22,9 @@ class TestOpenAILLM:
         return llm
 
     def test_message(self, llm: OpenAILLM):
-        message = OpenAILLM._normalize_message("say hi")
-        assert isinstance(message, Message)
+        messages = OpenAILLM._normalize_message("say hi")
+        assert isinstance(messages[0], Message)
+        message = messages[0]
         assert message.original is not None
         assert message.content is "say hi"
 
@@ -37,8 +39,8 @@ class TestOpenAILLM:
                 ],
             }
         ]
-        message = OpenAILLM._normalize_message(advanced)
-        assert message.original is not None
+        messages2 = OpenAILLM._normalize_message(advanced)
+        assert messages2[0].original is not None
 
 
 

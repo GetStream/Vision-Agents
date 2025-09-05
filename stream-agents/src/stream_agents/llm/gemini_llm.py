@@ -40,3 +40,21 @@ class GeminiLLM(LLM):
         # Extract text from Gemini's response format
         text = response.text if response.text else ""
         return LLMResponse(response, text)
+
+    @staticmethod
+    def _normalize_message(openai_input) -> List[Message]:
+        # standardize on input
+        if isinstance(openai_input, str):
+            openai_input = [
+                dict(content=openai_input, role="user", type="message")
+            ]
+        elif not isinstance(openai_input, List):
+            openai_input = [openai_input]
+
+        messages = []
+        for i in openai_input:
+            message = Message(original=i)
+            message.content = i["content"]
+            messages.append(message)
+
+        return messages
