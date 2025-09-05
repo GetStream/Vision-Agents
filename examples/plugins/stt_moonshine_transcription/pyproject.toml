@@ -15,3 +15,5 @@ dependencies = [
 
 [tool.uv.sources]
 useful-moonshine-onnx = { git = "https://github.com/usefulsensors/moonshine.git", subdirectory = "moonshine-onnx" }
+getstream-plugins-moonshine = { path = "../../../plugins/moonshine", editable = true }
+getstream-plugins-silero = { path = "../../../plugins/silero", editable = true }

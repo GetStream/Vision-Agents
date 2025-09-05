@@ -19,7 +19,7 @@ dependencies = [
 packages = ["."]
 
 [tool.uv.sources]
-getstream-plugins-common = { workspace = true }
+stream-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

@@ -10,7 +10,7 @@ from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.pcm_utils import pcm_to_numpy_array, numpy_array_to_bytes
 
-from .events import (
+from ..events import (
     VADSpeechStartEvent,
     VADSpeechEndEvent,
     VADAudioEvent,
@@ -18,8 +18,8 @@ from .events import (
     VADErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
+    register_global_event,
 )
-from .event_utils import register_global_event
 
 logger = logging.getLogger(__name__)
 

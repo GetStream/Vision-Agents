@@ -1,16 +1,7 @@
-"""
-Models Package
+from .llm import LLM
+from .sts import STS
+from .openai_llm import OpenAILLM
+from .claude_llm import ClaudeLLM
+from .gemini_llm import GeminiLLM
 
-This package provides AI model interfaces and implementations for Stream Agents.
-"""
-
-from .openai import OpenAILLM
-from .openai_sts import OpenAIRealtimeModel
-from .gemini_sts import GeminiLiveModel, GeminiLiveConnection
-
-__all__ = [
-    "OpenAILLM",
-    "OpenAIRealtimeModel",
-    "GeminiLiveModel",
-    "GeminiLiveConnection",
-]
+__all__ = ["LLM", "STS", "OpenAILLM", "ClaudeLLM", "GeminiLLM"]

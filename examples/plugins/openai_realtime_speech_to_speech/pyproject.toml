@@ -12,3 +12,6 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "openai>=1.102.0",
 ]
+
+[tool.uv.sources]
+getstream-plugins-openai = { path = "../../../plugins/openai", editable = true }

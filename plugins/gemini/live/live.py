@@ -36,7 +36,7 @@ from google.genai.types import (
 )
 
 from getstream.audio.utils import resample_audio
-from getstream.plugins.common import STS
+from stream_agents.llm import STS
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 

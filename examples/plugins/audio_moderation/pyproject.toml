@@ -1,13 +1,16 @@
 [project]
 name = "getstream-audio-moderation-example"
 version = "0.1.0"
-description = "Example project showing how to moderate speech in a video call using STT with Deepgram"
+description = "Example project showing how to moderate audio by transcribing with Deepgram"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 
 dependencies = [
-    "getstream[webrtc]>=2.3.0a1",
-    "getstream-plugins-deepgram>=0.1.0",
+    "getstream[webrtc]>=2.3.0a4",
+    "getstream-plugins-deepgram>=0.1.1",
     "python-dotenv>=1.1.1",
 ]
+
+[tool.uv.sources]
+getstream-plugins-deepgram = { path = "../../../plugins/deepgram", editable = true }

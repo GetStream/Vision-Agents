@@ -1,6 +1,6 @@
 import logging
 
-from getstream.plugins.common import TTS
+from stream_agents.tts import TTS
 from elevenlabs.client import AsyncElevenLabs
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from typing import AsyncIterator, Optional

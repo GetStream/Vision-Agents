@@ -34,7 +34,7 @@ import wave
 
 import fal_client
 from getstream.video.rtc.track_util import PcmData
-from getstream.plugins.common import STT
+from stream_agents.stt import STT
 
 logger = logging.getLogger(__name__)
 
