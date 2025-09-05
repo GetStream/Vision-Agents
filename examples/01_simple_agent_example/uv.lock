@@ -680,39 +680,22 @@ webrtc = [
 ]
 
 [[package]]
-name = "getstream-plugins-common"
-version = "0.2.0"
-source = { editable = "../../plugins/common" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-]
-
-[package.metadata]
-requires-dist = [{ name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
 name = "getstream-plugins-deepgram"
 version = "0.1.1"
 source = { editable = "../../plugins/deepgram" }
 dependencies = [
     { name = "deepgram-sdk" },
     { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-common" },
     { name = "numpy" },
+    { name = "stream-agents" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "deepgram-sdk", specifier = ">=4.5.0" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "../../plugins/common" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "stream-agents", editable = "../../stream-agents" },
 ]
 
 [package.metadata.requires-dev]
@@ -731,14 +714,14 @@ source = { editable = "../../plugins/elevenlabs" }
 dependencies = [
     { name = "elevenlabs" },
     { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-common" },
+    { name = "stream-agents" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "elevenlabs", specifier = ">=2.5.0" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common", editable = "../../plugins/common" },
+    { name = "stream-agents", editable = "../../stream-agents" },
 ]
 
 [package.metadata.requires-dev]
