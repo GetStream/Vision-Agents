@@ -3,6 +3,8 @@ from typing import Optional, List
 from google import genai
 
 from stream_agents.llm.llm import LLM, LLMResponse
+
+from src.stream_agents.agents.conversation import Message
 from stream_agents.processors import BaseProcessor
 
 
@@ -42,19 +44,19 @@ class GeminiLLM(LLM):
         return LLMResponse(response, text)
 
     @staticmethod
-    def _normalize_message(openai_input) -> List[Message]:
+    def _normalize_message(gemini_input) -> List[Message]:
         # standardize on input
-        if isinstance(openai_input, str):
-            openai_input = [
-                dict(content=openai_input, role="user", type="message")
+        if isinstance(gemini_input, str):
+            gemini_input = [
+                gemini_input
             ]
-        elif not isinstance(openai_input, List):
-            openai_input = [openai_input]
+
+        if not isinstance(gemini_input, List):
+            gemini_input = [gemini_input]
 
         messages = []
-        for i in openai_input:
-            message = Message(original=i)
-            message.content = i["content"]
+        for i in gemini_input:
+            message = Message(original=i, content=i)
             messages.append(message)
 
         return messages

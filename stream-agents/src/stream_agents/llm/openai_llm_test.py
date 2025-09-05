@@ -28,6 +28,8 @@ class TestOpenAILLM:
         assert message.original is not None
         assert message.content is "say hi"
 
+
+    def test_advanced_message(self, llm: OpenAILLM):
         img_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
 
         advanced = [

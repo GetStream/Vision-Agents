@@ -7,7 +7,7 @@ from google import genai
 from stream_agents.llm.llm import LLMResponse
 from stream_agents.llm.gemini_llm import GeminiLLM
 
-from src.stream_agents.agents.conversation import InMemoryConversation
+from src.stream_agents.agents.conversation import InMemoryConversation, Message
 
 load_dotenv()
 
@@ -21,6 +21,18 @@ class TestGeminiLLM:
         llm = GeminiLLM(model="gemini-1.5-flash")
         llm._conversation = InMemoryConversation("be friendly", [])
         return llm
+
+    def test_message(self, llm: GeminiLLM):
+        messages = GeminiLLM._normalize_message("say hi")
+        assert isinstance(messages[0], Message)
+        message = messages[0]
+        assert message.original is not None
+        assert message.content is "say hi"
+
+    def test_advanced_message(self, llm: GeminiLLM):
+        advanced = ["say hi"]
+        messages2 = GeminiLLM._normalize_message(advanced)
+        assert messages2[0].original is not None
 
     @pytest.mark.integration
     async def test_simple(self, llm: GeminiLLM):
