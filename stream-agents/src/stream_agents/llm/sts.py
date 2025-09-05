@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, Generic, List, Optional, TYPE_CHECKING, TypeVar
+
+from getstream.video.rtc.track_util import PcmData
 if TYPE_CHECKING:
     from stream_agents.agents import Agent
 
@@ -133,6 +135,10 @@ class STS(AsyncIOEventEmitter, abc.ABC):
     def set_after_response_listener(self, after_response_listener: AfterCb):
         self.after_response_listener = after_response_listener
 
+    @abc.abstractmethod
+    def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000):
+        ...
+    
     def _emit_connected_event(self, session_config=None, capabilities=None):
         """Emit a structured connected event."""
         self._is_connected = True
