@@ -1,4 +1,6 @@
 import logging
+from dataclasses import dataclass
+
 import torch
 import numpy as np
 import warnings
@@ -7,7 +9,15 @@ from typing import Dict, Any, Optional
 from stream_agents.vad.vad import VAD
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
-from stream_agents.events import VADAudioEvent, register_global_event
+from getstream.plugins.common.events import (
+    VADAudioEvent,
+    VADSpeechStartEvent,
+    VADSpeechEndEvent,
+    VADPartialEvent,
+    VADInferenceEvent,
+    AudioFormat
+)
+from getstream.plugins.common.event_utils import register_global_event
 
 
 try:
@@ -20,6 +30,32 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class SileroVADEndEvent(VADSpeechEndEvent):
+    """Event emitted when speech ends."""
+
+    avg_speech_probability: float = 0.0
+    inference_performance_ms: float = 0.0
+    model_confidence: float = 0.0
+
+
+@dataclass
+class SileroVADAudioEvent(VADAudioEvent):
+    """Event emitted when VAD detects complete speech segment."""
+
+    start_speech_probability: float = 0.0
+    end_speech_probability: float = 0.0
+    avg_inference_time_ms: float = 0.0
+    total_inferences: int = 0
+    model_confidence: float = 0.0
+
+
+@dataclass
+class SileroVADPartialEvent(VADPartialEvent):
+    """Event emitted during ongoing speech detection."""
+
+    inference_time_ms: float = 0.0
+    model_confidence: float = 0.0
 
 class SileroVAD(VAD):
     """
@@ -99,6 +135,11 @@ class SileroVAD(VAD):
         self.device: torch.device = torch.device("cpu")
         # Buffer used by base class; annotate for type-checker
         self.speech_buffer: bytearray = bytearray()
+        
+        # Type annotations for inherited attributes from base VAD class
+        self.is_speech_active: bool = False
+        self._speech_start_time: Optional[float] = None
+        self.total_speech_frames: int = 0
 
         # Verify window size is correct for the Silero model
         if self.model_rate == 16000 and self.window_samples != 512:
@@ -126,6 +167,15 @@ class SileroVAD(VAD):
         self.model: Optional[torch.nn.Module] = None
         # ONNX input name if ONNX is used
         self.onnx_input_name: Optional[str] = None
+
+        # Enhanced state tracking for events
+        self._current_speech_probability = 0.0
+        self._inference_times: list[float] = []  # Track inference performance
+        self._speech_start_probability = 0.0
+        self._speech_end_probability = 0.0
+        self._total_inference_time = 0.0
+        self._inference_count = 0
+        self._speech_probabilities: list[float] = []  # Track probabilities during speech
 
         # Load the appropriate model
         self._load_model()
@@ -334,17 +384,45 @@ class SileroVAD(VAD):
                             speech_prob = self.model(tensor, self.model_rate)  # type: ignore[call-arg]
                             speech_prob = float(speech_prob.item())
 
-                    # Calculate real-time factor (RTF)
+                    # Calculate inference metrics
                     end_time = time.time()
-                    inference_time = end_time - start_time
-                    # Time taken to process window_samples at model_rate
+                    inference_time = (end_time - start_time) * 1000  # Convert to ms
+                    self._inference_times.append(inference_time)
+                    self._total_inference_time += inference_time
+                    self._inference_count += 1
+
+                    # Keep only recent inference times (sliding window)
+                    if len(self._inference_times) > 100:
+                        self._inference_times = self._inference_times[-50:]
+
+                    # Calculate real-time factor (RTF)
                     audio_duration = self.window_samples / self.model_rate
-                    rtf = inference_time / audio_duration
+                    rtf = inference_time / (audio_duration * 1000)  # Convert to ms
+
+                    # Update current speech probability
+                    self._current_speech_probability = speech_prob
+
+                    # Emit inference event
+                    inference_event = VADInferenceEvent(
+                        session_id=self.session_id,
+                        plugin_name=self.provider_name,
+                        speech_probability=speech_prob,
+                        inference_time_ms=inference_time,
+                        window_samples=self.window_samples,
+                        model_rate=self.model_rate,
+                        real_time_factor=rtf,
+                        is_speech_active=self.is_speech_active,
+                        accumulated_speech_duration_ms=self._get_accumulated_speech_duration(),
+                        accumulated_silence_duration_ms=self._get_accumulated_silence_duration(),
+                        user_metadata=None,  # Will be set by caller if needed
+                    )
+                    register_global_event(inference_event)
+                    self.emit("inference", inference_event)
 
                     # Log speech probability and RTF at DEBUG level
                     logger.debug(
                         "Speech detection window processed",
-                        extra={"p": speech_prob, "rtf": rtf},
+                        extra={"p": speech_prob, "rtf": rtf, "inference_ms": inference_time},
                     )
 
                     speech_probs.append(speech_prob)
@@ -385,20 +463,38 @@ class SileroVAD(VAD):
                 extra={"duration_ms": duration_ms, "samples": len(speech_data)},
             )
 
-            audio_event = VADAudioEvent(
+            # Calculate average speech probability during this segment
+            avg_speech_prob = self._get_avg_speech_probability()
+
+            audio_event = SileroVADAudioEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 audio_data=speech_data.tobytes(),
                 sample_rate=self.sample_rate,
-                audio_format="s16",
+                audio_format=AudioFormat.PCM_S16,
                 channels=1,
                 duration_ms=duration_ms,
-                speech_probability=0.8,  # Default value, could be enhanced
+                speech_probability=avg_speech_prob,
                 frame_count=len(speech_data) // self.frame_size,
                 user_metadata=user,
             )
             register_global_event(audio_event)
             self.emit("audio", audio_event)  # Structured event
+
+        # Emit enhanced speech end event if we were actively detecting speech
+        if self.is_speech_active and self._speech_start_time:
+            total_speech_duration = (time.time() - self._speech_start_time) * 1000
+            speech_end_event = SileroVADEndEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                speech_probability=self._speech_end_probability,
+                deactivation_threshold=self.deactivation_th,
+                total_speech_duration_ms=total_speech_duration,
+                total_frames=self.total_speech_frames,
+                user_metadata=user,
+            )
+            register_global_event(speech_end_event)
+            self.emit("speech_end", speech_end_event)
 
         # Reset state variables
         self.speech_buffer = bytearray()
@@ -406,11 +502,155 @@ class SileroVAD(VAD):
         self.is_speech_active = False
         self.total_speech_frames = 0
         self.partial_counter = 0
+        # Reset enhanced state tracking
+        self._speech_start_probability = 0.0
+        self._speech_end_probability = 0.0
+        self._speech_probabilities = []
+
+    def _get_avg_inference_time(self) -> float:
+        """Get average inference time in milliseconds."""
+        if not self._inference_times:
+            return 0.0
+        return sum(self._inference_times) / len(self._inference_times)
+
+    def _get_avg_speech_probability(self) -> float:
+        """Get average speech probability during current segment."""
+        if not self._speech_probabilities:
+            return self._current_speech_probability
+        return sum(self._speech_probabilities) / len(self._speech_probabilities)
+
+    def _get_accumulated_speech_duration(self) -> float:
+        """Get accumulated speech duration in milliseconds."""
+        if hasattr(self, '_speech_start_time') and self._speech_start_time:
+            return (time.time() - self._speech_start_time) * 1000
+        return 0.0
+
+    def _get_accumulated_silence_duration(self) -> float:
+        """Get accumulated silence duration in milliseconds."""
+        return (self.silence_counter * self.frame_size / self.sample_rate) * 1000
+
+    async def _process_frame(self, frame: PcmData, user: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Process a single audio frame with enhanced Silero-specific event data.
+        """
+        speech_prob = await self.is_speech(frame)
+
+        # Track speech probabilities during active speech
+        if self.is_speech_active:
+            self._speech_probabilities.append(speech_prob)
+            # Keep only recent probabilities (sliding window)
+            if len(self._speech_probabilities) > 100:
+                self._speech_probabilities = self._speech_probabilities[-50:]
+
+        # Determine speech state based on asymmetric thresholds
+        if self.is_speech_active:
+            is_speech = speech_prob >= self.deactivation_th
+        else:
+            is_speech = speech_prob >= self.activation_th
+
+        # Handle speech start
+        if not self.is_speech_active and is_speech:
+            self.is_speech_active = True
+            self.silence_counter = 0
+            self.total_speech_frames = 1
+            self.partial_counter = 1
+            self._speech_start_time = time.time()
+            self._speech_start_probability = speech_prob
+            self._speech_probabilities = [speech_prob]  # Reset probability tracking
+
+            # Emit enhanced speech start event
+            speech_start_event = VADSpeechStartEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                speech_probability=speech_prob,
+                activation_threshold=self.activation_th,
+                frame_count=1,
+                user_metadata=user,
+            )
+            register_global_event(speech_start_event)
+            self.emit("speech_start", speech_start_event)
+
+            # Add this frame to the buffer using shared utility
+            from getstream.audio.pcm_utils import numpy_array_to_bytes
+            frame_bytes = numpy_array_to_bytes(frame.samples)
+            self.speech_buffer.extend(frame_bytes)
+
+        # Handle ongoing speech
+        elif self.is_speech_active:
+            # Add frame to buffer in all cases during active speech
+            from getstream.audio.pcm_utils import numpy_array_to_bytes
+            frame_bytes = numpy_array_to_bytes(frame.samples)
+            self.speech_buffer.extend(frame_bytes)
+            self.total_speech_frames += 1
+            self.partial_counter += 1
+
+            # Emit enhanced partial events with Silero data
+            if self.partial_counter >= self.partial_frames:
+                # Create a copy of the current speech data
+                import numpy as np
+                current_samples = np.frombuffer(self.speech_buffer, dtype=np.int16).copy()
+                current_bytes = numpy_array_to_bytes(current_samples)
+
+                # Calculate current duration
+                current_duration_ms = (len(current_samples) / self.sample_rate) * 1000
+
+                # Emit enhanced partial event
+                partial_event = SileroVADPartialEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    audio_data=current_bytes,
+                    sample_rate=self.sample_rate,
+                    audio_format=AudioFormat.PCM_S16,
+                    channels=1,
+                    duration_ms=current_duration_ms,
+                    speech_probability=speech_prob,
+                    frame_count=len(current_samples) // self.frame_size,
+                    is_speech_active=True,
+                    user_metadata=user,
+                )
+                register_global_event(partial_event)
+                self.emit("partial", partial_event)
+
+                logger.debug(f"Emitted partial event with {len(current_samples)} samples")
+                self.partial_counter = 0
+
+            if is_speech:
+                # Reset silence counter when speech is detected
+                self.silence_counter = 0
+            else:
+                # Increment silence counter when silence is detected
+                self.silence_counter += 1
+
+                # Calculate silence pad frames based on ms
+                speech_pad_frames = int(
+                    self.speech_pad_ms * self.sample_rate / 1000 / self.frame_size
+                )
+
+                # If silence exceeds padding duration, emit audio and reset
+                if self.silence_counter >= speech_pad_frames:
+                    await self._flush_speech_buffer(user)
+
+            # Calculate max speech frames based on ms
+            max_speech_frames = int(
+                self.max_speech_ms * self.sample_rate / 1000 / self.frame_size
+            )
+
+            # Force flush if speech duration exceeds maximum
+            if self.total_speech_frames >= max_speech_frames:
+                await self._flush_speech_buffer(user)
 
     async def reset(self) -> None:
         """Reset the VAD state."""
         await super().reset()
         self.reset_states()
+        # Reset enhanced state tracking
+        self._current_speech_probability = 0.0
+        self._inference_times = []
+        self._speech_start_probability = 0.0
+        self._speech_end_probability = 0.0
+        self._total_inference_time = 0.0
+        self._inference_count = 0
+        self._speech_probabilities = []
 
     async def flush(self, user=None) -> None:
         """
@@ -429,3 +669,11 @@ class SileroVAD(VAD):
         if self.onnx_session is not None:
             self.onnx_session = None
         self.reset_states()
+        # Reset enhanced state tracking
+        self._current_speech_probability = 0.0
+        self._inference_times = []
+        self._speech_start_probability = 0.0
+        self._speech_end_probability = 0.0
+        self._total_inference_time = 0.0
+        self._inference_count = 0
+        self._speech_probabilities = []

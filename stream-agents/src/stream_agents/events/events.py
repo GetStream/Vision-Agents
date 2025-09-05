@@ -51,6 +51,7 @@ class EventType(Enum):
     VAD_SPEECH_END = "vad_speech_end"
     VAD_AUDIO = "vad_audio"
     VAD_PARTIAL = "vad_partial"
+    VAD_INFERENCE = "vad_inference"
     VAD_ERROR = "vad_error"
 
     # Generic Plugin Events
@@ -404,6 +405,21 @@ class VADPartialEvent(BaseEvent):
 
 
 @dataclass
+class VADInferenceEvent(BaseEvent):
+    """Event emitted after each VAD inference window."""
+
+    event_type: EventType = field(default=EventType.VAD_INFERENCE, init=False)
+    speech_probability: float = 0.0
+    inference_time_ms: float = 0.0
+    window_samples: int = 0
+    model_rate: int = 16000
+    real_time_factor: float = 0.0
+    is_speech_active: bool = False
+    accumulated_speech_duration_ms: float = 0.0
+    accumulated_silence_duration_ms: float = 0.0
+
+
+@dataclass
 class VADErrorEvent(BaseEvent):
     """Event emitted when a VAD error occurs."""
 
@@ -489,6 +505,7 @@ EVENT_CLASS_MAP = {
     EventType.VAD_SPEECH_END: VADSpeechEndEvent,
     EventType.VAD_AUDIO: VADAudioEvent,
     EventType.VAD_PARTIAL: VADPartialEvent,
+    EventType.VAD_INFERENCE: VADInferenceEvent,
     EventType.VAD_ERROR: VADErrorEvent,
     EventType.PLUGIN_INITIALIZED: PluginInitializedEvent,
     EventType.PLUGIN_CLOSED: PluginClosedEvent,
@@ -549,6 +566,7 @@ __all__ = [
     "VADSpeechEndEvent",
     "VADAudioEvent",
     "VADPartialEvent",
+    "VADInferenceEvent",
     "VADErrorEvent",
     # Generic Events
     "PluginInitializedEvent",

@@ -28,6 +28,7 @@ from .events import (
     VADSpeechEndEvent,
     VADAudioEvent,
     VADPartialEvent,
+    VADInferenceEvent,
     VADErrorEvent,
     # Generic Events
     PluginInitializedEvent,
@@ -76,6 +77,7 @@ __all__ = [
     "VADSpeechEndEvent",
     "VADAudioEvent",
     "VADPartialEvent",
+    "VADInferenceEvent",
     "VADErrorEvent",
     "PluginInitializedEvent",
     "PluginClosedEvent",
