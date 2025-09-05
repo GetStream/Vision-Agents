@@ -1,46 +1,40 @@
-
-
-
-[build-system]
-requires = ["hatchling", "hatch-vcs", "setuptools-scm"]
-build-backend = "hatchling.build"
-
-
-
 [tool.uv.sources]
 stream-agents = { workspace = true }
-stream-agents-plugin-xai = { workspace = true }
 
 [tool.uv.workspace]
-members = ["stream-agents", "plugins/xai", "plugins/anthropic"]
+members = ["stream-agents", "plugins/*"]
+exclude = [
+"**/__pycache__",
+"**/tests/__pycache__",
+"**/*.pyc",
+"**/dist/",
+"**/*.egg-info/",
+"**/.pytest_cache/",
+"**/.mypy_cache/",
+"**/.ruff_cache/",
+"examples/",
+"**/test*",
+]
 
 [dependency-groups]
 dev = [
     "ruff",
     "mypy",
+    "pip>=25.2",
     "pytest",
     "pytest-xdist",
     "pytest-asyncio",
     "python-dotenv",
-    "pip>=25.2",
-    "hatch",
-    "hatch-vcs",
-    "hatchling",
+    "pre-commit",
 ]
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.hatch.version]
-source = "vcs"
-raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
-
-
 
 [tool.mypy]
 python_version = "3.12"
-files = ["stream-agents/stream_agents", "plugins", "tests"]
+files = ["stream-agents/src/stream_agents", "plugins", "tests"]
 
 # Gradual typing → can tighten over time
 ignore_missing_imports = true
 check_untyped_defs = true
+namespace_packages = true
+explicit_package_bases = true
 

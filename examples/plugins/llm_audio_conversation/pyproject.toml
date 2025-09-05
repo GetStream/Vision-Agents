@@ -1,0 +1,17 @@
+[project]
+name = "llm-audio-conversation-example"
+version = "0.1.0"
+description = "Example project showing how to integrate speech-to-text, text-to-speech and an LLM."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "getstream[webrtc]>=2.3.0a0",
+    "getstream-plugins-deepgram>=0.1.0",
+    "getstream-plugins-elevenlabs>=0.1.0",
+    "getstream-plugins-silero>=0.1.0",
+    "python-dotenv>=1.1.1",
+    "openai>=1.93.0",
+    "elevenlabs>=2.7.1",
+]
