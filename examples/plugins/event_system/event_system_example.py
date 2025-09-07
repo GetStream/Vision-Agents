@@ -17,24 +17,18 @@ import json
 import logging
 
 # Import the common plugin system
-from getstream.plugins.common import (
-    # Base classes
-    STT,
-    TTS,
-    VAD,
+from stream_agents.stt.stt import STT
+from stream_agents.tts.tts import TTS
+from stream_agents.vad.vad import VAD
+from stream_agents.events import (
     EventType,
     STTTranscriptEvent,
     VADAudioEvent,
-    # Event utilities
     EventFilter,
     EventRegistry,
     get_global_registry,
-)
-from getstream.plugins.common.event_metrics import (
     calculate_stt_metrics,
     calculate_tts_metrics,
-)
-from getstream.plugins.common.event_serialization import (
     serialize_events,
     deserialize_event,
 )

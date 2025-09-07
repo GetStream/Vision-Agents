@@ -123,7 +123,8 @@ STS events cover the complete conversation flow including connection management,
 ### Basic Event Handling
 
 ```python
-from getstream.plugins.common import STT, STTTranscriptEvent
+from stream_agents.stt.stt import STT
+from stream_agents.events import STTTranscriptEvent
 
 # Create STT plugin
 stt = MySTTPlugin(provider_name="my_provider")
@@ -145,7 +146,7 @@ async def on_transcript_legacy(text: str, user_metadata: dict, metadata: dict):
 ### Event Filtering and Analysis
 
 ```python
-from getstream.plugins.common import EventFilter, get_global_registry
+from stream_agents.events import EventFilter, get_global_registry
 
 # Create event filter
 filter_criteria = EventFilter(
@@ -168,7 +169,7 @@ for event in recent_transcripts:
 ### Performance Metrics
 
 ```python
-from getstream.plugins.common import EventMetrics, EventType
+from stream_agents.events import EventType
 
 # Get all STT events
 stt_events = registry.get_events(
@@ -188,7 +189,7 @@ print(f"Total transcripts: {metrics['total_transcripts']}")
 ### Event Serialization
 
 ```python
-from getstream.plugins.common import EventSerializer
+from stream_agents.events import serialize_events, deserialize_event
 
 # Serialize events for storage
 events_json = EventSerializer.serialize_events(recent_transcripts)
@@ -262,7 +263,7 @@ class MyAsyncSTTPlugin(STT):
 The global event registry automatically tracks all events across all plugins:
 
 ```python
-from getstream.plugins.common import get_global_registry
+from stream_agents.events import get_global_registry
 
 registry = get_global_registry()
 
@@ -280,7 +281,7 @@ session_events = registry.get_session_events("session_123")
 Register global event listeners:
 
 ```python
-from getstream.plugins.common import EventType, get_global_registry
+from stream_agents.events import EventType, get_global_registry
 
 registry = get_global_registry()
 

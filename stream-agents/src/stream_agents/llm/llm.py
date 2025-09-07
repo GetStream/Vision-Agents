@@ -1,17 +1,26 @@
-"""
-Base LLM classes with function calling support.
+from __future__ import annotations
 
-Requirements
-- support image, text, functools etc as input
+from typing import Optional, TYPE_CHECKING
+if TYPE_CHECKING:
+    from stream_agents.agents import Agent
 
-This module provides the base classes for LLM implementations with
-automatic function calling capabilities.
-"""
-
-from typing import List, Dict, Any, Optional
+from typing import List, TypeVar, Optional, Any, Callable, Generic, Dict
 import logging
-from .function_registry import FunctionRegistry
-from .types import MCPServerConfig
+
+from av.dictionary import Dictionary
+
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from stream_agents.processors import BaseProcessor
+
+T = TypeVar("T")
+
+class LLMResponse(Generic[T]):
+    def __init__(self, original: T, text: str):
+        self.original = original
+        self.text = text
+
+BeforeCb = Callable[[List[Dictionary]], None]
+AfterCb  = Callable[[LLMResponse], None]
 
 try:
     from .mcp_integration import MCPManager  # noqa: F401
@@ -21,18 +30,37 @@ except ImportError:
 
 
 class LLM:
-    """
-    Base class for LLM implementations with function calling support.
-    
-    All LLM implementations should inherit from this class to get
-    automatic function calling capabilities.
-    """
-    
+    # if we want to use realtime/ sts behaviour
+    sts: bool = False
+
+    before_response_listener: BeforeCb
+    after_response_listener: AfterCb
+    agent: Optional["Agent"]
+    _conversation: Optional["Conversation"]
+
+
     def __init__(self):
+        self.agent = None
+        # Function calling support
+        from .function_registry import FunctionRegistry
         self.function_registry = FunctionRegistry()
-        self.sts: bool = False
-        self.logger = logging.getLogger(f"{self.__class__.__name__}")
-    
+
+    def simple_response(self, text, processors: List[BaseProcessor], participant: Participant = None) -> LLMResponse[Any]:
+        pass
+
+    def attach_agent(self, agent: Agent):
+        self.agent = agent
+        self._conversation = agent.conversation
+        self.before_response_listener = lambda x: agent.before_response(x)
+        self.after_response_listener = lambda x: agent.after_response(x)
+
+    def set_before_response_listener(self, before_response_listener: BeforeCb):
+        self.before_response_listener = before_response_listener
+
+    def set_after_response_listener(self, after_response_listener: AfterCb):
+        self.after_response_listener = after_response_listener
+
+    # Function calling methods
     def function(self, description: str = "", name: Optional[str] = None):
         """
         Decorator to register a function for LLM calling.
@@ -48,7 +76,7 @@ class LLM:
         """
         return self.function_registry.function(description, name)
     
-    def add_mcp_server(self, config: MCPServerConfig) -> None:
+    def add_mcp_server(self, config) -> None:
         """
         Add an MCP server to the LLM's function registry.
         
@@ -97,29 +125,3 @@ class LLM:
 
 
 
-class RealtimeLLM(LLM):
-    """
-    Base class for real-time LLM implementations (Speech-to-Speech).
-    
-    These LLMs handle audio directly and support real-time conversation.
-    """
-    
-    def __init__(self):
-        super().__init__()
-        self.sts: bool = True
-    
-    async def connect(self, call, agent_user_id: str = "assistant"):
-        """
-        Connect to a video call for real-time communication.
-        
-        This method should be implemented by each real-time LLM subclass.
-        """
-        raise NotImplementedError("Subclasses must implement connect")
-    
-    def attach_incoming_audio(self, track):
-        """Attach incoming audio track for processing."""
-        raise NotImplementedError("Subclasses must implement attach_incoming_audio")
-    
-    def attach_outgoing_audio(self, track):
-        """Attach outgoing audio track for responses."""
-        raise NotImplementedError("Subclasses must implement attach_outgoing_audio")

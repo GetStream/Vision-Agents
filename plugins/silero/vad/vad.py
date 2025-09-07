@@ -6,7 +6,7 @@ import numpy as np
 import warnings
 import time
 from typing import Dict, Any, Optional
-from getstream.plugins.common import VAD
+from stream_agents.vad.vad import VAD
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
 from getstream.plugins.common.events import (

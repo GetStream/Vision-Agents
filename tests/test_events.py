@@ -2,7 +2,7 @@ import pytest
 import json
 from datetime import datetime
 
-from getstream.plugins.common.events import (
+from stream_agents.events import (
     # Base events
     BaseEvent,
     EventType,
@@ -41,7 +41,7 @@ from getstream.plugins.common.events import (
     PluginErrorEvent,
 )
 
-from getstream.plugins.common.event_serialization import (
+from stream_agents.events import (
     serialize_event,
     serialize_events,
     deserialize_event,
@@ -566,14 +566,14 @@ class TestEventMetrics:
 
     def test_calculate_stt_metrics_empty_events(self):
         """Test STT metrics calculation with no events."""
-        from getstream.plugins.common.event_metrics import calculate_stt_metrics
+        from stream_agents.events import calculate_stt_metrics
 
         metrics = calculate_stt_metrics([])
         assert metrics == {"total_transcripts": 0}
 
     def test_calculate_stt_metrics_basic_counts(self):
         """Test STT metrics calculation with basic event counts."""
-        from getstream.plugins.common.event_metrics import calculate_stt_metrics
+        from stream_agents.events import calculate_stt_metrics
 
         events = [
             STTTranscriptEvent(text="First transcript", is_final=True),
@@ -590,7 +590,7 @@ class TestEventMetrics:
 
     def test_calculate_stt_metrics_with_processing_times(self):
         """Test STT metrics calculation with processing time data."""
-        from getstream.plugins.common.event_metrics import calculate_stt_metrics
+        from stream_agents.events import calculate_stt_metrics
 
         events = [
             STTTranscriptEvent(text="Fast", processing_time_ms=50.0),
@@ -608,7 +608,7 @@ class TestEventMetrics:
 
     def test_calculate_stt_metrics_with_confidence(self):
         """Test STT metrics calculation with confidence data."""
-        from getstream.plugins.common.event_metrics import calculate_stt_metrics
+        from stream_agents.events import calculate_stt_metrics
 
         events = [
             STTTranscriptEvent(text="High confidence", confidence=0.95),
@@ -626,7 +626,7 @@ class TestEventMetrics:
 
     def test_calculate_stt_metrics_mixed_data(self):
         """Test STT metrics calculation with mixed data (some missing values)."""
-        from getstream.plugins.common.event_metrics import calculate_stt_metrics
+        from stream_agents.events import calculate_stt_metrics
 
         events = [
             STTTranscriptEvent(
@@ -655,7 +655,7 @@ class TestEventMetrics:
 
     def test_calculate_tts_metrics_empty_events(self):
         """Test TTS metrics calculation with no events."""
-        from getstream.plugins.common.event_metrics import calculate_tts_metrics
+        from stream_agents.events import calculate_tts_metrics
 
         metrics = calculate_tts_metrics([])
         assert metrics == {
@@ -666,7 +666,7 @@ class TestEventMetrics:
 
     def test_calculate_tts_metrics_basic_counts(self):
         """Test TTS metrics calculation with basic event counts."""
-        from getstream.plugins.common.event_metrics import calculate_tts_metrics
+        from stream_agents.events import calculate_tts_metrics
 
         events = [
             TTSAudioEvent(audio_data=b"chunk1"),
@@ -684,7 +684,7 @@ class TestEventMetrics:
 
     def test_calculate_tts_metrics_with_synthesis_times(self):
         """Test TTS metrics calculation with synthesis time data."""
-        from getstream.plugins.common.event_metrics import calculate_tts_metrics
+        from stream_agents.events import calculate_tts_metrics
 
         events = [
             TTSSynthesisCompleteEvent(synthesis_id="fast", synthesis_time_ms=100.0),
@@ -701,7 +701,7 @@ class TestEventMetrics:
 
     def test_calculate_tts_metrics_with_real_time_factors(self):
         """Test TTS metrics calculation with real-time factor data."""
-        from getstream.plugins.common.event_metrics import calculate_tts_metrics
+        from stream_agents.events import calculate_tts_metrics
 
         events = [
             TTSSynthesisCompleteEvent(synthesis_id="rt1", real_time_factor=0.5),
@@ -721,14 +721,14 @@ class TestEventMetrics:
 
     def test_calculate_vad_metrics_empty_events(self):
         """Test VAD metrics calculation with no events."""
-        from getstream.plugins.common.event_metrics import calculate_vad_metrics
+        from stream_agents.events import calculate_vad_metrics
 
         metrics = calculate_vad_metrics([])
         assert metrics == {"total_speech_segments": 0, "total_partial_events": 0}
 
     def test_calculate_vad_metrics_basic_counts(self):
         """Test VAD metrics calculation with basic event counts."""
-        from getstream.plugins.common.event_metrics import calculate_vad_metrics
+        from stream_agents.events import calculate_vad_metrics
 
         events = [
             VADAudioEvent(audio_data=b"speech1"),
@@ -745,7 +745,7 @@ class TestEventMetrics:
 
     def test_calculate_vad_metrics_with_durations_and_probabilities(self):
         """Test VAD metrics calculation with duration and probability data."""
-        from getstream.plugins.common.event_metrics import calculate_vad_metrics
+        from stream_agents.events import calculate_vad_metrics
 
         events = [
             VADAudioEvent(
@@ -772,7 +772,7 @@ class TestEventMetrics:
 
     def test_calculate_vad_metrics_mixed_data(self):
         """Test VAD metrics calculation with mixed data (some missing values)."""
-        from getstream.plugins.common.event_metrics import calculate_vad_metrics
+        from stream_agents.events import calculate_vad_metrics
 
         events = [
             VADAudioEvent(
@@ -799,7 +799,7 @@ class TestEventMetrics:
 
     def test_calculate_metrics_with_realistic_event_sequence(self):
         """Test metrics calculation with a realistic sequence of events."""
-        from getstream.plugins.common.event_metrics import (
+        from stream_agents.events import (
             calculate_stt_metrics,
             calculate_tts_metrics,
             calculate_vad_metrics,
@@ -1132,7 +1132,7 @@ class TestEventFiltering:
 
     def test_event_filter_creation(self):
         """Test EventFilter creation with various parameters."""
-        from getstream.plugins.common.event_utils import EventFilter
+        from stream_agents.events import EventFilter
 
         # Test basic filter
         filter1 = EventFilter()
@@ -1160,7 +1160,7 @@ class TestEventFiltering:
 
     def test_event_filter_matching(self):
         """Test EventFilter.matches() method."""
-        from getstream.plugins.common.event_utils import EventFilter
+        from stream_agents.events import EventFilter
         from datetime import datetime, timedelta
 
         # Create test events
@@ -1221,7 +1221,7 @@ class TestEventFiltering:
 
     def test_event_filter_edge_cases(self):
         """Test EventFilter edge cases."""
-        from getstream.plugins.common.event_utils import EventFilter
+        from stream_agents.events import EventFilter
 
         # Test with None values
         event = STTTranscriptEvent(text="test")
@@ -1246,7 +1246,7 @@ class TestEventRegistry:
 
     def test_event_registry_creation(self):
         """Test EventRegistry creation and basic properties."""
-        from getstream.plugins.common.event_utils import EventRegistry
+        from stream_agents.events import EventRegistry
 
         registry = EventRegistry(max_events=100)
         assert registry.max_events == 100
@@ -1257,7 +1257,7 @@ class TestEventRegistry:
 
     def test_event_registration(self):
         """Test event registration and counting."""
-        from getstream.plugins.common.event_utils import EventRegistry
+        from stream_agents.events import EventRegistry
 
         registry = EventRegistry()
 
@@ -1284,7 +1284,7 @@ class TestEventRegistry:
 
     def test_event_registry_max_events(self):
         """Test EventRegistry respects max_events limit."""
-        from getstream.plugins.common.event_utils import EventRegistry
+        from stream_agents.events import EventRegistry
 
         registry = EventRegistry(max_events=3)
 
@@ -1300,7 +1300,7 @@ class TestEventRegistry:
 
     def test_event_registry_filtering(self):
         """Test EventRegistry.get_events() with filtering."""
-        from getstream.plugins.common.event_utils import EventRegistry, EventFilter
+        from stream_agents.events import EventRegistry, EventFilter
 
         registry = EventRegistry()
 
@@ -1352,7 +1352,7 @@ class TestEventRegistry:
 
     def test_event_registry_statistics(self):
         """Test EventRegistry statistics methods."""
-        from getstream.plugins.common.event_utils import EventRegistry
+        from stream_agents.events import EventRegistry
 
         registry = EventRegistry()
 
@@ -1382,7 +1382,7 @@ class TestEventRegistry:
 
     def test_event_registry_listeners(self):
         """Test EventRegistry event listener functionality."""
-        from getstream.plugins.common.event_utils import EventRegistry
+        from stream_agents.events import EventRegistry
 
         registry = EventRegistry()
         received_events = []
@@ -1414,7 +1414,7 @@ class TestEventRegistry:
 
     def test_event_registry_clear(self):
         """Test EventRegistry.clear() method."""
-        from getstream.plugins.common.event_utils import EventRegistry
+        from stream_agents.events import EventRegistry
 
         registry = EventRegistry()
 
@@ -1441,7 +1441,7 @@ class TestEventLogger:
 
     def test_event_logger_creation(self):
         """Test EventLogger creation."""
-        from getstream.plugins.common.event_utils import EventLogger
+        from stream_agents.events import EventLogger
 
         logger = EventLogger()
         assert logger.registry is not None
@@ -1449,7 +1449,7 @@ class TestEventLogger:
 
     def test_event_logger_logging(self):
         """Test EventLogger event logging."""
-        from getstream.plugins.common.event_utils import EventLogger
+        from stream_agents.events import EventLogger
         import logging
 
         # Set up logging capture
@@ -1478,7 +1478,7 @@ class TestEventLogger:
 
     def test_event_logger_batch_logging(self):
         """Test EventLogger batch logging."""
-        from getstream.plugins.common.event_utils import EventLogger
+        from stream_agents.events import EventLogger
 
         logger = EventLogger()
 
@@ -1507,7 +1507,7 @@ class TestGlobalEventSystem:
 
     def test_global_registry_access(self):
         """Test global registry access functions."""
-        from getstream.plugins.common.event_utils import (
+        from stream_agents.events import (
             get_global_registry,
             get_global_logger,
             register_global_event,
@@ -1536,7 +1536,7 @@ class TestGlobalEventSystem:
 
     def test_global_event_consistency(self):
         """Test that global registry and logger are consistent."""
-        from getstream.plugins.common.event_utils import (
+        from stream_agents.events import (
             get_global_registry,
             get_global_logger,
             register_global_event,
