@@ -8,15 +8,15 @@ from typing import Optional, Dict, Any, Union, Iterator, AsyncIterator
 from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
-from .events import (
+from ..events import (
     TTSAudioEvent,
     TTSSynthesisStartEvent,
     TTSSynthesisCompleteEvent,
     TTSErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
+    register_global_event,
 )
-from .event_utils import register_global_event
 
 logger = logging.getLogger(__name__)
 

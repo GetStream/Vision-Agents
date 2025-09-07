@@ -1,12 +1,19 @@
+from __future__ import annotations
+
+from typing import Any, Callable, Dict, Generic, List, Optional, TYPE_CHECKING, TypeVar
+
+from getstream.video.rtc.track_util import PcmData
+if TYPE_CHECKING:
+    from stream_agents.agents import Agent
+
 import abc
 import logging
 import uuid
 
-from typing import Any, Dict, List, Optional
-
 from pyee.asyncio import AsyncIOEventEmitter
+from av.dictionary import Dictionary
 
-from .events import (
+from ..events import (
     STSConnectedEvent,
     STSDisconnectedEvent,
     STSAudioInputEvent,
@@ -17,8 +24,19 @@ from .events import (
     STSErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
+    register_global_event,
 )
-from .event_utils import register_global_event
+
+T = TypeVar("T")
+
+
+class STSResponse(Generic[T]):
+    def __init__(self, original: T, text: str):
+        self.original = original
+        self.text = text
+
+BeforeCb = Callable[[List[Dictionary]], None]
+AfterCb  = Callable[[STSResponse], None]
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +124,21 @@ class STS(AsyncIOEventEmitter, abc.ABC):
         """Return True if the realtime session is currently active."""
         return self._is_connected
 
+    def attach_agent(self, agent: Agent):
+        self.agent = agent
+        self.before_response_listener = lambda x: agent.add_to_conversation(x)
+        self.after_response_listener = lambda x: agent.after_response(x)
+
+    def set_before_response_listener(self, before_response_listener: BeforeCb):
+        self.before_response_listener = before_response_listener
+
+    def set_after_response_listener(self, after_response_listener: AfterCb):
+        self.after_response_listener = after_response_listener
+
+    @abc.abstractmethod
+    def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000):
+        ...
+    
     def _emit_connected_event(self, session_config=None, capabilities=None):
         """Emit a structured connected event."""
         self._is_connected = True

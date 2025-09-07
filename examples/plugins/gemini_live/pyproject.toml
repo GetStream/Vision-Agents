@@ -16,4 +16,5 @@ dependencies = [
 
 
 [tool.uv.sources]
-getstream-plugins-gemini = { path = "../../getstream/plugins/gemini" }
+getstream-plugins-gemini = { path = "../../../plugins/gemini", editable = true }
+getstream-plugins-openai = { path = "../../../plugins/openai", editable = true }

@@ -36,7 +36,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
-from getstream.plugins import KokoroTTS
+from getstream.plugins.kokoro.tts import KokoroTTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

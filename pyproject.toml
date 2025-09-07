@@ -1,8 +1,32 @@
 [tool.uv.sources]
 stream-agents = { workspace = true }
+stream-agents-plugin-anthropic = { workspace = true }
+getstream-plugins-cartesia = { workspace = true }
+getstream-plugins-deepgram = { workspace = true }
+getstream-plugins-elevenlabs = { workspace = true }
+getstream-plugins-fal = { workspace = true }
+getstream-plugins-gemini = { workspace = true }
+getstream-plugins-kokoro = { workspace = true }
+getstream-plugins-moonshine = { workspace = true }
+getstream-plugins-openai = { workspace = true }
+getstream-plugins-silero = { workspace = true }
+stream-agents-plugin-xai = { workspace = true }
 
 [tool.uv.workspace]
-members = ["stream-agents", "plugins/*"]
+members = [
+    "stream-agents", 
+    "plugins/anthropic",
+    "plugins/cartesia", 
+    "plugins/deepgram",
+    "plugins/elevenlabs",
+    "plugins/fal",
+    "plugins/gemini",
+    "plugins/kokoro",
+    "plugins/moonshine",
+    "plugins/openai",
+    "plugins/silero",
+    "plugins/xai"
+]
 exclude = [
 "**/__pycache__",
 "**/tests/__pycache__",

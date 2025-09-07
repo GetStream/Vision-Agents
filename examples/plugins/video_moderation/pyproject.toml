@@ -11,3 +11,6 @@ dependencies = [
     "getstream-plugins-deepgram>=0.1.1",
     "python-dotenv>=1.1.1",
 ]
+
+[tool.uv.sources]
+getstream-plugins-deepgram = { path = "../../../plugins/deepgram", editable = true }

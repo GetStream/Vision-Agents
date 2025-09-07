@@ -3,7 +3,7 @@ from typing import List
 
 import pytest
 
-from getstream.plugins.common import STS
+from stream_agents.llm.sts import STS
 
 
 class DummySTS(STS):

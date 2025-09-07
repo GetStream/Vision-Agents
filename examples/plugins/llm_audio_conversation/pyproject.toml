@@ -15,3 +15,8 @@ dependencies = [
     "openai>=1.93.0",
     "elevenlabs>=2.7.1",
 ]
+
+[tool.uv.sources]
+getstream-plugins-deepgram = { path = "../../../plugins/deepgram", editable = true }
+getstream-plugins-elevenlabs = { path = "../../../plugins/elevenlabs", editable = true }
+getstream-plugins-silero = { path = "../../../plugins/silero", editable = true }
