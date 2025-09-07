@@ -76,6 +76,7 @@ class LLM:
         """
         return self.function_registry.function(description, name)
     
+<<<<<<< HEAD
     def add_mcp_server(self, config) -> None:
         """
         Add an MCP server to the LLM's function registry.
@@ -102,6 +103,8 @@ class LLM:
         """Connect to all configured MCP servers and register their tools."""
         await self.function_registry.connect_mcp_servers()
     
+=======
+>>>>>>> feat/function-calling
     async def generate_with_functions(
         self, 
         messages: List[Dict[str, str]], 
@@ -122,6 +125,13 @@ class LLM:
     def get_function_info(self, name: str) -> Optional[Dict[str, Any]]:
         """Get information about a registered function."""
         return self.function_registry.get_function_info(name)
+<<<<<<< HEAD
+=======
+
+
+
+
+>>>>>>> feat/function-calling
 
 
 
