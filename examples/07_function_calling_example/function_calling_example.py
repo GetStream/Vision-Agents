@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from getstream import Stream
 from getstream.plugins import DeepgramSTT, ElevenLabsTTS
 from stream_agents.turn_detection import FalTurnDetection
-from stream_agents.llm import OpenAILLM, GeminiLiveModel
+from stream_agents.llm import OpenAILLM, GeminiLLM
 from stream_agents import Agent, StreamEdge, start_dispatcher, open_demo
 
 load_dotenv()
@@ -34,8 +34,7 @@ async def create_openai_agent_with_functions():
     
     # Create OpenAI LLM
     llm = OpenAILLM(
-        name="gpt-4o",
-        instructions="You are a helpful AI assistant with access to various tools. Use them when appropriate to help users."
+        model="gpt-4o"
     )
     
     # Register functions using decorators - schemas are automatically inferred!
@@ -130,9 +129,8 @@ async def create_gemini_agent_with_functions():
     """Create a Gemini Live agent with function calling capabilities."""
     
     # Create Gemini Live LLM
-    llm = GeminiLiveModel(
-        model="gemini-2.5-flash-preview-native-audio-dialog",
-        instructions="You are a helpful AI assistant with access to various tools. Use them when appropriate to help users."
+    llm = GeminiLLM(
+        model="gemini-2.5-flash-preview-native-audio-dialog"
     )
     
     # Register the same functions for Gemini
