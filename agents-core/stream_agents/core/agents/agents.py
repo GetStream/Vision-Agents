@@ -258,8 +258,8 @@ class Agent:
     def _setup_vad(self):
         if self.vad:
             self.logger.info("🎙️ Setting up VAD listeners")
-            self.vad.on("speech_start", self._on_vad_speech_start)
-            self.vad.on("speech_end", self._on_vad_speech_end)
+            self.vad.on("partial", self._on_vad_speech_start)
+            # self.vad.on("speech_end", self._on_vad_speech_end)
 
     def _setup_turn_detection(self):
         if self.turn_detection:
@@ -455,10 +455,10 @@ class Agent:
                 await asyncio.sleep(0.5)
 
     def _on_vad_speech_start(self, event):
-        self.logger.info(f"============== VAD EVENT {event.speech_probability} ==============")
+        self.logger.info(f"============== VAD EVENT {event.is_speech_active} ==============")
 
     def _on_vad_speech_end(self, event):
-        self.logger.info(f"============== VAD EVENT {event} ==============")
+        pass
 
     def _on_turn_started(self, event_data: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
