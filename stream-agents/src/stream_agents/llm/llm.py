@@ -5,7 +5,7 @@ if TYPE_CHECKING:
     from stream_agents.agents import Agent
 
 
-from typing import List, TypeVar, Optional, Any, Callable, Generic
+from typing import List, TypeVar, Optional, Any, Callable, Generic, Dict
 
 from av.dictionary import Dictionary
 
@@ -36,6 +36,9 @@ class LLM:
 
     def __init__(self):
         self.agent = None
+        # Function calling support
+        from .function_registry import FunctionRegistry
+        self.function_registry = FunctionRegistry()
 
     def simple_response(self, text, processors: List[BaseProcessor], participant: Participant = None) -> LLMResponse[Any]:
         pass
@@ -51,6 +54,43 @@ class LLM:
 
     def set_after_response_listener(self, after_response_listener: AfterCb):
         self.after_response_listener = after_response_listener
+
+    # Function calling methods
+    def function(self, description: str = "", name: Optional[str] = None):
+        """
+        Decorator to register a function for LLM calling.
+        
+        Args:
+            description: Human-readable description of what the function does
+            name: Optional custom name for the function (defaults to function name)
+        
+        Example:
+            @llm.function("Get weather for a location")
+            async def get_weather(location: str) -> str:
+                return f"Weather in {location}: sunny"
+        """
+        return self.function_registry.function(description, name)
+    
+    async def generate_with_functions(
+        self, 
+        messages: List[Dict[str, str]], 
+        **kwargs
+    ) -> str:
+        """
+        Generate response with function calling support.
+        
+        This method should be implemented by each LLM subclass to handle
+        function calling in a provider-specific way.
+        """
+        raise NotImplementedError("Subclasses must implement generate_with_functions")
+    
+    def get_available_functions(self) -> List[str]:
+        """Get list of available function names."""
+        return self.function_registry.list_functions()
+    
+    def get_function_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get information about a registered function."""
+        return self.function_registry.get_function_info(name)
 
 
 
