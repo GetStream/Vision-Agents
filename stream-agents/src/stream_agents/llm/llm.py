@@ -76,7 +76,28 @@ class LLM:
         """
         return self.function_registry.function(description, name)
     
-<<<<<<< HEAD
+    async def generate_with_functions(
+        self, 
+        messages: List[Dict[str, str]], 
+        **kwargs
+    ) -> str:
+        """
+        Generate response with function calling support.
+        
+        This method should be implemented by each LLM subclass to handle
+        function calling in a provider-specific way.
+        """
+        raise NotImplementedError("Subclasses must implement generate_with_functions")
+    
+    def get_available_functions(self) -> List[str]:
+        """Get list of available function names."""
+        return self.function_registry.list_functions()
+    
+    def get_function_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get information about a registered function."""
+        return self.function_registry.get_function_info(name)
+    
+    # MCP methods
     def add_mcp_server(self, config) -> None:
         """
         Add an MCP server to the LLM's function registry.
@@ -102,36 +123,6 @@ class LLM:
     async def connect_mcp_servers(self) -> None:
         """Connect to all configured MCP servers and register their tools."""
         await self.function_registry.connect_mcp_servers()
-    
-=======
->>>>>>> feat/function-calling
-    async def generate_with_functions(
-        self, 
-        messages: List[Dict[str, str]], 
-        **kwargs
-    ) -> str:
-        """
-        Generate response with function calling support.
-        
-        This method should be implemented by each LLM subclass to handle
-        function calling in a provider-specific way.
-        """
-        raise NotImplementedError("Subclasses must implement generate_with_functions")
-    
-    def get_available_functions(self) -> List[str]:
-        """Get list of available function names."""
-        return self.function_registry.list_functions()
-    
-    def get_function_info(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get information about a registered function."""
-        return self.function_registry.get_function_info(name)
-<<<<<<< HEAD
-=======
-
-
-
-
->>>>>>> feat/function-calling
 
 
 
