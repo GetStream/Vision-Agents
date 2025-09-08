@@ -12,13 +12,13 @@ pip install getstream-plugins-fal
 ## Quick start
 
 ```python
-from getstream.plugins.fal import FalWizperSTT
+from stream_agents.plugins import fal
 
 # 1. Pure transcription (default)
-stt = FalWizperSTT()
+stt = fal.STT()
 
 # 2. Translation to Spanish ("es")
-stt = FalWizperSTT(target_language="es")
+stt = fal.STT(target_language="es")
 
 @stt.on("transcript")
 async def on_transcript(text: str, user: dict, metadata: dict):

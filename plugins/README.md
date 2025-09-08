@@ -51,27 +51,27 @@ uv run pytest
 
 - **Deepgram**: High-quality speech-to-text using the Deepgram API
   ```python
-  from getstream.plugins import DeepgramSTT
+  from stream_agents.plugins import deepgram
 
-  stt = DeepgramSTT(api_key="your_deepgram_api_key")
+  stt = deepgram.STT(api_key="your_deepgram_api_key")
   ```
 
 ### Text-to-Speech (TTS)
 
 - **ElevenLabs**: High-quality text-to-speech using the ElevenLabs API
   ```python
-  from getstream.plugins import ElevenLabsTTS
+  from stream_agents.plugins import elevenlabs
 
-  tts = ElevenLabsTTS(api_key="your_elevenlabs_api_key")
+  tts = elevenlabs.TTS(api_key="your_elevenlabs_api_key")
   ```
 
 ### Voice Activity Detection (VAD)
 
 - **Silero**: Fast and accurate voice activity detection
   ```python
-  from getstream.plugins import SileroVAD
+  from stream_agents.plugins import silero
 
-  vad = SileroVAD()
+  vad = silero.VAD()
   ```
 
 ## Using Plugins
@@ -79,7 +79,7 @@ uv run pytest
 All plugins follow a consistent API within their category. You can access the base classes directly:
 
 ```python
-from getstream.plugins import STT, TTS, VAD
+from stream_agents.plugins import stt, tts, vad
 ```
 
 ## Creating New Plugins

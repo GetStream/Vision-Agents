@@ -16,10 +16,10 @@ pip install getstream-plugins-openai
 ## Usage
 
 ```python
-from getstream.plugins.openai import OpenAIRealtime
+from stream_agents.plugins import openai
 
 # Initialize with API key
-sts = OpenAIRealtime(api_key="your_openai_api_key", voice="alloy")
+sts = openai.Realtime(api_key="your_openai_api_key", voice="alloy")
 
 # Connect to a call
 async with await sts.connect(call, agent_user_id="assistant") as connection:
@@ -42,7 +42,7 @@ The OpenAI Realtime API supports function calling, allowing the assistant to inv
 ### Example with Function Calling
 
 ```python
-from getstream.plugins.openai import OpenAIRealtime
+from stream_agents.plugins import openai
 
 # Define your functions
 def get_weather(location: str) -> str:
@@ -56,7 +56,7 @@ def send_email(to: str, subject: str, body: str) -> str:
     return f"Email sent to {to} with subject: {subject}"
 
 # Initialize with functions
-sts = OpenAIRealtime(
+sts = openai.Realtime(
     api_key="your_openai_api_key",
     voice="alloy",
     functions=[

@@ -11,14 +11,14 @@ pip install getstream-plugins-silero
 ## Usage
 
 ```python
-from getstream.plugins.silero import SileroVAD
+from stream_agents.plugins import silero
 from getstream.video.rtc.track_util import PcmData
 
 # Initialize with default settings
-vad = SileroVAD()
+vad = silero.VAD()
 
 # Or customize parameters
-vad = SileroVAD(
+vad = silero.VAD(
     sample_rate=16000,
     frame_size=512,
     silence_threshold=0.3,
