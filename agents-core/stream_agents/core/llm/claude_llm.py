@@ -2,12 +2,15 @@ import datetime
 from typing import Optional, List, Iterable, TYPE_CHECKING
 
 import anthropic
-from anthropic import AsyncAnthropic
-from anthropic.types import MessageParam
+from anthropic import AsyncAnthropic, AsyncStream, ContentBlockStopEvent, MessageStopEvent
+from anthropic.types import MessageParam, RawMessageStreamEvent, Message as ClaudeMessage, RawMessageDeltaEvent, \
+    RawContentBlockDeltaEvent, RawMessageStopEvent
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+
+from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from stream_agents.core.processors import BaseProcessor
 
 if TYPE_CHECKING:
@@ -31,6 +34,9 @@ class ClaudeLLM(LLM):
         if "model" not in kwargs:
             kwargs["model"] = self.model
 
+        if "stream" not in kwargs:
+            kwargs["stream"] = True
+
         # ensure the AI remembers the past conversation
         new_messages =  kwargs["messages"]
         old_messages = [m.original for m in self._conversation.messages]
@@ -42,12 +48,38 @@ class ClaudeLLM(LLM):
             self.before_response_listener(new_messages)
 
         original = await self.client.messages.create(*args, **kwargs)
+        if isinstance(original, ClaudeMessage):
+            # Extract text from Claude's response format
+            text = original.content[0].text if original.content else ""
+            llm_response = LLMResponse(original, text)
+        elif isinstance(original, AsyncStream):
+            original : AsyncStream[RawMessageStreamEvent] = original
+            total_text = ""
+            async for event in original:
+                if event.type=="content_block_delta":
+                    print(event)
+                    event: RawContentBlockDeltaEvent = event
+                    total_text += event.delta.text
 
-        # Extract text from Claude's response format
-        text = original.content[0].text if original.content else ""
-        llm_response = LLMResponse(original, text)
+                    standardized_event = StandardizedTextDeltaEvent(
+                        content_index=event.index,
+                        type=event.type,
+                        delta=event.delta.text,
+                    )
+                    self.emit("standardized.output_text.delta", standardized_event)
+                    self.emit(event.type, event)
+                elif event.type=="message_stop":
+                    print(event)
+                    event: RawMessageStopEvent = event
+                    llm_response = LLMResponse(total_text, total_text)
+                else:
+                    self.emit(event.type, event)
+                    pass
+
         if hasattr(self, "after_response_listener"):
             await self.after_response_listener(llm_response)
+
+
         return llm_response
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, participant: Participant = None):

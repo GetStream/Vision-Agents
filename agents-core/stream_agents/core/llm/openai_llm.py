@@ -11,6 +11,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 from openai.types.responses import ResponseCompletedEvent, ResponseOutputText, ResponseTextDeltaEvent
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 
 from stream_agents.core.processors import BaseProcessor
 
@@ -27,25 +28,7 @@ def use_create(fn: Callable[P, R]) -> Callable[P, R]:
 # TODO: somehow this isn't right, docs aren't great: https://peps.python.org/pep-0612/
 bound = use_create(Responses.create)
 
-@dataclass
-class StandardizedTextDeltaEvent:
-    content_index: int
-    """The index of the content part that the text delta was added to."""
 
-    delta: str
-    """The text delta that was added."""
-
-    item_id: str
-    """The ID of the output item that the text delta was added to."""
-
-    output_index: int
-    """The index of the output item that the text delta was added to."""
-
-    sequence_number: int
-    """The sequence number for this event."""
-
-    type: Literal["response.output_text.delta"]
-    """The type of the event. Always `response.output_text.delta`."""
 
 class OpenAILLM(LLM):
     '''
