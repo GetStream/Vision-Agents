@@ -51,7 +51,7 @@ class OpenAILLM(LLM):
         if client is not None:
             self.client = client
         elif api_key is not None and api_key != "":
-            self.openai_conversation = OpenAI(api_key=api_key)
+            self.client = OpenAI(api_key=api_key)
         else:
             self.client = OpenAI()
 
@@ -59,27 +59,36 @@ class OpenAILLM(LLM):
         if "model" not in kwargs:
             kwargs["model"] = self.model
 
-        if not self.openai_conversation:
-            self.openai_conversation = self.client.conversations.create()
-        kwargs["conversation"] = self.openai_conversation.id
-
+        # Convert input to messages format for chat completions
+        messages = self._prepare_messages(kwargs.get("input", ""))
+        
         # Add tools if functions are available
         available_functions = self.get_available_functions()
+        tools = None
         if available_functions:
-            kwargs["tools"] = [self._tool_schema_to_openai_tool(schema) for schema in available_functions]
+            tools = [self._tool_schema_to_openai_tool(schema) for schema in available_functions]
 
         if hasattr(self, "before_response_listener"):
             self.before_response_listener(self._normalize_message(kwargs["input"]))
-        response = self.client.responses.create(
-            *args, **kwargs
-        )
+
+        # Use chat completions API for function calling
+        chat_kwargs = {
+            "model": kwargs["model"],
+            "messages": messages,
+        }
+        
+        if tools:
+            chat_kwargs["tools"] = tools
+            chat_kwargs["tool_choice"] = "auto"
+
+        response = self.client.chat.completions.create(**chat_kwargs)
 
         # Process tool calls if present
         normalized_response = self._normalize_openai_response(response)
         if normalized_response.get("output"):
             normalized_response = self.process_tool_calls(normalized_response)
 
-        llm_response = LLMResponse[Response](response, response.output_text)
+        llm_response = LLMResponse[Response](response, response.choices[0].message.content or "")
         if hasattr(self, "after_response_listener"):
             await self.after_response_listener(llm_response)
         return llm_response
@@ -124,20 +133,30 @@ class OpenAILLM(LLM):
             }
         }
 
-    def _normalize_openai_response(self, response: Response) -> NormalizedResponse:
+    def _prepare_messages(self, input_text: str) -> List[Dict[str, str]]:
+        """Convert input text to messages format for chat completions."""
+        if isinstance(input_text, str):
+            return [{"role": "user", "content": input_text}]
+        elif isinstance(input_text, list):
+            return input_text
+        else:
+            return [{"role": "user", "content": str(input_text)}]
+
+    def _normalize_openai_response(self, response) -> NormalizedResponse:
         """Convert OpenAI response to normalized format."""
         output = []
         
         # Handle text content
-        if hasattr(response, 'output_text') and response.output_text:
+        message = response.choices[0].message
+        if message.content:
             output.append({
                 "type": "text",
-                "text": response.output_text
+                "text": message.content
             })
         
         # Handle tool calls if present
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            for tool_call in response.tool_calls:
+        if message.tool_calls:
+            for tool_call in message.tool_calls:
                 tool_call_item: NormalizedToolCallItem = {
                     "type": "tool_call",
                     "name": tool_call.function.name,
@@ -146,10 +165,10 @@ class OpenAILLM(LLM):
                 output.append(tool_call_item)
         
         return {
-            "id": getattr(response, 'id', ''),
-            "model": getattr(response, 'model', self.model),
+            "id": response.id,
+            "model": response.model,
             "status": "completed",
             "output": output,
-            "output_text": getattr(response, 'output_text', ''),
+            "output_text": message.content or "",
             "raw": response
         }
