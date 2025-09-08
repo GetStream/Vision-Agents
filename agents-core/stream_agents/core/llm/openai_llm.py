@@ -57,6 +57,8 @@ class OpenAILLM(LLM):
     async def create_response(self, *args: P.args, **kwargs: P.kwargs) -> LLMResponse:
         if "model" not in kwargs:
             kwargs["model"] = self.model
+        if "stream" not in kwargs:
+            kwargs["stream"] = True
 
         if not self.openai_conversation:
             self.openai_conversation = self.client.conversations.create()
@@ -68,7 +70,20 @@ class OpenAILLM(LLM):
             *args, **kwargs
         )
 
+        # handle both streaming and non-streaming response types
+        for event in response:
+            self.emit(event.type, event.response)
+            # standardize the events. emit both the native and standardized events?
+            from pprint import pprint
+            pprint(event.response)
+            pass
+
         llm_response = LLMResponse[Response](response, response.output_text)
+
+
+
+
+
         if hasattr(self, "after_response_listener"):
             await self.after_response_listener(llm_response)
         return llm_response

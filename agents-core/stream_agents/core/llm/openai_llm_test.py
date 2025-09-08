@@ -30,7 +30,6 @@ class TestOpenAILLM:
         assert message.original is not None
         assert message.content is "say hi"
 
-
     def test_advanced_message(self, llm: OpenAILLM):
         img_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
 
@@ -45,10 +44,6 @@ class TestOpenAILLM:
         ]
         messages2 = OpenAILLM._normalize_message(advanced)
         assert messages2[0].original is not None
-
-
-
-
 
     @pytest.mark.integration
     async def test_simple(self, llm: OpenAILLM):
