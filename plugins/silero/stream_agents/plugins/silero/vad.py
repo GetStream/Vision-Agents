@@ -6,7 +6,7 @@ import numpy as np
 import warnings
 import time
 from typing import Dict, Any, Optional
-from stream_agents.vad.vad import VAD
+from stream_agents.core import vad
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
 from getstream.plugins.common.events import (
@@ -57,7 +57,7 @@ class SileroVADPartialEvent(VADPartialEvent):
     inference_time_ms: float = 0.0
     model_confidence: float = 0.0
 
-class SileroVAD(VAD):
+class VAD(vad.VAD):
     """
     Voice Activity Detection implementation using Silero VAD model.
 
