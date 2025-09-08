@@ -109,6 +109,11 @@ class LLM:
                 function_name = tool_call_item["name"]
                 arguments = tool_call_item["arguments_json"]
                 
+                # Parse JSON string if needed
+                if isinstance(arguments, str):
+                    import json
+                    arguments = json.loads(arguments)
+                
                 try:
                     # Call the function
                     result = self.call_function(function_name, arguments)
@@ -137,6 +142,22 @@ class LLM:
         
         # Update the response with processed output
         response["output"] = updated_output
+        
+        # Generate response text from the processed output
+        response_text_parts = []
+        for item in updated_output:
+            if item.get("type") == "text":
+                response_text_parts.append(item["text"])
+            elif item.get("type") == "tool_result":
+                result = item["result_json"]
+                if isinstance(result, dict) and "result" in result:
+                    response_text_parts.append(f"Function {item['name']} result: {result['result']}")
+                else:
+                    response_text_parts.append(f"Function {item['name']} result: {result}")
+        
+        if response_text_parts:
+            response["output_text"] = "\n".join(response_text_parts)
+        
         return response
 
 

@@ -87,8 +87,12 @@ class OpenAILLM(LLM):
         normalized_response = self._normalize_openai_response(response)
         if normalized_response.get("output"):
             normalized_response = self.process_tool_calls(normalized_response)
+            # Use the processed response text
+            response_text = normalized_response.get("output_text", response.choices[0].message.content or "")
+        else:
+            response_text = response.choices[0].message.content or ""
 
-        llm_response = LLMResponse[Response](response, response.choices[0].message.content or "")
+        llm_response = LLMResponse[Response](response, response_text)
         if hasattr(self, "after_response_listener"):
             await self.after_response_listener(llm_response)
         return llm_response
