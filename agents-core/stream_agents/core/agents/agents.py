@@ -132,6 +132,31 @@ class Agent:
                 self.instructions, [], self.channel.data.channel, chat_client
             )
             self.llm.conversation = self.conversation
+            # When using Realtime, mirror responses/transcripts into the conversation for UI updates
+            if self.sts_mode and hasattr(self.llm, "on") and self.conversation is not None:
+                @self.llm.on("response")  # type: ignore[attr-defined]
+                async def _on_llm_response(event):
+                    try:
+                        text = getattr(event, "text", None) if not isinstance(event, str) else event
+                        is_complete = getattr(event, "is_complete", True)
+                        if text:
+                            if is_complete:
+                                self.conversation.finish_last_message(text)
+                            else:
+                                self.conversation.partial_update_message(text, None)
+                    except Exception as e:
+                        self.logger.debug(f"Error updating conversation from response: {e}")
+
+                @self.llm.on("transcript")  # type: ignore[attr-defined]
+                async def _on_llm_transcript(event):
+                    try:
+                        # Only mirror user transcripts; assistant transcripts will be reflected via response events
+                        is_user = getattr(event, "is_user", True)
+                        text = getattr(event, "text", None) if not isinstance(event, str) else event
+                        if is_user and text:
+                            self.conversation.partial_update_message(text, None)
+                    except Exception as e:
+                        self.logger.debug(f"Error updating conversation from transcript: {e}")
 
         """Join a Stream video call."""
         if self._is_running:

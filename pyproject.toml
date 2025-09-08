@@ -54,7 +54,7 @@ dev = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["stream-agents/src/stream_agents", "plugins", "tests"]
+files = ["agents-core/stream_agents", "plugins", "tests"]
 
 # Gradual typing → can tighten over time
 ignore_missing_imports = true

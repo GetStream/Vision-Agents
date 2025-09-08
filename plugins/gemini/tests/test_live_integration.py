@@ -68,3 +68,47 @@ async def test_gemini_live_with_real_api():
         )
     finally:
         await sts.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_gemini_native_passthrough(monkeypatch):
+    # Patch client and session to capture native calls
+    from stream_agents.plugins import gemini as gemini_pkg
+
+    calls = {"text": [], "audio": [], "media": []}
+
+    class _Sess:
+        async def send_realtime_input(self, *, text=None, audio=None, media=None):
+            if text:
+                calls["text"].append(text)
+            if audio:
+                calls["audio"].append(audio)
+            if media:
+                calls["media"].append(media)
+
+    class _CM:
+        async def __aenter__(self):
+            return _Sess()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _Live:
+        def connect(self, model=None, config=None):
+            return _CM()
+
+    class _Client:
+        def __init__(self, *a, **k):
+            self.aio = type("A", (), {"live": _Live()})
+
+    monkeypatch.setattr(gemini_pkg.realtime, "Client", lambda *a, **k: _Client())
+
+    sts = gemini_pkg.Realtime(api_key="x", model="m")
+    ready = await sts.wait_until_ready(timeout=1.0)
+    assert ready
+
+    # Call passthrough
+    await sts.native_send_realtime_input(text="hello")
+    assert calls["text"] == ["hello"]
+    await sts.close()

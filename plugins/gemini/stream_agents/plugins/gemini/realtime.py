@@ -36,7 +36,7 @@ from google.genai.types import (
 )
 
 from getstream.audio.utils import resample_audio
-from stream_agents import llm
+from stream_agents.core import llm
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 
@@ -56,7 +56,7 @@ class Realtime(llm.Realtime):
         response_modalities: Optional[List[Modality]] = None,
         voice: Optional[str] = None,
         barge_in: bool = True,
-        activity_threshold: int = 1000,
+        activity_threshold: int = 4000,
         silence_timeout_ms: int = 1000,
         provider_config: Optional[LiveConnectConfigDict] = None,
     ):
@@ -135,7 +135,7 @@ class Realtime(llm.Realtime):
         )
         # Kick off background connect if we are in an event loop
         loop = asyncio.get_running_loop()
-        self._connect_task = loop.create_task(self._run_connection())
+        self._connect_task = loop.create_task(self.connect())
 
     def _default_config(self) -> LiveConnectConfigDict:
         return LiveConnectConfigDict(
@@ -192,7 +192,7 @@ class Realtime(llm.Realtime):
             raise RuntimeError("Not connected")
         return self._session
 
-    async def _run_connection(self) -> None:
+    async def connect(self) -> None:
         """Background task that connects and holds the session open until stopped."""
         if self._is_connected:
             return
@@ -226,6 +226,11 @@ class Realtime(llm.Realtime):
     async def send_text(self, text: str):
         """Send a text message from the human side to the conversation."""
         session = await self._require_session()
+        # Emit user transcript event
+        try:
+            self._emit_transcript_event(text=text, is_user=True)
+        except Exception:
+            pass
         await session.send_realtime_input(text=text)
 
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000):
@@ -252,8 +257,9 @@ class Realtime(llm.Realtime):
                 audio_array, pcm.sample_rate, target_rate
             ).astype(np.int16)
 
-        # Activity detection to avoid constant interruption when streaming continuous audio
-        is_active = bool(np.mean(np.abs(audio_array)) > self._activity_threshold)
+        # Activity detection with a small hysteresis to avoid flapping
+        energy = float(np.mean(np.abs(audio_array)))
+        is_active = energy > float(self._activity_threshold)
 
         # On first frame of a speaking burst, interrupt current playback (barge-in)
         if self._barge_in_enabled and is_active and not self._user_speaking:
@@ -267,6 +273,8 @@ class Realtime(llm.Realtime):
             if self._eos_timer_task and not self._eos_timer_task.done():
                 self._eos_timer_task.cancel()
             self._eos_timer_task = asyncio.create_task(self._silence_timeout_task())
+        # When stream becomes sufficiently silent, allow existing timer to elapse
+        # (No action needed here other than not restarting the timer)
 
         # Build blob and send directly
         audio_bytes = audio_array.tobytes()
@@ -275,6 +283,11 @@ class Realtime(llm.Realtime):
         logger.info(
             "Sending %d bytes audio to Gemini Live (%s)", len(audio_bytes), mime
         )
+        # Emit standardized audio input event
+        try:
+            self._emit_audio_input_event(audio_bytes, sample_rate=target_rate)
+        except Exception:
+            pass
         await session.send_realtime_input(audio=blob)
 
     async def start_video_sender(self, track: MediaStreamTrack, fps: int = 1) -> None:
@@ -336,6 +349,23 @@ class Realtime(llm.Realtime):
         except asyncio.CancelledError:
             return
 
+    # --- Provider-native passthroughs ---
+    def get_native_session(self) -> Optional[AsyncSession]:
+        """Return the underlying Gemini AsyncSession if connected (advanced use)."""
+        return self._session
+
+    async def native_send_realtime_input(
+        self, *, text: Optional[str] = None, audio: Optional[Blob] = None, media: Optional[Blob] = None
+    ) -> None:
+        """Advanced: call Gemini's send_realtime_input directly with text/audio/media.
+
+        This bypasses the standardized helpers and is intended for users who need
+        provider-specific control. The Agent path remains standardized via send_text
+        and send_audio_pcm.
+        """
+        session = await self._require_session()
+        await session.send_realtime_input(text=text, audio=audio, media=media)
+
     async def start_response_listener(
         self,
         emit_events: bool = True,
@@ -354,6 +384,7 @@ class Realtime(llm.Realtime):
             try:
                 assert self._session is not None
                 # Continuously read turns; receive() yields one complete model turn
+                turn_text_parts: List[str] = []
                 while self._is_connected and self._session is not None:
                     async for resp in self._session.receive():
                         if data := resp.data:
@@ -362,11 +393,30 @@ class Realtime(llm.Realtime):
                             # Write directly to the outbound track when playback is enabled
                             if self._playback_enabled:
                                 await self.output_track.write(data)
+                            # Emit standardized audio output event
+                            try:
+                                self._emit_audio_output_event(data, sample_rate=24000)
+                            except Exception:
+                                pass
                         text = getattr(resp, "text", None)
                         if text and emit_events:
                             self.emit("text", text)
+                        if text:
+                            # Emit standardized response delta and assistant transcript
+                            try:
+                                self._emit_response_event(text, is_complete=False)
+                                self._emit_transcript_event(text, is_user=False)
+                            except Exception:
+                                pass
+                            turn_text_parts.append(text)
 
                     # Small pause between turns to avoid tight loop
+                    if turn_text_parts:
+                        try:
+                            self._emit_response_event("".join(turn_text_parts), is_complete=True)
+                        except Exception:
+                            pass
+                        turn_text_parts = []
                     await asyncio.sleep(0)
             except asyncio.CancelledError:  # graceful stop
                 return
@@ -404,8 +454,8 @@ class Realtime(llm.Realtime):
                 await self._eos_timer_task
         self._eos_timer_task = None
 
-    async def close(self) -> None:
-        """Stop the session and background tasks."""
+    async def _close_impl(self) -> None:
+        """Provider-specific cleanup without emitting base events."""
         self._stop_event.set()
         await self.stop_video_sender()
         await self.stop_response_listener()
