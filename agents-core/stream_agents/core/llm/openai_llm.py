@@ -1,5 +1,5 @@
 import datetime
-from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING
+from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Dict, Any
 
 from openai import OpenAI
 from openai.resources.responses import Responses
@@ -7,6 +7,7 @@ from openai.resources.responses import Responses
 from getstream.models import Response
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm_types import NormalizedResponse, NormalizedToolCallItem, NormalizedToolResultItem
 
 from stream_agents.core.processors import BaseProcessor
 
@@ -49,7 +50,7 @@ class OpenAILLM(LLM):
 
         if client is not None:
             self.client = client
-        elif api_key is not None and api_key is not "":
+        elif api_key is not None and api_key != "":
             self.openai_conversation = OpenAI(api_key=api_key)
         else:
             self.client = OpenAI()
@@ -62,11 +63,21 @@ class OpenAILLM(LLM):
             self.openai_conversation = self.client.conversations.create()
         kwargs["conversation"] = self.openai_conversation.id
 
+        # Add tools if functions are available
+        available_functions = self.get_available_functions()
+        if available_functions:
+            kwargs["tools"] = [self._tool_schema_to_openai_tool(schema) for schema in available_functions]
+
         if hasattr(self, "before_response_listener"):
             self.before_response_listener(self._normalize_message(kwargs["input"]))
         response = self.client.responses.create(
             *args, **kwargs
         )
+
+        # Process tool calls if present
+        normalized_response = self._normalize_openai_response(response)
+        if normalized_response.get("output"):
+            normalized_response = self.process_tool_calls(normalized_response)
 
         llm_response = LLMResponse[Response](response, response.output_text)
         if hasattr(self, "after_response_listener"):
@@ -101,3 +112,44 @@ class OpenAILLM(LLM):
             messages.append(message)
 
         return messages
+
+    def _tool_schema_to_openai_tool(self, schema) -> Dict[str, Any]:
+        """Convert a tool schema to OpenAI tool format."""
+        return {
+            "type": "function",
+            "function": {
+                "name": schema["name"],
+                "description": schema.get("description", ""),
+                "parameters": schema["parameters_schema"]
+            }
+        }
+
+    def _normalize_openai_response(self, response: Response) -> NormalizedResponse:
+        """Convert OpenAI response to normalized format."""
+        output = []
+        
+        # Handle text content
+        if hasattr(response, 'output_text') and response.output_text:
+            output.append({
+                "type": "text",
+                "text": response.output_text
+            })
+        
+        # Handle tool calls if present
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            for tool_call in response.tool_calls:
+                tool_call_item: NormalizedToolCallItem = {
+                    "type": "tool_call",
+                    "name": tool_call.function.name,
+                    "arguments_json": tool_call.function.arguments
+                }
+                output.append(tool_call_item)
+        
+        return {
+            "id": getattr(response, 'id', ''),
+            "model": getattr(response, 'model', self.model),
+            "status": "completed",
+            "output": output,
+            "output_text": getattr(response, 'output_text', ''),
+            "raw": response
+        }
