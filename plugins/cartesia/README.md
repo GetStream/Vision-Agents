@@ -21,15 +21,15 @@ pip install cartesia getstream-plugins-cartesia
 ## Usage
 
 ```python
-from getstream.plugins.cartesia import CartesiaTTS
+from stream_agents.plugins import cartesia
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 async def speak():
     # Option A: read key from env var (CARTESIA_API_KEY)
-    tts = CartesiaTTS()
+    tts = cartesia.TTS()
 
     # Option B: pass explicitly
-    # tts = CartesiaTTS(api_key="<your key>")
+    # tts = cartesia.TTS(api_key="<your key>")
 
     # Audio MUST be 16-kHz, 16-bit PCM (matches Cartesia Sonic model)
     track = AudioStreamTrack(framerate=16000)

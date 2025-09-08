@@ -16,7 +16,7 @@ Example
 
 ```python
 from getstream.stream import Stream
-from getstream.plugins.sts.openai_realtime import OpenAIRealtime
+from stream_agents.plugins import openai
 
 # Initialize Stream client and create/join a call
 client = Stream.from_env()
@@ -24,7 +24,7 @@ call = client.video.call("default", "demo-call")
 call.get_or_create()
 
 # Create and configure the STS bot
-sts_bot = OpenAIRealtime(
+sts_bot = openai.Realtime(
     model="gpt-4o-realtime-preview",
     voice="alloy",  # Optional: specify voice
     instructions="You are a helpful assistant."  # Optional: system instructions
