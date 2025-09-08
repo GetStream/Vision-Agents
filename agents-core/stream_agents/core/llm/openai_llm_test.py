@@ -5,10 +5,10 @@ import pytest
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from stream_agents.llm.llm import LLMResponse
-from stream_agents.llm.openai_llm import OpenAILLM
+from stream_agents.core.llm.llm import LLMResponse
+from stream_agents.core.llm.openai_llm import OpenAILLM
 
-from stream_agents.agents.conversation import Message
+from stream_agents.core.agents.conversation import Message
 
 load_dotenv()
 

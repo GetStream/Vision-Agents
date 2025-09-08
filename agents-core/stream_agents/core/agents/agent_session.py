@@ -1,4 +1,4 @@
-from stream_agents import Agent
+from stream_agents.core.agents import Agent
 
 
 class AgentSessionContextManager:

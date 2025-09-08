@@ -4,8 +4,8 @@ import pytest
 from dotenv import load_dotenv
 from google import genai
 
-from stream_agents.llm.llm import LLMResponse
-from stream_agents.llm.gemini_llm import GeminiLLM
+from stream_agents.core.llm.llm import LLMResponse
+from stream_agents.core.llm.gemini_llm import GeminiLLM
 
 from src.stream_agents.agents.conversation import InMemoryConversation, Message
 

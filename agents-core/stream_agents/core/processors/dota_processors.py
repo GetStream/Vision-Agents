@@ -1,7 +1,7 @@
 import logging
 import requests
 from typing import Optional, List, Dict, Any
-from stream_agents.processors import BaseProcessor
+from stream_agents.core.processors import BaseProcessor
 
 try:
     import stratz

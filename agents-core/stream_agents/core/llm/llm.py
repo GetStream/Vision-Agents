@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
-    from stream_agents.agents import Agent
+    from stream_agents.core.agents import Agent
 
 
 from typing import List, TypeVar, Optional, Any, Callable, Generic
@@ -10,7 +10,7 @@ from typing import List, TypeVar, Optional, Any, Callable, Generic
 from av.dictionary import Dictionary
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from stream_agents.processors import BaseProcessor
+from stream_agents.core.processors import BaseProcessor
 
 T = TypeVar("T")
 

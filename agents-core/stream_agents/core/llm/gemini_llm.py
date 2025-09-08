@@ -1,11 +1,13 @@
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 
 from google import genai
 
-from stream_agents.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm import LLM, LLMResponse
 
-from stream_agents.agents.conversation import Message
-from stream_agents.processors import BaseProcessor
+from stream_agents.core.processors import BaseProcessor
+
+if TYPE_CHECKING:
+    from stream_agents.core.agents.conversation import Message
 
 
 class GeminiLLM(LLM):
@@ -44,7 +46,9 @@ class GeminiLLM(LLM):
         return LLMResponse(response, text)
 
     @staticmethod
-    def _normalize_message(gemini_input) -> List[Message]:
+    def _normalize_message(gemini_input) -> List["Message"]:
+        from stream_agents.core.agents.conversation import Message
+        
         # standardize on input
         if isinstance(gemini_input, str):
             gemini_input = [

@@ -18,7 +18,7 @@ import fal_client
 import numpy as np
 from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
-from stream_agents.utils.utils import to_mono
+from stream_agents.core.utils.utils import to_mono
 
 from .turn_detection import BaseTurnDetector, TurnEvent, TurnEventData
 

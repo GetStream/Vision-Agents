@@ -8,8 +8,8 @@ import krisp_audio
 import numpy as np
 from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
-from stream_agents.turn_detection import BaseTurnDetector, TurnEvent, TurnEventData
-from stream_agents.utils.utils import to_mono
+from stream_agents.core.turn_detection import BaseTurnDetector, TurnEvent, TurnEventData
+from stream_agents.core.utils.utils import to_mono
 
 
 def _int_to_frame_duration(frame_dur: int):

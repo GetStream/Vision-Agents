@@ -8,7 +8,11 @@ from stream_agents.plugins.elevenlabs.tts import ElevenLabsTTS
 from stream_agents.plugins.deepgram.stt import DeepgramSTT
 from stream_agents.core.llm.openai_llm import OpenAILLM
 from stream_agents.core.turn_detection import FalTurnDetection
-from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
+from stream_agents.core.agents import Agent
+from stream_agents.core.edge import StreamEdge
+from stream_agents.core.cli import start_dispatcher
+from stream_agents.core.utils import open_demo
+from getstream import Stream
 
 load_dotenv()
 

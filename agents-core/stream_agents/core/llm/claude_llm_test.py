@@ -5,10 +5,10 @@ import pytest
 from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
 
-from stream_agents.llm.llm import LLMResponse
-from stream_agents.llm.claude_llm import ClaudeLLM
+from stream_agents.core.llm.llm import LLMResponse
+from stream_agents.core.llm.claude_llm import ClaudeLLM
 
-from stream_agents.agents.conversation import InMemoryConversation
+from stream_agents.core.agents.conversation import InMemoryConversation
 
 from src.stream_agents.agents.conversation import Message
 

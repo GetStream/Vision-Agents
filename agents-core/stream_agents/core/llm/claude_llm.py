@@ -1,15 +1,17 @@
 import datetime
-from typing import Optional, List, Iterable
+from typing import Optional, List, Iterable, TYPE_CHECKING
 
 import anthropic
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
 
-from stream_agents.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm import LLM, LLMResponse
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from stream_agents.agents.conversation import Message
-from stream_agents.processors import BaseProcessor
+from stream_agents.core.processors import BaseProcessor
+
+if TYPE_CHECKING:
+    from stream_agents.core.agents.conversation import Message
 
 
 class ClaudeLLM(LLM):
@@ -55,7 +57,9 @@ class ClaudeLLM(LLM):
         )
 
     @staticmethod
-    def _normalize_message(claude_messages: Iterable[Message]) -> List[Message]:
+    def _normalize_message(claude_messages: Iterable["Message"]) -> List["Message"]:
+        from stream_agents.core.agents.conversation import Message
+        
         if isinstance(claude_messages, str):
             claude_messages = [{"content": claude_messages, "role": "user", "type": "text"}]
 

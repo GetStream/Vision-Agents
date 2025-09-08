@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, Generic, List, Optional, TYPE_CHECKING, 
 
 from getstream.video.rtc.track_util import PcmData
 if TYPE_CHECKING:
-    from stream_agents.agents import Agent
+    from stream_agents.core.agents import Agent
 
 import abc
 import logging

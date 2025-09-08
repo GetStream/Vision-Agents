@@ -1,15 +1,17 @@
 import datetime
-from typing import Optional, List, ParamSpec, TypeVar, Callable
+from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING
 
 from openai import OpenAI
 from openai.resources.responses import Responses
 
 from getstream.models import Response
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from stream_agents.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm import LLM, LLMResponse
 
-from stream_agents.agents.conversation import Message
-from stream_agents.processors import BaseProcessor
+from stream_agents.core.processors import BaseProcessor
+
+if TYPE_CHECKING:
+    from stream_agents.core.agents.conversation import Message
 
 
 P = ParamSpec("P")
@@ -82,7 +84,9 @@ class OpenAILLM(LLM):
         )
 
     @staticmethod
-    def _normalize_message(openai_input) -> List[Message]:
+    def _normalize_message(openai_input) -> List["Message"]:
+        from stream_agents.core.agents.conversation import Message
+        
         # standardize on input
         if isinstance(openai_input, str):
             openai_input = [

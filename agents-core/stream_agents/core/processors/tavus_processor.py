@@ -7,7 +7,7 @@ from daily import CallClient, Daily, EventHandler
 from aiortc import AudioStreamTrack, VideoStreamTrack
 import av
 
-from stream_agents.processors.base_processor import (
+from stream_agents.core.processors.base_processor import (
     AudioVideoProcessor,
     AudioPublisherMixin,
     VideoPublisherMixin,
