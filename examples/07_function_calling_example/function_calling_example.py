@@ -13,7 +13,17 @@ from stream_agents.core.llm import OpenAILLM, ClaudeLLM, GeminiLLM
 async def main():
     """Main function to demonstrate function calling."""
     
-    # Example functions that can be called by the LLM
+    # Initialize LLM (you can switch between different providers)
+    # Make sure to set your API keys in environment variables
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("Please set OPENAI_API_KEY environment variable")
+        return
+    
+    llm = OpenAILLM(model="gpt-4", api_key=api_key)
+    
+    # Register functions with the LLM using decorator syntax
+    @llm.register_function(description="Get current weather for a location")
     def get_weather(location: str) -> Dict[str, Any]:
         """Get the current weather for a location."""
         # Mock weather data
@@ -25,10 +35,12 @@ async def main():
         }
         return weather_data
     
+    @llm.register_function(description="Calculate the sum of two numbers")
     def calculate_sum(a: int, b: int) -> int:
         """Calculate the sum of two numbers."""
         return a + b
     
+    @llm.register_function(description="Get user information by ID")
     def get_user_info(user_id: str) -> Dict[str, Any]:
         """Get information about a user by their ID."""
         # Mock user data
@@ -39,20 +51,6 @@ async def main():
             "status": "active"
         }
         return user_data
-    
-    # Initialize LLM (you can switch between different providers)
-    # Make sure to set your API keys in environment variables
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        print("Please set OPENAI_API_KEY environment variable")
-        return
-    
-    llm = OpenAILLM(model="gpt-4", api_key=api_key)
-    
-    # Register functions with the LLM
-    llm.register_function(description="Get current weather for a location")(get_weather)
-    llm.register_function(description="Calculate the sum of two numbers")(calculate_sum)
-    llm.register_function(description="Get user information by ID")(get_user_info)
     
     print("Available functions:")
     for schema in llm.get_available_functions():
