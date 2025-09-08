@@ -30,7 +30,7 @@ from getstream.video.rtc.tracks import (
 from .conversation import Conversation, StreamConversation
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
-from ..llm.openai_llm import OpenAILLM
+from ..llm.openai_llm import OpenAILLM, StandardizedTextDeltaEvent
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING
@@ -90,6 +90,18 @@ class Agent:
         self.queue = ReplyQueue(self)
         self.conversation = None
         self.llm.attach_agent(self)
+
+        @self.llm.on('standardized.output_text.delta')
+        def _partial_messages(event: StandardizedTextDeltaEvent):
+            """Handle partial transcript from STT service."""
+            if event.delta and event.delta.strip():
+                if self.conversation:
+                    self.conversation.partial_update_message(event.delta, self.agent_user)
+
+        @self.stt.on("partial_transcript")
+        def partial_transcript(event: STTPartialTranscriptEvent, *args, **kwargs):
+            import pdb; pdb.set_trace()
+            pass
 
         # Initialize state variables
         self._is_running: bool = False
@@ -425,6 +437,7 @@ class Agent:
         participant: Participant = None,
         metadata=None,
     ):
+
         """Handle partial transcript from STT service."""
         if event.text and event.text.strip():
             if self.conversation:
@@ -434,6 +447,7 @@ class Agent:
     async def _on_transcript(
         self, event: STTTranscriptEvent, participant: Participant = None, metadata=None
     ):
+        import pdb; pdb.set_trace()
         """Handle final transcript from STT service."""
         if event.text and event.text.strip():
             if self.conversation:

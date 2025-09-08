@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from stream_agents.core.llm.llm import LLMResponse
-from stream_agents.core.llm.openai_llm import OpenAILLM
+from stream_agents.core.llm.openai_llm import OpenAILLM, StandardizedTextDeltaEvent
 
 from stream_agents.core.agents.conversation import Message
 
@@ -56,6 +56,12 @@ class TestOpenAILLM:
 
     @pytest.mark.integration
     async def test_native_api(self, llm: OpenAILLM):
+        streamingWorks = False
+        @llm.on('standardized.output_text.delta')
+        def passed(event: StandardizedTextDeltaEvent):
+            nonlocal streamingWorks
+            streamingWorks = True
+
         response = await llm.create_response(
             input="say hi",
             instructions="You are a helpful assistant."
@@ -64,6 +70,18 @@ class TestOpenAILLM:
         # Assertions
         assert response.text
         assert hasattr(response.original, 'id')  # OpenAI response has id
+        assert streamingWorks
+
+    @pytest.mark.integration
+    async def test_streaming(self, llm: OpenAILLM):
+
+
+        response = await llm.simple_response(
+            "Explain quantum computing in 1 paragraph",
+        )
+
+
+        assert response.text
 
     @pytest.mark.integration
     async def test_memory(self, llm: OpenAILLM):

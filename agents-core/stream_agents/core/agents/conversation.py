@@ -61,6 +61,7 @@ class InMemoryConversation(Conversation):
     def partial_update_message(self, text: str, user):
         """Handle partial transcript updates."""
         user_id = user.user_id if user and hasattr(user, "user_id") else "unknown"
+
         self.update_last_message(text, user_id)
 
 class StreamConversation(InMemoryConversation):

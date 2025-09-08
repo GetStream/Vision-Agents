@@ -1,11 +1,15 @@
 import datetime
-from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Literal
 
-from openai import OpenAI
+from openai import OpenAI, Stream
+from openai.lib.streaming.responses import ResponseStreamEvent
 from openai.resources.responses import Responses
 
 from getstream.models import Response
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from openai.types.responses import ResponseCompletedEvent, ResponseOutputText, ResponseTextDeltaEvent
+
 from stream_agents.core.llm.llm import LLM, LLMResponse
 
 from stream_agents.core.processors import BaseProcessor
@@ -22,6 +26,26 @@ def use_create(fn: Callable[P, R]) -> Callable[P, R]:
 
 # TODO: somehow this isn't right, docs aren't great: https://peps.python.org/pep-0612/
 bound = use_create(Responses.create)
+
+@dataclass
+class StandardizedTextDeltaEvent:
+    content_index: int
+    """The index of the content part that the text delta was added to."""
+
+    delta: str
+    """The text delta that was added."""
+
+    item_id: str
+    """The ID of the output item that the text delta was added to."""
+
+    output_index: int
+    """The index of the output item that the text delta was added to."""
+
+    sequence_number: int
+    """The sequence number for this event."""
+
+    type: Literal["response.output_text.delta"]
+    """The type of the event. Always `response.output_text.delta`."""
 
 class OpenAILLM(LLM):
     '''
@@ -70,23 +94,44 @@ class OpenAILLM(LLM):
             *args, **kwargs
         )
 
-        # handle both streaming and non-streaming response types
-        for event in response:
-            from pprint import pprint
-            pprint(event.response)
-            #self.emit(event.type, event.response)
-            # standardize the events. emit both the native and standardized events?
+        if isinstance(response, Response):
+            llm_response = LLMResponse[Response](response, response.output_text)
+        elif isinstance(response, Stream):
+            response : Stream[ResponseStreamEvent] = response
+            # handle both streaming and non-streaming response types
+            for event in response:
+                from pprint import pprint
+                pprint(event.type)
+                if event.type == "response.output_text.delta":
+                    event : ResponseTextDeltaEvent = event
 
-            pass
+                    standardized_event = StandardizedTextDeltaEvent(
+                        content_index=event.content_index,
+                        item_id=event.item_id,
+                        output_index=event.output_index,
+                        sequence_number=event.sequence_number,
+                        type=event.type,
+                        delta=event.delta,
+                    )
+                    self.emit("standardized.output_text.delta", standardized_event)
 
-        llm_response = LLMResponse[Response](response, response.output_text)
+                    pprint(event.delta)
+                    print("\n")
+                elif event.type == "response.completed":
+                    event : ResponseCompletedEvent = event
+                    llm_response = LLMResponse[Response](event.response, event.response.output_text)
+                    self.emit("standardized.response.completed", llm_response)
+                else:
+                    pprint( event)
 
+                self.emit(event.type, event)
+                # standardize the events. emit both the native and standardized events?
 
-
-
+                pass
 
         if hasattr(self, "after_response_listener"):
             await self.after_response_listener(llm_response)
+
         return llm_response
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, participant: Participant = None):
