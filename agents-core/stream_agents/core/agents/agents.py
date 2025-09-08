@@ -112,7 +112,10 @@ class Agent:
         pass
 
     async def after_response(self, llm_response):
-        await self.queue.resume(llm_response)
+        # In Realtime (STS) mode or when not joined to a call, conversation may be None.
+        # Only resume the reply queue (which writes to conversation/tts) when a conversation exists.
+        if self.conversation is not None:
+            await self.queue.resume(llm_response)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call

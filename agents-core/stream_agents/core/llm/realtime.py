@@ -186,6 +186,29 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         """Optionally overridden by providers to resume audio playback."""
         return None
 
+    # --- Optional provider-native passthroughs for advanced usage ---
+    def get_native_session(self) -> Any:
+        """Return underlying provider session if available (advanced use).
+
+        Providers should override to return their native session object.
+        Default returns None.
+        """
+        return None
+
+    async def native_send_realtime_input(
+        self,
+        *,
+        text: Optional[str] = None,
+        audio: Optional[Any] = None,
+        media: Optional[Any] = None,
+    ) -> None:
+        """Advanced: provider-native realtime input (text/audio/media).
+
+        Providers that support a native realtime input API should override this.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError("native_send_realtime_input is not implemented for this provider")
+
     async def simple_response(
         self,
         *,

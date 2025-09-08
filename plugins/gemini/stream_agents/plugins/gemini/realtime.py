@@ -411,12 +411,13 @@ class Realtime(llm.Realtime):
                             turn_text_parts.append(text)
 
                     # Small pause between turns to avoid tight loop
-                    if turn_text_parts:
-                        try:
-                            self._emit_response_event("".join(turn_text_parts), is_complete=True)
-                        except Exception:
-                            pass
-                        turn_text_parts = []
+                    try:
+                        # Always emit a final done event at end-of-turn, even if text was empty.
+                        final_text = "".join(turn_text_parts) if turn_text_parts else ""
+                        self._emit_response_event(final_text, is_complete=True)
+                    except Exception:
+                        pass
+                    turn_text_parts = []
                     await asyncio.sleep(0)
             except asyncio.CancelledError:  # graceful stop
                 return

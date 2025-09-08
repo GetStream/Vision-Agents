@@ -36,9 +36,11 @@ async def start_agent() -> None:
 
     # Have the agent join the call/room
     with await agent.join(call):
-        # Example: prompt the assistant to greet the user
-        # This will stream audio back to the call using the Realtime provider
-        await agent.llm.simple_response("Please greet the user and ask how their day is going.")
+        # Example 1: standardized simple response (aggregates delta/done)
+        await agent.llm.simple_response(text="Please greet the user and ask how their day is going.")
+
+        # Example 2: provider-native passthrough for advanced control
+        await agent.llm.native_send_realtime_input(text="Also mention that you can see and hear them clearly.")
 
         await agent.finish()  # run till the call ends
 
