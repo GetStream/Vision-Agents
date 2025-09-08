@@ -16,7 +16,7 @@ from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from getstream.chat.client import ChatClient
 from getstream.models import User, ChannelInput, UserRequest
-from getstream.plugins.common import get_global_registry, EventType
+from ..events import get_global_registry, EventType
 from getstream.video import rtc
 from getstream.video.call import Call
 from getstream.video.rtc import audio_track

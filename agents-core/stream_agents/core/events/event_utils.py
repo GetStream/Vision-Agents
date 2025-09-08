@@ -120,7 +120,7 @@ class EventRegistry:
         #self.register_event(event_dataclass)
         pass
 
-    def add_connection_listeners(self, connection: rtc.ConnectionManager, event_mapping):
+    def add_connection_listeners(self, connection: 'rtc.ConnectionManager', event_mapping):
         # add connection sfu listeners for events
         # add connection.ws listeners for events
         for event_type in self.listeners:
