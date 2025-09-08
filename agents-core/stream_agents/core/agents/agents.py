@@ -182,26 +182,26 @@ class Agent:
             default=self._get_subscription_config()
         )
 
-        async with (
-            await rtc.join(
-                call, self.agent_user.id, subscription_config=subscription_config
-            ) as connection
-        ):
-            self._connection = connection
-            self._is_running = True
+        # Open RTC connection and keep it alive for the duration of the returned context manager
+        connection_cm = await rtc.join(
+            call, self.agent_user.id, subscription_config=subscription_config
+        )
+        connection = await connection_cm.__aenter__()
+        self._connection = connection
+        self._is_running = True
 
-            self.logger.info(f"🤖 Agent joined call: {call.id}")
+        self.logger.info(f"🤖 Agent joined call: {call.id}")
 
-            # Set up audio and video tracks together to avoid SDP issues
-            audio_track = self._audio_track if self.publish_audio else None
-            video_track = self._video_track if self.publish_video else None
+        # Set up audio and video tracks together to avoid SDP issues
+        audio_track = self._audio_track if self.publish_audio else None
+        video_track = self._video_track if self.publish_video else None
 
-            if audio_track or video_track:
-                await connection.add_tracks(audio=audio_track, video=video_track)
-                if audio_track:
-                    self.logger.debug("🤖 Agent ready to speak")
-                if video_track:
-                    self.logger.debug("🎥 Agent ready to publish video")
+        if audio_track or video_track:
+            await connection.add_tracks(audio=audio_track, video=video_track)
+            if audio_track:
+                self.logger.debug("🤖 Agent ready to speak")
+            if video_track:
+                self.logger.debug("🎥 Agent ready to publish video")
 
             # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
@@ -210,18 +210,9 @@ class Agent:
 
             # Realtime providers manage their own event loops; nothing to do here
 
-            # Keep the agent running and listening
-            self.logger.info("🎧 Agent is active - press Ctrl+C to stop")
-            try:
-                # Wait for the connection to stay alive
-                await connection.wait()
-            except Exception as e:
-                self.logger.error(f"❌ Error while waiting for connection: {e}")
-                self.logger.error(traceback.format_exc())
-
             from .agent_session import AgentSessionContextManager
 
-            return AgentSessionContextManager(self)
+            return AgentSessionContextManager(self, connection_cm)
 
     async def say(self, text):
         await self.queue.say_text(text)
@@ -290,19 +281,11 @@ class Agent:
 
             await self.reply_to_audio(pcm, participant)
 
-        # listen to video tracks if we have video or image processors
-        self.logger.info(
-            "VDP: checking image and video processors %s %s",
-            self.video_processors,
-            self.image_processors,
-        )
-        if self.video_processors or self.image_processors:
-            self.logger.info("VDP: ok image and video processors")
-
-            @self._connection.on("track_added")
-            async def on_track(track_id, track_type, user):
-                self.logger.info("VDP: on track")
-                asyncio.create_task(self._process_track(track_id, track_type, user))
+        # Always listen to remote video tracks so we can forward frames to Realtime providers
+        @self._connection.on("track_added")
+        async def on_track(track_id, track_type, user):
+            self.logger.info("VDP: on track")
+            asyncio.create_task(self._process_track(track_id, track_type, user))
 
     async def reply_to_audio(
         self, pcm_data: PcmData, participant: models_pb2.Participant
@@ -355,8 +338,8 @@ class Agent:
             f"🎥 Participant object: {participant}, type: {type(participant)}"
         )
 
-        # Only process video tracks - track_type might be numeric (2 for video)
-        if track_type != "video":
+        # Only process video tracks - track_type might be string, enum or numeric (2 for video)
+        if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
 

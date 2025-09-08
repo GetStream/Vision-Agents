@@ -231,6 +231,8 @@ class Realtime(llm.Realtime):
             self._emit_transcript_event(text=text, is_user=True)
         except Exception:
             pass
+        # Ensure playback is enabled before expecting an assistant reply
+        self.resume_playback()
         await session.send_realtime_input(text=text)
 
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000):
@@ -280,9 +282,6 @@ class Realtime(llm.Realtime):
         audio_bytes = audio_array.tobytes()
         mime = f"audio/pcm;rate={target_rate}"
         blob = Blob(data=audio_bytes, mime_type=mime)
-        logger.info(
-            "Sending %d bytes audio to Gemini Live (%s)", len(audio_bytes), mime
-        )
         # Emit standardized audio input event
         try:
             self._emit_audio_input_event(audio_bytes, sample_rate=target_rate)
@@ -364,7 +363,26 @@ class Realtime(llm.Realtime):
         and send_audio_pcm.
         """
         session = await self._require_session()
+        # Ensure playback is enabled so replies go to the call
+        self.resume_playback()
         await session.send_realtime_input(text=text, audio=audio, media=media)
+
+    async def simple_response(
+        self,
+        *,
+        text: str,
+        timeout: Optional[float] = 30.0,
+        processors: Optional[List[Any]] = None,
+        participant: Any = None,
+    ):
+        """Standardized single-turn response that aggregates deltas and speaks into the call.
+
+        Delegates to the base implementation which listens for STSResponseEvent
+        delta/done and returns a RealtimeResponse. Playback is ensured via send_text.
+        """
+        return await super().simple_response(
+            text=text, processors=processors, participant=participant, timeout=timeout
+        )
 
     async def start_response_listener(
         self,
