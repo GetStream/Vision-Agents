@@ -30,7 +30,7 @@ jobs:
 
       - name: Extract package version (hatch via uv)
         id: get_version
-        working-directory: stream-agents
+        working-directory: agents-core
         run: |
           VERSION=$(uv run -q hatch version)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
