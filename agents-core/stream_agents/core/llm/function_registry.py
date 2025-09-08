@@ -5,7 +5,6 @@ Function registry for managing available functions that can be called by LLMs.
 from __future__ import annotations
 
 import inspect
-import json
 from typing import Any, Callable, Dict, List, Optional, Type, Union, get_type_hints
 from dataclasses import dataclass
 from enum import Enum
@@ -174,17 +173,17 @@ class FunctionRegistry:
     def _type_to_json_schema(self, type_hint: Type) -> Dict[str, Any]:
         """Convert a Python type hint to a JSON schema."""
         # Handle basic types
-        if type_hint == str or type_hint == str:
+        if type_hint is str:
             return {"type": "string"}
-        elif type_hint == int or type_hint == int:
+        elif type_hint is int:
             return {"type": "integer"}
-        elif type_hint == float or type_hint == float:
+        elif type_hint is float:
             return {"type": "number"}
-        elif type_hint == bool or type_hint == bool:
+        elif type_hint is bool:
             return {"type": "boolean"}
-        elif type_hint == list or type_hint == List:
+        elif type_hint is list or type_hint is List:
             return {"type": "array"}
-        elif type_hint == dict or type_hint == Dict:
+        elif type_hint is dict or type_hint is Dict:
             return {"type": "object"}
         
         # Handle Optional types

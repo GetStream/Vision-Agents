@@ -1,12 +1,10 @@
-import datetime
 from typing import Optional, List, Iterable, TYPE_CHECKING, Dict, Any
 
 import anthropic
 from anthropic import AsyncAnthropic
-from anthropic.types import MessageParam
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
-from stream_agents.core.llm.llm_types import NormalizedResponse, NormalizedToolCallItem, NormalizedToolResultItem
+from stream_agents.core.llm.llm_types import NormalizedResponse, NormalizedToolCallItem
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.processors import BaseProcessor

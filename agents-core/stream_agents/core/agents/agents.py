@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import traceback
-from contextlib import nullcontext
 from typing import Optional, List, Any
 from uuid import uuid4
 
@@ -27,10 +26,9 @@ from getstream.video.rtc.tracks import (
     TrackType,
 )
 
-from .conversation import Conversation, StreamConversation
+from .conversation import StreamConversation
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
-from ..llm.openai_llm import OpenAILLM
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING

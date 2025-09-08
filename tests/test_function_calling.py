@@ -3,7 +3,6 @@ Tests for function calling functionality.
 """
 
 import pytest
-from unittest.mock import Mock, patch
 
 from stream_agents.core.llm import FunctionRegistry, function_registry
 
@@ -35,12 +34,12 @@ class TestFunctionRegistry:
         # Check parameter details
         x_param = next(p for p in func_def.parameters if p.name == "x")
         assert x_param.required is True
-        assert x_param.type == int
+        assert x_param.type is int
         
         y_param = next(p for p in func_def.parameters if p.name == "y")
         assert y_param.required is False
         assert y_param.default == "default"
-        assert y_param.type == str
+        assert y_param.type is str
     
     def test_call_function(self):
         """Test calling a registered function."""

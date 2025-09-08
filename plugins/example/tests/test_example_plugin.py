@@ -1,5 +1,3 @@
-import os
-from typing import List
 
 import pytest
 from dotenv import load_dotenv

@@ -1,4 +1,3 @@
-import datetime
 from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Dict, Any
 
 from openai import OpenAI
@@ -7,7 +6,7 @@ from openai.resources.responses import Responses
 from getstream.models import Response
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.llm.llm import LLM, LLMResponse
-from stream_agents.core.llm.llm_types import NormalizedResponse, NormalizedToolCallItem, NormalizedToolResultItem
+from stream_agents.core.llm.llm_types import NormalizedResponse, NormalizedToolCallItem
 
 from stream_agents.core.processors import BaseProcessor
 

@@ -3,7 +3,7 @@ from typing import Optional, List, TYPE_CHECKING, Dict, Any
 from google import genai
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
-from stream_agents.core.llm.llm_types import NormalizedResponse, NormalizedToolCallItem, NormalizedToolResultItem
+from stream_agents.core.llm.llm_types import NormalizedResponse, NormalizedToolCallItem
 
 from stream_agents.core.processors import BaseProcessor
 

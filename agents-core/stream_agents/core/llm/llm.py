@@ -6,14 +6,14 @@ if TYPE_CHECKING:
     from stream_agents.core.agents.conversation import Conversation
 
 
-from typing import List, TypeVar, Optional, Any, Callable, Generic, Dict
+from typing import List, TypeVar, Any, Callable, Generic, Dict
 
 from av.dictionary import Dictionary
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.processors import BaseProcessor
 from .function_registry import FunctionRegistry
-from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolCallItem, NormalizedToolResultItem
+from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolResultItem
 
 T = TypeVar("T")
 
