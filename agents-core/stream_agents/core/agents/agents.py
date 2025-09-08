@@ -98,10 +98,6 @@ class Agent:
                 if self.conversation:
                     self.conversation.partial_update_message(event.delta, self.agent_user)
 
-        @self.stt.on("partial_transcript")
-        def partial_transcript(event: STTPartialTranscriptEvent, *args, **kwargs):
-            import pdb; pdb.set_trace()
-            pass
 
         # Initialize state variables
         self._is_running: bool = False
@@ -434,27 +430,21 @@ class Agent:
     async def _on_partial_transcript(
         self,
         event: STTPartialTranscriptEvent,
-        participant: Participant = None,
-        metadata=None,
     ):
-
-        """Handle partial transcript from STT service."""
         if event.text and event.text.strip():
             if self.conversation:
-                self.conversation.partial_update_message(event.text, participant)
+                self.conversation.partial_update_message(event.text, event.user_metadata)
             self.logger.debug(f"🎤 [partial]: {event.text}")
 
     async def _on_transcript(
-        self, event: STTTranscriptEvent, participant: Participant = None, metadata=None
+        self, event: STTTranscriptEvent
     ):
-        import pdb; pdb.set_trace()
-        """Handle final transcript from STT service."""
         if event.text and event.text.strip():
             if self.conversation:
                 self.conversation.finish_last_message(event.text)
 
             # Process transcription through LLM and respond
-            await self._process_transcription(event.text, participant)
+            await self._process_transcription(event.text, event.user_metadata)
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""
