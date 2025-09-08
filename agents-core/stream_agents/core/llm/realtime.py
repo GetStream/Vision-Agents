@@ -13,7 +13,7 @@ import uuid
 from pyee.asyncio import AsyncIOEventEmitter
 from av.dictionary import Dictionary
 
-from ..events import (
+from stream_agents.core.events import (
     STSConnectedEvent,
     STSDisconnectedEvent,
     STSAudioInputEvent,
