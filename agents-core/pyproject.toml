@@ -42,7 +42,7 @@ dependencies = [
 [project.urls]
 Documentation = "https://getstream.io/video/docs/python-ai/"
 Website = "https://getstream.io/video/voice-agents/"
-Source = "https://github.com/getstream/stream-agents"
+Source = "https://github.com/getstream/agents"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff"]
