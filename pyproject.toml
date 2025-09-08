@@ -14,7 +14,7 @@ stream-agents-plugins-xai = { workspace = true }
 
 [tool.uv.workspace]
 members = [
-    "stream-agents", 
+    "agents-core", 
     "plugins/anthropic",
     "plugins/cartesia", 
     "plugins/deepgram",

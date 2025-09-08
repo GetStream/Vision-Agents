@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = [".", "stream_agents"]
 
 [tool.uv.sources]
 stream-agents = { workspace = true }

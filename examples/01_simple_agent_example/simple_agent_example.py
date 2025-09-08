@@ -4,10 +4,10 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from getstream.plugins.elevenlabs.tts import ElevenLabsTTS
-from getstream.plugins.deepgram.stt import DeepgramSTT
-from stream_agents.llm.openai_llm import OpenAILLM
-from stream_agents.turn_detection import FalTurnDetection
+from stream_agents.plugins.elevenlabs.tts import ElevenLabsTTS
+from stream_agents.plugins.deepgram.stt import DeepgramSTT
+from stream_agents.core.llm.openai_llm import OpenAILLM
+from stream_agents.core.turn_detection import FalTurnDetection
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
 load_dotenv()
