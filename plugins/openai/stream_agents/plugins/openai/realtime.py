@@ -58,14 +58,14 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from stream_agents.llm.sts import STS
+from stream_agents.core import sts
 from getstream.video.call import Call
 from getstream.video.openai import ConnectionManagerWrapper
 
 logger = logging.getLogger(__name__)
 
 
-class OpenAIRealtime(STS):
+class Realtime(sts.STS):
     """Speech-to-Speech wrapper for the OpenAI Realtime API."""
 
     def __init__(
@@ -191,4 +191,4 @@ class OpenAIRealtime(STS):
 
 
 # Re-export for ``from getstream.plugins.sts.openai_realtime import OpenAIRealtime``
-__all__ = ["OpenAIRealtime"]
+__all__ = ["Realtime"]
