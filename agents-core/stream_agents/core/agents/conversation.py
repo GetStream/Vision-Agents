@@ -1,5 +1,5 @@
 import datetime
-from typing import Optional, List, TypedDict, Required, Any
+from typing import Optional, List, Any
 
 from getstream.chat.client import ChatClient
 from getstream.models import MessageRequest, ChannelResponse, MessageResponse

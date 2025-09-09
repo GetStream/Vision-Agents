@@ -100,7 +100,7 @@ async def test_agent_conversation_updates_with_realtime(monkeypatch):
     call = SimpleNamespace(id="c1", client=SimpleNamespace(stream=SimpleNamespace(chat=SimpleNamespace(get_or_create_channel=lambda *a, **k: SimpleNamespace(data=SimpleNamespace(channel="ch"))))))
 
     # Run join (which registers event mirroring to conversation)
-    mgr = await agent.join(call)
+    await agent.join(call)
 
     # Trigger a send_text to produce transcript and response events
     await rt.send_text("Hi")

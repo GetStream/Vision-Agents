@@ -1,4 +1,3 @@
-from __future__ import annotations
 """
 Realtime base class contract and streaming semantics
 ===================================================
@@ -46,6 +45,7 @@ Notes
 - For audio-only turns, done should be emitted with empty text; callers receive
   RealtimeResponse(text="") but the audio is still emitted on the "audio" event
 """
+from __future__ import annotations
 
 from typing import Any, Callable, Dict, Generic, List, Optional, TYPE_CHECKING, TypeVar, Awaitable
 
@@ -62,7 +62,7 @@ import uuid
 from pyee.asyncio import AsyncIOEventEmitter
 from av.dictionary import Dictionary
 
-from ..events import (
+from ..events.events import (
     RealtimeConnectedEvent,
     RealtimeDisconnectedEvent,
     RealtimeAudioInputEvent,
@@ -73,8 +73,8 @@ from ..events import (
     RealtimeErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
-    register_global_event,
 )
+from ..events.event_utils import register_global_event
 
 T = TypeVar("T")
 

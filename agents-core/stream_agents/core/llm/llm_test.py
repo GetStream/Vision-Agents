@@ -20,15 +20,7 @@ And more advanced things
 
 """
 
-import os
-import pytest
-from dotenv import load_dotenv
 
-from anthropic import AsyncAnthropic
-from anthropic.types import Message
-from openai import OpenAI
 
-from stream_agents.core.llm.claude_llm import ClaudeLLM
-from stream_agents.core.llm.llm import LLMResponse
 
 

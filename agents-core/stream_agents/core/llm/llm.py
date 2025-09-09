@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
+    from stream_agents.core.agents.conversation import Conversation
 
 
-from typing import List, TypeVar, Optional, Any, Callable, Generic
+from typing import List, TypeVar, Any, Callable, Generic
 
 from av.dictionary import Dictionary
 

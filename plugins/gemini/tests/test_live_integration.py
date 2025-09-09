@@ -4,6 +4,11 @@ import asyncio
 import pytest
 from typing import List, TypedDict
 
+
+class _Events(TypedDict):
+    audio: List[bytes]
+    text: List[str]
+
 try:
     from dotenv import load_dotenv
 
@@ -33,9 +38,6 @@ async def test_gemini_live_with_real_api():
     from stream_agents.plugins import gemini
     
     # Set up instance and event capture
-    class _Events(TypedDict):
-        audio: List[bytes]
-        text: List[str]
 
     events: _Events = {"audio": [], "text": []}
     sts = gemini.Realtime(api_key=api_key)

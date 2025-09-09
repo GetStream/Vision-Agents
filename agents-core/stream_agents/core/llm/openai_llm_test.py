@@ -1,11 +1,7 @@
-import os
-from typing import List
 
 import pytest
 from dotenv import load_dotenv
-from openai import OpenAI
 
-from stream_agents.core.llm.llm import LLMResponse
 from stream_agents.core.llm.openai_llm import OpenAILLM
 
 from stream_agents.core.agents.conversation import Message
@@ -28,7 +24,7 @@ class TestOpenAILLM:
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
-        assert message.content is "say hi"
+        assert message.content == "say hi"
 
 
     def test_advanced_message(self, llm: OpenAILLM):

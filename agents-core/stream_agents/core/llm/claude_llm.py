@@ -1,9 +1,7 @@
-import datetime
 from typing import Optional, List, Iterable, TYPE_CHECKING
 
 import anthropic
 from anthropic import AsyncAnthropic
-from anthropic.types import MessageParam
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
 

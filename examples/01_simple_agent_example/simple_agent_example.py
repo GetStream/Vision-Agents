@@ -1,18 +1,11 @@
 import asyncio
-<<<<<<< HEAD
 import logging
-=======
->>>>>>> main
 from uuid import uuid4
 
 from dotenv import load_dotenv
 
-<<<<<<< HEAD
-from stream_agents.plugins import gemini
-=======
 from stream_agents.plugins import elevenlabs, deepgram
 from stream_agents.core.llm.openai_llm import OpenAILLM
->>>>>>> main
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher
