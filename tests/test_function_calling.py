@@ -235,7 +235,7 @@ class TestOpenAIFunctionCalling:
         assert result == "Weather in New York: Sunny, 72°F"
     
     @patch('stream_agents.core.llm.openai_llm.OpenAI')
-    def test_openai_conversational_response(self, mock_openai):
+    async def test_openai_conversational_response(self, mock_openai):
         """Test OpenAI conversational response generation."""
         mock_client = Mock()
         mock_openai.return_value = mock_client
@@ -266,7 +266,7 @@ class TestOpenAIFunctionCalling:
         ]
         
         original_response = Mock()
-        response = llm._generate_conversational_response(tool_results, original_response)
+        response = await llm._generate_conversational_response(tool_results, original_response)
         
         assert response == "The weather in New York is sunny and 72°F. Perfect for a walk!"
 
@@ -310,7 +310,7 @@ class TestClaudeFunctionCalling:
         assert result == "Weather in New York: Sunny, 72°F"
     
     @patch('stream_agents.core.llm.claude_llm.anthropic')
-    def test_claude_conversational_response(self, mock_anthropic):
+    async def test_claude_conversational_response(self, mock_anthropic):
         """Test Claude conversational response generation."""
         mock_client = Mock()
         mock_anthropic.AsyncAnthropic.return_value = mock_client
@@ -318,7 +318,12 @@ class TestClaudeFunctionCalling:
         # Mock follow-up response
         mock_followup = Mock()
         mock_followup.content = [Mock(text="The weather in New York is sunny and 72°F. Perfect for a walk!")]
-        mock_client.messages.create.return_value = mock_followup
+        
+        # Create async mock for the create method
+        async def async_create(*args, **kwargs):
+            return mock_followup
+        
+        mock_client.messages.create = async_create
         
         llm = ClaudeLLM(api_key="test-key", model="claude-3-sonnet-20240229")
         
@@ -339,7 +344,7 @@ class TestClaudeFunctionCalling:
         ]
         
         original_response = Mock()
-        response = llm._generate_conversational_response(tool_results, original_response)
+        response = await llm._generate_conversational_response(tool_results, original_response)
         
         assert response == "The weather in New York is sunny and 72°F. Perfect for a walk!"
 
@@ -386,7 +391,7 @@ class TestGeminiFunctionCalling:
         assert result == "Weather in New York: Sunny, 72°F"
     
     @patch('stream_agents.core.llm.gemini_llm.genai')
-    def test_gemini_conversational_response(self, mock_genai):
+    async def test_gemini_conversational_response(self, mock_genai):
         """Test Gemini conversational response generation."""
         mock_client = Mock()
         mock_genai.Client.return_value = mock_client
@@ -411,7 +416,7 @@ class TestGeminiFunctionCalling:
         ]
         
         original_response = Mock()
-        response = llm._generate_conversational_response(tool_results, original_response)
+        response = await llm._generate_conversational_response(tool_results, original_response)
         
         assert response == "The weather in New York is sunny and 72°F. Perfect for a walk!"
 
