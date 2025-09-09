@@ -143,6 +143,19 @@ class Realtime(realtime.Realtime):
         )
         return self._connection
 
+    # Implement abstract methods from base
+    def send_audio_pcm(self, pcm, target_rate: int = 48000):
+        # Audio is forwarded by the SDK connection; base does not need to send here in tests
+        return None
+
+    async def _close_impl(self):
+        # If we had a connection, ensure it is closed
+        if self._connection and hasattr(self._connection, "__aexit__"):
+            try:
+                await self._connection.__aexit__(None, None, None)  # type: ignore[misc]
+            except Exception:
+                pass
+
     async def update_session(self, **session_fields):
         """Wrapper around ``connection.session.update()``."""
         if not self.is_connected or not self._connection:
