@@ -11,13 +11,13 @@ pip install getstream-plugins-deepgram
 ## Usage
 
 ```python
-from stream_agents.plugins import deepgram
+from getstream.plugins.deepgram import DeepgramSTT
 
 # Initialize with API key from environment variable
-stt = deepgram.STT()
+stt = DeepgramSTT()
 
 # Or specify API key directly
-stt = deepgram.STT(api_key="your_deepgram_api_key")
+stt = DeepgramSTT(api_key="your_deepgram_api_key")
 
 # Register event handlers
 @stt.on("transcript")

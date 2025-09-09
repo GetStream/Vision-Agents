@@ -2,7 +2,7 @@ import asyncio
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from getstream.plugins import DeepgramSTT, ElevenLabsTTS
+from stream_agents.plugins import deepgram, elevenlabs
 from stream_agents.llm import OpenAILLM
 from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
 
@@ -23,8 +23,8 @@ async def start_agent() -> None:
             name="gpt-4o",
             instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         ),
-        tts=ElevenLabsTTS(),
-        stt=DeepgramSTT(),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
         # turn_detection=FalTurnDetection(),
         # Soccer: processors=[MatchStatistics()]
         # DOTA: processors=[GameStats(), Yolo(), Image()]

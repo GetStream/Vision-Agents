@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from getstream import Stream
 from getstream.models import CallRequest, StartClosedCaptionsResponse, UserRequest
-from getstream.plugins.openai.sts import OpenAIRealtime
+from stream_agents.plugins import openai
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,7 +90,7 @@ async def main():
     # Open demo browser so you can join from the UI
     open_browser(client.api_key, user_token, call_id)
 
-    sts_bot = OpenAIRealtime(
+    sts_bot = openai.Realtime(
         api_key=os.getenv("OPENAI_API_KEY"),
         model=os.getenv("OPENAI_REALTIME_MODEL") or "gpt-realtime",
         instructions="You are a friendly assistant; reply verbally in a short sentence of maximum 5 words.",

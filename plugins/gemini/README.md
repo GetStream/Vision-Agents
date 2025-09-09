@@ -23,14 +23,14 @@ import asyncio
 import os
 
 from getstream import Stream
-from stream_agents.plugins import gemini
+from getstream.plugins.gemini.live import GeminiLive
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
 
 
 async def main():
     # Ensure your key is set: export GOOGLE_API_KEY=... (or GEMINI_API_KEY)
-    gemini_realtime = gemini.Realtime(
+    gemini = GeminiLive(
         api_key=os.getenv("GOOGLE_API_KEY"),
         model="gemini-live-2.5-flash-preview",
     )
@@ -40,15 +40,15 @@ async def main():
 
     async with await rtc.join(call, user_id="assistant-bot") as connection:
         # Route Gemini's synthesized speech back into the call
-        await connection.add_tracks(audio=gemini_realtime.output_track)
+        await connection.add_tracks(audio=gemini.output_track)
 
         # Forward microphone PCM frames to Gemini in realtime
         @connection.on("audio")
         async def on_audio(pcm: PcmData):
-            await gemini_realtime.send_audio_pcm(pcm, target_rate=48000)
+            await gemini.send_audio_pcm(pcm, target_rate=48000)
 
         # Optionally send a kick-off text message
-        await gemini_realtime.send_text("Give a short greeting to the participants.")
+        await gemini.send_text("Give a short greeting to the participants.")
 
         # Keep the session running
         while True:

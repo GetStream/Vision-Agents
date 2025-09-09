@@ -20,7 +20,7 @@ def stt():
         yield stt_instance
 
 
-class Testfal.STT:
+class TestfalSTT:
     """Test suite for the fal.STT class."""
 
     def test_init(self):

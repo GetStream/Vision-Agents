@@ -60,14 +60,14 @@ uv sync        # installs both dependencies
 ## Usage
 
 ```python
-from stream_agents.plugins import moonshine
+from getstream.plugins.moonshine import MoonshineSTT
 from getstream.video.rtc.track_util import PcmData
 
 # Initialize with default settings (base model, 16kHz)
-stt = moonshine.STT()
+stt = MoonshineSTT()
 
 # Or customize the configuration
-stt = moonshine.STT(
+stt = MoonshineSTT(
     model_name="moonshine/tiny",  # Use the smaller, faster model
     sample_rate=16000,            # Moonshine's native sample rate
     min_audio_length_ms=500,      # Minimum audio length for transcription

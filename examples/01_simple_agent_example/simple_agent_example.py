@@ -1,11 +1,9 @@
 import asyncio
-import os
 from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins.elevenlabs.tts import ElevenLabsTTS
-from stream_agents.plugins.deepgram.stt import DeepgramSTT
+from stream_agents.plugins import elevenlabs, deepgram
 from stream_agents.core.llm.openai_llm import OpenAILLM
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge import StreamEdge
@@ -28,8 +26,8 @@ async def start_agent() -> None:
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         # tts, llm, stt more. see the realtime example for sts
         llm=OpenAILLM(model="gpt-4o-mini"),
-        tts=ElevenLabsTTS(),
-        stt=DeepgramSTT(),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
         #turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
