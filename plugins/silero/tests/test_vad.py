@@ -10,7 +10,7 @@ import torchaudio
 from typing import List, Dict, Any, Optional
 
 from stream_agents.plugins import silero
-from plugin_test_utils import get_audio_asset, get_json_metadata
+from plugins.plugin_test_utils import get_audio_asset, get_json_metadata
 from getstream.video.rtc.track_util import PcmData
 
 # Setup logging for the test

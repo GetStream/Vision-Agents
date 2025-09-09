@@ -116,7 +116,9 @@ async def main():
     stt = deepgram.STT()
 
     # Use "Arnold" voice - a default ElevenLabs voice available to all users
-    tts_instance = elevenlabs.TTS(voice_id="VR6AewLTigWG4xSOukaG")  # ID of default voice
+    tts_instance = elevenlabs.TTS(
+        voice_id="VR6AewLTigWG4xSOukaG"
+    )  # ID of default voice
     openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     tts_instance.set_output_track(audio)
 

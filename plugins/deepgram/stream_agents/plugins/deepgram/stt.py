@@ -8,7 +8,7 @@ import time
 
 # Conditional imports with error handling
 try:
-    from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
+    from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions  # type: ignore[attr-defined]
 
     _deepgram_available = True
 except ImportError:
@@ -145,8 +145,10 @@ class STT(stt.STT):
                     # Update the last activity time
                     self.last_activity_time = time.time()
 
-                    # Check if result is already a dict (from LiveResultResponse)
-                    if hasattr(result, "to_dict"):
+                    # Check if result is already a dict (from LiveResultResponse or test mocks)
+                    if isinstance(result, dict):
+                        transcript = result
+                    elif hasattr(result, "to_dict"):
                         transcript = result.to_dict()
                     elif hasattr(result, "to_json"):
                         transcript = json.loads(result.to_json())

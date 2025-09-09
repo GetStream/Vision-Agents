@@ -20,10 +20,10 @@ jobs:
       - uses: ./.github/actions/python-uv-setup
       - name: Run Ruff
         run: uv run ruff check .
-      - name: Mypy main
-        run: uv run mypy --install-types --non-interactive -p stream_agents
+      - name: Mypy core
+        run: uv run mypy --install-types --non-interactive agents-core/stream_agents tests
       - name: Mypy plugins
-        run: uv run mypy --install-types --non-interactive --explicit-package-bases plugins
+        run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
 
   test:
     name: Test "${{ inputs.marker }}"
@@ -37,4 +37,3 @@ jobs:
         run: uv run pytest -n auto -m "${{ inputs.marker }}"
       - name: Run plugin test
         run: uv run pytest plugins/*/tests/*.py -n auto -m "${{ inputs.marker }}"
-

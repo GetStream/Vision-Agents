@@ -12,7 +12,7 @@ import pytest
 import soundfile as sf
 from stream_agents.plugins import silero
 from getstream.video.rtc.track_util import PcmData
-from plugin_test_utils import get_audio_asset
+from plugins.plugin_test_utils import get_audio_asset
 
 
 async def benchmark_vad(use_onnx=False, device="cpu"):
