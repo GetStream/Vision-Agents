@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from stream_agents.plugins import elevenlabs, deepgram, openai, silero
 from stream_agents.core import agents, edge, cli
 from getstream import Stream
-from getstream.plugins.common.events import EventType
+from stream_agents.core.events import EventType
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
