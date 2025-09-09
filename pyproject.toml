@@ -54,8 +54,20 @@ dev = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["agents-core/stream_agents", "plugins", "tests"]
-
+mypy_path = [
+    "agents-core",
+    "plugins/anthropic",
+    "plugins/cartesia",
+    "plugins/deepgram",
+    "plugins/elevenlabs",
+    "plugins/fal",
+    "plugins/gemini",
+    "plugins/kokoro",
+    "plugins/moonshine",
+    "plugins/openai",
+    "plugins/silero",
+    "plugins/xai",
+]
 # Gradual typing → can tighten over time
 ignore_missing_imports = true
 check_untyped_defs = true
