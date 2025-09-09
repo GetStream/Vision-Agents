@@ -37,7 +37,6 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
     agent: Optional["Agent"]
     _conversation: Optional["Conversation"]
 
-
     def __init__(self):
         super().__init__()
         self.agent = None
@@ -48,16 +47,6 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
     def attach_agent(self, agent: Agent):
         self.agent = agent
         self._conversation = agent.conversation
-        self.before_response_listener = lambda x: agent.before_response(x)
-        self.after_response_listener = lambda x: agent.after_response(x)
-
-    def set_before_response_listener(self, before_response_listener: BeforeCb):
-        self.before_response_listener = before_response_listener
-
-    def set_after_response_listener(self, after_response_listener: AfterCb):
-        self.after_response_listener = after_response_listener
-
-
 
 
 

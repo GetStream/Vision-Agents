@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from aiortc import VideoStreamTrack
 
+from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..events import STTTranscriptEvent, STTPartialTranscriptEvent
@@ -30,7 +31,6 @@ from getstream.video.rtc.tracks import (
 from .conversation import Conversation, StreamConversation
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
-from ..llm.openai_llm import OpenAILLM, StandardizedTextDeltaEvent
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING
@@ -90,6 +90,9 @@ class Agent:
         self.queue = ReplyQueue(self)
         self.conversation = None
         self.llm.attach_agent(self)
+        #TODO: naming?
+        self.llm.on("before_llm_response", self.before_response)
+        self.llm.on("after_llm_response", self.after_response)
 
         @self.llm.on('standardized.output_text.delta')
         def _partial_messages(event: StandardizedTextDeltaEvent):
