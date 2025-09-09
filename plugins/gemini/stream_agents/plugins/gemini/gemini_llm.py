@@ -1,4 +1,4 @@
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING, Any
 
 from google import genai
 from google.genai.types import GenerateContentResponse
@@ -42,14 +42,14 @@ class GeminiLLM(LLM):
         """
         super().__init__()
         self.model = model
-        self.chat = None
+        self.chat: Optional[Any] = None
 
         if client is not None:
             self.client = client
         else:
             self.client = genai.Client(api_key=api_key)
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, **kwargs):
+    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, participant: Optional[Any] = None) -> LLMResponse[Any]:
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
 
@@ -83,16 +83,15 @@ class GeminiLLM(LLM):
         # Generate content using the client
         iterator = self.chat.send_message_stream(*args, **kwargs)
         for chunk in iterator:
-            chunk:GenerateContentResponse = chunk
-            llm_response_optional = self._standardize_and_emit_event(chunk)
+            response_chunk: GenerateContentResponse = chunk
+            llm_response_optional = self._standardize_and_emit_event(response_chunk)
             if llm_response_optional is not None:
                 llm_response = llm_response_optional
 
         self.emit("after_llm_response", llm_response)
 
-        # Extract text from Gemini's response format
-        text = response.text if response.text else ""
-        return LLMResponse(response, text)
+        # Return the LLM response
+        return llm_response
 
     @staticmethod
     def _normalize_message(gemini_input) -> List["Message"]:
@@ -119,16 +118,21 @@ class GeminiLLM(LLM):
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
         # forward the native event
-        self.emit(chunk.type, chunk)
-        # send a standardized version for delta and response
-        if chunk.type == "content_block_delta":
+        self.emit("gemini_response", chunk)
+        
+        # Check if response has text content
+        if hasattr(chunk, 'text') and chunk.text:
             standardized_event = StandardizedTextDeltaEvent(
-                type=chunk.type,
+                content_index=0,
+                item_id="",
+                output_index=0,
+                sequence_number=0,
+                type="response.output_text.delta",
                 delta=chunk.text,
             )
             self.emit("standardized.output_text.delta", standardized_event)
-        elif chunk.type == "message_stop":
-            total_text = chunk.text
-            llm_response = LLMResponse(total_text, total_text)
+            
+            # Return response for final text
+            llm_response = LLMResponse(chunk, chunk.text)
             return llm_response
         return None
