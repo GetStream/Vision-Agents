@@ -5,8 +5,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from getstream import Stream
 from getstream.models import UserRequest
-from getstream.plugins.elevenlabs.tts import ElevenLabsTTS
-from getstream.plugins.deepgram.stt import DeepgramSTT
+from stream_agents.plugins import deepgram, elevenlabs
 from stream_agents.processors import YOLOPoseProcessor
 
 # TODO: imports are not nice
@@ -46,8 +45,8 @@ async def main() -> None:
             name="gpt-4o",
             instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         ),
-        tts=ElevenLabsTTS(),
-        stt=DeepgramSTT(),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
         # turn keeping
         turn_detection=turn_detection,
         # processors can fetch extra data, check images/audio data or transform video

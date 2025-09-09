@@ -29,8 +29,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
-from getstream.plugins.fal.stt import FalWizperSTT
-from getstream.plugins.silero.vad import SileroVAD
+from stream_agents.plugins import fal, silero
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -118,8 +117,8 @@ async def main():
     print("\nPress Ctrl+C to stop the transcription bot.\n")
 
     # Initialize FAL.ai STT (api_key comes from .env)
-    stt = FalWizperSTT(target_language="fr")
-    vad = SileroVAD()
+    stt = fal.STT(target_language="fr")
+    vad = silero.VAD()
 
     try:
         async with await rtc.join(call, bot_user_id) as connection:

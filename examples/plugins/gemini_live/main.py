@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from getstream import Stream
 from getstream.models import CallRequest, UserRequest
-from getstream.plugins.gemini.live import GeminiLive
+from stream_agents.plugins import gemini
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import (
@@ -94,7 +94,7 @@ async def main():
     # Open demo browser so you can join from the UI
     open_browser(client.api_key, user_token, call_id)
 
-    gemini_live = GeminiLive(
+    gemini_live = gemini.Realtime(
         api_key=os.getenv("GOOGLE_API_KEY"),
         model="gemini-live-2.5-flash-preview",
     )
