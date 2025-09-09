@@ -1,10 +1,18 @@
 import asyncio
+<<<<<<< HEAD
 import logging
+=======
+>>>>>>> main
 from uuid import uuid4
 
 from dotenv import load_dotenv
 
+<<<<<<< HEAD
 from stream_agents.plugins import gemini
+=======
+from stream_agents.plugins import elevenlabs, deepgram
+from stream_agents.core.llm.openai_llm import OpenAILLM
+>>>>>>> main
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher
@@ -27,8 +35,11 @@ async def start_agent() -> None:
         edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        # Use Gemini Live Realtime for speech-to-speech
-        llm=gemini.Realtime(),
+        # tts, llm, stt more. see the realtime example for sts
+        llm=OpenAILLM(model="gpt-4o-mini"),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
+        #turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

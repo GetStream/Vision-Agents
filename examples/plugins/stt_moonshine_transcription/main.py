@@ -30,8 +30,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
-from getstream.plugins.moonshine.stt import MoonshineSTT
-from getstream.plugins.silero.vad import SileroVAD
+from stream_agents.plugins import silero, moonshine
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -108,11 +107,11 @@ async def main() -> None:  # noqa: D401
     print("\n🤖 Starting transcription bot…")
     print("Speak in the browser and see transcripts below. Press Ctrl+C to stop.\n")
 
-    stt = MoonshineSTT()
+    stt = moonshine.STT()
 
     # Initialize Silero VAD for speech detection
     print("🔊 Initializing Silero VAD...")
-    vad = SileroVAD()
+    vad = silero.VAD()
     print("✅ Audio processing pipeline ready: VAD → Moonshine STT")
 
     try:

@@ -2,9 +2,13 @@ import asyncio
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from getstream.plugins import DeepgramSTT, ElevenLabsTTS
-from stream_agents.llm import OpenAILLM
-from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
+from stream_agents.plugins import deepgram, elevenlabs
+from stream_agents.core.llm import OpenAILLM
+from stream_agents.core.agents.agents import Agent
+from stream_agents.core.edge.edge_transport import StreamEdge
+from stream_agents.core.cli import start_dispatcher
+from stream_agents.core.utils import open_demo
+from getstream import Stream
 
 load_dotenv()
 
@@ -18,13 +22,13 @@ async def start_agent() -> None:
     agent = Agent(
         edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
+        instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         # tts, llm, stt more. see the realtime example for sts
         llm=OpenAILLM(
-            name="gpt-4o",
-            instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
+            model="gpt-4o",
         ),
-        tts=ElevenLabsTTS(),
-        stt=DeepgramSTT(),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
         # turn_detection=FalTurnDetection(),
         # Soccer: processors=[MatchStatistics()]
         # DOTA: processors=[GameStats(), Yolo(), Image()]

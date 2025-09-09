@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, Tuple, List
 import numpy as np
 import soundfile as sf
 
-from stream_agents.stt.stt import STT
+from stream_agents.core import stt
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
 from getstream.audio.pcm_utils import (
@@ -34,7 +34,7 @@ _SUPPORTED_MODELS = {
 }
 
 
-class MoonshineSTT(STT):
+class STT(stt.STT):
     """
     Moonshine-based Speech-to-Text implementation.
 

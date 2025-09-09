@@ -31,7 +31,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
-from getstream.plugins.cartesia.tts import CartesiaTTS
+from stream_agents.plugins import cartesia
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -104,7 +104,7 @@ async def main() -> None:
     open_browser(client.api_key, token, call_id)
 
     track = audio_track.AudioStreamTrack(framerate=16000)
-    tts = CartesiaTTS()
+    tts = cartesia.TTS()
     tts.set_output_track(track)
 
     greeting = "Hello there! I'm a Cartesia TTS bot speaking inside this call. As this is a minimal example, I'll stop speaking now."

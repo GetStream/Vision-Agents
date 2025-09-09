@@ -30,7 +30,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc.track_util import PcmData
-from getstream.plugins.silero.vad import SileroVAD
+from stream_agents.plugins import silero
 
 # Logging setup – INFO level so we see joins / leaves, etc.
 logging.basicConfig(
@@ -104,7 +104,7 @@ async def main() -> None:
 
     open_browser(client.api_key, token, call_id)
 
-    vad = SileroVAD()
+    vad = silero.VAD()
 
     print("\n🤖 VAD bot starting – speak in the call and watch the console.\n")
 

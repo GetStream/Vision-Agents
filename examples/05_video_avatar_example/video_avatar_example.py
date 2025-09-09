@@ -3,10 +3,14 @@ import os
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from getstream.plugins import DeepgramSTT, ElevenLabsTTS
-from stream_agents.processors.tavus_processor import TavusProcessor
-from stream_agents.llm import OpenAILLM
-from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
+from stream_agents.plugins import deepgram, elevenlabs
+from stream_agents.core.processors.tavus_processor import TavusProcessor
+from stream_agents.core.llm import OpenAILLM
+from stream_agents.core.agents.agents import Agent
+from stream_agents.core.edge.edge_transport import StreamEdge
+from stream_agents.core.cli import start_dispatcher
+from stream_agents.core.utils import open_demo
+from getstream import Stream
 
 load_dotenv()
 
@@ -50,13 +54,13 @@ async def start_agent() -> None:
     agent = Agent(
         edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
+        instructions="You're an AI avatar powered by Tavus technology. You can see and interact through video. Keep responses natural and conversational. You're streaming live video and audio, so be engaging and personable. Don't use special characters or formatting in speech.",
         # Enhanced LLM instructions for avatar interaction
         llm=OpenAILLM(
-            name="gpt-4o",
-            instructions="You're an AI avatar powered by Tavus technology. You can see and interact through video. Keep responses natural and conversational. You're streaming live video and audio, so be engaging and personable. Don't use special characters or formatting in speech.",
+            model="gpt-4o",
         ),
-        tts=ElevenLabsTTS(),
-        stt=DeepgramSTT(),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
         # Optional turn detection for better conversation flow
         # turn_detection=FalTurnDetection(),
         processors=[tavus_processor],  # Tavus processor provides AI avatar video/audio
