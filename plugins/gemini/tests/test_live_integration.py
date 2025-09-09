@@ -2,7 +2,7 @@ import os
 import asyncio
 
 import pytest
-from typing import List, TypedDict
+from typing import List, TypedDict, Dict, List as TList
 
 
 class _Events(TypedDict):
@@ -143,7 +143,7 @@ async def test_gemini_native_passthrough(monkeypatch):
     # Patch client and session to capture native calls
     from stream_agents.plugins import gemini as gemini_pkg
 
-    calls = {"text": [], "audio": [], "media": []}
+    calls: Dict[str, TList[object]] = {"text": [], "audio": [], "media": []}
 
     class _Sess:
         async def send_realtime_input(self, *, text=None, audio=None, media=None):

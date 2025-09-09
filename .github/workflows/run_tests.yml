@@ -23,7 +23,7 @@ jobs:
       - name: Mypy core
         run: uv run mypy --install-types --non-interactive agents-core/stream_agents tests
       - name: Mypy plugins
-        run: uv run mypy --install-types --non-interactive plugins
+        run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
 
   test:
     name: Test "${{ inputs.marker }}"

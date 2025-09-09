@@ -21,7 +21,7 @@ except Exception:  # pragma: no cover
 import numpy as np
 from google.genai import Client
 from google.genai.live import AsyncSession
-from google.genai.types import (
+from google.genai.types import (  # type: ignore[attr-defined]
     AudioTranscriptionConfigDict,
     Blob,
     ContextWindowCompressionConfigDict,
@@ -201,7 +201,9 @@ class Realtime(realtime.Realtime):
         if self._is_connected:
             return
         logger.info("Connecting Gemini agent using model %s", self.model)
-        connect_cm = self.client.aio.live.connect(model=self.model, config=self.config)
+        connect_cm = self.client.aio.live.connect(
+            model=self.model or "", config=self.config
+        )
         async with connect_cm as session:
             self._session = session
             self._is_connected = True

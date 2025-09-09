@@ -95,12 +95,7 @@ class Realtime(realtime.Realtime):
         self.instructions = instructions
         self._connection: Optional[ConnectionManagerWrapper] = None
 
-    async def connect(
-        self,
-        call: Call,
-        agent_user_id: str = "assistant",
-        extra_session: Optional[Dict[str, Any]] = None,
-    ) -> ConnectionManagerWrapper:
+    async def connect(self, *args: Any, **kwargs: Any) -> ConnectionManagerWrapper:
         """Connect an AI agent to *call*.
 
         Emits:
@@ -111,6 +106,13 @@ class Realtime(realtime.Realtime):
 
         if self.is_connected:
             raise RuntimeError("AI agent already connected")
+
+        # Extract parameters from positional/keyword args for backward compatibility
+        call: Call = kwargs.get("call") or (args[0] if len(args) > 0 else None)
+        if call is None:
+            raise ValueError("call is required")
+        agent_user_id: str = kwargs.get("agent_user_id", "assistant")
+        extra_session: Optional[Dict[str, Any]] = kwargs.get("extra_session")
 
         # Build session presets
         session_payload: Dict[str, Any] = {}

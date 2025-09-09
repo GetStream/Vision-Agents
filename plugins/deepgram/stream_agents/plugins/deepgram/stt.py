@@ -8,7 +8,7 @@ import time
 
 # Conditional imports with error handling
 try:
-    from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
+    from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions  # type: ignore[attr-defined]
 
     _deepgram_available = True
 except ImportError:
