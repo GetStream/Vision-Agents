@@ -2630,6 +2630,7 @@ dependencies = [
     { name = "openai" },
     { name = "python-dotenv" },
     { name = "stream-agents" },
+    { name = "stream-agents-plugins-anthropic" },
     { name = "stream-agents-plugins-deepgram" },
     { name = "stream-agents-plugins-elevenlabs" },
 ]
@@ -2647,6 +2648,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.101.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "stream-agents", editable = "../../agents-core" },
+    { name = "stream-agents-plugins-anthropic", editable = "../../plugins/anthropic" },
     { name = "stream-agents-plugins-deepgram", editable = "../../plugins/deepgram" },
     { name = "stream-agents-plugins-elevenlabs", editable = "../../plugins/elevenlabs" },
 ]
@@ -2874,6 +2876,7 @@ provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemin
 
 [[package]]
 name = "stream-agents-plugins-anthropic"
+version = "0.1.1"
 source = { editable = "../../plugins/anthropic" }
 dependencies = [
     { name = "anthropic" },
@@ -2884,6 +2887,12 @@ dependencies = [
 requires-dist = [
     { name = "anthropic" },
     { name = "stream-agents", editable = "../../agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
