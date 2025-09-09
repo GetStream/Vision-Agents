@@ -2,12 +2,6 @@ import pytest
 from dotenv import load_dotenv
 
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
-<<<<<<< HEAD:plugins/openai/tests/test_openai_llm.py
-=======
-
-from stream_agents.core.llm.openai_llm import OpenAILLM
->>>>>>> fcfdebc221f05b20141aa965930b492c476ae9ea:agents-core/stream_agents/core/llm/openai_llm_test.py
-
 from stream_agents.core.agents.conversation import Message
 from stream_agents.plugins.openai.openai_llm import OpenAILLM
 

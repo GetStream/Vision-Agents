@@ -4363,16 +4363,29 @@ provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemin
 
 [[package]]
 name = "stream-agents-plugins-anthropic"
+version = "0.1.1"
 source = { editable = "plugins/anthropic" }
 dependencies = [
     { name = "anthropic" },
     { name = "stream-agents" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "anthropic" },
     { name = "stream-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]

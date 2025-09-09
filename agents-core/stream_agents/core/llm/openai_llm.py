@@ -78,18 +78,15 @@ class OpenAILLM(LLM):
             # Process tool calls if present
             normalized_response = self._normalize_openai_response(response)
             if normalized_response.get("output"):
-                normalized_response = self.process_tool_calls(normalized_response)
-                # Use the processed response text
-                response_text = normalized_response.get("output_text", response.choices[0].message.content or "")
-            else:
-                response_text = response.choices[0].message.content or ""
-
+                normalized_response = await self.process_tool_calls(normalized_response)
+            # Use the processed response text
+            response_text = normalized_response.get("output_text", response.choices[0].message.content or "")
             llm_response = LLMResponse[Response](response, response_text)
         else:
             # Use conversations API for regular chat
-            response: Response = self.client.responses.create(*args, **kwargs)
-            llm_response: LLMResponse[Response] = LLMResponse(
-                response, response.output_text
+            conversation_response: Response = self.client.responses.create(*args, **kwargs)
+            llm_response = LLMResponse[Response](
+                conversation_response, conversation_response.output_text
             )
         if hasattr(self, "after_response_listener"):
             maybe_awaitable = self.after_response_listener(llm_response)
@@ -164,23 +161,27 @@ class OpenAILLM(LLM):
         # Handle tool calls if present
         if message.tool_calls:
             for tool_call in message.tool_calls:
+                # Parse arguments from JSON string
+                import json
+                arguments_dict = json.loads(tool_call.function.arguments)
+                
                 tool_call_item: NormalizedToolCallItem = {
                     "type": "tool_call",
                     "name": tool_call.function.name,
-                    "arguments_json": tool_call.function.arguments
+                    "arguments_json": arguments_dict
                 }
-                output.append(tool_call_item)
+                output.append(tool_call_item)  # type: ignore
         
         return {
             "id": response.id,
             "model": response.model,
-            "status": "completed",
-            "output": output,
+            "status": "completed",  # type: ignore
+            "output": output,  # type: ignore
             "output_text": message.content or "",
             "raw": response
         }
     
-    def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
+    async def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
         """Generate a conversational response based on tool results using OpenAI."""
         try:
             # Prepare the conversation with tool results
@@ -210,8 +211,8 @@ class OpenAILLM(LLM):
             
             messages.append({
                 "role": "assistant",
-                "content": None,
-                "tool_calls": tool_calls
+                "content": None,  # type: ignore
+                "tool_calls": tool_calls  # type: ignore
             })
             
             # Add the tool results
@@ -231,14 +232,14 @@ class OpenAILLM(LLM):
             # Get a follow-up response from OpenAI
             follow_up_response = self.client.chat.completions.create(
                 model=self.model,
-                messages=messages,
+                messages=messages,  # type: ignore
                 max_tokens=500,
                 temperature=0.7
             )
             
-            return follow_up_response.choices[0].message.content
+            return follow_up_response.choices[0].message.content or ""
             
         except Exception as e:
-            # If there's an error, return None to use fallback formatting
+            # If there's an error, return empty string to use fallback formatting
             print(f"Error generating conversational response: {e}")
-            return None
+            return ""

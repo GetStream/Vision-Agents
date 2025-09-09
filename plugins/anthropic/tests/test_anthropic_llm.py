@@ -1,7 +1,6 @@
 import pytest
 from dotenv import load_dotenv
 
-from plugins.anthropic.stream_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
 from stream_agents.core.llm.claude_llm import ClaudeLLM
 
 from stream_agents.core.agents.conversation import InMemoryConversation
@@ -63,7 +62,7 @@ class TestClaudeLLM:
             nonlocal streamingWorks
             streamingWorks = True
 
-        response = await llm.simple_response("Explain magma to a 5 year old")
+        await llm.simple_response("Explain magma to a 5 year old")
 
         assert streamingWorks
 

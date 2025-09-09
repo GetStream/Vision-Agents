@@ -53,7 +53,7 @@ class TestGeminiLLM:
             nonlocal streamingWorks
             streamingWorks = True
 
-        response = await llm.simple_response("Explain magma to a 5 year old")
+        await llm.simple_response("Explain magma to a 5 year old")
 
         assert streamingWorks
 

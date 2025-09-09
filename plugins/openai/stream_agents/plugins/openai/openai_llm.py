@@ -65,7 +65,7 @@ class OpenAILLM(LLM):
 
         if client is not None:
             self.client = client
-        elif api_key is not None and api_key is not "":
+        elif api_key is not None and api_key != "":
             self.openai_conversation = OpenAI(api_key=api_key)
         else:
             self.client = OpenAI()

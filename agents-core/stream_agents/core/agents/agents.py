@@ -91,16 +91,16 @@ class Agent:
         self.conversation: Optional[StreamConversation] = None
         if self.llm is not None:
             self.llm.attach_agent(self)
-        #TODO: naming?
-        self.llm.on("before_llm_response", self.before_response)
-        self.llm.on("after_llm_response", self.after_response)
+            #TODO: naming?
+            self.llm.on("before_llm_response", self.before_response)
+            self.llm.on("after_llm_response", self.after_response)
 
-        @self.llm.on('standardized.output_text.delta')
-        def _partial_messages(event: StandardizedTextDeltaEvent):
-            """Handle partial transcript from STT service."""
-            if event.delta and event.delta.strip():
-                if self.conversation:
-                    self.conversation.partial_update_message(event.delta, self.agent_user)
+            @self.llm.on('standardized.output_text.delta')
+            def _partial_messages(event: StandardizedTextDeltaEvent):
+                """Handle partial transcript from STT service."""
+                if event.delta and event.delta.strip():
+                    if self.conversation:
+                        self.conversation.partial_update_message(event.delta, self.agent_user)
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None

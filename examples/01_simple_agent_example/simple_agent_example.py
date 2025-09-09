@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import elevenlabs, deepgram, openai, anthropic
+from stream_agents.plugins import elevenlabs, deepgram, anthropic
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher

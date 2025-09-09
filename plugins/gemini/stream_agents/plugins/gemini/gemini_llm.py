@@ -90,9 +90,8 @@ class GeminiLLM(LLM):
 
         self.emit("after_llm_response", llm_response)
 
-        # Extract text from Gemini's response format
-        text = response.text if response.text else ""
-        return LLMResponse(response, text)
+        # Return the LLM response
+        return llm_response
 
     @staticmethod
     def _normalize_message(gemini_input) -> List["Message"]:

@@ -49,7 +49,7 @@ class GeminiLLM(LLM):
         if available_functions:
             # Use generate_content directly for function calling
             tools = [self._tool_schema_to_gemini_tool(schema) for schema in available_functions]
-            config = genai.types.GenerateContentConfig(tools=tools)
+            config = genai.types.GenerateContentConfig(tools=tools)  # type: ignore
             response = self.client.models.generate_content(
                 model=f"models/{self.model}",
                 contents=kwargs.get("message", ""),
@@ -64,7 +64,7 @@ class GeminiLLM(LLM):
         # Process tool calls if present
         normalized_response = self._normalize_gemini_response(response)
         if normalized_response.get("output"):
-            normalized_response = self.process_tool_calls(normalized_response)
+            normalized_response = await self.process_tool_calls(normalized_response)
 
         # Extract text from processed response or original response
         text = normalized_response.get("output_text", response.text if response.text else "")
@@ -114,30 +114,30 @@ class GeminiLLM(LLM):
                             "name": part.function_call.name,
                             "arguments_json": part.function_call.args
                         }
-                        output.append(tool_call_item)
+                        output.append(tool_call_item)  # type: ignore
                     elif hasattr(part, 'text') and part.text:
                         output.append({
-                            "type": "text",
+                            "type": "text",  # type: ignore
                             "text": part.text
-                        })
+                        })  # type: ignore
         
         # Handle text content if no parts were processed
         if not output and response.text:
             output.append({
-                "type": "text",
+                "type": "text",  # type: ignore
                 "text": response.text
-            })
+            })  # type: ignore
         
         return {
             "id": getattr(response, 'id', ''),
             "model": self.model,
-            "status": "completed",
-            "output": output,
+            "status": "completed",  # type: ignore
+            "output": output,  # type: ignore
             "output_text": response.text or "",
             "raw": response
         }
     
-    def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
+    async def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
         """Generate a conversational response based on tool results using Gemini."""
         try:
             # Create a simple prompt to generate a conversational response
@@ -163,9 +163,9 @@ Please provide a natural, conversational response based on these results. Be hel
                 self.chat = self.client.chats.create(model=self.model)
             
             follow_up_response = self.chat.send_message(prompt)
-            return follow_up_response.text
+            return follow_up_response.text or ""
             
         except Exception as e:
-            # If there's an error, return None to use fallback formatting
+            # If there's an error, return empty string to use fallback formatting
             print(f"Error generating conversational response: {e}")
-            return None
+            return ""

@@ -98,7 +98,7 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
         """
         return self.function_registry.call_function(name, arguments)
     
-    def process_tool_calls(self, response: NormalizedResponse) -> NormalizedResponse:
+    async def process_tool_calls(self, response: NormalizedResponse) -> NormalizedResponse:
         """
         Process tool calls in a response by executing the functions and adding results.
         
@@ -115,49 +115,46 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
         
         for item in response["output"]:
             if item.get("type") == "tool_call":
-                tool_call_item = item
-                function_name = tool_call_item["name"]
-                arguments = tool_call_item["arguments_json"]
+                # Type assertion: we know this is a tool call item
+                function_name = item["name"]  # type: ignore
+                arguments = item["arguments_json"]  # type: ignore
                 
-                # Parse JSON string if needed
-                if isinstance(arguments, str):
-                    import json
-                    arguments = json.loads(arguments)
+                # arguments_json is now a Dict[str, Any], no need to parse
                 
                 try:
                     # Call the function
                     result = self.call_function(function_name, arguments)
                     
                     # Add tool result to output
-                    tool_result: NormalizedToolResultItem = {
+                    tool_result_item: NormalizedToolResultItem = {
                         "type": "tool_result",
                         "name": function_name,
                         "result_json": result if isinstance(result, dict) else {"result": result},
                         "is_error": False
                     }
-                    updated_output.append(tool_result)
+                    updated_output.append(tool_result_item)
                     
                 except Exception as e:
                     # Add error result to output
-                    tool_result: NormalizedToolResultItem = {
+                    error_result_item: NormalizedToolResultItem = {
                         "type": "tool_result",
                         "name": function_name,
                         "result_json": {"error": str(e)},
                         "is_error": True
                     }
-                    updated_output.append(tool_result)
+                    updated_output.append(error_result_item)
             else:
                 # Keep non-tool-call items as-is
-                updated_output.append(item)
+                updated_output.append(item)  # type: ignore
         
         # Update the response with processed output
-        response["output"] = updated_output
+        response["output"] = updated_output  # type: ignore
         
         # Check if we have tool results that need a conversational response
         tool_results = [item for item in updated_output if item.get("type") == "tool_result"]
         if tool_results:
             # Generate a conversational response based on the tool results
-            conversational_response = self._generate_conversational_response(tool_results, response)
+            conversational_response = await self._generate_conversational_response(tool_results, response)
             if conversational_response:
                 response["output_text"] = conversational_response
                 response["output"] = [{"type": "text", "text": conversational_response}]
@@ -166,10 +163,10 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
                 response_text_parts = []
                 for item in updated_output:
                     if item.get("type") == "text":
-                        response_text_parts.append(item["text"])
+                        response_text_parts.append(item["text"])  # type: ignore
                     elif item.get("type") == "tool_result":
-                        result = item["result_json"]
-                        function_name = item["name"]
+                        result = item["result_json"]  # type: ignore
+                        function_name = item["name"]  # type: ignore
                         if item.get("is_error", False):
                             response_text_parts.append(f"Error in {function_name}: {result.get('error', 'Unknown error')}")
                         else:
@@ -180,13 +177,13 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
             response_text_parts = []
             for item in updated_output:
                 if item.get("type") == "text":
-                    response_text_parts.append(item["text"])
+                    response_text_parts.append(item["text"])  # type: ignore
             if response_text_parts:
                 response["output_text"] = "\n".join(response_text_parts)
         
         return response
     
-    def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
+    async def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str | None:
         """Generate a conversational response based on tool results.
         
         This method should be implemented by each LLM provider to generate

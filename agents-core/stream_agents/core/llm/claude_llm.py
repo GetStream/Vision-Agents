@@ -131,18 +131,18 @@ class ClaudeLLM(LLM):
                         "name": content_block.name,
                         "arguments_json": content_block.input
                     }
-                    output.append(tool_call_item)
+                    output.append(tool_call_item)  # type: ignore
         
         return {
             "id": response.id,
             "model": self.model,
-            "status": "completed",
-            "output": output,
+            "status": "completed",  # type: ignore
+            "output": output,  # type: ignore
             "output_text": response.content[0].text if response.content and response.content[0].type == "text" else "",
             "raw": response
         }
     
-    def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
+    async def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
         """Generate a conversational response based on tool results using Claude."""
         try:
             import json
@@ -171,8 +171,8 @@ class ClaudeLLM(LLM):
             
             messages.append({
                 "role": "assistant",
-                "content": None,
-                "tool_use": tool_uses
+                "content": None,  # type: ignore
+                "tool_use": tool_uses  # type: ignore
             })
             
             # Add the tool results
@@ -185,7 +185,7 @@ class ClaudeLLM(LLM):
                             "tool_use_id": f"call_{i}",
                             "content": json.dumps(result["result_json"])
                         }
-                    ]
+                    ]  # type: ignore
                 })
             
             # Add a system message to guide the response
@@ -195,16 +195,16 @@ class ClaudeLLM(LLM):
             })
             
             # Get a follow-up response from Claude
-            follow_up_response = self.client.messages.create(
+            follow_up_response = await self.client.messages.create(
                 model=self.model,
-                messages=messages,
+                messages=messages,  # type: ignore
                 max_tokens=500,
                 temperature=0.7
             )
             
-            return follow_up_response.content[0].text
+            return follow_up_response.content[0].text or ""  # type: ignore
             
         except Exception as e:
-            # If there's an error, return None to use fallback formatting
+            # If there's an error, return empty string to use fallback formatting
             print(f"Error generating conversational response: {e}")
-            return None
+            return ""
