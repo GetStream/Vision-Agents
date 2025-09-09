@@ -57,7 +57,7 @@ class TestClaudeLLM:
         assert hasattr(response.original, 'id')  # Claude response has id
 
     @pytest.mark.integration
-    async def test_native_api(self, llm: ClaudeLLM):
+    async def test_stream(self, llm: ClaudeLLM):
         streamingWorks = False
         @llm.on('standardized.output_text.delta')
         def passed(event: StandardizedTextDeltaEvent):

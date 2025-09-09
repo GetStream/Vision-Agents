@@ -1,6 +1,7 @@
 from typing import Optional, List, TYPE_CHECKING
 
 from google import genai
+from google.genai.types import GenerateContentResponse
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
 
@@ -39,7 +40,10 @@ class GeminiLLM(LLM):
             self.chat = self.client.chats.create(model=self.model)
 
         # Generate content using the client
-        response = self.chat.send_message(*args, **kwargs)
+        iterator = self.chat.send_message_stream(*args, **kwargs)
+        for chunk in iterator:
+            chunk:GenerateContentResponse = chunk
+            print(chunk)
 
         # Extract text from Gemini's response format
         text = response.text if response.text else ""

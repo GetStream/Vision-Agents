@@ -7,7 +7,9 @@ from google import genai
 from stream_agents.core.llm.llm import LLMResponse
 from stream_agents.core.llm.gemini_llm import GeminiLLM
 
-from src.stream_agents.agents.conversation import InMemoryConversation, Message
+from stream_agents.core.agents.conversation import InMemoryConversation, Message
+
+from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 
 load_dotenv()
 
@@ -50,6 +52,18 @@ class TestGeminiLLM:
         # Assertions
         assert response.text
         assert hasattr(response.original, 'text')  # Gemini response has text attribute
+
+    @pytest.mark.integration
+    async def test_stream(self, llm: GeminiLLM):
+        streamingWorks = False
+        @llm.on('standardized.output_text.delta')
+        def passed(event: StandardizedTextDeltaEvent):
+            nonlocal streamingWorks
+            streamingWorks = True
+
+        response = await llm.simple_response("Explain magma to a 5 year old")
+
+        assert streamingWorks
 
     @pytest.mark.integration
     async def test_memory(self, llm: GeminiLLM):
