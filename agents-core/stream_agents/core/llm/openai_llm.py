@@ -1,4 +1,5 @@
 from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Dict, Any
+import json
 
 from openai import OpenAI
 from openai.resources.responses import Responses
@@ -175,3 +176,66 @@ class OpenAILLM(LLM):
             "output_text": message.content or "",
             "raw": response
         }
+    
+    def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
+        """Generate a conversational response based on tool results using OpenAI."""
+        try:
+            # Prepare the conversation with tool results
+            messages = []
+            
+            # Add the original user message if available
+            if hasattr(self, '_conversation') and self._conversation:
+                for message in reversed(self._conversation.messages):
+                    if message.role == "user":
+                        messages.append({
+                            "role": "user",
+                            "content": message.content
+                        })
+                        break
+            
+            # Add the assistant's tool calls
+            tool_calls = []
+            for i, result in enumerate(tool_results):
+                tool_calls.append({
+                    "id": f"call_{i}",
+                    "type": "function",
+                    "function": {
+                        "name": result["name"],
+                        "arguments": "{}"  # We don't need the original arguments
+                    }
+                })
+            
+            messages.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": tool_calls
+            })
+            
+            # Add the tool results
+            for i, result in enumerate(tool_results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": f"call_{i}",
+                    "content": json.dumps(result["result_json"])
+                })
+            
+            # Add a system message to guide the response
+            messages.insert(0, {
+                "role": "system",
+                "content": "You are a helpful assistant. The user asked you to perform some functions, and you have the results. Please provide a natural, conversational response based on these results. Be helpful and informative."
+            })
+            
+            # Get a follow-up response from OpenAI
+            follow_up_response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            return follow_up_response.choices[0].message.content
+            
+        except Exception as e:
+            # If there's an error, return None to use fallback formatting
+            print(f"Error generating conversational response: {e}")
+            return None

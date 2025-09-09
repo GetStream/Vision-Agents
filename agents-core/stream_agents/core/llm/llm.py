@@ -143,22 +143,55 @@ class LLM:
         # Update the response with processed output
         response["output"] = updated_output
         
-        # Generate response text from the processed output
-        response_text_parts = []
-        for item in updated_output:
-            if item.get("type") == "text":
-                response_text_parts.append(item["text"])
-            elif item.get("type") == "tool_result":
-                result = item["result_json"]
-                if isinstance(result, dict) and "result" in result:
-                    response_text_parts.append(f"Function {item['name']} result: {result['result']}")
-                else:
-                    response_text_parts.append(f"Function {item['name']} result: {result}")
-        
-        if response_text_parts:
-            response["output_text"] = "\n".join(response_text_parts)
+        # Check if we have tool results that need a conversational response
+        tool_results = [item for item in updated_output if item.get("type") == "tool_result"]
+        if tool_results:
+            # Generate a conversational response based on the tool results
+            conversational_response = self._generate_conversational_response(tool_results, response)
+            if conversational_response:
+                response["output_text"] = conversational_response
+                response["output"] = [{"type": "text", "text": conversational_response}]
+            else:
+                # Fallback: simple formatting
+                response_text_parts = []
+                for item in updated_output:
+                    if item.get("type") == "text":
+                        response_text_parts.append(item["text"])
+                    elif item.get("type") == "tool_result":
+                        result = item["result_json"]
+                        function_name = item["name"]
+                        if item.get("is_error", False):
+                            response_text_parts.append(f"Error in {function_name}: {result.get('error', 'Unknown error')}")
+                        else:
+                            response_text_parts.append(f"{function_name} result: {result}")
+                response["output_text"] = "\n".join(response_text_parts)
+        else:
+            # No tool results, just use the text content
+            response_text_parts = []
+            for item in updated_output:
+                if item.get("type") == "text":
+                    response_text_parts.append(item["text"])
+            if response_text_parts:
+                response["output_text"] = "\n".join(response_text_parts)
         
         return response
+    
+    def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str:
+        """Generate a conversational response based on tool results.
+        
+        This method should be implemented by each LLM provider to generate
+        natural language responses based on function call results.
+        
+        Args:
+            tool_results: List of tool result items
+            original_response: The original response containing the tool calls
+            
+        Returns:
+            A conversational response string, or None if not implemented
+        """
+        # Default implementation returns None to use fallback formatting
+        # Each LLM provider should override this method
+        return None
 
 
 

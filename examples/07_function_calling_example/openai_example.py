@@ -1,23 +1,19 @@
 """
-Simple Claude function calling example.
+Simple OpenAI function calling example.
 """
 
 import asyncio
 from dotenv import load_dotenv
-from stream_agents.core.llm.claude_llm import ClaudeLLM
-from stream_agents.core.agents.conversation import Conversation
+from stream_agents.core.llm.openai_llm import OpenAILLM
 
 load_dotenv()
 
 
 async def main():
-    """Run a simple Claude function calling example."""
+    """Run a simple OpenAI function calling example."""
     
     # Create the LLM
-    llm = ClaudeLLM(model="claude-3-5-sonnet-20241022")
-    
-    # Initialize conversation for standalone use
-    llm._conversation = Conversation()
+    llm = OpenAILLM(model="gpt-4o-mini")
     
     # Register functions
     @llm.register_function(description="Get current weather for a location")
@@ -42,16 +38,16 @@ async def main():
         "What's the weather in London and calculate 100 + 200?"
     ]
     
-    print("Claude Function Calling Example")
+    print("OpenAI Function Calling Example")
     print("=" * 50)
     
     for query in queries:
         print(f"\nQuery: {query}")
         print("-" * 30)
         
-        response = await llm.create_message(
-            model="claude-3-5-sonnet-20241022",
-            messages=[{"role": "user", "content": query}]
+        response = await llm.create_response(
+            model="gpt-4o-mini",
+            input=[{"role": "user", "content": query}]
         )
         
         print(f"Response: {response.text}")
