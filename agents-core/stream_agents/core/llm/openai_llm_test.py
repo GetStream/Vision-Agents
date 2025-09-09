@@ -1,16 +1,12 @@
-import os
-from typing import List
-
 import pytest
 from dotenv import load_dotenv
-from openai import OpenAI
 
-from stream_agents.core.llm.llm import LLMResponse
 from stream_agents.core.llm.openai_llm import OpenAILLM
 
 from stream_agents.core.agents.conversation import Message
 
 load_dotenv()
+
 
 class TestOpenAILLM:
     """Test suite for OpenAILLM class with real API calls."""
@@ -24,12 +20,12 @@ class TestOpenAILLM:
     def test_message(self, llm: OpenAILLM):
         messages = OpenAILLM._normalize_message("say hi")
         from pprint import pprint
+
         pprint(messages[0])
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
-        assert message.content is "say hi"
-
+        assert message.content == "say hi"
 
     def test_advanced_message(self, llm: OpenAILLM):
         img_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
@@ -46,29 +42,23 @@ class TestOpenAILLM:
         messages2 = OpenAILLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
-
-
-
-
     @pytest.mark.integration
     async def test_simple(self, llm: OpenAILLM):
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
 
-
         assert response.text
 
     @pytest.mark.integration
     async def test_native_api(self, llm: OpenAILLM):
         response = await llm.create_response(
-            input="say hi",
-            instructions="You are a helpful assistant."
+            input="say hi", instructions="You are a helpful assistant."
         )
 
         # Assertions
         assert response.text
-        assert hasattr(response.original, 'id')  # OpenAI response has id
+        assert hasattr(response.original, "id")  # OpenAI response has id
 
     @pytest.mark.integration
     async def test_memory(self, llm: OpenAILLM):

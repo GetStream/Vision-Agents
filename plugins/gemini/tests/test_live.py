@@ -143,8 +143,11 @@ _types_mod.LiveConnectConfigDict = _DummyDict
 _types_mod.Blob = _DummyBlob
 _types_mod.Modality = _DummyModality
 _types_mod.AudioTranscriptionConfigDict = _DummyDict
+# Direct alias used by some code paths
+_types_mod.RealtimeInputConfigDict = _DummyDict  # type: ignore[attr-defined]
+# Provide a nested gemini module attribute on types for backward compatibility
 _gemini_mod = types.ModuleType("gemini")
-_gemini_mod.RealtimeInputConfigDict = _DummyDict
+_gemini_mod.RealtimeInputConfigDict = _DummyDict  # type: ignore[attr-defined]
 _types_mod.gemini = _gemini_mod
 _types_mod.TurnCoverage = _DummyTurnCoverage
 _types_mod.SpeechConfigDict = _DummyDict
@@ -222,7 +225,11 @@ except ImportError:  # pragma: no cover - environment should have google from pr
     sys.modules["google"] = pkg
 
 
-from stream_agents.plugins.gemini import Realtime as gemini_live  # noqa: E402
+from stream_agents.plugins.gemini import realtime as gemini_live  # noqa: E402
+
+# Inject our dummy types/live modules into sys.modules to satisfy import/type lookups
+sys.modules["google.genai.types"] = _types_mod
+sys.modules["google.genai.live"] = _live_mod
 
 
 @pytest.fixture

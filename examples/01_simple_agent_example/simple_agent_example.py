@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -10,6 +11,9 @@ from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher
 from stream_agents.core.utils import open_demo
 from getstream import Stream
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -28,7 +32,7 @@ async def start_agent() -> None:
         llm=OpenAILLM(model="gpt-4o-mini"),
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        #turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
+        # turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
@@ -40,20 +44,14 @@ async def start_agent() -> None:
 
     # Have the agent join the call/room
     with await agent.join(call):
-        # example of sending a system instruction. supports full openAI input
-        # await agent.llm.simple_response( "please say hi to the user and ask how their day is")
-        # Note how you can use native APIs. create response (openAI), create message (claude) and generate_content (gemini)
-        img_url = "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2670&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
-        await agent.llm.create_response(model="gpt-4o-mini",
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": "Tell me a short poem about this image"},
-                        {"type": "input_image", "image_url": f"{img_url}"},
-                    ],
-                }
-            ]
+        # Example 1: standardized simple response (aggregates delta/done)
+        await agent.llm.simple_response(
+            text="Please say verbatim: 'this is a test of the gemini realtime api.'."
+        )
+
+        # Example 2: provider-native passthrough for advanced control
+        await agent.llm.native_send_realtime_input(
+            text="Please say verbatim: 'this is a test using the gemini realtime api native input method.'."
         )
 
         await agent.finish()  # run till the call ends

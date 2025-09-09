@@ -35,7 +35,7 @@ Demo video
 
 ### Dota Coaching Example
 
-Use API calls to retrieve game state, while also analysing the gameplay. 
+Use API calls to retrieve game state, while also analysing the gameplay.
 OpenAI + API calls.
 
 Demo video
@@ -50,7 +50,7 @@ Demo video
 
 For use cases that only require you to connect openAI & Stream you can consider
 https://getstream.io/video/voice-agents/
-This is a direct proxy written in Go and maintained by Stream. 
+This is a direct proxy written in Go and maintained by Stream.
 You can use it with any programming language/ SDK.
 
 Benefits:
@@ -61,7 +61,7 @@ Benefits:
 
 ** Stream agents **
 
-This python framework gives you full control. 
+This python framework gives you full control.
 
 ## 📦 Installation
 
@@ -113,7 +113,7 @@ from agents import Agent
 agent = Agent(
     pre_processors=[Roboflow(), dota_api("gameid")],
     interval=1 second,
-    llm=GeminiSTS(), 
+    llm=GeminiSTS(),
     # turn_detection=your_turn_detector
 )
 
@@ -192,7 +192,7 @@ Other example to build
 Check out the [`examples/`](./examples/) directory for complete working examples:
 
 - **`examples/main.py`** - Basic TTS bot with ElevenLabs
-- **`examples/example_agent.py`** - Agent framework with tools and pre-processors  
+- **`examples/example_agent.py`** - Agent framework with tools and pre-processors
 - **`examples/example_openai_model.py`** - OpenAI model integration
 - **`examples/example_agent_with_openai.py`** - Complete AI agent with OpenAI
 
@@ -232,7 +232,7 @@ OPENAI_API_KEY=your_openai_api_key
 ```python
 agent = Agent(
     tools=[external_api_tool],           # External API integrations
-    pre_processors=[data_processor],     # Input data processing  
+    pre_processors=[data_processor],     # Input data processing
     llm=ai_model,                      # AI model for responses
     stt=speech_to_text,                  # Speech recognition
     tts=text_to_speech,                  # Voice synthesis
@@ -276,7 +276,7 @@ If features are added to the client, you can use them easily via tts.client
 
 Avoid using Union types or complicated composite types.
 Keep typing simple. Use the PcmAudio type instead of bytes when passing around audio.
-This prevents mistakes related to different audio formats. 
+This prevents mistakes related to different audio formats.
 
 ### Testing
 

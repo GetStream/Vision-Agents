@@ -16,7 +16,7 @@ uv sync --all-extras --dev
 
 To setup your .env
 ```bash
-cp env.example .env 
+cp env.example .env
 ```
 
 ## Running
@@ -78,4 +78,4 @@ git tag -a v0.0.1 -m "Release 0.0.1" && git push --tags
 ## General Guidelines
 1. We are experimenting and moving fast. Things may break, that is fine for now, but before merging to main, check that your code is running and if required, has tests.
 2. Communication: Things are moving quickly, communicate what you're working on and what's blocking early and frequently in #video_ai
-3. Avoid creating large PRs that's hard to review, break them up in to smaller reviewable PRs. 
+3. Avoid creating large PRs that's hard to review, break them up in to smaller reviewable PRs.

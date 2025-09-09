@@ -1,13 +1,14 @@
 import datetime
-from typing import Optional, List, TypedDict, Required, Any
+from typing import Optional, List, Any
 
 from getstream.chat.client import ChatClient
 from getstream.models import MessageRequest, ChannelResponse, MessageResponse
 from dataclasses import dataclass
 
+
 @dataclass
 class Message:
-    original: Any # the original openai, claude or gemini message
+    original: Any  # the original openai, claude or gemini message
     content: str
     timestamp: Optional[datetime.datetime] = None
     role: Optional[str] = None
@@ -17,12 +18,11 @@ class Message:
         self.timestamp = datetime.datetime.now()
 
 
-
 class Conversation:
     def __init__(
-            self,
-            instructions: str,
-            messages: List[Message],
+        self,
+        instructions: str,
+        messages: List[Message],
     ):
         self.instructions = instructions
         self.messages = messages
@@ -63,10 +63,12 @@ class InMemoryConversation(Conversation):
         user_id = user.user_id if user and hasattr(user, "user_id") else "unknown"
         self.update_last_message(text, user_id)
 
+
 class StreamConversation(InMemoryConversation):
     """
     Persists the message history to a stream channel & messages
     """
+
     channel: ChannelResponse
     chat_client: ChatClient
 
@@ -87,10 +89,10 @@ class StreamConversation(InMemoryConversation):
         )
         return response
 
-    def add_message(self, input_text: str, user_id: str):
-        """Add a message to the conversation."""
+    def add_text_message(self, input_text: str, user_id: str) -> None:
+        """Add a message to the conversation (text/user form)."""
         message = MessageRequest(text=input_text, user_id=user_id)
-        self.messages.append(message)
+        self.messages.append(message)  # type: ignore[arg-type]
         self._send_message(message)
 
     def finish_last_message(self, text: str):

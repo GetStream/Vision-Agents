@@ -21,7 +21,7 @@ except Exception:  # pragma: no cover
 import numpy as np
 from google.genai import Client
 from google.genai.live import AsyncSession
-from google.genai.types import (
+from google.genai.types import (  # type: ignore[attr-defined]
     AudioTranscriptionConfigDict,
     Blob,
     ContextWindowCompressionConfigDict,
@@ -56,7 +56,7 @@ class Realtime(realtime.Realtime):
         response_modalities: Optional[List[Modality]] = None,
         voice: Optional[str] = None,
         barge_in: bool = True,
-        activity_threshold: int = 1000,
+        activity_threshold: int = 3000,
         silence_timeout_ms: int = 1000,
         provider_config: Optional[LiveConnectConfigDict] = None,
     ):
@@ -101,7 +101,6 @@ class Realtime(realtime.Realtime):
                 "failed to import google genai SDK, install with: uv add google-genai"
             )
 
-        # Use v1beta for Live APIs as required by current SDK
         self.client = Client(
             api_key=self.api_key, http_options={"api_version": "v1beta"}
         )
@@ -135,7 +134,12 @@ class Realtime(realtime.Realtime):
         )
         # Kick off background connect if we are in an event loop
         loop = asyncio.get_running_loop()
-        self._connect_task = loop.create_task(self._run_connection())
+        self._connect_task = loop.create_task(self.connect())
+
+    # ---- Small helpers (DRY) ----
+    def _ensure_playback(self) -> None:
+        if not self._playback_enabled:
+            self._playback_enabled = True
 
     def _default_config(self) -> LiveConnectConfigDict:
         return LiveConnectConfigDict(
@@ -192,12 +196,14 @@ class Realtime(realtime.Realtime):
             raise RuntimeError("Not connected")
         return self._session
 
-    async def _run_connection(self) -> None:
+    async def connect(self) -> None:
         """Background task that connects and holds the session open until stopped."""
         if self._is_connected:
             return
         logger.info("Connecting Gemini agent using model %s", self.model)
-        connect_cm = self.client.aio.live.connect(model=self.model, config=self.config)
+        connect_cm = self.client.aio.live.connect(
+            model=self.model or "", config=self.config
+        )
         async with connect_cm as session:
             self._session = session
             self._is_connected = True
@@ -226,6 +232,13 @@ class Realtime(realtime.Realtime):
     async def send_text(self, text: str):
         """Send a text message from the human side to the conversation."""
         session = await self._require_session()
+        # Emit user transcript event
+        try:
+            self._emit_transcript_event(text=text, is_user=True)
+        except Exception:
+            pass
+        # Ensure playback is enabled before expecting an assistant reply
+        self._ensure_playback()
         await session.send_realtime_input(text=text)
 
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000):
@@ -252,8 +265,9 @@ class Realtime(realtime.Realtime):
                 audio_array, pcm.sample_rate, target_rate
             ).astype(np.int16)
 
-        # Activity detection to avoid constant interruption when streaming continuous audio
-        is_active = bool(np.mean(np.abs(audio_array)) > self._activity_threshold)
+        # Activity detection with a small hysteresis to avoid flapping
+        energy = float(np.mean(np.abs(audio_array)))
+        is_active = energy > float(self._activity_threshold)
 
         # On first frame of a speaking burst, interrupt current playback (barge-in)
         if self._barge_in_enabled and is_active and not self._user_speaking:
@@ -267,15 +281,32 @@ class Realtime(realtime.Realtime):
             if self._eos_timer_task and not self._eos_timer_task.done():
                 self._eos_timer_task.cancel()
             self._eos_timer_task = asyncio.create_task(self._silence_timeout_task())
+        # When stream becomes sufficiently silent, allow existing timer to elapse
+        # (No action needed here other than not restarting the timer)
 
         # Build blob and send directly
         audio_bytes = audio_array.tobytes()
         mime = f"audio/pcm;rate={target_rate}"
         blob = Blob(data=audio_bytes, mime_type=mime)
-        logger.info(
-            "Sending %d bytes audio to Gemini Live (%s)", len(audio_bytes), mime
-        )
+        # Emit standardized audio input event
+        try:
+            self._emit_audio_input_event(audio_bytes, sample_rate=target_rate)
+        except Exception:
+            pass
         await session.send_realtime_input(audio=blob)
+
+    @staticmethod
+    def _frame_to_png_bytes(frame: Any) -> bytes:
+        if Image is None:
+            return b""
+        if hasattr(frame, "to_image"):
+            img = frame.to_image()  # type: ignore[attr-defined]
+        else:
+            arr = frame.to_ndarray(format="rgb24")  # type: ignore[attr-defined]
+            img = Image.fromarray(arr)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
 
     async def start_video_sender(self, track: MediaStreamTrack, fps: int = 1) -> None:
         """Start a background task that forwards video frames to Gemini Live.
@@ -291,23 +322,11 @@ class Realtime(realtime.Realtime):
 
         interval = max(0.01, 1.0 / max(1, fps))
 
-        def _frame_to_png_bytes(frame: Any) -> bytes:
-            if Image is None:
-                return b""
-            if hasattr(frame, "to_image"):
-                img = frame.to_image()  # type: ignore[attr-defined]
-            else:
-                arr = frame.to_ndarray(format="rgb24")  # type: ignore[attr-defined]
-                img = Image.fromarray(arr)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-
         async def _loop():
             try:
                 while self._is_connected and self._session is not None:
                     frame = await track.recv()  # type: ignore[reportUnknownReturnType]
-                    png_bytes = _frame_to_png_bytes(frame)
+                    png_bytes = self._frame_to_png_bytes(frame)
                     if png_bytes:
                         blob = Blob(data=png_bytes, mime_type="image/png")
                         await self._session.send_realtime_input(media=blob)
@@ -336,6 +355,46 @@ class Realtime(realtime.Realtime):
         except asyncio.CancelledError:
             return
 
+    # --- Provider-native passthroughs ---
+    def get_native_session(self) -> Optional[AsyncSession]:
+        """Return the underlying Gemini AsyncSession if connected (advanced use)."""
+        return self._session
+
+    async def native_send_realtime_input(
+        self,
+        *,
+        text: Optional[str] = None,
+        audio: Optional[Blob] = None,
+        media: Optional[Blob] = None,
+    ) -> None:
+        """Advanced: call Gemini's send_realtime_input directly with text/audio/media.
+
+        This bypasses the standardized helpers and is intended for users who need
+        provider-specific control. The Agent path remains standardized via send_text
+        and send_audio_pcm.
+        """
+        session = await self._require_session()
+        # Ensure playback is enabled so replies go to the call
+        self._ensure_playback()
+        await session.send_realtime_input(text=text, audio=audio, media=media)
+
+    async def simple_response(
+        self,
+        *,
+        text: str,
+        timeout: Optional[float] = 30.0,
+        processors: Optional[List[Any]] = None,
+        participant: Any = None,
+    ):
+        """Standardized single-turn response that aggregates deltas and speaks into the call.
+
+        Delegates to the base implementation which listens for RealtimeResponseEvent
+        delta/done and returns a RealtimeResponse. Playback is ensured via send_text.
+        """
+        return await super().simple_response(
+            text=text, processors=processors, participant=participant, timeout=timeout
+        )
+
     async def start_response_listener(
         self,
         emit_events: bool = True,
@@ -354,19 +413,40 @@ class Realtime(realtime.Realtime):
             try:
                 assert self._session is not None
                 # Continuously read turns; receive() yields one complete model turn
+                turn_text_parts: List[str] = []
+
                 while self._is_connected and self._session is not None:
                     async for resp in self._session.receive():
-                        if data := resp.data:
+                        data = getattr(resp, "data", None)
+                        if data is not None:
                             if emit_events:
                                 self.emit("audio", data)
-                            # Write directly to the outbound track when playback is enabled
                             if self._playback_enabled:
                                 await self.output_track.write(data)
+                            # Emit standardized audio output event
+                            try:
+                                self._emit_audio_output_event(data, sample_rate=24000)
+                            except Exception:
+                                pass
                         text = getattr(resp, "text", None)
-                        if text and emit_events:
-                            self.emit("text", text)
+                        if text:
+                            if emit_events:
+                                self.emit("text", text)
+                            try:
+                                self._emit_response_event(text, is_complete=False)
+                                self._emit_transcript_event(text, is_user=False)
+                            except Exception:
+                                pass
+                            turn_text_parts.append(text)
 
                     # Small pause between turns to avoid tight loop
+                    try:
+                        # Always emit a final done event at end-of-turn, even if text was empty.
+                        final_text = "".join(turn_text_parts) if turn_text_parts else ""
+                        self._emit_response_event(final_text, is_complete=True)
+                    except Exception:
+                        pass
+                    turn_text_parts.clear()
                     await asyncio.sleep(0)
             except asyncio.CancelledError:  # graceful stop
                 return
@@ -404,8 +484,8 @@ class Realtime(realtime.Realtime):
                 await self._eos_timer_task
         self._eos_timer_task = None
 
-    async def close(self) -> None:
-        """Stop the session and background tasks."""
+    async def _close_impl(self) -> None:
+        """Provider-specific cleanup without emitting base events."""
         self._stop_event.set()
         await self.stop_video_sender()
         await self.stop_response_listener()

@@ -143,12 +143,6 @@ async def test_cartesia_send_without_track_raises():
 @pytest.mark.asyncio
 async def test_cartesia_with_real_api():
     """Integration test against Cartesia cloud – skipped if CARTESIA_API_KEY unset."""
-    # Skip if the Cartesia SDK is not available
-    try:
-        import cartesia  # noqa: F401
-    except ImportError:
-        pytest.skip("cartesia package not installed – skipping live API test.")
-
     api_key = os.environ.get("CARTESIA_API_KEY")
     if not api_key:
         pytest.skip("CARTESIA_API_KEY env var not set – skipping live API test.")
