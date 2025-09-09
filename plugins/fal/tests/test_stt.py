@@ -13,7 +13,7 @@ from getstream.video.rtc.track_util import PcmData
 def stt():
     """Provides a fal.STT instance with a mocked fal_client."""
     with patch(
-        "stream_agents.plugins.fal.stt.stt.fal_client.AsyncClient"
+        "fal_client.AsyncClient"
     ) as mock_fal_client:
         stt_instance = fal.STT()
         stt_instance._fal_client = mock_fal_client.return_value
@@ -95,7 +95,7 @@ class TestfalSTT:
     @pytest.mark.asyncio
     async def test_process_audio_impl_success_translate(self):
         """Test successful translation with target language."""
-        with patch("stream_agents.plugins.fal.stt.stt.fal_client.AsyncClient"):
+        with patch("fal_client.AsyncClient"):
             stt = fal.STT(task="translate", target_language="pt")
             stt._fal_client.upload_file = AsyncMock(
                 return_value="http://mock.url/audio.wav"
