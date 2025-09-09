@@ -38,9 +38,7 @@ class TestGeminiLLM:
 
     @pytest.mark.integration
     async def test_simple(self, llm: GeminiLLM):
-        response = await llm.simple_response(
-            "Explain quantum computing in 1 paragraph",
-        )
+        response = await llm.simple_response("Explain quantum computing in 1 paragraph")
         assert response.text
 
     @pytest.mark.integration
@@ -67,12 +65,8 @@ class TestGeminiLLM:
 
     @pytest.mark.integration
     async def test_memory(self, llm: GeminiLLM):
-        await llm.simple_response(
-            text="There are 2 dogs in the room",
-        )
-        response = await llm.simple_response(
-            text="How many paws are there in the room?",
-        )
+        await llm.simple_response(text="There are 2 dogs in the room")
+        response = await llm.simple_response(text="How many paws are there in the room?")
         assert "8" in response.text or "eight" in response.text
 
     @pytest.mark.integration

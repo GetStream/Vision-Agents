@@ -127,7 +127,6 @@ class ClaudeLLM(LLM):
                 delta=event.delta.text,
             )
             self.emit("standardized.output_text.delta", standardized_event)
-            self.emit(event.type, event)
         elif event.type == "message_stop":
             event: RawMessageStopEvent = event
             total_text = "".join(text_parts)
