@@ -5,7 +5,11 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from stream_agents.plugins import gemini
-from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
+from stream_agents.core.agents.agents import Agent
+from stream_agents.core.edge.edge_transport import StreamEdge
+from stream_agents.core.cli import start_dispatcher
+from stream_agents.core.utils import open_demo
+from getstream import Stream
 
 load_dotenv()
 

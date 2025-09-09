@@ -3,7 +3,7 @@ import pytest
 import asyncio
 from unittest.mock import patch, MagicMock
 
-from getstream.plugins import DeepgramSTT
+from stream_agents.plugins import deepgram
 from getstream.video.rtc.track_util import PcmData
 
 
@@ -99,7 +99,7 @@ async def test_real_time_transcript_emission():
     3. Both collection and immediate emission work correctly
     """
     # Create the Deepgram STT instance
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
 
     # Collection for events
     transcript_events = []
@@ -151,7 +151,7 @@ async def test_real_time_partial_transcript_emission():
     Test that partial transcripts are emitted in real-time.
     """
     # Create the Deepgram STT instance
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
 
     # Collection for events
     transcript_events = []
@@ -216,7 +216,7 @@ async def test_real_time_error_emission():
     Test that errors are emitted in real-time.
     """
     # Create the Deepgram STT instance
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
 
     # Collection for events
     error_events = []
@@ -251,7 +251,7 @@ async def test_close_cleanup():
     Test that the STT service is properly closed and cleaned up.
     """
     # Create the Deepgram STT instance
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
 
     # Verify the service is running
     assert not stt._is_closed, "Service should be running after initialization"
@@ -292,7 +292,7 @@ async def test_asynchronous_mode_behavior():
     2. _process_audio_impl always returns None (no result collection)
     """
     # Create the Deepgram STT instance
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
 
     # Collection for events
     transcript_events = []

@@ -10,7 +10,7 @@ import torchaudio
 from typing import List, Dict, Any, Optional
 
 from stream_agents.plugins import silero
-from plugins.plugin_test_utils import get_audio_asset, get_json_metadata
+from plugin_test_utils import get_audio_asset, get_json_metadata
 from getstream.video.rtc.track_util import PcmData
 
 # Setup logging for the test
@@ -473,7 +473,7 @@ async def test_silence_no_turns():
     assert not partial_event_fired, "A partial event was fired when processing silence"
 
 
-class Testsilero.VAD:
+class TestSileroVAD:
     """Tests for Silero VAD implementation."""
 
     @pytest.mark.asyncio

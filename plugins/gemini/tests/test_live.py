@@ -222,7 +222,7 @@ except ImportError:  # pragma: no cover - environment should have google from pr
     sys.modules["google"] = pkg
 
 
-from getstream.plugins.gemini.live import live as gemini_live  # noqa: E402
+from stream_agents.plugins.gemini import Realtime as gemini_live  # noqa: E402
 
 
 @pytest.fixture
