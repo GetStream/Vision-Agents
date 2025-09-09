@@ -1,0 +1,10 @@
+[project]
+name = "openai-sts-example"
+version = "1.0.0"
+dependencies = [
+    "stream-agents",
+    "python-dotenv",
+    "asyncio",
+    "aiortc",
+    "openai",
+]
