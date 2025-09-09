@@ -1,4 +1,4 @@
-from typing import Optional, List, Iterable, TYPE_CHECKING, Any
+from typing import Optional, List, TYPE_CHECKING, Any
 
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream

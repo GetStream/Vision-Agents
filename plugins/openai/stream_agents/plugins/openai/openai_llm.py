@@ -14,7 +14,7 @@ from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from stream_agents.core.processors import BaseProcessor
 
 if TYPE_CHECKING:
-    from stream_agents.core.agents.conversation import Message, Conversation
+    from stream_agents.core.agents.conversation import Message
 
 P = ParamSpec("P")
 R = TypeVar("R")
