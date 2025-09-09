@@ -2,7 +2,7 @@ import pytest
 import json
 from datetime import datetime
 
-from stream_agents.events import (
+from stream_agents.core.events import (
     # Base events
     BaseEvent,
     EventType,
