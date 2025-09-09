@@ -56,7 +56,7 @@ class Realtime(llm.Realtime):
         response_modalities: Optional[List[Modality]] = None,
         voice: Optional[str] = None,
         barge_in: bool = True,
-        activity_threshold: int = 4000,
+        activity_threshold: int = 3000,
         silence_timeout_ms: int = 1000,
         provider_config: Optional[LiveConnectConfigDict] = None,
     ):
@@ -101,7 +101,6 @@ class Realtime(llm.Realtime):
                 "failed to import google genai SDK, install with: uv add google-genai"
             )
 
-        # Use v1beta for Live APIs as required by current SDK
         self.client = Client(
             api_key=self.api_key, http_options={"api_version": "v1beta"}
         )
@@ -136,6 +135,11 @@ class Realtime(llm.Realtime):
         # Kick off background connect if we are in an event loop
         loop = asyncio.get_running_loop()
         self._connect_task = loop.create_task(self.connect())
+
+    # ---- Small helpers (DRY) ----
+    def _ensure_playback(self) -> None:
+        if not self._playback_enabled:
+            self._playback_enabled = True
 
     def _default_config(self) -> LiveConnectConfigDict:
         return LiveConnectConfigDict(
@@ -232,7 +236,7 @@ class Realtime(llm.Realtime):
         except Exception:
             pass
         # Ensure playback is enabled before expecting an assistant reply
-        self.resume_playback()
+        self._ensure_playback()
         await session.send_realtime_input(text=text)
 
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000):
@@ -289,6 +293,19 @@ class Realtime(llm.Realtime):
             pass
         await session.send_realtime_input(audio=blob)
 
+    @staticmethod
+    def _frame_to_png_bytes(frame: Any) -> bytes:
+        if Image is None:
+            return b""
+        if hasattr(frame, "to_image"):
+            img = frame.to_image()  # type: ignore[attr-defined]
+        else:
+            arr = frame.to_ndarray(format="rgb24")  # type: ignore[attr-defined]
+            img = Image.fromarray(arr)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
     async def start_video_sender(self, track: MediaStreamTrack, fps: int = 1) -> None:
         """Start a background task that forwards video frames to Gemini Live.
 
@@ -303,23 +320,11 @@ class Realtime(llm.Realtime):
 
         interval = max(0.01, 1.0 / max(1, fps))
 
-        def _frame_to_png_bytes(frame: Any) -> bytes:
-            if Image is None:
-                return b""
-            if hasattr(frame, "to_image"):
-                img = frame.to_image()  # type: ignore[attr-defined]
-            else:
-                arr = frame.to_ndarray(format="rgb24")  # type: ignore[attr-defined]
-                img = Image.fromarray(arr)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-
         async def _loop():
             try:
                 while self._is_connected and self._session is not None:
                     frame = await track.recv()  # type: ignore[reportUnknownReturnType]
-                    png_bytes = _frame_to_png_bytes(frame)
+                    png_bytes = self._frame_to_png_bytes(frame)
                     if png_bytes:
                         blob = Blob(data=png_bytes, mime_type="image/png")
                         await self._session.send_realtime_input(media=blob)
@@ -364,7 +369,7 @@ class Realtime(llm.Realtime):
         """
         session = await self._require_session()
         # Ensure playback is enabled so replies go to the call
-        self.resume_playback()
+        self._ensure_playback()
         await session.send_realtime_input(text=text, audio=audio, media=media)
 
     async def simple_response(
@@ -377,7 +382,7 @@ class Realtime(llm.Realtime):
     ):
         """Standardized single-turn response that aggregates deltas and speaks into the call.
 
-        Delegates to the base implementation which listens for STSResponseEvent
+        Delegates to the base implementation which listens for RealtimeResponseEvent
         delta/done and returns a RealtimeResponse. Playback is ensured via send_text.
         """
         return await super().simple_response(
@@ -403,12 +408,13 @@ class Realtime(llm.Realtime):
                 assert self._session is not None
                 # Continuously read turns; receive() yields one complete model turn
                 turn_text_parts: List[str] = []
+
                 while self._is_connected and self._session is not None:
                     async for resp in self._session.receive():
-                        if data := resp.data:
+                        data = getattr(resp, "data", None)
+                        if data is not None:
                             if emit_events:
                                 self.emit("audio", data)
-                            # Write directly to the outbound track when playback is enabled
                             if self._playback_enabled:
                                 await self.output_track.write(data)
                             # Emit standardized audio output event
@@ -417,10 +423,9 @@ class Realtime(llm.Realtime):
                             except Exception:
                                 pass
                         text = getattr(resp, "text", None)
-                        if text and emit_events:
-                            self.emit("text", text)
                         if text:
-                            # Emit standardized response delta and assistant transcript
+                            if emit_events:
+                                self.emit("text", text)
                             try:
                                 self._emit_response_event(text, is_complete=False)
                                 self._emit_transcript_event(text, is_user=False)
@@ -435,7 +440,7 @@ class Realtime(llm.Realtime):
                         self._emit_response_event(final_text, is_complete=True)
                     except Exception:
                         pass
-                    turn_text_parts = []
+                    turn_text_parts.clear()
                     await asyncio.sleep(0)
             except asyncio.CancelledError:  # graceful stop
                 return

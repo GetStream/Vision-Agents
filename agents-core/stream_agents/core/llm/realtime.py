@@ -1,6 +1,53 @@
 from __future__ import annotations
+"""
+Realtime base class contract and streaming semantics
+===================================================
 
-from typing import Any, Callable, Dict, Generic, List, Optional, TYPE_CHECKING, TypeVar
+Overview
+--------
+This module defines the provider-agnostic Realtime base used by Agent for
+realtime integrations. Providers (e.g., Gemini Live, OpenAI
+Realtime) implement how to send input (text/audio/video) and emit standardized
+events. The base class aggregates streamed responses and exposes a consistent
+API to users and the Agent.
+
+Events that providers must emit
+-------------------------------
+- RealtimeResponseEvent (EventType.REALTIME_RESPONSE)
+  - is_complete=False: a delta/partial textual update during streaming
+  - is_complete=True: a single end-of-turn "done" signal; text may be present
+    (some providers repeat the last chunk) or empty (audio-only turns)
+- RealtimeTranscriptEvent for user/assistant transcripts (optional but recommended)
+- RealtimeAudioOutputEvent for audio bytes returned by the model
+- RealtimeAudioInputEvent when audio is sent upstream (optional)
+
+Aggregation contract (hybrid strategy)
+-------------------------------------
+Both simple_response and native_response aggregate text using a hybrid approach:
+1) Concatenate only deltas (is_complete=False) into an accumulator
+2) When the done event (is_complete=True) arrives:
+   - If no deltas were seen, use the done text (handles providers that only
+     send final text)
+   - If deltas were seen, prefer the accumulated text but:
+     - If done text starts with the accumulated text, use the done text to
+       preserve final punctuation/formatting
+     - Else, if done text is a short punctuation-only suffix, append it
+     - Else, keep the accumulated text
+
+Return type
+-----------
+Both simple_response and native_response return RealtimeResponse:
+- .text: the aggregated final text following the rules above
+- .original: the final RealtimeResponseEvent (is_complete=True) that ended the turn
+
+Notes
+-----
+- Providers should emit exactly one done event per turn
+- For audio-only turns, done should be emitted with empty text; callers receive
+  RealtimeResponse(text="") but the audio is still emitted on the "audio" event
+"""
+
+from typing import Any, Callable, Dict, Generic, List, Optional, TYPE_CHECKING, TypeVar, Awaitable
 
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.audio_track import AudioStreamTrack
@@ -16,14 +63,14 @@ from pyee.asyncio import AsyncIOEventEmitter
 from av.dictionary import Dictionary
 
 from ..events import (
-    STSConnectedEvent,
-    STSDisconnectedEvent,
-    STSAudioInputEvent,
-    STSAudioOutputEvent,
-    STSTranscriptEvent,
-    STSResponseEvent,
-    STSConversationItemEvent,
-    STSErrorEvent,
+    RealtimeConnectedEvent,
+    RealtimeDisconnectedEvent,
+    RealtimeAudioInputEvent,
+    RealtimeAudioOutputEvent,
+    RealtimeTranscriptEvent,
+    RealtimeResponseEvent,
+    RealtimeConversationItemEvent,
+    RealtimeErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
     register_global_event,
@@ -209,6 +256,23 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         """
         raise NotImplementedError("native_send_realtime_input is not implemented for this provider")
 
+    async def native_response(
+        self,
+        *,
+        text: Optional[str] = None,
+        audio: Optional[Any] = None,
+        media: Optional[Any] = None,
+        timeout: Optional[float] = 30.0,
+    ) -> RealtimeResponse[Any]:
+        """Provider-native request that returns a standardized RealtimeResponse.
+
+        Delegates to the shared aggregation helper using native_send_realtime_input.
+        """
+        async def _sender():
+            await self.native_send_realtime_input(text=text, audio=audio, media=media)
+
+        return await self._aggregate_turn(sender=_sender, before_text=text, timeout=timeout)
+
     async def simple_response(
         self,
         *,
@@ -219,48 +283,71 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
     ) -> RealtimeResponse[Any]:
         """Send text and resolve when the assistant finishes the turn.
 
-        Aggregates `STSResponseEvent` deltas (is_complete=False) until a final
-        event with `is_complete=True` arrives, then returns the concatenated text.
+        Aggregates streaming deltas with a hybrid strategy to build final text.
         """
-        # Notify before listener with a minimal normalized message shape
-        try:
-            normalized: List[Dictionary] = [Dictionary({"content": text, "role": "user"})]
-            if hasattr(self, "before_response_listener"):
-                self.before_response_listener(normalized)
-        except Exception:
-            # Do not fail if Dictionary creation is problematic
-            pass
+        async def _sender():
+            await self.send_text(text)
+
+        return await self._aggregate_turn(sender=_sender, before_text=text, timeout=timeout)
+
+    # ---- Shared aggregation helpers ----
+    @staticmethod
+    def _merge_final_text(collected_parts: List[str], done_text: Optional[str]) -> str:
+        accumulated = "".join(collected_parts)
+        final_done = done_text or ""
+        if not collected_parts:
+            return final_done
+        if final_done.startswith(accumulated):
+            return final_done
+        if accumulated.endswith(final_done):
+            return accumulated
+        if final_done and len(final_done) <= 4 and all(ch in " .,!?:;—-…'\"" for ch in final_done):
+            return accumulated + final_done
+        return accumulated
+
+    async def _aggregate_turn(
+        self,
+        *,
+        sender: Callable[[], Awaitable[None]],
+        before_text: Optional[str],
+        timeout: Optional[float],
+    ) -> RealtimeResponse[Any]:
+        # Notify before listener
+        if before_text is not None:
+            try:
+                normalized: List[Dictionary] = [Dictionary({"content": before_text, "role": "user"})]
+                if hasattr(self, "before_response_listener"):
+                    self.before_response_listener(normalized)
+            except Exception:
+                pass
 
         collected_parts: List[str] = []
         done_fut: asyncio.Future[RealtimeResponse[Any]] = asyncio.get_event_loop().create_future()
 
         async def _on_response(event: Any):
             try:
-                if isinstance(event, STSResponseEvent):
-                    if event.text:
-                        collected_parts.append(event.text)
+                if isinstance(event, RealtimeResponseEvent):
                     if event.is_complete:
                         if not done_fut.done():
-                            done_fut.set_result(RealtimeResponse(event, "".join(collected_parts)))
-                        # remove listener once complete
+                            final_text = self._merge_final_text(collected_parts, event.text)
+                            done_fut.set_result(RealtimeResponse(event, final_text))
                         self.remove_listener("response", _on_response)
-            except Exception as e:  # pragma: no cover
+                    else:
+                        if event.text:
+                            collected_parts.append(event.text)
+            except Exception as e:
                 if not done_fut.done():
                     done_fut.set_exception(e)
 
-        # Attach listener and send the text
         self.on("response", _on_response)  # type: ignore[arg-type]
-        await self.send_text(text)
+        await sender()
 
-        # Wait for completion
         try:
             result = await asyncio.wait_for(done_fut, timeout=timeout)
         except asyncio.TimeoutError as e:
-            # Cleanup listener on timeout
             self.remove_listener("response", _on_response)
             raise e
 
-        # Notify after listener
         if hasattr(self, "after_response_listener"):
             await self.after_response_listener(result)
 
@@ -274,7 +361,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             self._ready_event.set()
         except Exception:
             pass
-        event = STSConnectedEvent(
+        event = RealtimeConnectedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             session_config=session_config,
@@ -286,7 +373,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
     def _emit_disconnected_event(self, reason=None, was_clean=True):
         """Emit a structured disconnected event."""
         self._is_connected = False
-        event = STSDisconnectedEvent(
+        event = RealtimeDisconnectedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             reason=reason,
@@ -299,7 +386,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self, audio_data, sample_rate=16000, user_metadata=None
     ):
         """Emit a structured audio input event."""
-        event = STSAudioInputEvent(
+        event = RealtimeAudioInputEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             audio_data=audio_data,
@@ -313,7 +400,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self, audio_data, sample_rate=16000, response_id=None, user_metadata=None
     ):
         """Emit a structured audio output event."""
-        event = STSAudioOutputEvent(
+        event = RealtimeAudioOutputEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             audio_data=audio_data,
@@ -333,7 +420,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         user_metadata=None,
     ):
         """Emit a structured transcript event."""
-        event = STSTranscriptEvent(
+        event = RealtimeTranscriptEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
@@ -354,7 +441,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         user_metadata=None,
     ):
         """Emit a structured response event."""
-        event = STSResponseEvent(
+        event = RealtimeResponseEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
@@ -370,7 +457,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self, item_id, item_type, status, role, content=None, user_metadata=None
     ):
         """Emit a structured conversation item event."""
-        event = STSConversationItemEvent(
+        event = RealtimeConversationItemEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             item_id=item_id,
@@ -385,7 +472,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
 
     def _emit_error_event(self, error, context="", user_metadata=None):
         """Emit a structured error event."""
-        event = STSErrorEvent(
+        event = RealtimeErrorEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             error=error,

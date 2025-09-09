@@ -188,3 +188,38 @@ async def test_noop_video_and_playback_methods_do_not_error():
     await rt.stop_video_sender()
     await rt.interrupt_playback()
     rt.resume_playback()
+
+
+class FakeRealtimeNative(base_rt.Realtime):
+    def __init__(self) -> None:
+        super().__init__(provider_name="FakeRTNative")
+        self._is_connected = True
+        self._ready_event.set()
+
+    async def connect(self):
+        return None
+
+    async def send_text(self, text: str):
+        # Not used in native_response test
+        pass
+
+    async def native_send_realtime_input(self, *, text=None, audio=None, media=None) -> None:
+        # Emit two deltas and an empty final (hybrid contract)
+        self._emit_response_event(text="foo", is_complete=False)
+        self._emit_response_event(text="bar", is_complete=False)
+        self._emit_response_event(text="", is_complete=True)
+
+    def send_audio_pcm(self, pcm, target_rate: int = 48000):
+        return None
+
+    async def _close_impl(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_native_response_aggregates_and_returns_realtimeresponse():
+    rt = FakeRealtimeNative()
+
+    result = await rt.native_response(text="x")
+    assert isinstance(result, RealtimeResponse)
+    assert result.text == "foobar"

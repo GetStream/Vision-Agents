@@ -170,7 +170,7 @@ class Agent:
         if self.sts_mode:
             self.logger.info("🎤 Using Realtime (Speech-to-Speech) mode")
         else:
-            self.logger.info("🎤 Using traditional STT/TTS mode")
+            self.logger.info("🎤 Using STT/TTS mode")
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.sts_mode:

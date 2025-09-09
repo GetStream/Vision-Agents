@@ -20,15 +20,15 @@ from stream_agents.core.events import (
     TTSSynthesisCompleteEvent,
     TTSErrorEvent,
     TTSConnectionEvent,
-    # STS Events
-    STSConnectedEvent,
-    STSDisconnectedEvent,
-    STSAudioInputEvent,
-    STSAudioOutputEvent,
-    STSTranscriptEvent,
-    STSResponseEvent,
-    STSConversationItemEvent,
-    STSErrorEvent,
+    # Realtime Events (formerly STS)
+    RealtimeConnectedEvent,
+    RealtimeDisconnectedEvent,
+    RealtimeAudioInputEvent,
+    RealtimeAudioOutputEvent,
+    RealtimeTranscriptEvent,
+    RealtimeResponseEvent,
+    RealtimeConversationItemEvent,
+    RealtimeErrorEvent,
     # VAD Events
     VADSpeechStartEvent,
     VADSpeechEndEvent,
@@ -252,85 +252,85 @@ class TestTTSEvents:
         assert event.details == {"reason": "timeout"}
 
 
-class TestSTSEvents:
-    """Test STS-related events."""
+class TestRealtimeEvents:
+    """Test realtime-related events."""
 
-    def test_sts_connected_event(self):
-        """Test STS connected event."""
-        event = STSConnectedEvent(
-            provider="sts_provider", session_config={"endpoint": "wss://test.com"}
+    def test_realtime_connected_event(self):
+        """Test realtime connected event."""
+        event = RealtimeConnectedEvent(
+            provider="realtime_provider", session_config={"endpoint": "wss://test.com"}
         )
-        assert event.event_type == EventType.STS_CONNECTED
-        assert event.provider == "sts_provider"
+        assert event.event_type == EventType.REALTIME_CONNECTED
+        assert event.provider == "realtime_provider"
         assert event.session_config == {"endpoint": "wss://test.com"}
 
-    def test_sts_disconnected_event(self):
-        """Test STS disconnected event."""
-        event = STSDisconnectedEvent(
-            provider="sts_provider", reason="user_disconnect", was_clean=True
+    def test_realtime_disconnected_event(self):
+        """Test realtime disconnected event."""
+        event = RealtimeDisconnectedEvent(
+            provider="realtime_provider", reason="user_disconnect", was_clean=True
         )
-        assert event.event_type == EventType.STS_DISCONNECTED
-        assert event.provider == "sts_provider"
+        assert event.event_type == EventType.REALTIME_DISCONNECTED
+        assert event.provider == "realtime_provider"
         assert event.reason == "user_disconnect"
         assert event.was_clean is True
 
-    def test_sts_audio_input_event(self):
-        """Test STS audio input event."""
-        event = STSAudioInputEvent(
+    def test_realtime_audio_input_event(self):
+        """Test realtime audio input event."""
+        event = RealtimeAudioInputEvent(
             audio_data=b"input audio", sample_rate=16000, channels=1
         )
-        assert event.event_type == EventType.STS_AUDIO_INPUT
+        assert event.event_type == EventType.REALTIME_AUDIO_INPUT
         assert event.audio_data == b"input audio"
         assert event.sample_rate == 16000
         assert event.channels == 1
 
-    def test_sts_audio_output_event(self):
-        """Test STS audio output event."""
-        event = STSAudioOutputEvent(
+    def test_realtime_audio_output_event(self):
+        """Test realtime audio output event."""
+        event = RealtimeAudioOutputEvent(
             audio_data=b"output audio", sample_rate=16000, channels=1
         )
-        assert event.event_type == EventType.STS_AUDIO_OUTPUT
+        assert event.event_type == EventType.REALTIME_AUDIO_OUTPUT
         assert event.audio_data == b"output audio"
         assert event.sample_rate == 16000
         assert event.channels == 1
 
-    def test_sts_transcript_event(self):
-        """Test STS transcript event."""
-        event = STSTranscriptEvent(text="Hello world", confidence=0.95, is_user=True)
-        assert event.event_type == EventType.STS_TRANSCRIPT
+    def test_realtime_transcript_event(self):
+        """Test realtime transcript event."""
+        event = RealtimeTranscriptEvent(text="Hello world", confidence=0.95, is_user=True)
+        assert event.event_type == EventType.REALTIME_TRANSCRIPT
         assert event.text == "Hello world"
         assert event.confidence == 0.95
         assert event.is_user is True
 
-    def test_sts_response_event(self):
-        """Test STS response event."""
-        event = STSResponseEvent(text="Response text", is_complete=True)
-        assert event.event_type == EventType.STS_RESPONSE
+    def test_realtime_response_event(self):
+        """Test realtime response event."""
+        event = RealtimeResponseEvent(text="Response text", is_complete=True)
+        assert event.event_type == EventType.REALTIME_RESPONSE
         assert event.text == "Response text"
         assert event.is_complete is True
         assert event.response_id is not None
 
-    def test_sts_conversation_item_event(self):
-        """Test STS conversation item event."""
-        event = STSConversationItemEvent(
+    def test_realtime_conversation_item_event(self):
+        """Test realtime conversation item event."""
+        event = RealtimeConversationItemEvent(
             item_type="message",
             status="completed",
             role="user",
             content=[{"type": "text", "text": "User message"}],
         )
-        assert event.event_type == EventType.STS_CONVERSATION_ITEM
+        assert event.event_type == EventType.REALTIME_CONVERSATION_ITEM
         assert event.item_type == "message"
         assert event.status == "completed"
         assert event.role == "user"
         assert event.content == [{"type": "text", "text": "User message"}]
 
-    def test_sts_error_event(self):
-        """Test STS error event."""
-        error = Exception("STS error")
-        event = STSErrorEvent(error=error, error_code="STS_001", context="conversation")
-        assert event.event_type == EventType.STS_ERROR
+    def test_realtime_error_event(self):
+        """Test realtime error event."""
+        error = Exception("Realtime error")
+        event = RealtimeErrorEvent(error=error, error_code="RT_001", context="conversation")
+        assert event.event_type == EventType.REALTIME_ERROR
         assert event.error == error
-        assert event.error_code == "STS_001"
+        assert event.error_code == "RT_001"
         assert event.context == "conversation"
 
 
@@ -473,14 +473,14 @@ class TestEventEnums:
             "tts_synthesis_complete",
             "tts_error",
             "tts_connection",
-            "sts_connected",
-            "sts_disconnected",
-            "sts_audio_input",
-            "sts_audio_output",
-            "sts_transcript",
-            "sts_response",
-            "sts_conversation_item",
-            "sts_error",
+            "realtime_connected",
+            "realtime_disconnected",
+            "realtime_audio_input",
+            "realtime_audio_output",
+            "realtime_transcript",
+            "realtime_response",
+            "realtime_conversation_item",
+            "realtime_error",
             "vad_speech_start",
             "vad_speech_end",
             "vad_audio",
@@ -1032,15 +1032,15 @@ class TestEventSerialization:
             TTSSynthesisCompleteEvent(synthesis_id="synth-123"),
             TTSErrorEvent(error=Exception("TTS error")),
             TTSConnectionEvent(connection_state=ConnectionState.DISCONNECTED),
-            # STS Events
-            STSConnectedEvent(provider="test_provider"),
-            STSDisconnectedEvent(reason="user_disconnect"),
-            STSAudioInputEvent(audio_data=b"input"),
-            STSAudioOutputEvent(audio_data=b"output"),
-            STSTranscriptEvent(text="STS transcript"),
-            STSResponseEvent(text="STS response"),
-            STSConversationItemEvent(item_type="message"),
-            STSErrorEvent(error=Exception("STS error")),
+            # Realtime Events
+            RealtimeConnectedEvent(provider="test_provider"),
+            RealtimeDisconnectedEvent(reason="user_disconnect"),
+            RealtimeAudioInputEvent(audio_data=b"input"),
+            RealtimeAudioOutputEvent(audio_data=b"output"),
+            RealtimeTranscriptEvent(text="Realtime transcript"),
+            RealtimeResponseEvent(text="Realtime response"),
+            RealtimeConversationItemEvent(item_type="message"),
+            RealtimeErrorEvent(error=Exception("Realtime error")),
             # VAD Events
             VADSpeechStartEvent(speech_probability=0.8),
             VADSpeechEndEvent(total_speech_duration_ms=1000.0),
