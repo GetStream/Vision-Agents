@@ -5,7 +5,7 @@ This module provides functions for calculating performance metrics
 from events across different plugin types.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Sequence
 import math
 
 from .events import (
@@ -77,7 +77,7 @@ def calculate_stt_metrics(events: List[BaseEvent]) -> Dict[str, Any]:
     return metrics
 
 
-def calculate_tts_metrics(events: List[BaseEvent]) -> Dict[str, Any]:
+def calculate_tts_metrics(events: Sequence[BaseEvent]) -> Dict[str, Any]:
     """Calculate TTS-specific metrics."""
     audio_events = [e for e in events if isinstance(e, TTSAudioEvent)]
     synthesis_events = [e for e in events if isinstance(e, TTSSynthesisStartEvent)]
@@ -119,7 +119,7 @@ def calculate_tts_metrics(events: List[BaseEvent]) -> Dict[str, Any]:
     return metrics
 
 
-def calculate_vad_metrics(events: List[BaseEvent]) -> Dict[str, Any]:
+def calculate_vad_metrics(events: Sequence[BaseEvent]) -> Dict[str, Any]:
     """Calculate VAD-specific metrics."""
     audio_events = [e for e in events if isinstance(e, VADAudioEvent)]
     partial_events = [e for e in events if isinstance(e, VADPartialEvent)]

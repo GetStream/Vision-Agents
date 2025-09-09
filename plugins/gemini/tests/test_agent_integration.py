@@ -21,7 +21,9 @@ class _Events(TypedDict):
 async def test_gemini_agent_integration_hits_live_endpoints():
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if api_key is None:
-        pytest.skip("GOOGLE_API_KEY not set – skipping agent+Gemini live integration test")
+        pytest.skip(
+            "GOOGLE_API_KEY not set – skipping agent+Gemini live integration test"
+        )
 
     # Build Agent with live Gemini Realtime (no RTC join needed to hit Gemini endpoints)
     agent = Agent(
@@ -58,4 +60,6 @@ async def test_gemini_agent_integration_hits_live_endpoints():
         await asyncio.sleep(0.25)
 
     # We expect at least one audio or text chunk from the live model
-    assert events["audio"] or events["text"], "No response received from Gemini Live via Agent"
+    assert events["audio"] or events["text"], (
+        "No response received from Gemini Live via Agent"
+    )

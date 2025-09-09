@@ -1,6 +1,5 @@
-from typing import Callable, ParamSpec, TypeVar
+from typing import Callable, ParamSpec, TypeVar, Any
 
-from anthropic.resources import AsyncMessages
 
 P2 = ParamSpec("P2")
 R2 = TypeVar("R2")
@@ -33,10 +32,19 @@ messages = [
 
 system_prompt = "You are a helpful assistant that describes images in detail."
 
+
+# The following is a type exercise; avoid calling an overloaded SDK method with ParamSpec, which confuses mypy
+# by referencing a concrete callable with a clear signature.
+def _echo(
+    text: str, system: str, messages: list[dict[str, Any]], max_tokens: int
+) -> str:
+    return text
+
+
 result = call_twice(
-    AsyncMessages.create,
-    model="claude-3-5-sonnet-20241022",
+    _echo,
+    "ok",
     system=system_prompt,
     messages=messages,
-    max_tokens="1000",
+    max_tokens=1000,
 )

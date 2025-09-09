@@ -21,8 +21,11 @@ class AgentSessionContextManager:
                 if callable(ae):
                     try:
                         import asyncio
+
                         if asyncio.iscoroutinefunction(ae):
-                            asyncio.get_event_loop().run_until_complete(ae(None, None, None))
+                            asyncio.get_event_loop().run_until_complete(
+                                ae(None, None, None)
+                            )
                         else:
                             ae(None, None, None)
                     except Exception:
@@ -31,6 +34,7 @@ class AgentSessionContextManager:
             # Close agent resources
             try:
                 import asyncio
+
                 coro = self.agent.close()
                 if asyncio.iscoroutine(coro):
                     asyncio.get_event_loop().run_until_complete(coro)

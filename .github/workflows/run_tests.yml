@@ -37,4 +37,3 @@ jobs:
         run: uv run pytest -n auto -m "${{ inputs.marker }}"
       - name: Run plugin test
         run: uv run pytest plugins/*/tests/*.py -n auto -m "${{ inputs.marker }}"
-

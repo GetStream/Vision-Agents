@@ -48,7 +48,7 @@ uv run pytest                          # Run all tests in the workspace
 
 ## Project layout
 
-1. the `agents` folder is where most of the logic is handled 
+1. the `agents` folder is where most of the logic is handled
 2. all tests live inside `tests`
 
 

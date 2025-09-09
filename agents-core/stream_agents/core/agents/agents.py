@@ -86,8 +86,9 @@ class Agent:
         self.turn_detection = turn_detection
         self.processors = processors or []
         self.queue = ReplyQueue(self)
-        self.conversation = None
-        self.llm.attach_agent(self)
+        self.conversation: Optional[StreamConversation] = None
+        if self.llm is not None:
+            self.llm.attach_agent(self)
 
         # Initialize state variables
         self._is_running: bool = False
@@ -132,32 +133,50 @@ class Agent:
             self.conversation = StreamConversation(
                 self.instructions, [], self.channel.data.channel, chat_client
             )
-            self.llm.conversation = self.conversation
+            # mypy: set attr dynamically for both LLM and Realtime types
+            setattr(self.llm, "conversation", self.conversation)
             # When using Realtime, mirror responses/transcripts into the conversation for UI updates
-            if self.sts_mode and hasattr(self.llm, "on") and self.conversation is not None:
+            if (
+                self.sts_mode
+                and hasattr(self.llm, "on")
+                and self.conversation is not None
+            ):
+
                 @self.llm.on("response")  # type: ignore[attr-defined]
                 async def _on_llm_response(event):
                     try:
-                        text = getattr(event, "text", None) if not isinstance(event, str) else event
+                        text = (
+                            getattr(event, "text", None)
+                            if not isinstance(event, str)
+                            else event
+                        )
                         is_complete = getattr(event, "is_complete", True)
-                        if text:
+                        if text and self.conversation is not None:
                             if is_complete:
                                 self.conversation.finish_last_message(text)
                             else:
                                 self.conversation.partial_update_message(text, None)
                     except Exception as e:
-                        self.logger.debug(f"Error updating conversation from response: {e}")
+                        self.logger.debug(
+                            f"Error updating conversation from response: {e}"
+                        )
 
                 @self.llm.on("transcript")  # type: ignore[attr-defined]
                 async def _on_llm_transcript(event):
                     try:
                         # Only mirror user transcripts; assistant transcripts will be reflected via response events
                         is_user = getattr(event, "is_user", True)
-                        text = getattr(event, "text", None) if not isinstance(event, str) else event
-                        if is_user and text:
+                        text = (
+                            getattr(event, "text", None)
+                            if not isinstance(event, str)
+                            else event
+                        )
+                        if is_user and text and self.conversation is not None:
                             self.conversation.partial_update_message(text, None)
                     except Exception as e:
-                        self.logger.debug(f"Error updating conversation from transcript: {e}")
+                        self.logger.debug(
+                            f"Error updating conversation from transcript: {e}"
+                        )
 
         """Join a Stream video call."""
         if self._is_running:
@@ -171,7 +190,7 @@ class Agent:
             self.logger.info("🎤 Using STT/TTS mode")
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
-        if self.sts_mode:
+        if self.sts_mode and isinstance(self.llm, Realtime):
             await self.llm.wait_until_ready()
 
         # Traditional mode - use WebRTC connection
@@ -211,6 +230,10 @@ class Agent:
             from .agent_session import AgentSessionContextManager
 
             return AgentSessionContextManager(self, connection_cm)
+        # In case tracks are not added, still return context manager
+        from .agent_session import AgentSessionContextManager
+
+        return AgentSessionContextManager(self, connection_cm)
 
     async def say(self, text):
         await self.queue.say_text(text)
@@ -319,7 +342,7 @@ class Agent:
                 self.logger.error(f"Error processing audio for processors: {e}")
 
             # when in Realtime mode call the Realtime directly
-            if self.sts_mode:
+            if self.sts_mode and isinstance(self.llm, Realtime):
                 await self.llm.send_audio_pcm(pcm_data)
             else:
                 # Process audio through STT
@@ -361,12 +384,14 @@ class Agent:
         await asyncio.sleep(0.5)
 
         # If Realtime provider supports video, forward frames upstream once per track
-        if self.sts_mode:
+        if self.sts_mode and isinstance(self.llm, Realtime):
             try:
                 await self.llm.start_video_sender(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
             except Exception as e:
-                self.logger.error(f"Error starting video sender to Realtime provider: {e}")
+                self.logger.error(
+                    f"Error starting video sender to Realtime provider: {e}"
+                )
 
         hasImageProcessers = len(self.image_processors) > 0
         self.logger.info(
@@ -459,7 +484,10 @@ class Agent:
     async def _process_transcription(
         self, text: str, participant: Participant = None
     ) -> None:
-        await self.llm.simple_response(text=text, processors=self.processors, participant=participant)
+        if self.llm is not None:
+            await self.llm.simple_response(
+                text=text, processors=self.processors, participant=participant
+            )
 
     @property
     def sts_mode(self) -> bool:
@@ -543,7 +571,7 @@ class Agent:
 
         # Set up audio track if TTS is available
         if self.publish_audio:
-            if self.sts_mode:
+            if self.sts_mode and isinstance(self.llm, Realtime):
                 self._audio_track = self.llm.output_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
@@ -594,7 +622,9 @@ class Agent:
 
                 self.logger.info("✅ OpenAI audio forwarding configured")
             else:
-                self.logger.warning("⚠️ Realtime connection doesn't support audio forwarding")
+                self.logger.warning(
+                    "⚠️ Realtime connection doesn't support audio forwarding"
+                )
         else:
             self.logger.warning("⚠️ Audio track not available for forwarding")
 

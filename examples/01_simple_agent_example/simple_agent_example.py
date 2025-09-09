@@ -32,7 +32,7 @@ async def start_agent() -> None:
         llm=OpenAILLM(model="gpt-4o-mini"),
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        #turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
+        # turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
@@ -45,10 +45,14 @@ async def start_agent() -> None:
     # Have the agent join the call/room
     with await agent.join(call):
         # Example 1: standardized simple response (aggregates delta/done)
-        await agent.llm.simple_response(text="Please say verbatim: 'this is a test of the gemini realtime api.'.")
-        
+        await agent.llm.simple_response(
+            text="Please say verbatim: 'this is a test of the gemini realtime api.'."
+        )
+
         # Example 2: provider-native passthrough for advanced control
-        await agent.llm.native_send_realtime_input(text="Please say verbatim: 'this is a test using the gemini realtime api native input method.'.")
+        await agent.llm.native_send_realtime_input(
+            text="Please say verbatim: 'this is a test using the gemini realtime api native input method.'."
+        )
 
         await agent.finish()  # run till the call ends
 

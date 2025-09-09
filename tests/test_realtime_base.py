@@ -97,7 +97,18 @@ async def test_agent_conversation_updates_with_realtime(monkeypatch):
     agent = Agent(llm=rt)
 
     # Fake Call with minimal attributes used
-    call = SimpleNamespace(id="c1", client=SimpleNamespace(stream=SimpleNamespace(chat=SimpleNamespace(get_or_create_channel=lambda *a, **k: SimpleNamespace(data=SimpleNamespace(channel="ch"))))))
+    call = SimpleNamespace(
+        id="c1",
+        client=SimpleNamespace(
+            stream=SimpleNamespace(
+                chat=SimpleNamespace(
+                    get_or_create_channel=lambda *a, **k: SimpleNamespace(
+                        data=SimpleNamespace(channel="ch")
+                    )
+                )
+            )
+        ),
+    )
 
     # Run join (which registers event mirroring to conversation)
     await agent.join(call)
@@ -203,7 +214,9 @@ class FakeRealtimeNative(base_rt.Realtime):
         # Not used in native_response test
         pass
 
-    async def native_send_realtime_input(self, *, text=None, audio=None, media=None) -> None:
+    async def native_send_realtime_input(
+        self, *, text=None, audio=None, media=None
+    ) -> None:
         # Emit two deltas and an empty final (hybrid contract)
         self._emit_response_event(text="foo", is_complete=False)
         self._emit_response_event(text="bar", is_complete=False)

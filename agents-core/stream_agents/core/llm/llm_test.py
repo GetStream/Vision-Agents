@@ -19,8 +19,3 @@ And more advanced things
 - STS standardization
 
 """
-
-
-
-
-

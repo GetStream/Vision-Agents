@@ -1,4 +1,3 @@
-
 import pytest
 from dotenv import load_dotenv
 
@@ -7,7 +6,6 @@ load_dotenv()
 
 
 class TestExamplePlugin:
-
     def test_regular(self):
         assert True
 

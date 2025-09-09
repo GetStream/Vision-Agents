@@ -359,7 +359,11 @@ class Realtime(realtime.Realtime):
         return self._session
 
     async def native_send_realtime_input(
-        self, *, text: Optional[str] = None, audio: Optional[Blob] = None, media: Optional[Blob] = None
+        self,
+        *,
+        text: Optional[str] = None,
+        audio: Optional[Blob] = None,
+        media: Optional[Blob] = None,
     ) -> None:
         """Advanced: call Gemini's send_realtime_input directly with text/audio/media.
 

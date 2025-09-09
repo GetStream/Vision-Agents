@@ -45,13 +45,25 @@ Notes
 - For audio-only turns, done should be emitted with empty text; callers receive
   RealtimeResponse(text="") but the audio is still emitted on the "audio" event
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Generic, List, Optional, TYPE_CHECKING, TypeVar, Awaitable
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    TYPE_CHECKING,
+    TypeVar,
+    Awaitable,
+)
 
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.audio_track import AudioStreamTrack
 import asyncio
+
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
 
@@ -60,7 +72,6 @@ import logging
 import uuid
 
 from pyee.asyncio import AsyncIOEventEmitter
-from av.dictionary import Dictionary
 
 from ..events.events import (
     RealtimeConnectedEvent,
@@ -84,8 +95,9 @@ class RealtimeResponse(Generic[T]):
         self.original = original
         self.text = text
 
-BeforeCb = Callable[[List[Dictionary]], None]
-AfterCb  = Callable[[RealtimeResponse], None]
+
+BeforeCb = Callable[[List[Any]], None]
+AfterCb = Callable[[RealtimeResponse[Any]], Any]
 
 logger = logging.getLogger(__name__)
 
@@ -183,12 +195,12 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         return self._is_connected
 
     @abc.abstractmethod
-    async def connect(self):
-        ...
+    async def connect(self): ...
 
     def attach_agent(self, agent: Agent):
         self.agent = agent
-        self.before_response_listener = lambda x: agent.add_to_conversation(x)
+        # Keep callbacks consistent with Agent methods
+        self.before_response_listener = lambda x: agent.before_response(x)
         self.after_response_listener = lambda x: agent.after_response(x)
 
     def set_before_response_listener(self, before_response_listener: BeforeCb):
@@ -198,8 +210,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self.after_response_listener = after_response_listener
 
     @abc.abstractmethod
-    def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000):
-        ...
+    def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
 
     async def send_text(self, text: str):
         """Send a text message from the human side to the conversation.
@@ -254,7 +265,9 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         Providers that support a native realtime input API should override this.
         Default implementation raises NotImplementedError.
         """
-        raise NotImplementedError("native_send_realtime_input is not implemented for this provider")
+        raise NotImplementedError(
+            "native_send_realtime_input is not implemented for this provider"
+        )
 
     async def native_response(
         self,
@@ -268,10 +281,13 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
 
         Delegates to the shared aggregation helper using native_send_realtime_input.
         """
+
         async def _sender():
             await self.native_send_realtime_input(text=text, audio=audio, media=media)
 
-        return await self._aggregate_turn(sender=_sender, before_text=text, timeout=timeout)
+        return await self._aggregate_turn(
+            sender=_sender, before_text=text, timeout=timeout
+        )
 
     async def simple_response(
         self,
@@ -285,10 +301,13 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
 
         Aggregates streaming deltas with a hybrid strategy to build final text.
         """
+
         async def _sender():
             await self.send_text(text)
 
-        return await self._aggregate_turn(sender=_sender, before_text=text, timeout=timeout)
+        return await self._aggregate_turn(
+            sender=_sender, before_text=text, timeout=timeout
+        )
 
     # ---- Shared aggregation helpers ----
     @staticmethod
@@ -301,7 +320,11 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             return final_done
         if accumulated.endswith(final_done):
             return accumulated
-        if final_done and len(final_done) <= 4 and all(ch in " .,!?:;—-…'\"" for ch in final_done):
+        if (
+            final_done
+            and len(final_done) <= 4
+            and all(ch in " .,!?:;—-…'\"" for ch in final_done)
+        ):
             return accumulated + final_done
         return accumulated
 
@@ -315,21 +338,25 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         # Notify before listener
         if before_text is not None:
             try:
-                normalized: List[Dictionary] = [Dictionary({"content": before_text, "role": "user"})]
+                normalized: List[Any] = [{"content": before_text, "role": "user"}]
                 if hasattr(self, "before_response_listener"):
                     self.before_response_listener(normalized)
             except Exception:
                 pass
 
         collected_parts: List[str] = []
-        done_fut: asyncio.Future[RealtimeResponse[Any]] = asyncio.get_event_loop().create_future()
+        done_fut: asyncio.Future[RealtimeResponse[Any]] = (
+            asyncio.get_event_loop().create_future()
+        )
 
         async def _on_response(event: Any):
             try:
                 if isinstance(event, RealtimeResponseEvent):
                     if event.is_complete:
                         if not done_fut.done():
-                            final_text = self._merge_final_text(collected_parts, event.text)
+                            final_text = self._merge_final_text(
+                                collected_parts, event.text
+                            )
                             done_fut.set_result(RealtimeResponse(event, final_text))
                         self.remove_listener("response", _on_response)
                     else:
@@ -352,7 +379,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             await self.after_response_listener(result)
 
         return result
-    
+
     def _emit_connected_event(self, session_config=None, capabilities=None):
         """Emit a structured connected event."""
         self._is_connected = True
@@ -498,8 +525,8 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self.emit("closed", close_event)
 
     @abc.abstractmethod
-    async def _close_impl(self):
-        ...
+    async def _close_impl(self): ...
+
 
 # Public re-export
 __all__ = ["Realtime"]

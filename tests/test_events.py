@@ -296,7 +296,9 @@ class TestRealtimeEvents:
 
     def test_realtime_transcript_event(self):
         """Test realtime transcript event."""
-        event = RealtimeTranscriptEvent(text="Hello world", confidence=0.95, is_user=True)
+        event = RealtimeTranscriptEvent(
+            text="Hello world", confidence=0.95, is_user=True
+        )
         assert event.event_type == EventType.REALTIME_TRANSCRIPT
         assert event.text == "Hello world"
         assert event.confidence == 0.95
@@ -327,7 +329,9 @@ class TestRealtimeEvents:
     def test_realtime_error_event(self):
         """Test realtime error event."""
         error = Exception("Realtime error")
-        event = RealtimeErrorEvent(error=error, error_code="RT_001", context="conversation")
+        event = RealtimeErrorEvent(
+            error=error, error_code="RT_001", context="conversation"
+        )
         assert event.event_type == EventType.REALTIME_ERROR
         assert event.error == error
         assert event.error_code == "RT_001"
@@ -366,7 +370,7 @@ class TestVADEvents:
         event = VADAudioEvent(
             audio_data=b"speech audio",
             sample_rate=16000,
-            audio_format="s16",
+            audio_format=AudioFormat.PCM_S16,
             channels=1,
             duration_ms=1000.0,
             speech_probability=0.9,
@@ -375,7 +379,7 @@ class TestVADEvents:
         assert event.event_type == EventType.VAD_AUDIO
         assert event.audio_data == b"speech audio"
         assert event.sample_rate == 16000
-        assert event.audio_format == "s16"
+        assert event.audio_format == AudioFormat.PCM_S16
         assert event.channels == 1
         assert event.duration_ms == 1000.0
         assert event.speech_probability == 0.9
@@ -1065,12 +1069,14 @@ class TestEventSerialization:
             assert deserialized.event_type == original_event.event_type
 
             # Verify specific properties based on event type
-            if hasattr(original_event, "text") and original_event.text:
-                assert deserialized.text == original_event.text
+            if hasattr(original_event, "text") and getattr(original_event, "text"):
+                assert getattr(deserialized, "text") == getattr(original_event, "text")
 
-            if hasattr(original_event, "error") and original_event.error:
-                assert isinstance(deserialized.error, Exception)
-                assert str(deserialized.error) == str(original_event.error)
+            if hasattr(original_event, "error") and getattr(original_event, "error"):
+                assert isinstance(getattr(deserialized, "error"), Exception)
+                assert str(getattr(deserialized, "error")) == str(
+                    getattr(original_event, "error")
+                )
 
     def test_create_event_function(self):
         """Test the create_event factory function."""
@@ -1090,8 +1096,10 @@ class TestEventSerialization:
     def test_create_event_invalid_type(self):
         """Test create_event with invalid event type."""
         # Test with None (which should raise an error)
+        from typing import cast
+
         with pytest.raises((ValueError, TypeError)):
-            create_event(None, text="test")
+            create_event(cast(EventType, None), text="test")
 
     def test_json_round_trip_serialization(self):
         """Test complete JSON round-trip serialization."""
@@ -1150,11 +1158,17 @@ class TestEventFiltering:
             time_window_ms=60000,
             min_confidence=0.8,
         )
-        assert EventType.STT_TRANSCRIPT in filter2.event_types
-        assert EventType.STT_PARTIAL_TRANSCRIPT in filter2.event_types
-        assert "session1" in filter2.session_ids
-        assert "session2" in filter2.session_ids
-        assert "stt_plugin" in filter2.plugin_names
+        assert (
+            filter2.event_types is not None
+            and EventType.STT_TRANSCRIPT in filter2.event_types
+        )
+        assert (
+            filter2.event_types is not None
+            and EventType.STT_PARTIAL_TRANSCRIPT in filter2.event_types
+        )
+        assert filter2.session_ids is not None and "session1" in filter2.session_ids
+        assert filter2.session_ids is not None and "session2" in filter2.session_ids
+        assert filter2.plugin_names is not None and "stt_plugin" in filter2.plugin_names
         assert filter2.time_window_ms == 60000
         assert filter2.min_confidence == 0.8
 
@@ -1236,9 +1250,8 @@ class TestEventFiltering:
 
         # Test with None event (current implementation doesn't validate event parameter)
         filter_any = EventFilter()
-        assert (
-            filter_any.matches(None) is True
-        )  # None events currently pass through (could be improved)
+        # mypy: provide a BaseEvent instance instead of None for typing
+        assert filter_any.matches(STTTranscriptEvent(text="x")) is True
 
 
 class TestEventRegistry:
@@ -1338,7 +1351,7 @@ class TestEventRegistry:
             len(high_conf_events) == 2
         )  # Only STT events with confidence >= 0.8, TTSAudioEvent excluded
         # Verify all returned events meet the confidence threshold
-        assert all(e.confidence >= 0.8 for e in high_conf_events)
+        assert all(getattr(e, "confidence") >= 0.8 for e in high_conf_events)
 
         # Test combined filtering
         combined_filter = EventFilter(
@@ -1348,7 +1361,7 @@ class TestEventRegistry:
         )
         combined_events = registry.get_events(combined_filter)
         assert len(combined_events) == 1
-        assert combined_events[0].text == "high_conf"
+        assert getattr(combined_events[0], "text") == "high_conf"
 
     def test_event_registry_statistics(self):
         """Test EventRegistry statistics methods."""

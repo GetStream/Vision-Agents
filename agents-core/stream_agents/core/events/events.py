@@ -324,7 +324,9 @@ class RealtimeResponseEvent(BaseEvent):
 class RealtimeConversationItemEvent(BaseEvent):
     """Event emitted for conversation item updates in realtime session."""
 
-    event_type: EventType = field(default=EventType.REALTIME_CONVERSATION_ITEM, init=False)
+    event_type: EventType = field(
+        default=EventType.REALTIME_CONVERSATION_ITEM, init=False
+    )
     item_id: Optional[str] = None
     item_type: Optional[str] = (
         None  # "message", "function_call", "function_call_output"

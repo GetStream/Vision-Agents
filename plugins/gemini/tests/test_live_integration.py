@@ -9,6 +9,7 @@ class _Events(TypedDict):
     audio: List[bytes]
     text: List[str]
 
+
 try:
     from dotenv import load_dotenv
 
@@ -36,7 +37,7 @@ async def test_gemini_live_with_real_api():
         pytest.skip(f"Required Google packages not available: {e}")
 
     from stream_agents.plugins import gemini
-    
+
     # Set up instance and event capture
 
     events: _Events = {"audio": [], "text": []}
@@ -128,7 +129,9 @@ async def test_gemini_live_simple_and_native_and_video():
         await asyncio.sleep(0.2)
 
     try:
-        assert events["audio"] or events["text"], "No response received from Gemini Live"
+        assert events["audio"] or events["text"], (
+            "No response received from Gemini Live"
+        )
     finally:
         await sts.stop_video_sender()
         await sts.close()
@@ -181,6 +184,7 @@ async def test_gemini_native_passthrough(monkeypatch):
 @pytest.mark.asyncio
 async def test_gemini_native_response_returns_standardized(monkeypatch):
     import types
+
     # Patch client to have a dummy session that yields two text parts then ends
     from stream_agents.plugins.gemini import realtime as gemini_live
 
