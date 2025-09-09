@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from aiortc import VideoStreamTrack
 
+from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..events import STTTranscriptEvent, STTPartialTranscriptEvent
@@ -86,10 +87,20 @@ class Agent:
         self.turn_detection = turn_detection
         self.processors = processors or []
         self.queue = ReplyQueue(self)
+
         self.conversation: Optional[StreamConversation] = None
         if self.llm is not None:
             self.llm.attach_agent(self)
+        #TODO: naming?
+        self.llm.on("before_llm_response", self.before_response)
+        self.llm.on("after_llm_response", self.after_response)
 
+        @self.llm.on('standardized.output_text.delta')
+        def _partial_messages(event: StandardizedTextDeltaEvent):
+            """Handle partial transcript from STT service."""
+            if event.delta and event.delta.strip():
+                if self.conversation:
+                    self.conversation.partial_update_message(event.delta, self.agent_user)
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
@@ -456,25 +467,21 @@ class Agent:
     async def _on_partial_transcript(
         self,
         event: STTPartialTranscriptEvent,
-        participant: Participant = None,
-        metadata=None,
     ):
-        """Handle partial transcript from STT service."""
         if event.text and event.text.strip():
             if self.conversation:
-                self.conversation.partial_update_message(event.text, participant)
+                self.conversation.partial_update_message(event.text, event.user_metadata)
             self.logger.debug(f"🎤 [partial]: {event.text}")
 
     async def _on_transcript(
-        self, event: STTTranscriptEvent, participant: Participant = None, metadata=None
+        self, event: STTTranscriptEvent
     ):
-        """Handle final transcript from STT service."""
         if event.text and event.text.strip():
             if self.conversation:
                 self.conversation.finish_last_message(event.text)
 
             # Process transcription through LLM and respond
-            await self._process_transcription(event.text, participant)
+            await self._process_transcription(event.text, event.user_metadata)
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""

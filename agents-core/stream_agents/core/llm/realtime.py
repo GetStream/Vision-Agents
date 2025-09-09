@@ -73,6 +73,7 @@ import uuid
 
 from pyee.asyncio import AsyncIOEventEmitter
 
+
 from ..events.events import (
     RealtimeConnectedEvent,
     RealtimeDisconnectedEvent,

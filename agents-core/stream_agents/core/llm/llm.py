@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import abc
 from typing import Optional, TYPE_CHECKING
+
+from pyee.asyncio import AsyncIOEventEmitter
 
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
@@ -28,7 +31,7 @@ BeforeCb = Callable[[List[Any]], None]
 AfterCb = Callable[[LLMResponse], None]
 
 
-class LLM:
+class LLM(AsyncIOEventEmitter, abc.ABC):
     # if we want to use realtime/ sts behaviour
     sts: bool = False
 
@@ -39,6 +42,7 @@ class LLM:
     function_registry: FunctionRegistry
 
     def __init__(self):
+        super().__init__()
         self.agent = None
         self.function_registry = FunctionRegistry()
 

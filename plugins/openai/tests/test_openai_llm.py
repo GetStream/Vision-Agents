@@ -1,9 +1,15 @@
 import pytest
 from dotenv import load_dotenv
 
+from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+<<<<<<< HEAD:plugins/openai/tests/test_openai_llm.py
+=======
+
 from stream_agents.core.llm.openai_llm import OpenAILLM
+>>>>>>> fcfdebc221f05b20141aa965930b492c476ae9ea:agents-core/stream_agents/core/llm/openai_llm_test.py
 
 from stream_agents.core.agents.conversation import Message
+from stream_agents.plugins.openai.openai_llm import OpenAILLM
 
 load_dotenv()
 
@@ -19,9 +25,6 @@ class TestOpenAILLM:
 
     def test_message(self, llm: OpenAILLM):
         messages = OpenAILLM._normalize_message("say hi")
-        from pprint import pprint
-
-        pprint(messages[0])
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
@@ -52,13 +55,32 @@ class TestOpenAILLM:
 
     @pytest.mark.integration
     async def test_native_api(self, llm: OpenAILLM):
+
+
         response = await llm.create_response(
             input="say hi", instructions="You are a helpful assistant."
         )
 
         # Assertions
         assert response.text
-        assert hasattr(response.original, "id")  # OpenAI response has id
+        assert hasattr(response.original, 'id')  # OpenAI response has id
+
+
+    @pytest.mark.integration
+    async def test_streaming(self, llm: OpenAILLM):
+
+        streamingWorks = False
+        @llm.on('standardized.output_text.delta')
+        def passed(event: StandardizedTextDeltaEvent):
+            nonlocal streamingWorks
+            streamingWorks = True
+        response = await llm.simple_response(
+            "Explain quantum computing in 1 paragraph",
+        )
+
+
+        assert response.text
+        assert streamingWorks
 
     @pytest.mark.integration
     async def test_memory(self, llm: OpenAILLM):

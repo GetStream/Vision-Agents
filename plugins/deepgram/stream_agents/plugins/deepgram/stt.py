@@ -47,7 +47,7 @@ class STT(stt.STT):
         sample_rate: int = 48000,
         language: str = "en-US",
         keep_alive_interval: float = 3.0,
-        interim_results: bool = False,
+        interim_results: bool = True,
         client: Optional[DeepgramClient] = None,
     ):
         """

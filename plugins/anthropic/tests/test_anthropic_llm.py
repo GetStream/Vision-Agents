@@ -1,11 +1,13 @@
 import pytest
 from dotenv import load_dotenv
 
+from plugins.anthropic.stream_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
 from stream_agents.core.llm.claude_llm import ClaudeLLM
 
 from stream_agents.core.agents.conversation import InMemoryConversation
 
-from src.stream_agents.agents.conversation import Message
+from stream_agents.core.agents.conversation import Message
+from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 
 load_dotenv()
 
@@ -52,6 +54,19 @@ class TestClaudeLLM:
         # Assertions
         assert response.text
         assert hasattr(response.original, "id")  # Claude response has id
+
+    @pytest.mark.integration
+    async def test_stream(self, llm: ClaudeLLM):
+        streamingWorks = False
+        @llm.on('standardized.output_text.delta')
+        def passed(event: StandardizedTextDeltaEvent):
+            nonlocal streamingWorks
+            streamingWorks = True
+
+        response = await llm.simple_response("Explain magma to a 5 year old")
+
+        assert streamingWorks
+
 
     @pytest.mark.integration
     async def test_memory(self, llm: ClaudeLLM):
