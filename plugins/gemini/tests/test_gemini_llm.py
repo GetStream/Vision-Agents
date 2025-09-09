@@ -1,10 +1,6 @@
-import os
-
 import pytest
 from dotenv import load_dotenv
-from google import genai
 
-from stream_agents.core.llm.llm import LLMResponse
 from stream_agents.core.llm.gemini_llm import GeminiLLM
 
 from stream_agents.core.agents.conversation import InMemoryConversation, Message
@@ -29,7 +25,7 @@ class TestGeminiLLM:
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
-        assert message.content is "say hi"
+        assert message.content == "say hi"
 
     def test_advanced_message(self, llm: GeminiLLM):
         advanced = ["say hi"]
@@ -43,13 +39,11 @@ class TestGeminiLLM:
 
     @pytest.mark.integration
     async def test_native_api(self, llm: GeminiLLM):
-        response = await llm.send_message(
-            message="say hi"
-        )
+        response = await llm.send_message(message="say hi")
 
         # Assertions
         assert response.text
-        assert hasattr(response.original, 'text')  # Gemini response has text attribute
+        assert hasattr(response.original, "text")  # Gemini response has text attribute
 
     @pytest.mark.integration
     async def test_stream(self, llm: GeminiLLM):
@@ -71,9 +65,7 @@ class TestGeminiLLM:
 
     @pytest.mark.integration
     async def test_native_memory(self, llm: GeminiLLM):
-        await llm.send_message(
-            message="There are 2 dogs in the room"
-        )
+        await llm.send_message(message="There are 2 dogs in the room")
         response = await llm.send_message(
             message="How many paws are there in the room?"
         )

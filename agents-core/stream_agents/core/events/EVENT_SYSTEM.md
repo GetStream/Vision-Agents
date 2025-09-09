@@ -174,7 +174,7 @@ from stream_agents.core.events import EventType
 # Get all STT events
 stt_events = registry.get_events(
     EventFilter(event_types=[
-        EventType.STT_TRANSCRIPT, 
+        EventType.STT_TRANSCRIPT,
         EventType.STT_PARTIAL_TRANSCRIPT
     ])
 )
@@ -203,7 +203,7 @@ with open("transcript_events.json", "r") as f:
     events_data = json.load(f)
 
 restored_events = [
-    EventSerializer.deserialize_event(event_data) 
+    EventSerializer.deserialize_event(event_data)
     for event_data in events_data
 ]
 ```
@@ -218,10 +218,10 @@ When creating new plugins, follow these patterns:
 class MySTTPlugin(STT):
     def __init__(self, **kwargs):
         super().__init__(provider_name="my_provider", **kwargs)
-    
+
     async def _process_audio_impl(self, pcm_data, user_metadata=None):
         # Process audio...
-        
+
         # For synchronous plugins, return results
         metadata = {
             "confidence": 0.95,
@@ -229,7 +229,7 @@ class MySTTPlugin(STT):
             "model_name": "my_model_v1"
         }
         return [(True, "transcribed text", metadata)]
-    
+
     async def close(self):
         # Cleanup resources
         await super().close()  # This emits the closure event
@@ -243,10 +243,10 @@ class MyAsyncSTTPlugin(STT):
         # Send audio to streaming service
         # Events will be emitted when responses arrive
         self.send_audio_to_service(pcm_data)
-        
+
         # Return None for asynchronous mode
         return None
-    
+
     def on_service_response(self, response):
         # Emit structured events directly
         metadata = {

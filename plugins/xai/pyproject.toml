@@ -6,19 +6,18 @@ build-backend = "hatchling.build"
 name = "stream-agents-plugins-xai"
 dynamic = ["version"]
 description = "XAI for stream agents"
+readme = "README.md"
+requires-python = ">=3.10.0"
 license = "Apache-2.0"
-requires-python = ">=3.9.0"
 dependencies = [
-    "stream-agents",
     "xai-sdk",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.uv.sources]
+stream-agents = { workspace = true }
 
 [tool.hatch.version]
-path = "./version.py"
-
-[tool.hatch.build.targets.wheel]
-packages = ["getstream"]
-
-[tool.hatch.build.targets.sdist]
-include = ["/stream-agents"]
+path = "stream_agents/plugins/xai/version.py"

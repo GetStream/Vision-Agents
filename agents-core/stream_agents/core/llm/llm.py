@@ -7,25 +7,26 @@ from pyee.asyncio import AsyncIOEventEmitter
 
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
+    from stream_agents.core.agents.conversation import Conversation
 
 
-from typing import List, TypeVar, Optional, Any, Callable, Generic
+from typing import List, TypeVar, Any, Callable, Generic, Optional as TypingOptional
 
-from av.dictionary import Dictionary
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.processors import BaseProcessor
 
 T = TypeVar("T")
 
+
 class LLMResponse(Generic[T]):
     def __init__(self, original: T, text: str):
         self.original = original
         self.text = text
 
-BeforeCb = Callable[[List[Dictionary]], None]
-AfterCb  = Callable[[LLMResponse], None]
 
+BeforeCb = Callable[[List[Any]], None]
+AfterCb = Callable[[LLMResponse], None]
 
 
 class LLM(AsyncIOEventEmitter, abc.ABC):
@@ -41,14 +42,14 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
         super().__init__()
         self.agent = None
 
-    def simple_response(self, text, processors: List[BaseProcessor], participant: Participant = None) -> LLMResponse[Any]:
-        pass
+    async def simple_response(
+        self,
+        text: str,
+        processors: TypingOptional[List[BaseProcessor]] = None,
+        participant: TypingOptional[Participant] = None,
+    ) -> LLMResponse[Any]:
+        raise NotImplementedError
 
     def attach_agent(self, agent: Agent):
         self.agent = agent
         self._conversation = agent.conversation
-
-
-
-
-

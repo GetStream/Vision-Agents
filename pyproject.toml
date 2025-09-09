@@ -16,7 +16,7 @@ stream-agents-plugins-xai = { workspace = true }
 members = [
     "agents-core",
     "plugins/anthropic",
-    "plugins/cartesia", 
+    "plugins/cartesia",
     "plugins/deepgram",
     "plugins/elevenlabs",
     "plugins/fal",
@@ -54,11 +54,9 @@ dev = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["stream-agents/src/stream_agents", "plugins", "tests"]
-
+mypy_path = ["agents-core"]
 # Gradual typing → can tighten over time
 ignore_missing_imports = true
 check_untyped_defs = true
 namespace_packages = true
 explicit_package_bases = true
-

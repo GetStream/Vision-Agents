@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import traceback
-from contextlib import nullcontext
 from typing import Optional, List, Any
 from uuid import uuid4
 
@@ -28,7 +27,7 @@ from getstream.video.rtc.tracks import (
     TrackType,
 )
 
-from .conversation import Conversation, StreamConversation
+from .conversation import StreamConversation
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
@@ -88,8 +87,10 @@ class Agent:
         self.turn_detection = turn_detection
         self.processors = processors or []
         self.queue = ReplyQueue(self)
-        self.conversation = None
-        self.llm.attach_agent(self)
+
+        self.conversation: Optional[StreamConversation] = None
+        if self.llm is not None:
+            self.llm.attach_agent(self)
         #TODO: naming?
         self.llm.on("before_llm_response", self.before_response)
         self.llm.on("after_llm_response", self.after_response)
@@ -100,8 +101,6 @@ class Agent:
             if event.delta and event.delta.strip():
                 if self.conversation:
                     self.conversation.partial_update_message(event.delta, self.agent_user)
-
-
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
@@ -123,7 +122,10 @@ class Agent:
         pass
 
     async def after_response(self, llm_response):
-        await self.queue.resume(llm_response)
+        # In Realtime (STS) mode or when not joined to a call, conversation may be None.
+        # Only resume the reply queue (which writes to conversation/tts) when a conversation exists.
+        if self.conversation is not None:
+            await self.queue.resume(llm_response)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
@@ -142,7 +144,50 @@ class Agent:
             self.conversation = StreamConversation(
                 self.instructions, [], self.channel.data.channel, chat_client
             )
-            self.llm.conversation = self.conversation
+            # mypy: set attr dynamically for both LLM and Realtime types
+            setattr(self.llm, "conversation", self.conversation)
+            # When using Realtime, mirror responses/transcripts into the conversation for UI updates
+            if (
+                self.sts_mode
+                and hasattr(self.llm, "on")
+                and self.conversation is not None
+            ):
+
+                @self.llm.on("response")  # type: ignore[attr-defined]
+                async def _on_llm_response(event):
+                    try:
+                        text = (
+                            getattr(event, "text", None)
+                            if not isinstance(event, str)
+                            else event
+                        )
+                        is_complete = getattr(event, "is_complete", True)
+                        if text and self.conversation is not None:
+                            if is_complete:
+                                self.conversation.finish_last_message(text)
+                            else:
+                                self.conversation.partial_update_message(text, None)
+                    except Exception as e:
+                        self.logger.debug(
+                            f"Error updating conversation from response: {e}"
+                        )
+
+                @self.llm.on("transcript")  # type: ignore[attr-defined]
+                async def _on_llm_transcript(event):
+                    try:
+                        # Only mirror user transcripts; assistant transcripts will be reflected via response events
+                        is_user = getattr(event, "is_user", True)
+                        text = (
+                            getattr(event, "text", None)
+                            if not isinstance(event, str)
+                            else event
+                        )
+                        if is_user and text and self.conversation is not None:
+                            self.conversation.partial_update_message(text, None)
+                    except Exception as e:
+                        self.logger.debug(
+                            f"Error updating conversation from transcript: {e}"
+                        )
 
         """Join a Stream video call."""
         if self._is_running:
@@ -153,10 +198,10 @@ class Agent:
         if self.sts_mode:
             self.logger.info("🎤 Using Realtime (Speech-to-Speech) mode")
         else:
-            self.logger.info("🎤 Using traditional STT/TTS mode")
+            self.logger.info("🎤 Using STT/TTS mode")
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
-        if self.sts_mode:
+        if self.sts_mode and isinstance(self.llm, Realtime):
             await self.llm.wait_until_ready()
 
         # Traditional mode - use WebRTC connection
@@ -165,26 +210,26 @@ class Agent:
             default=self._get_subscription_config()
         )
 
-        async with (
-            await rtc.join(
-                call, self.agent_user.id, subscription_config=subscription_config
-            ) as connection
-        ):
-            self._connection = connection
-            self._is_running = True
+        # Open RTC connection and keep it alive for the duration of the returned context manager
+        connection_cm = await rtc.join(
+            call, self.agent_user.id, subscription_config=subscription_config
+        )
+        connection = await connection_cm.__aenter__()
+        self._connection = connection
+        self._is_running = True
 
-            self.logger.info(f"🤖 Agent joined call: {call.id}")
+        self.logger.info(f"🤖 Agent joined call: {call.id}")
 
-            # Set up audio and video tracks together to avoid SDP issues
-            audio_track = self._audio_track if self.publish_audio else None
-            video_track = self._video_track if self.publish_video else None
+        # Set up audio and video tracks together to avoid SDP issues
+        audio_track = self._audio_track if self.publish_audio else None
+        video_track = self._video_track if self.publish_video else None
 
-            if audio_track or video_track:
-                await connection.add_tracks(audio=audio_track, video=video_track)
-                if audio_track:
-                    self.logger.debug("🤖 Agent ready to speak")
-                if video_track:
-                    self.logger.debug("🎥 Agent ready to publish video")
+        if audio_track or video_track:
+            await connection.add_tracks(audio=audio_track, video=video_track)
+            if audio_track:
+                self.logger.debug("🤖 Agent ready to speak")
+            if video_track:
+                self.logger.debug("🎥 Agent ready to publish video")
 
             # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
@@ -193,18 +238,13 @@ class Agent:
 
             # Realtime providers manage their own event loops; nothing to do here
 
-            # Keep the agent running and listening
-            self.logger.info("🎧 Agent is active - press Ctrl+C to stop")
-            try:
-                # Wait for the connection to stay alive
-                await connection.wait()
-            except Exception as e:
-                self.logger.error(f"❌ Error while waiting for connection: {e}")
-                self.logger.error(traceback.format_exc())
-
             from .agent_session import AgentSessionContextManager
 
-            return AgentSessionContextManager(self)
+            return AgentSessionContextManager(self, connection_cm)
+        # In case tracks are not added, still return context manager
+        from .agent_session import AgentSessionContextManager
+
+        return AgentSessionContextManager(self, connection_cm)
 
     async def say(self, text):
         await self.queue.say_text(text)
@@ -273,19 +313,11 @@ class Agent:
 
             await self.reply_to_audio(pcm, participant)
 
-        # listen to video tracks if we have video or image processors
-        self.logger.info(
-            "VDP: checking image and video processors %s %s",
-            self.video_processors,
-            self.image_processors,
-        )
-        if self.video_processors or self.image_processors:
-            self.logger.info("VDP: ok image and video processors")
-
-            @self._connection.on("track_added")
-            async def on_track(track_id, track_type, user):
-                self.logger.info("VDP: on track")
-                asyncio.create_task(self._process_track(track_id, track_type, user))
+        # Always listen to remote video tracks so we can forward frames to Realtime providers
+        @self._connection.on("track_added")
+        async def on_track(track_id, track_type, user):
+            self.logger.info("VDP: on track")
+            asyncio.create_task(self._process_track(track_id, track_type, user))
 
     async def reply_to_audio(
         self, pcm_data: PcmData, participant: models_pb2.Participant
@@ -321,7 +353,7 @@ class Agent:
                 self.logger.error(f"Error processing audio for processors: {e}")
 
             # when in Realtime mode call the Realtime directly
-            if self.sts_mode:
+            if self.sts_mode and isinstance(self.llm, Realtime):
                 await self.llm.send_audio_pcm(pcm_data)
             else:
                 # Process audio through STT
@@ -338,8 +370,8 @@ class Agent:
             f"🎥 Participant object: {participant}, type: {type(participant)}"
         )
 
-        # Only process video tracks - track_type might be numeric (2 for video)
-        if track_type != "video":
+        # Only process video tracks - track_type might be string, enum or numeric (2 for video)
+        if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
 
@@ -363,12 +395,14 @@ class Agent:
         await asyncio.sleep(0.5)
 
         # If Realtime provider supports video, forward frames upstream once per track
-        if self.sts_mode:
+        if self.sts_mode and isinstance(self.llm, Realtime):
             try:
                 await self.llm.start_video_sender(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
             except Exception as e:
-                self.logger.error(f"Error starting video sender to Realtime provider: {e}")
+                self.logger.error(
+                    f"Error starting video sender to Realtime provider: {e}"
+                )
 
         hasImageProcessers = len(self.image_processors) > 0
         self.logger.info(
@@ -457,7 +491,10 @@ class Agent:
     async def _process_transcription(
         self, text: str, participant: Participant = None
     ) -> None:
-        await self.llm.simple_response(text=text, processors=self.processors, participant=participant)
+        if self.llm is not None:
+            await self.llm.simple_response(
+                text=text, processors=self.processors, participant=participant
+            )
 
     @property
     def sts_mode(self) -> bool:
@@ -541,7 +578,7 @@ class Agent:
 
         # Set up audio track if TTS is available
         if self.publish_audio:
-            if self.sts_mode:
+            if self.sts_mode and isinstance(self.llm, Realtime):
                 self._audio_track = self.llm.output_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
@@ -592,7 +629,9 @@ class Agent:
 
                 self.logger.info("✅ OpenAI audio forwarding configured")
             else:
-                self.logger.warning("⚠️ Realtime connection doesn't support audio forwarding")
+                self.logger.warning(
+                    "⚠️ Realtime connection doesn't support audio forwarding"
+                )
         else:
             self.logger.warning("⚠️ Audio track not available for forwarding")
 

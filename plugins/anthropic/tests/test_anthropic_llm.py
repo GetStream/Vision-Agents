@@ -1,11 +1,9 @@
-
-import os
-
 import pytest
 from dotenv import load_dotenv
-from anthropic import AsyncAnthropic
 
 from plugins.anthropic.stream_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
+from stream_agents.core.llm.claude_llm import ClaudeLLM
+
 from stream_agents.core.agents.conversation import InMemoryConversation
 
 from stream_agents.core.agents.conversation import Message
@@ -29,10 +27,13 @@ class TestClaudeLLM:
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
-        assert message.content is "say hi"
+        assert message.content == "say hi"
 
     def test_advanced_message(self, llm: ClaudeLLM):
-        advanced = {"role": "user", "content": "Explain quantum entanglement in simple terms."}
+        advanced = {
+            "role": "user",
+            "content": "Explain quantum entanglement in simple terms.",
+        }
         messages2 = ClaudeLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
@@ -52,7 +53,7 @@ class TestClaudeLLM:
 
         # Assertions
         assert response.text
-        assert hasattr(response.original, 'id')  # Claude response has id
+        assert hasattr(response.original, "id")  # Claude response has id
 
     @pytest.mark.integration
     async def test_stream(self, llm: ClaudeLLM):
@@ -85,8 +86,9 @@ class TestClaudeLLM:
             max_tokens=1000,
         )
         response = await llm.create_message(
-            messages=[{"role": "user", "content": "How many paws are there in the room?"}],
+            messages=[
+                {"role": "user", "content": "How many paws are there in the room?"}
+            ],
             max_tokens=1000,
         )
         assert "8" in response.text or "eight" in response.text
-

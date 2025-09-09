@@ -76,46 +76,6 @@ class MockDeepgramConnection:
             error_obj = Exception(error_message)
             self.event_handlers[LiveTranscriptionEvents.Error](self, error_obj)
 
-    def start(self, options):
-        """Start the connection"""
-        pass
-
-    def emit_transcript(self, text, is_final=True):
-        """Helper to emit a transcript event"""
-        from deepgram import LiveTranscriptionEvents
-
-        if LiveTranscriptionEvents.Transcript in self.event_handlers:
-            # Create a mock result
-            transcript_data = {
-                "is_final": is_final,
-                "channel": {
-                    "alternatives": [
-                        {
-                            "transcript": text,
-                            "confidence": 0.95,
-                            "words": [
-                                {
-                                    "word": word,
-                                    "start": i * 0.5,
-                                    "end": (i + 1) * 0.5,
-                                    "confidence": 0.95,
-                                }
-                                for i, word in enumerate(text.split())
-                            ],
-                        }
-                    ]
-                },
-                "channel_index": 0,
-            }
-
-            # Convert to JSON string for the handler
-            transcript_json = json.dumps(transcript_data)
-
-            # Call the handler with the connection and the result
-            self.event_handlers[LiveTranscriptionEvents.Transcript](
-                self, result=transcript_json
-            )
-
 
 class MockDeepgramClient:
     def __init__(self, api_key=None):
@@ -311,7 +271,7 @@ async def test_deepgram_stt_transcript_events(mia_metadata):
 
     # Set up the connection with the mocked client
     stt._setup_connection()
-    
+
     # Emit a transcript using the mock connection
     stt.dg_connection.emit_transcript("This is a final transcript")
 
@@ -585,7 +545,7 @@ async def test_deepgram_keep_alive_mechanism():
     """Test that the keep-alive mechanism works."""
     # Create a Deepgram STT instance with a short keep-alive interval
     stt = deepgram.STT(api_key="test-api-key", keep_alive_interval=0.1)
-    
+
     # Set up the connection with the mocked client
     stt._setup_connection()
     connection = stt.dg_connection
@@ -610,7 +570,7 @@ async def test_deepgram_keep_alive_after_audio():
     """Test that keep-alive messages are sent after audio is processed."""
     # Create a Deepgram STT instance with a short keep-alive interval
     stt = deepgram.STT(api_key="test-api-key", keep_alive_interval=0.1)
-    
+
     # Set up the connection with the mocked client
     stt._setup_connection()
     connection = stt.dg_connection
@@ -641,7 +601,7 @@ async def test_deepgram_keep_alive_direct():
     """Test that we can directly send keep-alive messages."""
     # Create a Deepgram STT instance
     stt = deepgram.STT(api_key="test-api-key")
-    
+
     # Set up the connection with the mocked client
     stt._setup_connection()
     connection = stt.dg_connection
@@ -673,7 +633,7 @@ async def test_deepgram_close_message():
     """Test that the finish message is sent when the connection is closed."""
     # Create a Deepgram STT instance
     stt = deepgram.STT(api_key="test-api-key")
-    
+
     # Set up the connection with the mocked client
     stt._setup_connection()
     connection = stt.dg_connection

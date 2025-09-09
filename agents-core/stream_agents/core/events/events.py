@@ -36,15 +36,15 @@ class EventType(Enum):
     TTS_ERROR = "tts_error"
     TTS_CONNECTION = "tts_connection"
 
-    # STS Events
-    STS_CONNECTED = "sts_connected"
-    STS_DISCONNECTED = "sts_disconnected"
-    STS_AUDIO_INPUT = "sts_audio_input"
-    STS_AUDIO_OUTPUT = "sts_audio_output"
-    STS_TRANSCRIPT = "sts_transcript"
-    STS_RESPONSE = "sts_response"
-    STS_ERROR = "sts_error"
-    STS_CONVERSATION_ITEM = "sts_conversation_item"
+    # Realtime Events (formerly STS)
+    REALTIME_CONNECTED = "realtime_connected"
+    REALTIME_DISCONNECTED = "realtime_disconnected"
+    REALTIME_AUDIO_INPUT = "realtime_audio_input"
+    REALTIME_AUDIO_OUTPUT = "realtime_audio_output"
+    REALTIME_TRANSCRIPT = "realtime_transcript"
+    REALTIME_RESPONSE = "realtime_response"
+    REALTIME_ERROR = "realtime_error"
+    REALTIME_CONVERSATION_ITEM = "realtime_conversation_item"
 
     # VAD Events
     VAD_SPEECH_START = "vad_speech_start"
@@ -251,35 +251,35 @@ class TTSConnectionEvent(BaseEvent):
 
 
 # ============================================================================
-# STS (Speech-to-Speech) Events
+# Realtime (Speech-to-Speech) Events
 # ============================================================================
 
 
 @dataclass
-class STSConnectedEvent(BaseEvent):
-    """Event emitted when STS connection is established."""
+class RealtimeConnectedEvent(BaseEvent):
+    """Event emitted when realtime connection is established."""
 
-    event_type: EventType = field(default=EventType.STS_CONNECTED, init=False)
+    event_type: EventType = field(default=EventType.REALTIME_CONNECTED, init=False)
     provider: Optional[str] = None
     session_config: Optional[Dict[str, Any]] = None
     capabilities: Optional[List[str]] = None
 
 
 @dataclass
-class STSDisconnectedEvent(BaseEvent):
-    """Event emitted when STS connection is closed."""
+class RealtimeDisconnectedEvent(BaseEvent):
+    """Event emitted when realtime connection is closed."""
 
-    event_type: EventType = field(default=EventType.STS_DISCONNECTED, init=False)
+    event_type: EventType = field(default=EventType.REALTIME_DISCONNECTED, init=False)
     provider: Optional[str] = None
     reason: Optional[str] = None
     was_clean: bool = True
 
 
 @dataclass
-class STSAudioInputEvent(BaseEvent):
-    """Event emitted when audio input is sent to STS."""
+class RealtimeAudioInputEvent(BaseEvent):
+    """Event emitted when audio input is sent to realtime session."""
 
-    event_type: EventType = field(default=EventType.STS_AUDIO_INPUT, init=False)
+    event_type: EventType = field(default=EventType.REALTIME_AUDIO_INPUT, init=False)
     audio_data: Optional[bytes] = None
     audio_format: AudioFormat = AudioFormat.PCM_S16
     sample_rate: int = 16000
@@ -287,10 +287,10 @@ class STSAudioInputEvent(BaseEvent):
 
 
 @dataclass
-class STSAudioOutputEvent(BaseEvent):
-    """Event emitted when audio output is received from STS."""
+class RealtimeAudioOutputEvent(BaseEvent):
+    """Event emitted when audio output is received from realtime session."""
 
-    event_type: EventType = field(default=EventType.STS_AUDIO_OUTPUT, init=False)
+    event_type: EventType = field(default=EventType.REALTIME_AUDIO_OUTPUT, init=False)
     audio_data: Optional[bytes] = None
     audio_format: AudioFormat = AudioFormat.PCM_S16
     sample_rate: int = 16000
@@ -299,10 +299,10 @@ class STSAudioOutputEvent(BaseEvent):
 
 
 @dataclass
-class STSTranscriptEvent(BaseEvent):
-    """Event emitted when STS provides a transcript."""
+class RealtimeTranscriptEvent(BaseEvent):
+    """Event emitted when realtime session provides a transcript."""
 
-    event_type: EventType = field(default=EventType.STS_TRANSCRIPT, init=False)
+    event_type: EventType = field(default=EventType.REALTIME_TRANSCRIPT, init=False)
     text: Optional[str] = None
     is_user: bool = True
     confidence: Optional[float] = None
@@ -310,10 +310,10 @@ class STSTranscriptEvent(BaseEvent):
 
 
 @dataclass
-class STSResponseEvent(BaseEvent):
-    """Event emitted when STS provides a response."""
+class RealtimeResponseEvent(BaseEvent):
+    """Event emitted when realtime session provides a response."""
 
-    event_type: EventType = field(default=EventType.STS_RESPONSE, init=False)
+    event_type: EventType = field(default=EventType.REALTIME_RESPONSE, init=False)
     text: Optional[str] = None
     response_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     is_complete: bool = True
@@ -321,10 +321,12 @@ class STSResponseEvent(BaseEvent):
 
 
 @dataclass
-class STSConversationItemEvent(BaseEvent):
-    """Event emitted for conversation item updates in STS."""
+class RealtimeConversationItemEvent(BaseEvent):
+    """Event emitted for conversation item updates in realtime session."""
 
-    event_type: EventType = field(default=EventType.STS_CONVERSATION_ITEM, init=False)
+    event_type: EventType = field(
+        default=EventType.REALTIME_CONVERSATION_ITEM, init=False
+    )
     item_id: Optional[str] = None
     item_type: Optional[str] = (
         None  # "message", "function_call", "function_call_output"
@@ -335,10 +337,10 @@ class STSConversationItemEvent(BaseEvent):
 
 
 @dataclass
-class STSErrorEvent(BaseEvent):
-    """Event emitted when an STS error occurs."""
+class RealtimeErrorEvent(BaseEvent):
+    """Event emitted when a realtime error occurs."""
 
-    event_type: EventType = field(default=EventType.STS_ERROR, init=False)
+    event_type: EventType = field(default=EventType.REALTIME_ERROR, init=False)
     error: Optional[Exception] = None
     error_code: Optional[str] = None
     context: Optional[str] = None
@@ -493,14 +495,14 @@ EVENT_CLASS_MAP = {
     EventType.TTS_SYNTHESIS_COMPLETE: TTSSynthesisCompleteEvent,
     EventType.TTS_ERROR: TTSErrorEvent,
     EventType.TTS_CONNECTION: TTSConnectionEvent,
-    EventType.STS_CONNECTED: STSConnectedEvent,
-    EventType.STS_DISCONNECTED: STSDisconnectedEvent,
-    EventType.STS_AUDIO_INPUT: STSAudioInputEvent,
-    EventType.STS_AUDIO_OUTPUT: STSAudioOutputEvent,
-    EventType.STS_TRANSCRIPT: STSTranscriptEvent,
-    EventType.STS_RESPONSE: STSResponseEvent,
-    EventType.STS_CONVERSATION_ITEM: STSConversationItemEvent,
-    EventType.STS_ERROR: STSErrorEvent,
+    EventType.REALTIME_CONNECTED: RealtimeConnectedEvent,
+    EventType.REALTIME_DISCONNECTED: RealtimeDisconnectedEvent,
+    EventType.REALTIME_AUDIO_INPUT: RealtimeAudioInputEvent,
+    EventType.REALTIME_AUDIO_OUTPUT: RealtimeAudioOutputEvent,
+    EventType.REALTIME_TRANSCRIPT: RealtimeTranscriptEvent,
+    EventType.REALTIME_RESPONSE: RealtimeResponseEvent,
+    EventType.REALTIME_CONVERSATION_ITEM: RealtimeConversationItemEvent,
+    EventType.REALTIME_ERROR: RealtimeErrorEvent,
     EventType.VAD_SPEECH_START: VADSpeechStartEvent,
     EventType.VAD_SPEECH_END: VADSpeechEndEvent,
     EventType.VAD_AUDIO: VADAudioEvent,
@@ -552,15 +554,15 @@ __all__ = [
     "TTSSynthesisCompleteEvent",
     "TTSErrorEvent",
     "TTSConnectionEvent",
-    # STS Events
-    "STSConnectedEvent",
-    "STSDisconnectedEvent",
-    "STSAudioInputEvent",
-    "STSAudioOutputEvent",
-    "STSTranscriptEvent",
-    "STSResponseEvent",
-    "STSConversationItemEvent",
-    "STSErrorEvent",
+    # Realtime Events
+    "RealtimeConnectedEvent",
+    "RealtimeDisconnectedEvent",
+    "RealtimeAudioInputEvent",
+    "RealtimeAudioOutputEvent",
+    "RealtimeTranscriptEvent",
+    "RealtimeResponseEvent",
+    "RealtimeConversationItemEvent",
+    "RealtimeErrorEvent",
     # VAD Events
     "VADSpeechStartEvent",
     "VADSpeechEndEvent",

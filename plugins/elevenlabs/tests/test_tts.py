@@ -44,7 +44,7 @@ async def test_elevenlabs_tts_initialization():
     tts = elevenlabs.TTS(api_key="test-api-key")
     assert tts is not None
     # The mock client should have the api_key attribute
-    assert hasattr(tts.client, 'api_key')
+    assert hasattr(tts.client, "api_key")
     assert tts.client.api_key == "test-api-key"
 
 
