@@ -10,7 +10,7 @@ import numpy as np
 import logging
 import pytest
 import soundfile as sf
-from getstream.plugins import SileroVAD
+from stream_agents.plugins import silero
 from getstream.video.rtc.track_util import PcmData
 from getstream.plugins.test_utils import get_audio_asset
 
@@ -29,7 +29,7 @@ async def benchmark_vad(use_onnx=False, device="cpu"):
     logging.basicConfig(level=logging.ERROR)  # Suppress logs during benchmark
 
     # Initialize the VAD
-    vad = SileroVAD(
+    vad = silero.VAD(
         sample_rate=16000,
         window_samples=512,
         activation_th=0.3,

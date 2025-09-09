@@ -11,7 +11,7 @@ import numpy as np
 
 import pytest
 
-from getstream.plugins import SileroVAD
+from stream_agents.plugins import silero
 from getstream.video.rtc.track_util import PcmData
 
 
@@ -19,7 +19,7 @@ from getstream.video.rtc.track_util import PcmData
 async def test_performance():
     """Test that Silero VAD processes audio with acceptable CPU time."""
     # Initialize the VAD
-    vad = SileroVAD(
+    vad = silero.VAD(
         sample_rate=16000,
         frame_size=512,
         activation_th=0.5,

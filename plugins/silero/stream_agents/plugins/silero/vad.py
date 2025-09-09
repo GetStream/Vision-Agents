@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 from stream_agents.core import vad
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
-from getstream.plugins.common.events import (
+from stream_agents.core.events import (
     VADAudioEvent,
     VADSpeechStartEvent,
     VADSpeechEndEvent,
@@ -17,7 +17,7 @@ from getstream.plugins.common.events import (
     VADInferenceEvent,
     AudioFormat
 )
-from getstream.plugins.common.event_utils import register_global_event
+from stream_agents.core.events.event_utils import register_global_event
 
 
 try:
