@@ -1,4 +1,4 @@
-from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING
+from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Any
 
 from openai import OpenAI, Stream
 from openai.lib.streaming.responses import ResponseStreamEvent
@@ -14,7 +14,7 @@ from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from stream_agents.core.processors import BaseProcessor
 
 if TYPE_CHECKING:
-    from stream_agents.core.agents.conversation import Message
+    from stream_agents.core.agents.conversation import Message, Conversation
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -60,7 +60,7 @@ class OpenAILLM(LLM):
         """
         super().__init__()
         self.model = model
-        self.openai_conversation = None
+        self.openai_conversation: Optional[Any] = None
         self.conversation = None
 
         if client is not None:
@@ -93,7 +93,7 @@ class OpenAILLM(LLM):
             instructions=instructions,
         )
 
-    async def create_response(self, *args: P.args, **kwargs: P.kwargs) -> LLMResponse:
+    async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponse[Response]:
         """
         create_response gives you full support/access to the native openAI responses.create method
         this method wraps the openAI method and ensures we broadcast an event which the agent class hooks into
@@ -117,16 +117,16 @@ class OpenAILLM(LLM):
         if isinstance(response, Response):
             llm_response = LLMResponse[Response](response, response.output_text)
         elif isinstance(response, Stream):
-            response: Stream[ResponseStreamEvent] = response
+            stream_response: Stream[ResponseStreamEvent] = response
             # handle both streaming and non-streaming response types
-            for event in response:
+            for event in stream_response:
                 llm_response_optional = self._standardize_and_emit_event(event)
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
 
         self.emit("after_llm_response", llm_response)
 
-        return llm_response
+        return llm_response or LLMResponse[Response](Response(), "")
 
     @staticmethod
     def _normalize_message(openai_input) -> List["Message"]:
@@ -159,20 +159,20 @@ class OpenAILLM(LLM):
 
         if event.type == "response.output_text.delta":
             # standardize the delta event
-            event: ResponseTextDeltaEvent = event
+            delta_event: ResponseTextDeltaEvent = event
             standardized_event = StandardizedTextDeltaEvent(
-                content_index=event.content_index,
-                item_id=event.item_id,
-                output_index=event.output_index,
-                sequence_number=event.sequence_number,
-                type=event.type,
-                delta=event.delta,
+                content_index=delta_event.content_index,
+                item_id=delta_event.item_id,
+                output_index=delta_event.output_index,
+                sequence_number=delta_event.sequence_number,
+                type=delta_event.type,
+                delta=delta_event.delta,
             )
             self.emit("standardized.output_text.delta", standardized_event)
         elif event.type == "response.completed":
             # standardize the response event and return the llm response
-            event: ResponseCompletedEvent = event
-            llm_response = LLMResponse[Response](event.response, event.response.output_text)
+            completed_event: ResponseCompletedEvent = event
+            llm_response = LLMResponse[Response](completed_event.response, completed_event.response.output_text)
             self.emit("standardized.response.completed", llm_response)
             return llm_response
         return None
