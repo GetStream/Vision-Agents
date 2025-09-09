@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import asyncio
 
-from getstream.plugins import OpenAIRealtime
+from stream_agents.plugins import openai
 from getstream.video.call import Call
 from getstream.video.openai import ConnectionManagerWrapper
 
@@ -35,7 +35,7 @@ async def test_connect_updates_state_and_emits_event(mock_call, mock_connection)
     # call.connect_openai should return our mocked connection
     mock_call.connect_openai.return_value = mock_connection  # type: ignore[attr-defined]
 
-    sts = OpenAIRealtime(api_key="key123", voice="alloy", instructions="hi")
+    sts = openai.Realtime(api_key="key123", voice="alloy", instructions="hi")
     events = []
 
     @sts.on("connected")  # type: ignore[arg-type]
@@ -58,7 +58,7 @@ async def test_connect_updates_state_and_emits_event(mock_call, mock_connection)
 @pytest.mark.asyncio
 async def test_update_session_calls_underlying_client(mock_call, mock_connection):
     mock_call.connect_openai.return_value = mock_connection  # type: ignore[attr-defined]
-    sts = OpenAIRealtime(api_key="abc")
+    sts = openai.Realtime(api_key="abc")
     await sts.connect(mock_call)
 
     await sts.update_session(voice="nova", temperature=0.5)
@@ -70,7 +70,7 @@ async def test_update_session_calls_underlying_client(mock_call, mock_connection
 @pytest.mark.asyncio
 async def test_send_user_message(mock_call, mock_connection):
     mock_call.connect_openai.return_value = mock_connection  # type: ignore[attr-defined]
-    sts = OpenAIRealtime(api_key="abc")
+    sts = openai.Realtime(api_key="abc")
     await sts.connect(mock_call)
 
     await sts.send_user_message("hello")
@@ -87,7 +87,7 @@ async def test_send_user_message(mock_call, mock_connection):
 @pytest.mark.asyncio
 async def test_send_function_call_output(mock_call, mock_connection):
     mock_call.connect_openai.return_value = mock_connection  # type: ignore[attr-defined]
-    sts = OpenAIRealtime(api_key="xyz")
+    sts = openai.Realtime(api_key="xyz")
     await sts.connect(mock_call)
 
     await sts.send_function_call_output("tool-123", '{"ok": true}')
@@ -104,7 +104,7 @@ async def test_send_function_call_output(mock_call, mock_connection):
 @pytest.mark.asyncio
 async def test_request_assistant_response(mock_call, mock_connection):
     mock_call.connect_openai.return_value = mock_connection  # type: ignore[attr-defined]
-    sts = OpenAIRealtime(api_key="abc")
+    sts = openai.Realtime(api_key="abc")
     await sts.connect(mock_call)
 
     await sts.request_assistant_response()
@@ -114,7 +114,7 @@ async def test_request_assistant_response(mock_call, mock_connection):
 
 @pytest.mark.asyncio
 async def test_methods_raise_if_not_connected():
-    sts = OpenAIRealtime(api_key="abc")
+    sts = openai.Realtime(api_key="abc")
     with pytest.raises(RuntimeError):
         await sts.update_session(foo="bar")
     with pytest.raises(RuntimeError):

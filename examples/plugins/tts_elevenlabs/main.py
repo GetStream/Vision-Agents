@@ -28,7 +28,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from getstream.models import UserRequest
-from getstream.plugins.elevenlabs.tts import ElevenLabsTTS
+from stream_agents.plugins import elevenlabs
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
@@ -103,7 +103,7 @@ async def main() -> None:
     open_browser(client.api_key, token, call_id)
 
     track = audio_track.AudioStreamTrack(framerate=16000)
-    tts = ElevenLabsTTS()  # API key picked from ELEVENLABS_API_KEY
+    tts = elevenlabs.TTS()  # API key picked from ELEVENLABS_API_KEY
     tts.set_output_track(track)
 
     greeting = "Hello there! I'm an ElevenLabs TTS bot speaking inside this call. As this is a minimal example, I'll stop speaking now."

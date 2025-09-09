@@ -10,8 +10,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.call import Call
-from getstream.plugins.deepgram.stt import DeepgramSTT
-from getstream.plugins.elevenlabs.tts import ElevenLabsTTS
+from stream_agents.plugins import deepgram, elevenlabs
 from getstream.video.rtc import audio_track
 from getstream.video.rtc.track_util import PcmData
 from agent import chat_with_tools
@@ -66,8 +65,8 @@ async def run_bot(call: Call, bot_user_id: str):
     """Join the call as a bot, convert speech→text, call MCP tools
     when the transcript is final, then speak the answer back."""
 
-    stt = DeepgramSTT()
-    tts = ElevenLabsTTS()
+    stt = deepgram.STT()
+    tts = elevenlabs.TTS()
     track = audio_track.AudioStreamTrack(framerate=16000)
     tts.set_output_track(track)
 

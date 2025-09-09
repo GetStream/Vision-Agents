@@ -17,13 +17,13 @@ except ImportError:
     LiveOptions = None  # type: ignore
     _deepgram_available = False
 
-from stream_agents.core.stt import STT
+from stream_agents.core import stt
 from getstream.video.rtc.track_util import PcmData
 
 logger = logging.getLogger(__name__)
 
 
-class DeepgramSTT(STT):
+class STT(stt.STT):
     """
     Deepgram-based Speech-to-Text implementation.
 

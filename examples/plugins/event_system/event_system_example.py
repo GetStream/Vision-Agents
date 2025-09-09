@@ -15,12 +15,11 @@ Run this example to see the event system in action.
 import asyncio
 import json
 import logging
+from abc import ABC
 
 # Import the common plugin system
-from stream_agents.stt.stt import STT
-from stream_agents.tts.tts import TTS
-from stream_agents.vad.vad import VAD
-from stream_agents.events import (
+from stream_agents.core import stt, tts, vad
+from stream_agents.core.events import (
     EventType,
     STTTranscriptEvent,
     VADAudioEvent,
@@ -39,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 # Example STT Plugin Implementation
-class ExampleSTTPlugin(STT):
+class ExampleSTTPlugin(stt.STT):
     """Example STT plugin that simulates transcription."""
 
     def __init__(self):
@@ -76,7 +75,7 @@ class ExampleSTTPlugin(STT):
 
 
 # Example TTS Plugin Implementation
-class ExampleTTSPlugin(TTS):
+class ExampleTTSPlugin(tts.TTS):
     """Example TTS plugin that simulates speech synthesis."""
 
     def __init__(self):
@@ -102,7 +101,7 @@ class ExampleTTSPlugin(TTS):
 
 
 # Example VAD Plugin Implementation
-class ExampleVADPlugin(VAD):
+class ExampleVADPlugin(vad.VAD):
     """Example VAD plugin that simulates voice activity detection."""
 
     def __init__(self):

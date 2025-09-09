@@ -6,13 +6,13 @@ This plugin integrates with Stream's audio processing pipeline to provide high-q
 speech-to-text capabilities.
 
 Example usage:
-    from fal_wizper_stt import FalWizperSTT
+    from stream_agents.plugins import fal
 
     # For transcription
-    stt = FalWizperSTT(task="transcribe")
+    stt = fal.STT(task="transcribe")
 
     # For translation to Portuguese
-    stt = FalWizperSTT(task="translate", target_language="pt")
+    stt = fal.STT(task="translate", target_language="pt")
 
     @stt.on("transcript")
     async def on_transcript(text: str, user: Any, metadata: dict):
@@ -34,12 +34,12 @@ import wave
 
 import fal_client
 from getstream.video.rtc.track_util import PcmData
-from stream_agents.stt import STT
+from stream_agents.core import stt
 
 logger = logging.getLogger(__name__)
 
 
-class FalWizperSTT(STT):
+class STT(stt.STT):
     """
     Audio transcription and translation using fal-ai/wizper (Whisper v3).
 

@@ -4,8 +4,12 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from getstream.plugins.gemini.live import GeminiLive
-from stream_agents import Agent, Stream, StreamEdge, start_dispatcher, open_demo
+from stream_agents.plugins import gemini
+from stream_agents.core.agents.agents import Agent
+from stream_agents.core.edge.edge_transport import StreamEdge
+from stream_agents.core.cli import start_dispatcher
+from stream_agents.core.utils import open_demo
+from getstream import Stream
 
 load_dotenv()
 
@@ -21,7 +25,7 @@ async def start_agent() -> None:
         agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         # tts, llm, stt more. see the realtime example for sts
-        llm=GeminiLive(),
+        llm=gemini.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

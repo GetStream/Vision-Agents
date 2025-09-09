@@ -8,9 +8,11 @@ license = { text = "MIT" }
 
 dependencies = [
     "getstream[webrtc]>=2.3.0a0",
-    "getstream-plugins-silero>=0.1.0",
+    "stream-agents-plugins-silero>=0.1.0",
     "python-dotenv>=1.1.1",
+    "getstream-plugins-common>=0.1.0",
 ]
 
 [tool.uv.sources]
-getstream-plugins-silero = { workspace = true }
+stream-agents-plugins-silero = { path = "../../../plugins/silero", editable = true }
+getstream-plugins-common = { path = "../../../plugins/common", editable = true }
