@@ -15,7 +15,7 @@ from stream_agents.core.events import (
     VADSpeechEndEvent,
     VADPartialEvent,
     VADInferenceEvent,
-    AudioFormat
+    AudioFormat,
 )
 from stream_agents.core.events.event_utils import register_global_event
 
@@ -29,6 +29,7 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class SileroVADEndEvent(VADSpeechEndEvent):
@@ -56,6 +57,7 @@ class SileroVADPartialEvent(VADPartialEvent):
 
     inference_time_ms: float = 0.0
     model_confidence: float = 0.0
+
 
 class VAD(vad.VAD):
     """
@@ -135,7 +137,7 @@ class VAD(vad.VAD):
         self.device: torch.device = torch.device("cpu")
         # Buffer used by base class; annotate for type-checker
         self.speech_buffer: bytearray = bytearray()
-        
+
         # Type annotations for inherited attributes from base VAD class
         self.is_speech_active: bool = False
         self._speech_start_time: Optional[float] = None
@@ -175,7 +177,9 @@ class VAD(vad.VAD):
         self._speech_end_probability = 0.0
         self._total_inference_time = 0.0
         self._inference_count = 0
-        self._speech_probabilities: list[float] = []  # Track probabilities during speech
+        self._speech_probabilities: list[
+            float
+        ] = []  # Track probabilities during speech
 
         # Load the appropriate model
         self._load_model()
@@ -422,7 +426,11 @@ class VAD(vad.VAD):
                     # Log speech probability and RTF at DEBUG level
                     logger.debug(
                         "Speech detection window processed",
-                        extra={"p": speech_prob, "rtf": rtf, "inference_ms": inference_time},
+                        extra={
+                            "p": speech_prob,
+                            "rtf": rtf,
+                            "inference_ms": inference_time,
+                        },
                     )
 
                     speech_probs.append(speech_prob)
@@ -521,7 +529,7 @@ class VAD(vad.VAD):
 
     def _get_accumulated_speech_duration(self) -> float:
         """Get accumulated speech duration in milliseconds."""
-        if hasattr(self, '_speech_start_time') and self._speech_start_time:
+        if hasattr(self, "_speech_start_time") and self._speech_start_time:
             return (time.time() - self._speech_start_time) * 1000
         return 0.0
 
@@ -529,7 +537,9 @@ class VAD(vad.VAD):
         """Get accumulated silence duration in milliseconds."""
         return (self.silence_counter * self.frame_size / self.sample_rate) * 1000
 
-    async def _process_frame(self, frame: PcmData, user: Optional[Dict[str, Any]] = None) -> None:
+    async def _process_frame(
+        self, frame: PcmData, user: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Process a single audio frame with enhanced Silero-specific event data.
         """
@@ -572,6 +582,7 @@ class VAD(vad.VAD):
 
             # Add this frame to the buffer using shared utility
             from getstream.audio.pcm_utils import numpy_array_to_bytes
+
             frame_bytes = numpy_array_to_bytes(frame.samples)
             self.speech_buffer.extend(frame_bytes)
 
@@ -579,6 +590,7 @@ class VAD(vad.VAD):
         elif self.is_speech_active:
             # Add frame to buffer in all cases during active speech
             from getstream.audio.pcm_utils import numpy_array_to_bytes
+
             frame_bytes = numpy_array_to_bytes(frame.samples)
             self.speech_buffer.extend(frame_bytes)
             self.total_speech_frames += 1
@@ -588,7 +600,10 @@ class VAD(vad.VAD):
             if self.partial_counter >= self.partial_frames:
                 # Create a copy of the current speech data
                 import numpy as np
-                current_samples = np.frombuffer(self.speech_buffer, dtype=np.int16).copy()
+
+                current_samples = np.frombuffer(
+                    self.speech_buffer, dtype=np.int16
+                ).copy()
                 current_bytes = numpy_array_to_bytes(current_samples)
 
                 # Calculate current duration
@@ -611,7 +626,9 @@ class VAD(vad.VAD):
                 register_global_event(partial_event)
                 self.emit("partial", partial_event)
 
-                logger.debug(f"Emitted partial event with {len(current_samples)} samples")
+                logger.debug(
+                    f"Emitted partial event with {len(current_samples)} samples"
+                )
                 self.partial_counter = 0
 
             if is_speech:

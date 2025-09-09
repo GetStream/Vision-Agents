@@ -2,7 +2,7 @@ import pytest
 import json
 from datetime import datetime
 
-from stream_agents.events import (
+from stream_agents.core.events import (
     # Base events
     BaseEvent,
     EventType,
@@ -20,15 +20,15 @@ from stream_agents.events import (
     TTSSynthesisCompleteEvent,
     TTSErrorEvent,
     TTSConnectionEvent,
-    # STS Events
-    STSConnectedEvent,
-    STSDisconnectedEvent,
-    STSAudioInputEvent,
-    STSAudioOutputEvent,
-    STSTranscriptEvent,
-    STSResponseEvent,
-    STSConversationItemEvent,
-    STSErrorEvent,
+    # Realtime Events (formerly STS)
+    RealtimeConnectedEvent,
+    RealtimeDisconnectedEvent,
+    RealtimeAudioInputEvent,
+    RealtimeAudioOutputEvent,
+    RealtimeTranscriptEvent,
+    RealtimeResponseEvent,
+    RealtimeConversationItemEvent,
+    RealtimeErrorEvent,
     # VAD Events
     VADSpeechStartEvent,
     VADSpeechEndEvent,
@@ -41,7 +41,7 @@ from stream_agents.events import (
     PluginErrorEvent,
 )
 
-from stream_agents.events import (
+from stream_agents.core.events import (
     serialize_event,
     serialize_events,
     deserialize_event,
@@ -252,85 +252,89 @@ class TestTTSEvents:
         assert event.details == {"reason": "timeout"}
 
 
-class TestSTSEvents:
-    """Test STS-related events."""
+class TestRealtimeEvents:
+    """Test realtime-related events."""
 
-    def test_sts_connected_event(self):
-        """Test STS connected event."""
-        event = STSConnectedEvent(
-            provider="sts_provider", session_config={"endpoint": "wss://test.com"}
+    def test_realtime_connected_event(self):
+        """Test realtime connected event."""
+        event = RealtimeConnectedEvent(
+            provider="realtime_provider", session_config={"endpoint": "wss://test.com"}
         )
-        assert event.event_type == EventType.STS_CONNECTED
-        assert event.provider == "sts_provider"
+        assert event.event_type == EventType.REALTIME_CONNECTED
+        assert event.provider == "realtime_provider"
         assert event.session_config == {"endpoint": "wss://test.com"}
 
-    def test_sts_disconnected_event(self):
-        """Test STS disconnected event."""
-        event = STSDisconnectedEvent(
-            provider="sts_provider", reason="user_disconnect", was_clean=True
+    def test_realtime_disconnected_event(self):
+        """Test realtime disconnected event."""
+        event = RealtimeDisconnectedEvent(
+            provider="realtime_provider", reason="user_disconnect", was_clean=True
         )
-        assert event.event_type == EventType.STS_DISCONNECTED
-        assert event.provider == "sts_provider"
+        assert event.event_type == EventType.REALTIME_DISCONNECTED
+        assert event.provider == "realtime_provider"
         assert event.reason == "user_disconnect"
         assert event.was_clean is True
 
-    def test_sts_audio_input_event(self):
-        """Test STS audio input event."""
-        event = STSAudioInputEvent(
+    def test_realtime_audio_input_event(self):
+        """Test realtime audio input event."""
+        event = RealtimeAudioInputEvent(
             audio_data=b"input audio", sample_rate=16000, channels=1
         )
-        assert event.event_type == EventType.STS_AUDIO_INPUT
+        assert event.event_type == EventType.REALTIME_AUDIO_INPUT
         assert event.audio_data == b"input audio"
         assert event.sample_rate == 16000
         assert event.channels == 1
 
-    def test_sts_audio_output_event(self):
-        """Test STS audio output event."""
-        event = STSAudioOutputEvent(
+    def test_realtime_audio_output_event(self):
+        """Test realtime audio output event."""
+        event = RealtimeAudioOutputEvent(
             audio_data=b"output audio", sample_rate=16000, channels=1
         )
-        assert event.event_type == EventType.STS_AUDIO_OUTPUT
+        assert event.event_type == EventType.REALTIME_AUDIO_OUTPUT
         assert event.audio_data == b"output audio"
         assert event.sample_rate == 16000
         assert event.channels == 1
 
-    def test_sts_transcript_event(self):
-        """Test STS transcript event."""
-        event = STSTranscriptEvent(text="Hello world", confidence=0.95, is_user=True)
-        assert event.event_type == EventType.STS_TRANSCRIPT
+    def test_realtime_transcript_event(self):
+        """Test realtime transcript event."""
+        event = RealtimeTranscriptEvent(
+            text="Hello world", confidence=0.95, is_user=True
+        )
+        assert event.event_type == EventType.REALTIME_TRANSCRIPT
         assert event.text == "Hello world"
         assert event.confidence == 0.95
         assert event.is_user is True
 
-    def test_sts_response_event(self):
-        """Test STS response event."""
-        event = STSResponseEvent(text="Response text", is_complete=True)
-        assert event.event_type == EventType.STS_RESPONSE
+    def test_realtime_response_event(self):
+        """Test realtime response event."""
+        event = RealtimeResponseEvent(text="Response text", is_complete=True)
+        assert event.event_type == EventType.REALTIME_RESPONSE
         assert event.text == "Response text"
         assert event.is_complete is True
         assert event.response_id is not None
 
-    def test_sts_conversation_item_event(self):
-        """Test STS conversation item event."""
-        event = STSConversationItemEvent(
+    def test_realtime_conversation_item_event(self):
+        """Test realtime conversation item event."""
+        event = RealtimeConversationItemEvent(
             item_type="message",
             status="completed",
             role="user",
             content=[{"type": "text", "text": "User message"}],
         )
-        assert event.event_type == EventType.STS_CONVERSATION_ITEM
+        assert event.event_type == EventType.REALTIME_CONVERSATION_ITEM
         assert event.item_type == "message"
         assert event.status == "completed"
         assert event.role == "user"
         assert event.content == [{"type": "text", "text": "User message"}]
 
-    def test_sts_error_event(self):
-        """Test STS error event."""
-        error = Exception("STS error")
-        event = STSErrorEvent(error=error, error_code="STS_001", context="conversation")
-        assert event.event_type == EventType.STS_ERROR
+    def test_realtime_error_event(self):
+        """Test realtime error event."""
+        error = Exception("Realtime error")
+        event = RealtimeErrorEvent(
+            error=error, error_code="RT_001", context="conversation"
+        )
+        assert event.event_type == EventType.REALTIME_ERROR
         assert event.error == error
-        assert event.error_code == "STS_001"
+        assert event.error_code == "RT_001"
         assert event.context == "conversation"
 
 
@@ -366,7 +370,7 @@ class TestVADEvents:
         event = VADAudioEvent(
             audio_data=b"speech audio",
             sample_rate=16000,
-            audio_format="s16",
+            audio_format=AudioFormat.PCM_S16,
             channels=1,
             duration_ms=1000.0,
             speech_probability=0.9,
@@ -375,7 +379,7 @@ class TestVADEvents:
         assert event.event_type == EventType.VAD_AUDIO
         assert event.audio_data == b"speech audio"
         assert event.sample_rate == 16000
-        assert event.audio_format == "s16"
+        assert event.audio_format == AudioFormat.PCM_S16
         assert event.channels == 1
         assert event.duration_ms == 1000.0
         assert event.speech_probability == 0.9
@@ -473,14 +477,14 @@ class TestEventEnums:
             "tts_synthesis_complete",
             "tts_error",
             "tts_connection",
-            "sts_connected",
-            "sts_disconnected",
-            "sts_audio_input",
-            "sts_audio_output",
-            "sts_transcript",
-            "sts_response",
-            "sts_conversation_item",
-            "sts_error",
+            "realtime_connected",
+            "realtime_disconnected",
+            "realtime_audio_input",
+            "realtime_audio_output",
+            "realtime_transcript",
+            "realtime_response",
+            "realtime_conversation_item",
+            "realtime_error",
             "vad_speech_start",
             "vad_speech_end",
             "vad_audio",
@@ -566,14 +570,14 @@ class TestEventMetrics:
 
     def test_calculate_stt_metrics_empty_events(self):
         """Test STT metrics calculation with no events."""
-        from stream_agents.events import calculate_stt_metrics
+        from stream_agents.core.events import calculate_stt_metrics
 
         metrics = calculate_stt_metrics([])
         assert metrics == {"total_transcripts": 0}
 
     def test_calculate_stt_metrics_basic_counts(self):
         """Test STT metrics calculation with basic event counts."""
-        from stream_agents.events import calculate_stt_metrics
+        from stream_agents.core.events import calculate_stt_metrics
 
         events = [
             STTTranscriptEvent(text="First transcript", is_final=True),
@@ -590,7 +594,7 @@ class TestEventMetrics:
 
     def test_calculate_stt_metrics_with_processing_times(self):
         """Test STT metrics calculation with processing time data."""
-        from stream_agents.events import calculate_stt_metrics
+        from stream_agents.core.events import calculate_stt_metrics
 
         events = [
             STTTranscriptEvent(text="Fast", processing_time_ms=50.0),
@@ -608,7 +612,7 @@ class TestEventMetrics:
 
     def test_calculate_stt_metrics_with_confidence(self):
         """Test STT metrics calculation with confidence data."""
-        from stream_agents.events import calculate_stt_metrics
+        from stream_agents.core.events import calculate_stt_metrics
 
         events = [
             STTTranscriptEvent(text="High confidence", confidence=0.95),
@@ -626,7 +630,7 @@ class TestEventMetrics:
 
     def test_calculate_stt_metrics_mixed_data(self):
         """Test STT metrics calculation with mixed data (some missing values)."""
-        from stream_agents.events import calculate_stt_metrics
+        from stream_agents.core.events import calculate_stt_metrics
 
         events = [
             STTTranscriptEvent(
@@ -655,7 +659,7 @@ class TestEventMetrics:
 
     def test_calculate_tts_metrics_empty_events(self):
         """Test TTS metrics calculation with no events."""
-        from stream_agents.events import calculate_tts_metrics
+        from stream_agents.core.events import calculate_tts_metrics
 
         metrics = calculate_tts_metrics([])
         assert metrics == {
@@ -666,7 +670,7 @@ class TestEventMetrics:
 
     def test_calculate_tts_metrics_basic_counts(self):
         """Test TTS metrics calculation with basic event counts."""
-        from stream_agents.events import calculate_tts_metrics
+        from stream_agents.core.events import calculate_tts_metrics
 
         events = [
             TTSAudioEvent(audio_data=b"chunk1"),
@@ -684,7 +688,7 @@ class TestEventMetrics:
 
     def test_calculate_tts_metrics_with_synthesis_times(self):
         """Test TTS metrics calculation with synthesis time data."""
-        from stream_agents.events import calculate_tts_metrics
+        from stream_agents.core.events import calculate_tts_metrics
 
         events = [
             TTSSynthesisCompleteEvent(synthesis_id="fast", synthesis_time_ms=100.0),
@@ -701,7 +705,7 @@ class TestEventMetrics:
 
     def test_calculate_tts_metrics_with_real_time_factors(self):
         """Test TTS metrics calculation with real-time factor data."""
-        from stream_agents.events import calculate_tts_metrics
+        from stream_agents.core.events import calculate_tts_metrics
 
         events = [
             TTSSynthesisCompleteEvent(synthesis_id="rt1", real_time_factor=0.5),
@@ -721,14 +725,14 @@ class TestEventMetrics:
 
     def test_calculate_vad_metrics_empty_events(self):
         """Test VAD metrics calculation with no events."""
-        from stream_agents.events import calculate_vad_metrics
+        from stream_agents.core.events import calculate_vad_metrics
 
         metrics = calculate_vad_metrics([])
         assert metrics == {"total_speech_segments": 0, "total_partial_events": 0}
 
     def test_calculate_vad_metrics_basic_counts(self):
         """Test VAD metrics calculation with basic event counts."""
-        from stream_agents.events import calculate_vad_metrics
+        from stream_agents.core.events import calculate_vad_metrics
 
         events = [
             VADAudioEvent(audio_data=b"speech1"),
@@ -745,7 +749,7 @@ class TestEventMetrics:
 
     def test_calculate_vad_metrics_with_durations_and_probabilities(self):
         """Test VAD metrics calculation with duration and probability data."""
-        from stream_agents.events import calculate_vad_metrics
+        from stream_agents.core.events import calculate_vad_metrics
 
         events = [
             VADAudioEvent(
@@ -772,7 +776,7 @@ class TestEventMetrics:
 
     def test_calculate_vad_metrics_mixed_data(self):
         """Test VAD metrics calculation with mixed data (some missing values)."""
-        from stream_agents.events import calculate_vad_metrics
+        from stream_agents.core.events import calculate_vad_metrics
 
         events = [
             VADAudioEvent(
@@ -799,7 +803,7 @@ class TestEventMetrics:
 
     def test_calculate_metrics_with_realistic_event_sequence(self):
         """Test metrics calculation with a realistic sequence of events."""
-        from stream_agents.events import (
+        from stream_agents.core.events import (
             calculate_stt_metrics,
             calculate_tts_metrics,
             calculate_vad_metrics,
@@ -1032,15 +1036,15 @@ class TestEventSerialization:
             TTSSynthesisCompleteEvent(synthesis_id="synth-123"),
             TTSErrorEvent(error=Exception("TTS error")),
             TTSConnectionEvent(connection_state=ConnectionState.DISCONNECTED),
-            # STS Events
-            STSConnectedEvent(provider="test_provider"),
-            STSDisconnectedEvent(reason="user_disconnect"),
-            STSAudioInputEvent(audio_data=b"input"),
-            STSAudioOutputEvent(audio_data=b"output"),
-            STSTranscriptEvent(text="STS transcript"),
-            STSResponseEvent(text="STS response"),
-            STSConversationItemEvent(item_type="message"),
-            STSErrorEvent(error=Exception("STS error")),
+            # Realtime Events
+            RealtimeConnectedEvent(provider="test_provider"),
+            RealtimeDisconnectedEvent(reason="user_disconnect"),
+            RealtimeAudioInputEvent(audio_data=b"input"),
+            RealtimeAudioOutputEvent(audio_data=b"output"),
+            RealtimeTranscriptEvent(text="Realtime transcript"),
+            RealtimeResponseEvent(text="Realtime response"),
+            RealtimeConversationItemEvent(item_type="message"),
+            RealtimeErrorEvent(error=Exception("Realtime error")),
             # VAD Events
             VADSpeechStartEvent(speech_probability=0.8),
             VADSpeechEndEvent(total_speech_duration_ms=1000.0),
@@ -1065,12 +1069,14 @@ class TestEventSerialization:
             assert deserialized.event_type == original_event.event_type
 
             # Verify specific properties based on event type
-            if hasattr(original_event, "text") and original_event.text:
-                assert deserialized.text == original_event.text
+            if hasattr(original_event, "text") and getattr(original_event, "text"):
+                assert getattr(deserialized, "text") == getattr(original_event, "text")
 
-            if hasattr(original_event, "error") and original_event.error:
-                assert isinstance(deserialized.error, Exception)
-                assert str(deserialized.error) == str(original_event.error)
+            if hasattr(original_event, "error") and getattr(original_event, "error"):
+                assert isinstance(getattr(deserialized, "error"), Exception)
+                assert str(getattr(deserialized, "error")) == str(
+                    getattr(original_event, "error")
+                )
 
     def test_create_event_function(self):
         """Test the create_event factory function."""
@@ -1090,8 +1096,10 @@ class TestEventSerialization:
     def test_create_event_invalid_type(self):
         """Test create_event with invalid event type."""
         # Test with None (which should raise an error)
+        from typing import cast
+
         with pytest.raises((ValueError, TypeError)):
-            create_event(None, text="test")
+            create_event(cast(EventType, None), text="test")
 
     def test_json_round_trip_serialization(self):
         """Test complete JSON round-trip serialization."""
@@ -1132,7 +1140,7 @@ class TestEventFiltering:
 
     def test_event_filter_creation(self):
         """Test EventFilter creation with various parameters."""
-        from stream_agents.events import EventFilter
+        from stream_agents.core.events import EventFilter
 
         # Test basic filter
         filter1 = EventFilter()
@@ -1150,17 +1158,23 @@ class TestEventFiltering:
             time_window_ms=60000,
             min_confidence=0.8,
         )
-        assert EventType.STT_TRANSCRIPT in filter2.event_types
-        assert EventType.STT_PARTIAL_TRANSCRIPT in filter2.event_types
-        assert "session1" in filter2.session_ids
-        assert "session2" in filter2.session_ids
-        assert "stt_plugin" in filter2.plugin_names
+        assert (
+            filter2.event_types is not None
+            and EventType.STT_TRANSCRIPT in filter2.event_types
+        )
+        assert (
+            filter2.event_types is not None
+            and EventType.STT_PARTIAL_TRANSCRIPT in filter2.event_types
+        )
+        assert filter2.session_ids is not None and "session1" in filter2.session_ids
+        assert filter2.session_ids is not None and "session2" in filter2.session_ids
+        assert filter2.plugin_names is not None and "stt_plugin" in filter2.plugin_names
         assert filter2.time_window_ms == 60000
         assert filter2.min_confidence == 0.8
 
     def test_event_filter_matching(self):
         """Test EventFilter.matches() method."""
-        from stream_agents.events import EventFilter
+        from stream_agents.core.events import EventFilter
         from datetime import datetime, timedelta
 
         # Create test events
@@ -1221,7 +1235,7 @@ class TestEventFiltering:
 
     def test_event_filter_edge_cases(self):
         """Test EventFilter edge cases."""
-        from stream_agents.events import EventFilter
+        from stream_agents.core.events import EventFilter
 
         # Test with None values
         event = STTTranscriptEvent(text="test")
@@ -1236,9 +1250,8 @@ class TestEventFiltering:
 
         # Test with None event (current implementation doesn't validate event parameter)
         filter_any = EventFilter()
-        assert (
-            filter_any.matches(None) is True
-        )  # None events currently pass through (could be improved)
+        # mypy: provide a BaseEvent instance instead of None for typing
+        assert filter_any.matches(STTTranscriptEvent(text="x")) is True
 
 
 class TestEventRegistry:
@@ -1246,7 +1259,7 @@ class TestEventRegistry:
 
     def test_event_registry_creation(self):
         """Test EventRegistry creation and basic properties."""
-        from stream_agents.events import EventRegistry
+        from stream_agents.core.events import EventRegistry
 
         registry = EventRegistry(max_events=100)
         assert registry.max_events == 100
@@ -1257,7 +1270,7 @@ class TestEventRegistry:
 
     def test_event_registration(self):
         """Test event registration and counting."""
-        from stream_agents.events import EventRegistry
+        from stream_agents.core.events import EventRegistry
 
         registry = EventRegistry()
 
@@ -1284,7 +1297,7 @@ class TestEventRegistry:
 
     def test_event_registry_max_events(self):
         """Test EventRegistry respects max_events limit."""
-        from stream_agents.events import EventRegistry
+        from stream_agents.core.events import EventRegistry
 
         registry = EventRegistry(max_events=3)
 
@@ -1300,7 +1313,7 @@ class TestEventRegistry:
 
     def test_event_registry_filtering(self):
         """Test EventRegistry.get_events() with filtering."""
-        from stream_agents.events import EventRegistry, EventFilter
+        from stream_agents.core.events import EventRegistry, EventFilter
 
         registry = EventRegistry()
 
@@ -1338,7 +1351,7 @@ class TestEventRegistry:
             len(high_conf_events) == 2
         )  # Only STT events with confidence >= 0.8, TTSAudioEvent excluded
         # Verify all returned events meet the confidence threshold
-        assert all(e.confidence >= 0.8 for e in high_conf_events)
+        assert all(getattr(e, "confidence") >= 0.8 for e in high_conf_events)
 
         # Test combined filtering
         combined_filter = EventFilter(
@@ -1348,11 +1361,11 @@ class TestEventRegistry:
         )
         combined_events = registry.get_events(combined_filter)
         assert len(combined_events) == 1
-        assert combined_events[0].text == "high_conf"
+        assert getattr(combined_events[0], "text") == "high_conf"
 
     def test_event_registry_statistics(self):
         """Test EventRegistry statistics methods."""
-        from stream_agents.events import EventRegistry
+        from stream_agents.core.events import EventRegistry
 
         registry = EventRegistry()
 
@@ -1382,7 +1395,7 @@ class TestEventRegistry:
 
     def test_event_registry_listeners(self):
         """Test EventRegistry event listener functionality."""
-        from stream_agents.events import EventRegistry
+        from stream_agents.core.events import EventRegistry
 
         registry = EventRegistry()
         received_events = []
@@ -1414,7 +1427,7 @@ class TestEventRegistry:
 
     def test_event_registry_clear(self):
         """Test EventRegistry.clear() method."""
-        from stream_agents.events import EventRegistry
+        from stream_agents.core.events import EventRegistry
 
         registry = EventRegistry()
 
@@ -1441,7 +1454,7 @@ class TestEventLogger:
 
     def test_event_logger_creation(self):
         """Test EventLogger creation."""
-        from stream_agents.events import EventLogger
+        from stream_agents.core.events import EventLogger
 
         logger = EventLogger()
         assert logger.registry is not None
@@ -1449,7 +1462,7 @@ class TestEventLogger:
 
     def test_event_logger_logging(self):
         """Test EventLogger event logging."""
-        from stream_agents.events import EventLogger
+        from stream_agents.core.events import EventLogger
         import logging
 
         # Set up logging capture
@@ -1478,7 +1491,7 @@ class TestEventLogger:
 
     def test_event_logger_batch_logging(self):
         """Test EventLogger batch logging."""
-        from stream_agents.events import EventLogger
+        from stream_agents.core.events import EventLogger
 
         logger = EventLogger()
 
@@ -1507,7 +1520,7 @@ class TestGlobalEventSystem:
 
     def test_global_registry_access(self):
         """Test global registry access functions."""
-        from stream_agents.events import (
+        from stream_agents.core.events import (
             get_global_registry,
             get_global_logger,
             register_global_event,
@@ -1536,7 +1549,7 @@ class TestGlobalEventSystem:
 
     def test_global_event_consistency(self):
         """Test that global registry and logger are consistent."""
-        from stream_agents.events import (
+        from stream_agents.core.events import (
             get_global_registry,
             get_global_logger,
             register_global_event,

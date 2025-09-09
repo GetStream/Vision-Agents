@@ -1,10 +1,6 @@
 import pytest
 from dotenv import load_dotenv
-import sys
 import os
-
-# Add the plugin directory to the path so we can import the plugin
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # Load environment variables
 load_dotenv()
@@ -111,6 +107,5 @@ class TestXAI:
 
     def test_version_import(self):
         """Test that version can be imported."""
-        from version import __version__
-
-        assert __version__ == "0.1.0"
+        from stream_agents.plugins import xai
+        assert xai.__version__ == "0.1.0"

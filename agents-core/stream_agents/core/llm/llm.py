@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
     from stream_agents.core.agents.conversation import Conversation
 
 
-from typing import List, TypeVar, Any, Callable, Generic, Dict
+from typing import List, TypeVar, Any, Callable, Generic, Dict, Optional as TypingOptional
 
-from av.dictionary import Dictionary
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.processors import BaseProcessor
@@ -17,14 +17,15 @@ from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolResultItem
 
 T = TypeVar("T")
 
+
 class LLMResponse(Generic[T]):
     def __init__(self, original: T, text: str):
         self.original = original
         self.text = text
 
-BeforeCb = Callable[[List[Dictionary]], None]
-AfterCb  = Callable[[LLMResponse], None]
 
+BeforeCb = Callable[[List[Any]], None]
+AfterCb = Callable[[LLMResponse], None]
 
 
 class LLM:
@@ -34,15 +35,20 @@ class LLM:
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
     agent: Optional["Agent"]
-    _conversation: Optional[Conversation]
+    _conversation: Optional["Conversation"]
     function_registry: FunctionRegistry
 
     def __init__(self):
         self.agent = None
         self.function_registry = FunctionRegistry()
 
-    def simple_response(self, text, processors: List[BaseProcessor], participant: Participant = None) -> LLMResponse[Any]:
-        pass
+    async def simple_response(
+        self,
+        text: str,
+        processors: TypingOptional[List[BaseProcessor]] = None,
+        participant: TypingOptional[Participant] = None,
+    ) -> LLMResponse[Any]:
+        raise NotImplementedError
 
     def attach_agent(self, agent: Agent):
         self.agent = agent
@@ -55,6 +61,7 @@ class LLM:
 
     def set_after_response_listener(self, after_response_listener: AfterCb):
         self.after_response_listener = after_response_listener
+<<<<<<< HEAD
 
     def register_function(self, 
                          name: Optional[str] = None,
@@ -192,10 +199,3 @@ class LLM:
         # Default implementation returns None to use fallback formatting
         # Each LLM provider should override this method
         return None
-
-
-
-
-
-
-

@@ -1,5 +1,3 @@
-
-
 import pytest
 from dotenv import load_dotenv
 
@@ -30,7 +28,10 @@ class TestClaudeLLM:
         assert message.content == "say hi"
 
     def test_advanced_message(self, llm: ClaudeLLM):
-        advanced = {"role": "user", "content": "Explain quantum entanglement in simple terms."}
+        advanced = {
+            "role": "user",
+            "content": "Explain quantum entanglement in simple terms.",
+        }
         messages2 = ClaudeLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
@@ -50,7 +51,7 @@ class TestClaudeLLM:
 
         # Assertions
         assert response.text
-        assert hasattr(response.original, 'id')  # Claude response has id
+        assert hasattr(response.original, "id")  # Claude response has id
 
     @pytest.mark.integration
     async def test_memory(self, llm: ClaudeLLM):
@@ -70,8 +71,9 @@ class TestClaudeLLM:
             max_tokens=1000,
         )
         response = await llm.create_message(
-            messages=[{"role": "user", "content": "How many paws are there in the room?"}],
+            messages=[
+                {"role": "user", "content": "How many paws are there in the room?"}
+            ],
             max_tokens=1000,
         )
         assert "8" in response.text or "eight" in response.text
-

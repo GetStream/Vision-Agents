@@ -18,4 +18,4 @@ def greet(name: str, excited: bool = False) -> str:
 
 result = call_twice(greet, "Thierry", excited=True)
 
-call_twice(greet, "hi", excited=1)
+call_twice(greet, "hi", excited=True)

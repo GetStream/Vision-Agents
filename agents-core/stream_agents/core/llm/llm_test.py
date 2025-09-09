@@ -20,7 +20,3 @@ And more advanced things
 
 """
 
-
-
-
-

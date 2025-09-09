@@ -1,16 +1,16 @@
-## AI Overview 
-This project is an Agent framework built on Stream's Python AI library for Video and Voice calling. 
+## AI Overview
+This project is an Agent framework built on Stream's Python AI library for Video and Voice calling.
 
 The source code for the Python library which contains the WebRTC and Call logic can be found here: https://github.com/GetStream/stream-py/tree/webrtc
 
 ## Project Structure
-Most of the project code and logic lives in `/agents`. As an agentic framework on top of Stream's WebRTC SDK, this project 
-aims to create a framework that's simple yet pwoerful for developers to use to build various types of applications using real-time 
-voice and video agents. 
+Most of the project code and logic lives in `/agents`. As an agentic framework on top of Stream's WebRTC SDK, this project
+aims to create a framework that's simple yet pwoerful for developers to use to build various types of applications using real-time
+voice and video agents.
 
 The core API looks something like this:
 
-```python 
+```python
 agent = Agent(
     stt=your_stt_service,
     pre_processors=[Roboflow()],
@@ -57,4 +57,3 @@ agent = Agent(
 ```
 
 The `TurnDetection` protocol requires: `start()`, `stop()`, `is_detecting()`, `process_audio()`, and event emission (`on`/`emit` from EventEmitter). The Agent automatically calls `process_audio()` with `PcmData` from Stream and listens for turn detection events.
-

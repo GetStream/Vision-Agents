@@ -12,9 +12,7 @@ from getstream.video.rtc.track_util import PcmData
 @pytest.fixture
 def stt():
     """Provides a fal.STT instance with a mocked fal_client."""
-    with patch(
-        "fal_client.AsyncClient"
-    ) as mock_fal_client:
+    with patch("fal_client.AsyncClient") as mock_fal_client:
         stt_instance = fal.STT()
         stt_instance._fal_client = mock_fal_client.return_value
         yield stt_instance
