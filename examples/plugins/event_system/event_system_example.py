@@ -15,7 +15,6 @@ Run this example to see the event system in action.
 import asyncio
 import json
 import logging
-from abc import ABC
 
 # Import the common plugin system
 from stream_agents.core import stt, tts, vad

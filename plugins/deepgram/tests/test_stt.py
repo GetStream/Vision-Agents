@@ -76,46 +76,6 @@ class MockDeepgramConnection:
             error_obj = Exception(error_message)
             self.event_handlers[LiveTranscriptionEvents.Error](self, error_obj)
 
-    def start(self, options):
-        """Start the connection"""
-        pass
-
-    def emit_transcript(self, text, is_final=True):
-        """Helper to emit a transcript event"""
-        from deepgram import LiveTranscriptionEvents
-
-        if LiveTranscriptionEvents.Transcript in self.event_handlers:
-            # Create a mock result
-            transcript_data = {
-                "is_final": is_final,
-                "channel": {
-                    "alternatives": [
-                        {
-                            "transcript": text,
-                            "confidence": 0.95,
-                            "words": [
-                                {
-                                    "word": word,
-                                    "start": i * 0.5,
-                                    "end": (i + 1) * 0.5,
-                                    "confidence": 0.95,
-                                }
-                                for i, word in enumerate(text.split())
-                            ],
-                        }
-                    ]
-                },
-                "channel_index": 0,
-            }
-
-            # Convert to JSON string for the handler
-            transcript_json = json.dumps(transcript_data)
-
-            # Call the handler with the connection and the result
-            self.event_handlers[LiveTranscriptionEvents.Transcript](
-                self, result=transcript_json
-            )
-
 
 class MockDeepgramClient:
     def __init__(self, api_key=None):
