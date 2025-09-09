@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import Mock, patch
 from dotenv import load_dotenv
 
 from stream_agents.core.llm.gemini_llm import GeminiLLM
@@ -11,14 +12,33 @@ load_dotenv()
 
 
 class TestGeminiLLM:
-    """Test suite for GeminiLLM class with real API calls."""
+    """Test suite for GeminiLLM class with mocked API calls."""
 
     @pytest.fixture
     def llm(self) -> GeminiLLM:
-        """Test GeminiLLM initialization with a provided client."""
-        llm = GeminiLLM(model="gemini-1.5-flash")
-        llm._conversation = InMemoryConversation("be friendly", [])
-        return llm
+        """Test GeminiLLM initialization with a mocked client."""
+        with patch('stream_agents.core.llm.gemini_llm.genai.Client') as mock_client:
+            # Create mock response object
+            mock_response = Mock()
+            mock_response.text = "Test response"
+            mock_response.candidates = [Mock()]
+            mock_response.candidates[0].content = Mock()
+            mock_response.candidates[0].content.parts = [Mock()]
+            mock_response.candidates[0].content.parts[0].text = "Test response"
+            
+            # Create mock chat object
+            mock_chat = Mock()
+            mock_chat.send_message.return_value = mock_response
+            mock_chat.send_message_stream.return_value = [mock_response]
+            
+            # Create mock client
+            mock_client_instance = Mock()
+            mock_client_instance.chats.create.return_value = mock_chat
+            mock_client.return_value = mock_client_instance
+            
+            llm = GeminiLLM(model="gemini-1.5-flash", api_key="test-key")
+            llm._conversation = InMemoryConversation("be friendly", [])
+            return llm
 
     def test_message(self, llm: GeminiLLM):
         messages = GeminiLLM._normalize_message("say hi")

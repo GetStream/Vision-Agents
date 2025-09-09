@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import Mock, patch
 from dotenv import load_dotenv
 
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
@@ -9,13 +10,35 @@ load_dotenv()
 
 
 class TestOpenAILLM:
-    """Test suite for OpenAILLM class with real API calls."""
+    """Test suite for OpenAILLM class with mocked API calls."""
 
     @pytest.fixture
     def llm(self) -> OpenAILLM:
-        """Test OpenAILLM initialization with a provided client."""
-        llm = OpenAILLM(model="gpt-4o")
-        return llm
+        """Test OpenAILLM initialization with a mocked client."""
+        with patch('stream_agents.plugins.openai.openai_llm.OpenAI') as mock_openai:
+            # Import Response class to create a proper mock
+            from getstream.models import Response
+            
+            # Create mock response object that is an instance of Response
+            mock_response = Mock(spec=Response)
+            mock_response.output_text = "Test response"
+            mock_response.choices = [Mock()]
+            mock_response.choices[0].message = Mock()
+            mock_response.choices[0].message.content = "Test response"
+            
+            # Create mock responses client
+            mock_responses = Mock()
+            mock_responses.create.return_value = mock_response
+            
+            # Create mock client
+            mock_client = Mock()
+            mock_client.responses = mock_responses
+            mock_openai.return_value = mock_client
+            
+            llm = OpenAILLM(model="gpt-4o", api_key="test-key")
+            # Ensure the client is set correctly
+            llm.client = mock_client
+            return llm
 
     def test_message(self, llm: OpenAILLM):
         messages = OpenAILLM._normalize_message("say hi")

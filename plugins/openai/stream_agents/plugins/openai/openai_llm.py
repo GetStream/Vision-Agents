@@ -66,7 +66,7 @@ class OpenAILLM(LLM):
         if client is not None:
             self.client = client
         elif api_key is not None and api_key != "":
-            self.openai_conversation = OpenAI(api_key=api_key)
+            self.client = OpenAI(api_key=api_key)
         else:
             self.client = OpenAI()
 
@@ -126,7 +126,7 @@ class OpenAILLM(LLM):
 
         self.emit("after_llm_response", llm_response)
 
-        return llm_response or LLMResponse[Response](Response(), "")
+        return llm_response or LLMResponse[Response](Response(duration=0.0), "")
 
     @staticmethod
     def _normalize_message(openai_input) -> List["Message"]:
