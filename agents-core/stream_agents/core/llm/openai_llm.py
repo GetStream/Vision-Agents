@@ -1,4 +1,4 @@
-from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Dict, Any, no_type_check
+from typing import Optional, List, TypeVar, Callable, TYPE_CHECKING, Dict, Any, no_type_check
 import json
 
 from openai import OpenAI
@@ -128,7 +128,6 @@ class OpenAILLM(LLM):
             messages.append(message)
 
         return messages
-<<<<<<< HEAD
 
     def _tool_schema_to_openai_tool(self, schema) -> Dict[str, Any]:
         """Convert a tool schema to OpenAI tool format."""

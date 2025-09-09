@@ -87,7 +87,6 @@ class GeminiLLM(LLM):
             messages.append(message)
 
         return messages
-<<<<<<< HEAD
 
     def _tool_schema_to_gemini_tool(self, schema) -> genai.types.Tool:
         """Convert a tool schema to Gemini tool format."""

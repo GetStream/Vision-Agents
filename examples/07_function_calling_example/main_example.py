@@ -9,8 +9,8 @@ from typing import Dict, Any
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins.elevenlabs.tts import ElevenLabsTTS
-from stream_agents.plugins.deepgram.stt import DeepgramSTT
+from stream_agents.plugins.elevenlabs.tts import TTS as ElevenLabsTTS
+from stream_agents.plugins.deepgram.stt import STT as DeepgramSTT
 from stream_agents.core.llm.openai_llm import OpenAILLM
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge import StreamEdge
@@ -167,7 +167,7 @@ async def start_agent() -> None:
                     "role": "user",
                     "content": [
                         {
-                            "type": "input_text", 
+                            "type": "text", 
                             "text": """Hi! I'm your AI assistant with special powers. I can help you with:
                             - Weather information (try asking about weather in any city)
                             - Math calculations (try asking me to calculate something)

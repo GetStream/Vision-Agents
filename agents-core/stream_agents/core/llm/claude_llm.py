@@ -104,7 +104,6 @@ class ClaudeLLM(LLM):
             messages.append(message)
 
         return messages
-<<<<<<< HEAD
 
     def _tool_schema_to_claude_tool(self, schema) -> Dict[str, Any]:
         """Convert a tool schema to Claude tool format."""

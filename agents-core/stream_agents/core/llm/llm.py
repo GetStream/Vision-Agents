@@ -61,7 +61,6 @@ class LLM:
 
     def set_after_response_listener(self, after_response_listener: AfterCb):
         self.after_response_listener = after_response_listener
-<<<<<<< HEAD
 
     def register_function(self, 
                          name: Optional[str] = None,
