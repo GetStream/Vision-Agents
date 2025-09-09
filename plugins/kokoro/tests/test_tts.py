@@ -54,8 +54,11 @@ async def test_kokoro_synthesize_returns_iterator():
     tts = kokoro.TTS()
     stream = await tts.stream_audio("Hello")
 
-    # Should be iterable (list of bytes)
-    chunks = list(stream)
+    # Should be an async iterator (list of bytes)
+    chunks = []
+    async for chunk in stream:
+        chunks.append(chunk)
+    
     assert len(chunks) == 2
     assert all(isinstance(c, (bytes, bytearray)) for c in chunks)
 
