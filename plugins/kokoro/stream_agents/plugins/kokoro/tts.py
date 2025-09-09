@@ -6,7 +6,7 @@ import logging
 import numpy as np
 from typing import AsyncIterator, List, Optional
 
-from stream_agents.tts import TTS
+from stream_agents.core import tts
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 try:
@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover – mocked during CI
     KPipeline = None  # type: ignore  # noqa: N816
 
 
-class KokoroTTS(TTS):
+class TTS(tts.TTS):
     """Text-to-Speech plugin backed by the Kokoro-82M model."""
 
     def __init__(

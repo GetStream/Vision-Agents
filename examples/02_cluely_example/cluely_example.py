@@ -5,18 +5,17 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from getstream import Stream
 from getstream.models import UserRequest
-from getstream.plugins.elevenlabs.tts import ElevenLabsTTS
-from getstream.plugins.deepgram.stt import DeepgramSTT
-from stream_agents.processors import YOLOPoseProcessor
+from stream_agents.plugins import deepgram, elevenlabs
+from stream_agents.core.processors import YOLOPoseProcessor
 
 # TODO: imports are not nice
-from stream_agents.turn_detection import FalTurnDetection
+from stream_agents.core.turn_detection import FalTurnDetection
 
-from stream_agents.edge.edge_transport import StreamEdge
-from stream_agents.utils import open_demo
-from stream_agents.llm import OpenAILLM
-from stream_agents.agents.agents import Agent
-from stream_agents.cli import start_dispatcher
+from stream_agents.core.edge.edge_transport import StreamEdge
+from stream_agents.core.utils import open_demo
+from stream_agents.core.llm import OpenAILLM
+from stream_agents.core.agents.agents import Agent
+from stream_agents.core.cli import start_dispatcher
 
 
 async def main() -> None:
@@ -32,22 +31,20 @@ async def main() -> None:
     # Create the agent
     turn_detection = FalTurnDetection(
         buffer_duration=3.0,  # Process 3 seconds of audio at a time
-        prediction_threshold=0.7,  # Higher threshold for more confident detections
-        mini_pause_duration=0.5,
-        max_pause_duration=2.0,
+        confidence_threshold=0.7,  # Higher threshold for more confident detections
     )
 
     # TODO: LLM class
     agent = Agent(
         edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user name etc for the agent
+        instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         # tts, llm, stt more. see the realtime example for sts
         llm=OpenAILLM(
-            name="gpt-4o",
-            instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
+            model="gpt-4o",
         ),
-        tts=ElevenLabsTTS(),
-        stt=DeepgramSTT(),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
         # turn keeping
         turn_detection=turn_detection,
         # processors can fetch extra data, check images/audio data or transform video

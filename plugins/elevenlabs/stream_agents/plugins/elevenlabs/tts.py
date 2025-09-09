@@ -1,13 +1,13 @@
 import logging
 
-from stream_agents.core.tts import TTS
+from stream_agents.core import tts
 from elevenlabs.client import AsyncElevenLabs
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from typing import AsyncIterator, Optional
 import os
 
 
-class ElevenLabsTTS(TTS):
+class TTS(tts.TTS):
     def __init__(
         self,
         api_key: Optional[str] = None,

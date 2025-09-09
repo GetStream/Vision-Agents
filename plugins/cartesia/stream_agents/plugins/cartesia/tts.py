@@ -11,11 +11,11 @@ from cartesia.tts import (
     TtsRequestEmbeddingSpecifierParams,
 )
 
-from stream_agents.tts import TTS
+from stream_agents.core import tts
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 
-class CartesiaTTS(TTS):
+class TTS(tts.TTS):
     """Text-to-Speech plugin backed by the Cartesia Sonic model."""
 
     def __init__(

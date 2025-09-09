@@ -9,8 +9,8 @@ import soundfile as sf
 import torchaudio
 from typing import List, Dict, Any, Optional
 
-from getstream.plugins import SileroVAD
-from plugins.plugin_test_utils import get_audio_asset, get_json_metadata
+from stream_agents.plugins import silero
+from plugin_test_utils import get_audio_asset, get_json_metadata
 from getstream.video.rtc.track_util import PcmData
 
 # Setup logging for the test
@@ -70,7 +70,7 @@ def audio_data(mia_wav_path):
 @pytest.fixture
 def vad_setup():
     """Create a Silero VAD instance with standard test configuration."""
-    vad = SileroVAD(
+    vad = silero.VAD(
         sample_rate=16000,  # Use the model's native sample rate
         speech_pad_ms=400,  # Increase padding to connect nearby speech segments
         min_speech_ms=100,  # Keep minimum low to catch shorter segments
@@ -292,7 +292,7 @@ def verify_partial_events(
 @pytest.mark.asyncio
 async def test_silero_vad_initialization():
     """Test that the Silero VAD can be initialized with default parameters."""
-    vad = SileroVAD()
+    vad = silero.VAD()
     assert vad is not None
     assert vad.model is not None
 
@@ -328,7 +328,7 @@ async def test_streaming_chunks_20ms(audio_data, mia_metadata):
     This test verifies that the VAD works in streaming mode.
     """
     # Create a new VAD for this test using the same parameters as vad_setup
-    vad = SileroVAD(
+    vad = silero.VAD(
         sample_rate=16000,  # Use the model's native sample rate
         speech_pad_ms=400,  # Increase padding to connect nearby speech segments
         min_speech_ms=100,  # Keep minimum low to catch shorter segments
@@ -420,7 +420,7 @@ async def test_vad_with_connection_manager_format(audio_data, vad_setup):
 async def test_silence_no_turns():
     """Test that no 'audio' events are fired when processing silence."""
     # Create a VAD for this test
-    vad = SileroVAD(
+    vad = silero.VAD(
         sample_rate=16000,
         speech_pad_ms=300,
         min_speech_ms=250,
@@ -480,7 +480,7 @@ class TestSileroVAD:
     async def test_speech_detection(self):
         """Test that Silero VAD correctly detects speech in an audio file."""
         # Initialize the VAD with asymmetric thresholds
-        vad = SileroVAD(
+        vad = silero.VAD(
             sample_rate=16000,
             frame_size=512,
             activation_th=0.3,  # Activation threshold
@@ -544,7 +544,7 @@ class TestSileroVAD:
     async def test_silence_no_turns(self):
         """Test that Silero VAD does not emit turns for pure silence."""
         # Initialize the VAD with asymmetric thresholds
-        vad = SileroVAD(
+        vad = silero.VAD(
             sample_rate=16000,
             frame_size=512,
             activation_th=0.5,
@@ -598,7 +598,7 @@ class TestSileroVAD:
         partial_events_48k = []
 
         # First test with 16 kHz audio
-        vad_16k = SileroVAD(
+        vad_16k = silero.VAD(
             sample_rate=16000,
             frame_size=512,
             activation_th=0.2,
@@ -649,7 +649,7 @@ class TestSileroVAD:
         logger.info(f"16k: is_speech calls={calls_16k}, max_p={max_p_16k:.3f}")
 
         # Now test with 48 kHz audio using the same parameters
-        vad_48k = SileroVAD(
+        vad_48k = silero.VAD(
             sample_rate=48000,  # Input is 48 kHz
             frame_size=512 * 3,  # Scale frame size to match time duration
             activation_th=0.2,
@@ -737,7 +737,7 @@ class TestSileroVAD:
         import tracemalloc
 
         # Initialize the VAD
-        vad = SileroVAD(
+        vad = silero.VAD(
             sample_rate=16000,
             frame_size=512,
             activation_th=0.3,
@@ -826,7 +826,7 @@ class TestSileroVAD:
             pytest.xfail("CUDA is available, skipping fallback test")
 
         # Initialize VAD with CUDA device
-        vad = SileroVAD(
+        vad = silero.VAD(
             sample_rate=16000,
             window_samples=512,
             device="cuda:0",  # Request CUDA
@@ -853,7 +853,7 @@ class TestSileroVAD:
         Test that flush() properly emits a speech turn even if the speech is not complete.
         """
         # Initialize the VAD with longer padding to ensure speech doesn't end naturally
-        vad = SileroVAD(
+        vad = silero.VAD(
             sample_rate=16000,
             window_samples=512,
             activation_th=0.3,
@@ -905,7 +905,7 @@ class TestSileroVAD:
         """
 
         # Initialize VAD with ONNX requested
-        vad = SileroVAD(
+        vad = silero.VAD(
             sample_rate=16000,
             window_samples=512,
             use_onnx=True,

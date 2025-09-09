@@ -278,7 +278,7 @@ version = "2.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "audioop-lts", marker = "python_full_version < '4.0'" },
+    { name = "audioop-lts", marker = "python_full_version < '4'" },
     { name = "httpx" },
     { name = "httpx-sse" },
     { name = "iterators" },
@@ -313,24 +313,47 @@ wheels = [
 
 [[package]]
 name = "cffi"
-version = "1.17.1"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/97/c783634659c2920c3fc70419e3af40972dbaf758daa229a7d6ea6135c90d/cffi-1.17.1.tar.gz", hash = "sha256:1c39c6016c32bc48dd54561950ebd6836e1670f2ae46128f67cf49e789c52824", size = 516621, upload-time = "2024-09-04T20:45:21.852Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/f8/dd6c246b148639254dad4d6803eb6a54e8c85c6e11ec9df2cffa87571dbe/cffi-1.17.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:f3a2b4222ce6b60e2e8b337bb9596923045681d71e5a082783484d845390938e", size = 182989, upload-time = "2024-09-04T20:44:28.956Z" },
-    { url = "https://files.pythonhosted.org/packages/8b/f1/672d303ddf17c24fc83afd712316fda78dc6fce1cd53011b839483e1ecc8/cffi-1.17.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:0984a4925a435b1da406122d4d7968dd861c1385afe3b45ba82b750f229811e2", size = 178802, upload-time = "2024-09-04T20:44:30.289Z" },
-    { url = "https://files.pythonhosted.org/packages/0e/2d/eab2e858a91fdff70533cab61dcff4a1f55ec60425832ddfdc9cd36bc8af/cffi-1.17.1-cp313-cp313-manylinux_2_12_i686.manylinux2010_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:d01b12eeeb4427d3110de311e1774046ad344f5b1a7403101878976ecd7a10f3", size = 454792, upload-time = "2024-09-04T20:44:32.01Z" },
-    { url = "https://files.pythonhosted.org/packages/75/b2/fbaec7c4455c604e29388d55599b99ebcc250a60050610fadde58932b7ee/cffi-1.17.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:706510fe141c86a69c8ddc029c7910003a17353970cff3b904ff0686a5927683", size = 478893, upload-time = "2024-09-04T20:44:33.606Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/b7/6e4a2162178bf1935c336d4da8a9352cccab4d3a5d7914065490f08c0690/cffi-1.17.1-cp313-cp313-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:de55b766c7aa2e2a3092c51e0483d700341182f08e67c63630d5b6f200bb28e5", size = 485810, upload-time = "2024-09-04T20:44:35.191Z" },
-    { url = "https://files.pythonhosted.org/packages/c7/8a/1d0e4a9c26e54746dc08c2c6c037889124d4f59dffd853a659fa545f1b40/cffi-1.17.1-cp313-cp313-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:c59d6e989d07460165cc5ad3c61f9fd8f1b4796eacbd81cee78957842b834af4", size = 471200, upload-time = "2024-09-04T20:44:36.743Z" },
-    { url = "https://files.pythonhosted.org/packages/26/9f/1aab65a6c0db35f43c4d1b4f580e8df53914310afc10ae0397d29d697af4/cffi-1.17.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:dd398dbc6773384a17fe0d3e7eeb8d1a21c2200473ee6806bb5e6a8e62bb73dd", size = 479447, upload-time = "2024-09-04T20:44:38.492Z" },
-    { url = "https://files.pythonhosted.org/packages/5f/e4/fb8b3dd8dc0e98edf1135ff067ae070bb32ef9d509d6cb0f538cd6f7483f/cffi-1.17.1-cp313-cp313-musllinux_1_1_aarch64.whl", hash = "sha256:3edc8d958eb099c634dace3c7e16560ae474aa3803a5df240542b305d14e14ed", size = 484358, upload-time = "2024-09-04T20:44:40.046Z" },
-    { url = "https://files.pythonhosted.org/packages/f1/47/d7145bf2dc04684935d57d67dff9d6d795b2ba2796806bb109864be3a151/cffi-1.17.1-cp313-cp313-musllinux_1_1_x86_64.whl", hash = "sha256:72e72408cad3d5419375fc87d289076ee319835bdfa2caad331e377589aebba9", size = 488469, upload-time = "2024-09-04T20:44:41.616Z" },
-    { url = "https://files.pythonhosted.org/packages/bf/ee/f94057fa6426481d663b88637a9a10e859e492c73d0384514a17d78ee205/cffi-1.17.1-cp313-cp313-win32.whl", hash = "sha256:e03eab0a8677fa80d646b5ddece1cbeaf556c313dcfac435ba11f107ba117b5d", size = 172475, upload-time = "2024-09-04T20:44:43.733Z" },
-    { url = "https://files.pythonhosted.org/packages/7c/fc/6a8cb64e5f0324877d503c854da15d76c1e50eb722e320b15345c4d0c6de/cffi-1.17.1-cp313-cp313-win_amd64.whl", hash = "sha256:f6a16c31041f09ead72d69f583767292f750d24913dadacf5756b966aacb3f1a", size = 182009, upload-time = "2024-09-04T20:44:45.309Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/8d/a0a47a0c9e413a658623d014e91e74a50cdd2c423f7ccfd44086ef767f90/cffi-2.0.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:00bdf7acc5f795150faa6957054fbbca2439db2f775ce831222b66f192f03beb", size = 185230, upload-time = "2025-09-08T23:23:00.879Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/d2/a6c0296814556c68ee32009d9c2ad4f85f2707cdecfd7727951ec228005d/cffi-2.0.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:45d5e886156860dc35862657e1494b9bae8dfa63bf56796f2fb56e1679fc0bca", size = 181043, upload-time = "2025-09-08T23:23:02.231Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/1e/d22cc63332bd59b06481ceaac49d6c507598642e2230f201649058a7e704/cffi-2.0.0-cp313-cp313-manylinux1_i686.manylinux2014_i686.manylinux_2_17_i686.manylinux_2_5_i686.whl", hash = "sha256:07b271772c100085dd28b74fa0cd81c8fb1a3ba18b21e03d7c27f3436a10606b", size = 212446, upload-time = "2025-09-08T23:23:03.472Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/f5/a2c23eb03b61a0b8747f211eb716446c826ad66818ddc7810cc2cc19b3f2/cffi-2.0.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d48a880098c96020b02d5a1f7d9251308510ce8858940e6fa99ece33f610838b", size = 220101, upload-time = "2025-09-08T23:23:04.792Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/7f/e6647792fc5850d634695bc0e6ab4111ae88e89981d35ac269956605feba/cffi-2.0.0-cp313-cp313-manylinux2014_ppc64le.manylinux_2_17_ppc64le.whl", hash = "sha256:f93fd8e5c8c0a4aa1f424d6173f14a892044054871c771f8566e4008eaa359d2", size = 207948, upload-time = "2025-09-08T23:23:06.127Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/1e/a5a1bd6f1fb30f22573f76533de12a00bf274abcdc55c8edab639078abb6/cffi-2.0.0-cp313-cp313-manylinux2014_s390x.manylinux_2_17_s390x.whl", hash = "sha256:dd4f05f54a52fb558f1ba9f528228066954fee3ebe629fc1660d874d040ae5a3", size = 206422, upload-time = "2025-09-08T23:23:07.753Z" },
+    { url = "https://files.pythonhosted.org/packages/98/df/0a1755e750013a2081e863e7cd37e0cdd02664372c754e5560099eb7aa44/cffi-2.0.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c8d3b5532fc71b7a77c09192b4a5a200ea992702734a2e9279a37f2478236f26", size = 219499, upload-time = "2025-09-08T23:23:09.648Z" },
+    { url = "https://files.pythonhosted.org/packages/50/e1/a969e687fcf9ea58e6e2a928ad5e2dd88cc12f6f0ab477e9971f2309b57c/cffi-2.0.0-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:d9b29c1f0ae438d5ee9acb31cadee00a58c46cc9c0b2f9038c6b0b3470877a8c", size = 222928, upload-time = "2025-09-08T23:23:10.928Z" },
+    { url = "https://files.pythonhosted.org/packages/36/54/0362578dd2c9e557a28ac77698ed67323ed5b9775ca9d3fe73fe191bb5d8/cffi-2.0.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:6d50360be4546678fc1b79ffe7a66265e28667840010348dd69a314145807a1b", size = 221302, upload-time = "2025-09-08T23:23:12.42Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/6d/bf9bda840d5f1dfdbf0feca87fbdb64a918a69bca42cfa0ba7b137c48cb8/cffi-2.0.0-cp313-cp313-win32.whl", hash = "sha256:74a03b9698e198d47562765773b4a8309919089150a0bb17d829ad7b44b60d27", size = 172909, upload-time = "2025-09-08T23:23:14.32Z" },
+    { url = "https://files.pythonhosted.org/packages/37/18/6519e1ee6f5a1e579e04b9ddb6f1676c17368a7aba48299c3759bbc3c8b3/cffi-2.0.0-cp313-cp313-win_amd64.whl", hash = "sha256:19f705ada2530c1167abacb171925dd886168931e0a7b78f5bffcae5c6b5be75", size = 183402, upload-time = "2025-09-08T23:23:15.535Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/0e/02ceeec9a7d6ee63bb596121c2c8e9b3a9e150936f4fbef6ca1943e6137c/cffi-2.0.0-cp313-cp313-win_arm64.whl", hash = "sha256:256f80b80ca3853f90c21b23ee78cd008713787b1b1e93eae9f3d6a7134abd91", size = 177780, upload-time = "2025-09-08T23:23:16.761Z" },
+    { url = "https://files.pythonhosted.org/packages/92/c4/3ce07396253a83250ee98564f8d7e9789fab8e58858f35d07a9a2c78de9f/cffi-2.0.0-cp314-cp314-macosx_10_13_x86_64.whl", hash = "sha256:fc33c5141b55ed366cfaad382df24fe7dcbc686de5be719b207bb248e3053dc5", size = 185320, upload-time = "2025-09-08T23:23:18.087Z" },
+    { url = "https://files.pythonhosted.org/packages/59/dd/27e9fa567a23931c838c6b02d0764611c62290062a6d4e8ff7863daf9730/cffi-2.0.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:c654de545946e0db659b3400168c9ad31b5d29593291482c43e3564effbcee13", size = 181487, upload-time = "2025-09-08T23:23:19.622Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/43/0e822876f87ea8a4ef95442c3d766a06a51fc5298823f884ef87aaad168c/cffi-2.0.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:24b6f81f1983e6df8db3adc38562c83f7d4a0c36162885ec7f7b77c7dcbec97b", size = 220049, upload-time = "2025-09-08T23:23:20.853Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/89/76799151d9c2d2d1ead63c2429da9ea9d7aac304603de0c6e8764e6e8e70/cffi-2.0.0-cp314-cp314-manylinux2014_ppc64le.manylinux_2_17_ppc64le.whl", hash = "sha256:12873ca6cb9b0f0d3a0da705d6086fe911591737a59f28b7936bdfed27c0d47c", size = 207793, upload-time = "2025-09-08T23:23:22.08Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/dd/3465b14bb9e24ee24cb88c9e3730f6de63111fffe513492bf8c808a3547e/cffi-2.0.0-cp314-cp314-manylinux2014_s390x.manylinux_2_17_s390x.whl", hash = "sha256:d9b97165e8aed9272a6bb17c01e3cc5871a594a446ebedc996e2397a1c1ea8ef", size = 206300, upload-time = "2025-09-08T23:23:23.314Z" },
+    { url = "https://files.pythonhosted.org/packages/47/d9/d83e293854571c877a92da46fdec39158f8d7e68da75bf73581225d28e90/cffi-2.0.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:afb8db5439b81cf9c9d0c80404b60c3cc9c3add93e114dcae767f1477cb53775", size = 219244, upload-time = "2025-09-08T23:23:24.541Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/0f/1f177e3683aead2bb00f7679a16451d302c436b5cbf2505f0ea8146ef59e/cffi-2.0.0-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:737fe7d37e1a1bffe70bd5754ea763a62a066dc5913ca57e957824b72a85e205", size = 222828, upload-time = "2025-09-08T23:23:26.143Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/0f/cafacebd4b040e3119dcb32fed8bdef8dfe94da653155f9d0b9dc660166e/cffi-2.0.0-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:38100abb9d1b1435bc4cc340bb4489635dc2f0da7456590877030c9b3d40b0c1", size = 220926, upload-time = "2025-09-08T23:23:27.873Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/aa/df335faa45b395396fcbc03de2dfcab242cd61a9900e914fe682a59170b1/cffi-2.0.0-cp314-cp314-win32.whl", hash = "sha256:087067fa8953339c723661eda6b54bc98c5625757ea62e95eb4898ad5e776e9f", size = 175328, upload-time = "2025-09-08T23:23:44.61Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/92/882c2d30831744296ce713f0feb4c1cd30f346ef747b530b5318715cc367/cffi-2.0.0-cp314-cp314-win_amd64.whl", hash = "sha256:203a48d1fb583fc7d78a4c6655692963b860a417c0528492a6bc21f1aaefab25", size = 185650, upload-time = "2025-09-08T23:23:45.848Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/2c/98ece204b9d35a7366b5b2c6539c350313ca13932143e79dc133ba757104/cffi-2.0.0-cp314-cp314-win_arm64.whl", hash = "sha256:dbd5c7a25a7cb98f5ca55d258b103a2054f859a46ae11aaf23134f9cc0d356ad", size = 180687, upload-time = "2025-09-08T23:23:47.105Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/61/c768e4d548bfa607abcda77423448df8c471f25dbe64fb2ef6d555eae006/cffi-2.0.0-cp314-cp314t-macosx_10_13_x86_64.whl", hash = "sha256:9a67fc9e8eb39039280526379fb3a70023d77caec1852002b4da7e8b270c4dd9", size = 188773, upload-time = "2025-09-08T23:23:29.347Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/ea/5f76bce7cf6fcd0ab1a1058b5af899bfbef198bea4d5686da88471ea0336/cffi-2.0.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:7a66c7204d8869299919db4d5069a82f1561581af12b11b3c9f48c584eb8743d", size = 185013, upload-time = "2025-09-08T23:23:30.63Z" },
+    { url = "https://files.pythonhosted.org/packages/be/b4/c56878d0d1755cf9caa54ba71e5d049479c52f9e4afc230f06822162ab2f/cffi-2.0.0-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:7cc09976e8b56f8cebd752f7113ad07752461f48a58cbba644139015ac24954c", size = 221593, upload-time = "2025-09-08T23:23:31.91Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/0d/eb704606dfe8033e7128df5e90fee946bbcb64a04fcdaa97321309004000/cffi-2.0.0-cp314-cp314t-manylinux2014_ppc64le.manylinux_2_17_ppc64le.whl", hash = "sha256:92b68146a71df78564e4ef48af17551a5ddd142e5190cdf2c5624d0c3ff5b2e8", size = 209354, upload-time = "2025-09-08T23:23:33.214Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/19/3c435d727b368ca475fb8742ab97c9cb13a0de600ce86f62eab7fa3eea60/cffi-2.0.0-cp314-cp314t-manylinux2014_s390x.manylinux_2_17_s390x.whl", hash = "sha256:b1e74d11748e7e98e2f426ab176d4ed720a64412b6a15054378afdb71e0f37dc", size = 208480, upload-time = "2025-09-08T23:23:34.495Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/44/681604464ed9541673e486521497406fadcc15b5217c3e326b061696899a/cffi-2.0.0-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:28a3a209b96630bca57cce802da70c266eb08c6e97e5afd61a75611ee6c64592", size = 221584, upload-time = "2025-09-08T23:23:36.096Z" },
+    { url = "https://files.pythonhosted.org/packages/25/8e/342a504ff018a2825d395d44d63a767dd8ebc927ebda557fecdaca3ac33a/cffi-2.0.0-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:7553fb2090d71822f02c629afe6042c299edf91ba1bf94951165613553984512", size = 224443, upload-time = "2025-09-08T23:23:37.328Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/5e/b666bacbbc60fbf415ba9988324a132c9a7a0448a9a8f125074671c0f2c3/cffi-2.0.0-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:6c6c373cfc5c83a975506110d17457138c8c63016b563cc9ed6e056a82f13ce4", size = 223437, upload-time = "2025-09-08T23:23:38.945Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/1d/ec1a60bd1a10daa292d3cd6bb0b359a81607154fb8165f3ec95fe003b85c/cffi-2.0.0-cp314-cp314t-win32.whl", hash = "sha256:1fc9ea04857caf665289b7a75923f2c6ed559b8298a1b8c49e59f7dd95c8481e", size = 180487, upload-time = "2025-09-08T23:23:40.423Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/41/4c1168c74fac325c0c8156f04b6749c8b6a8f405bbf91413ba088359f60d/cffi-2.0.0-cp314-cp314t-win_amd64.whl", hash = "sha256:d68b6cef7827e8641e8ef16f4494edda8b36104d79773a334beaa1e3521430f6", size = 191726, upload-time = "2025-09-08T23:23:41.742Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/3a/dbeec9d1ee0844c679f6bb5d6ad4e9f198b1224f4e7a32825f47f6192b0c/cffi-2.0.0-cp314-cp314t-win_arm64.whl", hash = "sha256:0a1527a803f0a659de1af2e1fd700213caba79377e27e4693648c2923da066f9", size = 184195, upload-time = "2025-09-08T23:23:43.004Z" },
 ]
 
 [[package]]
@@ -666,7 +689,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf57
 
 [[package]]
 name = "elevenlabs"
-version = "2.14.0"
+version = "2.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -676,9 +699,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a7/ab/a7630c2a69c26bc14168e23a32c73b6cb51ecf344a52afd85cc936fd6338/elevenlabs-2.14.0.tar.gz", hash = "sha256:a50cea97eae0e183f226a3961e036c9620b57fb31667cf1877cd73493e1d7970", size = 309874, upload-time = "2025-09-04T17:21:02.517Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/c8/b264e16ba64bd8c364f4bebb9e6059e5a0d00e6845b5072971013d96c067/elevenlabs-2.15.0.tar.gz", hash = "sha256:24de2fa9f90e691af31b6f2f52b5c08267ff65dc4c5dd4e23b4e43b84c483a2c", size = 348338, upload-time = "2025-09-08T06:52:46.086Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/b4/8813a5a5be7f3bc14231de5ff3d4dc56b05ea8611e14e3f1c5ce05443dbf/elevenlabs-2.14.0-py3-none-any.whl", hash = "sha256:ec1f30f43239b77a8760acb60be4b3968df459031e9d2566a4dd0e265a66f063", size = 891463, upload-time = "2025-09-04T17:21:01.187Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/cc/632a4b335edc8df13c64f884cf45ef48ba0295ef61aba40142717b1c694b/elevenlabs-2.15.0-py3-none-any.whl", hash = "sha256:38cdef32e8e51cd07e69da189d334652906f6ee91eb70c8744e1c88759cf665c", size = 941755, upload-time = "2025-09-08T06:52:44.514Z" },
 ]
 
 [[package]]
@@ -862,29 +885,6 @@ webrtc = [
 ]
 
 [[package]]
-name = "getstream-plugins-cartesia"
-version = "0.1.0"
-source = { editable = "../../plugins/cartesia" }
-dependencies = [
-    { name = "cartesia" },
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "stream-agents" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cartesia", specifier = ">=2.0.5" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "stream-agents", editable = "../../stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
 name = "getstream-plugins-common"
 version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -893,214 +893,6 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/12/33efcfa1815d95b6cbaaf8b2ef192d64eea6555dfe733ec9f642cf098322/getstream_plugins_common-0.1.1-py3-none-any.whl", hash = "sha256:87b04efbd9a9ce1e143045370ee62334a536e69d60060aae419acb2118cd242c", size = 14041, upload-time = "2025-08-01T15:47:11.774Z" },
-]
-
-[[package]]
-name = "getstream-plugins-deepgram"
-version = "0.1.1"
-source = { editable = "../../plugins/deepgram" }
-dependencies = [
-    { name = "deepgram-sdk" },
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=4.5.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "stream-agents", editable = "../../stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
-]
-
-[[package]]
-name = "getstream-plugins-elevenlabs"
-version = "0.1.0"
-source = { editable = "../../plugins/elevenlabs" }
-dependencies = [
-    { name = "elevenlabs" },
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "stream-agents" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "elevenlabs", specifier = ">=2.5.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "stream-agents", editable = "../../stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-fal"
-version = "0.1.1"
-source = { editable = "../../plugins/fal" }
-dependencies = [
-    { name = "fal-client" },
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "stream-agents" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fal-client", specifier = ">=0.7.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "stream-agents", editable = "../../stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-gemini"
-version = "0.1.0"
-source = { editable = "../../plugins/gemini" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "google-genai" },
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "google-genai", specifier = ">=1.29.0" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "stream-agents", editable = "../../stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-]
-
-[[package]]
-name = "getstream-plugins-kokoro"
-version = "0.1.0"
-source = { editable = "../../plugins/kokoro" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "kokoro" },
-    { name = "misaki", extra = ["en"] },
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "kokoro", specifier = ">=0.9.4" },
-    { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "stream-agents", editable = "../../stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-moonshine"
-version = "0.1.1"
-source = { editable = "../../plugins/moonshine" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "numpy" },
-    { name = "onnxruntime" },
-    { name = "soundfile" },
-    { name = "stream-agents" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "onnxruntime", specifier = ">=1.22.0" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "stream-agents", editable = "../../stream-agents" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-openai"
-version = "0.1.1"
-source = { editable = "../../plugins/openai" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-common" },
-    { name = "openai", extra = ["realtime"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common" },
-    { name = "openai", extras = ["realtime"], specifier = ">=1.97.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "getstream-plugins-silero"
-version = "0.1.0"
-source = { editable = "../../plugins/silero" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "numpy" },
-    { name = "silero" },
-    { name = "stream-agents" },
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "silero", specifier = ">=0.4.1" },
-    { name = "stream-agents", editable = "../../stream-agents" },
-    { name = "torch", specifier = ">=2.7.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
 ]
 
 [[package]]
@@ -1134,7 +926,7 @@ wheels = [
 
 [[package]]
 name = "google-genai"
-version = "1.33.0"
+version = "1.34.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1146,9 +938,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/f5/506221067750087ba1346f0a31f6e1714fda4b612d45a54cd2164750e05a/google_genai-1.33.0.tar.gz", hash = "sha256:7d3a5ebad712d95a0d1775842505886eb43cc52f9f478aa4ab0e2d25412499a2", size = 241006, upload-time = "2025-09-03T22:54:10.662Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/80/54a58abd46b5cb1385d993fd668f8c82c74a8896dceae691da1315a90dc9/google_genai-1.34.0.tar.gz", hash = "sha256:9f963745faaa177a921202aa849c0811f7852089101fa143b7568a32020c9de9", size = 243492, upload-time = "2025-09-09T02:37:31.408Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/8e/55052fe488d6604309b425360beb72e6d65f11fa4cc1cdde17ccfe93e1bc/google_genai-1.33.0-py3-none-any.whl", hash = "sha256:1710e958af0a0f3d19521fabbefd86b22d1f212376103f18fed11c9d96fa48e8", size = 241753, upload-time = "2025-09-03T22:54:08.789Z" },
+    { url = "https://files.pythonhosted.org/packages/53/2f/cd0009936b9fb0bd700a990ea7c8ec8e0f3e7a267279f062222f16823668/google_genai-1.34.0-py3-none-any.whl", hash = "sha256:d944d05c55162f3d408d22ea67bdb8dcc07ff3a9c82074f732acc27653175bdd", size = 244108, upload-time = "2025-09-09T02:37:29.66Z" },
 ]
 
 [[package]]
@@ -1392,14 +1184,14 @@ wheels = [
 
 [[package]]
 name = "jsonschema-specifications"
-version = "2025.4.1"
+version = "2025.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "referencing" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/ce/46fbd9c8119cfc3581ee5643ea49464d168028cfb5caff5fc0596d0cf914/jsonschema_specifications-2025.4.1.tar.gz", hash = "sha256:630159c9f4dbea161a6a2205c3011cc4f18ff381b189fff48bb39b9bf26ae608", size = 15513, upload-time = "2025-04-23T12:34:07.418Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/0e/b27cdbaccf30b890c40ed1da9fd4a3593a5cf94dae54fb34f8a4b74fcd3f/jsonschema_specifications-2025.4.1-py3-none-any.whl", hash = "sha256:4653bffbd6584f7de83a67e0d620ef16900b390ddc7939d56684d6c81e33f1af", size = 18437, upload-time = "2025-04-23T12:34:05.422Z" },
+    { url = "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe", size = 18437, upload-time = "2025-09-08T01:34:57.871Z" },
 ]
 
 [[package]]
@@ -1481,7 +1273,7 @@ wheels = [
 [[package]]
 name = "krisp-audio"
 version = "1.4.0"
-source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }
+source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }
 resolution-markers = [
     "platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
@@ -1492,7 +1284,7 @@ wheels = [
 [[package]]
 name = "krisp-audio"
 version = "1.4.0"
-source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }
+source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }
 resolution-markers = [
     "platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
@@ -1503,7 +1295,7 @@ wheels = [
 [[package]]
 name = "krisp-audio"
 version = "1.4.0"
-source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
+source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
 resolution-markers = [
     "platform_machine == 'aarch64' and sys_platform == 'darwin'",
 ]
@@ -1514,7 +1306,7 @@ wheels = [
 [[package]]
 name = "krisp-audio"
 version = "1.4.0"
-source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }
+source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }
 resolution-markers = [
     "sys_platform == 'win32'",
 ]
@@ -1705,28 +1497,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/b0/40fb2b3a1ab9381bb39a952e8390357c8be3bdadcf6d5055d9c31e1b35ae/matplotlib-3.10.6-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:83847b47f6524c34b4f2d3ce726bb0541c48c8e7692729865c3df75bfa0f495a", size = 9594077, upload-time = "2025-08-30T00:14:07.012Z" },
     { url = "https://files.pythonhosted.org/packages/76/34/c4b71b69edf5b06e635eee1ed10bfc73cf8df058b66e63e30e6a55e231d5/matplotlib-3.10.6-cp314-cp314t-win_amd64.whl", hash = "sha256:c7e0518e0d223683532a07f4b512e2e0729b62674f1b3a1a69869f98e6b1c7e3", size = 8342822, upload-time = "2025-08-30T00:14:09.041Z" },
     { url = "https://files.pythonhosted.org/packages/e8/62/aeabeef1a842b6226a30d49dd13e8a7a1e81e9ec98212c0b5169f0a12d83/matplotlib-3.10.6-cp314-cp314t-win_arm64.whl", hash = "sha256:4dd83e029f5b4801eeb87c64efd80e732452781c16a9cf7415b7b63ec8f374d7", size = 8172588, upload-time = "2025-08-30T00:14:11.166Z" },
-]
-
-[[package]]
-name = "mcp"
-version = "1.13.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "jsonschema" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
-    { name = "sse-starlette" },
-    { name = "starlette" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/66/3c/82c400c2d50afdac4fbefb5b4031fd327e2ad1f23ccef8eee13c5909aa48/mcp-1.13.1.tar.gz", hash = "sha256:165306a8fd7991dc80334edd2de07798175a56461043b7ae907b279794a834c5", size = 438198, upload-time = "2025-08-22T09:22:16.061Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/3f/d085c7f49ade6d273b185d61ec9405e672b6433f710ea64a90135a8dd445/mcp-1.13.1-py3-none-any.whl", hash = "sha256:c314e7c8bd477a23ba3ef472ee5a32880316c42d03e06dcfa31a1cc7a73b65df", size = 161494, upload-time = "2025-08-22T09:22:14.705Z" },
 ]
 
 [[package]]
@@ -2049,7 +1819,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.106.1"
+version = "1.107.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2061,9 +1831,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/b6/1aff7d6b8e9f0c3ac26bfbb57b9861a6711d5d60bd7dd5f7eebbf80509b7/openai-1.106.1.tar.gz", hash = "sha256:5f575967e3a05555825c43829cdcd50be6e49ab6a3e5262f0937a3f791f917f1", size = 561095, upload-time = "2025-09-04T18:17:15.303Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/67/d6498de300f83ff57a79cb7aa96ef3bef8d6f070c3ded0f1b5b45442a6bc/openai-1.107.0.tar.gz", hash = "sha256:43e04927584e57d0e9e640ee0077c78baf8150098be96ebd5c512539b6c4e9a4", size = 566056, upload-time = "2025-09-08T19:25:47.604Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/e1/47887212baa7bc0532880d33d5eafbdb46fcc4b53789b903282a74a85b5b/openai-1.106.1-py3-none-any.whl", hash = "sha256:bfdef37c949f80396c59f2c17e0eda35414979bc07ef3379596a93c9ed044f3a", size = 930768, upload-time = "2025-09-04T18:17:13.349Z" },
+    { url = "https://files.pythonhosted.org/packages/91/ed/e8a4fd20390f2858b95227c288df8fe0c835f7c77625f7583609161684ba/openai-1.107.0-py3-none-any.whl", hash = "sha256:3dcfa3cbb116bd6924b27913b8da28c4a787379ff60049588547a1013e6d6438", size = 950968, upload-time = "2025-09-08T19:25:45.552Z" },
 ]
 
 [package.optional-dependencies]
@@ -2556,28 +2326,6 @@ wheels = [
 ]
 
 [[package]]
-name = "python-multipart"
-version = "0.0.20"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f3/87/f44d7c9f274c7ee665a29b885ec97089ec5dc034c7f3fafa03da9e39a09e/python_multipart-0.0.20.tar.gz", hash = "sha256:8dd0cab45b8e23064ae09147625994d090fa46f5b0d1e13af944c331a7fa9d13", size = 37158, upload-time = "2024-12-16T19:45:46.972Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/58/38b5afbc1a800eeea951b9285d3912613f2603bdf897a4ab0f4bd7f405fc/python_multipart-0.0.20-py3-none-any.whl", hash = "sha256:8a62d3a8335e06589fe01f2a3e178cdcc632f3fbe0d492ad9ee0ec35aab1f104", size = 24546, upload-time = "2024-12-16T19:45:44.423Z" },
-]
-
-[[package]]
-name = "pywin32"
-version = "311"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/be/3fd5de0979fcb3994bfee0d65ed8ca9506a8a1260651b86174f6a86f52b3/pywin32-311-cp313-cp313-win32.whl", hash = "sha256:f95ba5a847cba10dd8c4d8fefa9f2a6cf283b8b88ed6178fa8a6c1ab16054d0d", size = 8705700, upload-time = "2025-07-14T20:13:26.471Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/28/e0a1909523c6890208295a29e05c2adb2126364e289826c0a8bc7297bd5c/pywin32-311-cp313-cp313-win_amd64.whl", hash = "sha256:718a38f7e5b058e76aee1c56ddd06908116d35147e133427e59a3983f703a20d", size = 9494700, upload-time = "2025-07-14T20:13:28.243Z" },
-    { url = "https://files.pythonhosted.org/packages/04/bf/90339ac0f55726dce7d794e6d79a18a91265bdf3aa70b6b9ca52f35e022a/pywin32-311-cp313-cp313-win_arm64.whl", hash = "sha256:7b4075d959648406202d92a2310cb990fea19b535c7f4a78d3f5e10b926eeb8a", size = 8709318, upload-time = "2025-07-14T20:13:30.348Z" },
-    { url = "https://files.pythonhosted.org/packages/c9/31/097f2e132c4f16d99a22bfb777e0fd88bd8e1c634304e102f313af69ace5/pywin32-311-cp314-cp314-win32.whl", hash = "sha256:b7a2c10b93f8986666d0c803ee19b5990885872a7de910fc460f9b0c2fbf92ee", size = 8840714, upload-time = "2025-07-14T20:13:32.449Z" },
-    { url = "https://files.pythonhosted.org/packages/90/4b/07c77d8ba0e01349358082713400435347df8426208171ce297da32c313d/pywin32-311-cp314-cp314-win_amd64.whl", hash = "sha256:3aca44c046bd2ed8c90de9cb8427f581c479e594e99b5c0bb19b29c10fd6cb87", size = 9656800, upload-time = "2025-07-14T20:13:34.312Z" },
-    { url = "https://files.pythonhosted.org/packages/c0/d2/21af5c535501a7233e734b8af901574572da66fcc254cb35d0609c9080dd/pywin32-311-cp314-cp314-win_arm64.whl", hash = "sha256:a508e2d9025764a8270f93111a970e1d0fbfc33f4153b388bb649b7eec4f9b42", size = 8932540, upload-time = "2025-07-14T20:13:36.379Z" },
-]
-
-[[package]]
 name = "pyyaml"
 version = "6.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2873,32 +2621,34 @@ source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-deepgram" },
-    { name = "getstream-plugins-elevenlabs" },
+    { name = "getstream-plugins-common" },
     { name = "google-genai" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }, marker = "sys_platform == 'win32'" },
+    { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
+    { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }, marker = "sys_platform == 'win32'" },
     { name = "openai" },
     { name = "python-dotenv" },
     { name = "stream-agents" },
+    { name = "stream-agents-plugins-deepgram" },
+    { name = "stream-agents-plugins-elevenlabs" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.66.0" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-deepgram", editable = "../../plugins/deepgram" },
-    { name = "getstream-plugins-elevenlabs", editable = "../../plugins/elevenlabs" },
+    { name = "getstream-plugins-common" },
     { name = "google-genai", specifier = ">=1.33.0" },
-    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'", path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
-    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" },
-    { name = "krisp-audio", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" },
-    { name = "krisp-audio", marker = "sys_platform == 'win32'", path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" },
+    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
+    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" },
+    { name = "krisp-audio", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" },
+    { name = "krisp-audio", marker = "sys_platform == 'win32'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" },
     { name = "openai", specifier = ">=1.101.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "stream-agents", editable = "../../stream-agents" },
+    { name = "stream-agents", editable = "../../agents-core" },
+    { name = "stream-agents-plugins-deepgram", editable = "../../plugins/deepgram" },
+    { name = "stream-agents-plugins-elevenlabs", editable = "../../plugins/elevenlabs" },
 ]
 
 [[package]]
@@ -2912,14 +2662,14 @@ wheels = [
 
 [[package]]
 name = "smart-open"
-version = "7.3.0.post1"
+version = "7.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/18/2b/5e7234c68ed5bc872ad6ae77b8a421c2ed70dcb1190b44dc1abdeed5e347/smart_open-7.3.0.post1.tar.gz", hash = "sha256:ce6a3d9bc1afbf6234ad13c010b77f8cd36d24636811e3c52c3b5160f5214d1e", size = 51557, upload-time = "2025-07-03T10:06:31.271Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/16/be/bf2d60280a9d7fac98ece2150a22538fa4332cda67d04d9618c8406f791e/smart_open-7.3.1.tar.gz", hash = "sha256:b33fee8dffd206f189d5e704106a8723afb4210d2ff47e0e1f7fbe436187a990", size = 51405, upload-time = "2025-09-08T10:03:53.726Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/5b/a2a3d4514c64818925f4e886d39981f1926eeb5288a4549c6b3c17ed66bb/smart_open-7.3.0.post1-py3-none-any.whl", hash = "sha256:c73661a2c24bf045c1e04e08fffc585b59af023fe783d57896f590489db66fb4", size = 61946, upload-time = "2025-07-03T10:06:29.599Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/d9/460cf1d58945dd771c228c29d5664f431dfc4060d3d092fed40546b11472/smart_open-7.3.1-py3-none-any.whl", hash = "sha256:e243b2e7f69d6c0c96dd763d6fbbedbb4e0e4fc6d74aa007acc5b018d523858c", size = 61722, upload-time = "2025-09-08T10:03:52.02Z" },
 ]
 
 [[package]]
@@ -3037,30 +2787,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sse-starlette"
-version = "3.0.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/42/6f/22ed6e33f8a9e76ca0a412405f31abb844b779d52c5f96660766edcd737c/sse_starlette-3.0.2.tar.gz", hash = "sha256:ccd60b5765ebb3584d0de2d7a6e4f745672581de4f5005ab31c3a25d10b52b3a", size = 20985, upload-time = "2025-07-27T09:07:44.565Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/10/c78f463b4ef22eef8491f218f692be838282cd65480f6e423d7730dfd1fb/sse_starlette-3.0.2-py3-none-any.whl", hash = "sha256:16b7cbfddbcd4eaca11f7b586f3b8a080f1afe952c15813455b162edea619e5a", size = 11297, upload-time = "2025-07-27T09:07:43.268Z" },
-]
-
-[[package]]
-name = "starlette"
-version = "0.47.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/15/b9/cc3017f9a9c9b6e27c5106cc10cc7904653c3eec0729793aec10479dd669/starlette-0.47.3.tar.gz", hash = "sha256:6bc94f839cc176c4858894f1f8908f0ab79dfec1a6b8402f6da9be26ebea52e9", size = 2584144, upload-time = "2025-08-24T13:36:42.122Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/fd/901cfa59aaa5b30a99e16876f11abe38b59a1a2c51ffb3d7142bb6089069/starlette-0.47.3-py3-none-any.whl", hash = "sha256:89c0778ca62a76b826101e7c709e70680a1699ca7da6b44d38eb0a7e61fe4b51", size = 72991, upload-time = "2025-08-24T13:36:40.887Z" },
-]
-
-[[package]]
 name = "stratz"
 version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3071,33 +2797,32 @@ sdist = { url = "https://files.pythonhosted.org/packages/52/45/cb417952940c71c78
 
 [[package]]
 name = "stream-agents"
-source = { editable = "../../stream-agents" }
+source = { editable = "../../agents-core" }
 dependencies = [
     { name = "aiortc" },
     { name = "click" },
     { name = "daily-python" },
     { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-cartesia" },
-    { name = "getstream-plugins-deepgram" },
-    { name = "getstream-plugins-elevenlabs" },
-    { name = "getstream-plugins-fal" },
-    { name = "getstream-plugins-gemini" },
-    { name = "getstream-plugins-kokoro" },
-    { name = "getstream-plugins-moonshine" },
-    { name = "getstream-plugins-openai" },
-    { name = "getstream-plugins-silero" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }, marker = "sys_platform == 'win32'" },
-    { name = "mcp" },
+    { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
+    { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }, marker = "sys_platform == 'win32'" },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pillow" },
     { name = "python-dotenv" },
     { name = "stratz" },
-    { name = "stream-agents-plugin-anthropic" },
-    { name = "stream-agents-plugin-xai" },
+    { name = "stream-agents-plugins-anthropic" },
+    { name = "stream-agents-plugins-cartesia" },
+    { name = "stream-agents-plugins-deepgram" },
+    { name = "stream-agents-plugins-elevenlabs" },
+    { name = "stream-agents-plugins-fal" },
+    { name = "stream-agents-plugins-gemini" },
+    { name = "stream-agents-plugins-kokoro" },
+    { name = "stream-agents-plugins-moonshine" },
+    { name = "stream-agents-plugins-openai" },
+    { name = "stream-agents-plugins-silero" },
+    { name = "stream-agents-plugins-xai" },
     { name = "ultralytics" },
     { name = "websockets" },
 ]
@@ -3110,28 +2835,15 @@ requires-dist = [
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
     { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=webrtc" },
-    { name = "getstream-plugins-cartesia", editable = "../../plugins/cartesia" },
-    { name = "getstream-plugins-deepgram", editable = "../../plugins/deepgram" },
-    { name = "getstream-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "../../plugins/deepgram" },
-    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", editable = "../../plugins/deepgram" },
-    { name = "getstream-plugins-elevenlabs", editable = "../../plugins/elevenlabs" },
-    { name = "getstream-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "../../plugins/elevenlabs" },
-    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "../../plugins/elevenlabs" },
-    { name = "getstream-plugins-fal", editable = "../../plugins/fal" },
-    { name = "getstream-plugins-gemini", editable = "../../plugins/gemini" },
-    { name = "getstream-plugins-kokoro", editable = "../../plugins/kokoro" },
-    { name = "getstream-plugins-moonshine", editable = "../../plugins/moonshine" },
-    { name = "getstream-plugins-openai", editable = "../../plugins/openai" },
-    { name = "getstream-plugins-openai", marker = "extra == 'all-plugins'", editable = "../../plugins/openai" },
-    { name = "getstream-plugins-openai", marker = "extra == 'openai'", editable = "../../plugins/openai" },
-    { name = "getstream-plugins-silero", editable = "../../plugins/silero" },
+    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
+    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
+    { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },
     { name = "google-genai", marker = "extra == 'all-plugins'", specifier = ">=0.3.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=0.3.0" },
-    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'", path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
-    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" },
-    { name = "krisp-audio", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" },
-    { name = "krisp-audio", marker = "sys_platform == 'win32'", path = "../../stream-agents/src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
+    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" },
+    { name = "krisp-audio", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" },
+    { name = "krisp-audio", marker = "sys_platform == 'win32'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = "==1.101.0" },
@@ -3141,15 +2853,27 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "stratz", specifier = ">=1.0.0" },
-    { name = "stream-agents-plugin-anthropic", editable = "../../plugins/anthropic" },
-    { name = "stream-agents-plugin-xai", editable = "../../plugins/xai" },
+    { name = "stream-agents-plugins-anthropic", editable = "../../plugins/anthropic" },
+    { name = "stream-agents-plugins-cartesia", editable = "../../plugins/cartesia" },
+    { name = "stream-agents-plugins-deepgram", editable = "../../plugins/deepgram" },
+    { name = "stream-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "../../plugins/deepgram" },
+    { name = "stream-agents-plugins-elevenlabs", editable = "../../plugins/elevenlabs" },
+    { name = "stream-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "../../plugins/elevenlabs" },
+    { name = "stream-agents-plugins-fal", editable = "../../plugins/fal" },
+    { name = "stream-agents-plugins-gemini", editable = "../../plugins/gemini" },
+    { name = "stream-agents-plugins-kokoro", editable = "../../plugins/kokoro" },
+    { name = "stream-agents-plugins-moonshine", editable = "../../plugins/moonshine" },
+    { name = "stream-agents-plugins-openai", editable = "../../plugins/openai" },
+    { name = "stream-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "../../plugins/openai" },
+    { name = "stream-agents-plugins-silero", editable = "../../plugins/silero" },
+    { name = "stream-agents-plugins-xai", editable = "../../plugins/xai" },
     { name = "ultralytics", specifier = ">=8.3.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
 provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemini", "openai"]
 
 [[package]]
-name = "stream-agents-plugin-anthropic"
+name = "stream-agents-plugins-anthropic"
 source = { editable = "../../plugins/anthropic" }
 dependencies = [
     { name = "anthropic" },
@@ -3159,11 +2883,242 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic" },
-    { name = "stream-agents", editable = "../../stream-agents" },
+    { name = "stream-agents", editable = "../../agents-core" },
 ]
 
 [[package]]
-name = "stream-agents-plugin-xai"
+name = "stream-agents-plugins-cartesia"
+version = "0.1.0"
+source = { editable = "../../plugins/cartesia" }
+dependencies = [
+    { name = "cartesia" },
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cartesia", specifier = ">=2.0.5" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "stream-agents", editable = "../../agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-deepgram"
+version = "0.1.1"
+source = { editable = "../../plugins/deepgram" }
+dependencies = [
+    { name = "deepgram-sdk" },
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "numpy" },
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "deepgram-sdk", specifier = ">=4.5.0" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "stream-agents", editable = "../../agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "stream-agents-plugins-elevenlabs"
+version = "0.1.0"
+source = { editable = "../../plugins/elevenlabs" }
+dependencies = [
+    { name = "elevenlabs" },
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "elevenlabs", specifier = ">=2.5.0" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "stream-agents", editable = "../../agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-fal"
+version = "0.1.1"
+source = { editable = "../../plugins/fal" }
+dependencies = [
+    { name = "fal-client" },
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fal-client", specifier = ">=0.7.0" },
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "stream-agents", editable = "../../agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-gemini"
+version = "0.1.0"
+source = { editable = "../../plugins/gemini" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "google-genai" },
+    { name = "numpy" },
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "google-genai", specifier = ">=1.29.0" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "stream-agents", editable = "../../agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "python-dotenv", specifier = ">=1.1.1" },
+]
+
+[[package]]
+name = "stream-agents-plugins-kokoro"
+version = "0.1.0"
+source = { editable = "../../plugins/kokoro" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "kokoro" },
+    { name = "misaki", extra = ["en"] },
+    { name = "numpy" },
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "kokoro", specifier = ">=0.9.4" },
+    { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "stream-agents", editable = "../../agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-moonshine"
+version = "0.1.1"
+source = { editable = "../../plugins/moonshine" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "soundfile" },
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "onnxruntime", specifier = ">=1.22.0" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "stream-agents", editable = "../../agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-openai"
+version = "0.1.1"
+source = { editable = "../../plugins/openai" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "getstream-plugins-common" },
+    { name = "openai", extra = ["realtime"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "getstream-plugins-common" },
+    { name = "openai", extras = ["realtime"], specifier = ">=1.97.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-silero"
+version = "0.1.0"
+source = { editable = "../../plugins/silero" }
+dependencies = [
+    { name = "getstream", extra = ["webrtc"] },
+    { name = "numpy" },
+    { name = "silero" },
+    { name = "stream-agents" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "silero", specifier = ">=0.4.1" },
+    { name = "stream-agents", editable = "../../agents-core" },
+    { name = "torch", specifier = ">=2.7.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "stream-agents-plugins-xai"
 source = { editable = "../../plugins/xai" }
 dependencies = [
     { name = "stream-agents" },
@@ -3172,7 +3127,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "stream-agents", editable = "../../stream-agents" },
+    { name = "stream-agents", editable = "../../agents-core" },
     { name = "xai-sdk" },
 ]
 
@@ -3447,7 +3402,7 @@ wheels = [
 
 [[package]]
 name = "ultralytics"
-version = "8.3.195"
+version = "8.3.196"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
@@ -3463,9 +3418,9 @@ dependencies = [
     { name = "torchvision" },
     { name = "ultralytics-thop" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0e/fc/b2d4cc5148e39db6af676786ab910574393e25838cbf7ab3653f10952555/ultralytics-8.3.195.tar.gz", hash = "sha256:1c37145bcdd8b34be35026244e31b9d9d8a22d80757ea9396c111d145b2427d9", size = 915285, upload-time = "2025-09-06T16:31:53.206Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/a7/f9df6aaf7b1d8f1ccc9237a32d2d01f26b77dc1fa11f0b0785b99d60a0fa/ultralytics-8.3.196.tar.gz", hash = "sha256:ede2739b8f41ba071b93cdfe8b72462f27ba5e4eb97139f9d85c1d0dbd60ddd5", size = 916583, upload-time = "2025-09-08T11:46:13.734Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/e8/3b3ef7261ec121caee0b989c0d62de0d1d8b5b994ab75464240cc3c0a0f4/ultralytics-8.3.195-py3-none-any.whl", hash = "sha256:cbe3c843caf7359cd69e751a36b52c17a4563d645b590e1fb06f7e1d0e40ea14", size = 1066804, upload-time = "2025-09-06T16:31:50.569Z" },
+    { url = "https://files.pythonhosted.org/packages/95/c3/0472cacf842287ef6bf407b5f0c10635659633418901235c834ed70eff20/ultralytics-8.3.196-py3-none-any.whl", hash = "sha256:371ca2c250fd4f976de78bd68761d4e8b971428d9e338b7ce75271713bb5495a", size = 1068376, upload-time = "2025-09-08T11:46:09.899Z" },
 ]
 
 [[package]]
@@ -3497,19 +3452,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
-]
-
-[[package]]
-name = "uvicorn"
-version = "0.35.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "h11" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/42/e0e305207bb88c6b8d3061399c6a961ffe5fbb7e2aa63c9234df7259e9cd/uvicorn-0.35.0.tar.gz", hash = "sha256:bc662f087f7cf2ce11a1d7fd70b90c9f98ef2e2831556dd078d131b96cc94a01", size = 78473, upload-time = "2025-06-28T16:15:46.058Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/e2/dc81b1bd1dcfe91735810265e9d26bc8ec5da45b4c0f6237e286819194c3/uvicorn-0.35.0-py3-none-any.whl", hash = "sha256:197535216b25ff9b785e29a0b79199f55222193d47f820816e7da751e9bc8d4a", size = 66406, upload-time = "2025-06-28T16:15:44.816Z" },
 ]
 
 [[package]]

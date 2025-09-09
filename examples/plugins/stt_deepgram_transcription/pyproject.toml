@@ -8,9 +8,9 @@ license = {text = "MIT"}
 
 dependencies = [
     "getstream[webrtc]>=2.3.0a0",
-    "getstream-plugins-deepgram>=0.1.0",
+    "stream-agents-plugins-deepgram>=0.1.0",
     "python-dotenv>=1.1.1",
 ]
 
 [tool.uv.sources]
-getstream-plugins-deepgram = { workspace = true }
+stream-agents-plugins-deepgram = { path = "../../../plugins/deepgram", editable = true }
