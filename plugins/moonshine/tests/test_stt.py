@@ -547,7 +547,7 @@ async def test_moonshine_model_selection():
 @pytest.mark.asyncio
 async def test_moonshine_with_mia_audio_mocked(mia_audio_data, mia_metadata):
     """Test Moonshine STT with mia.mp3 audio using mocked transcription."""
-    with patch("getstream.plugins.moonshine.stt.stt.moonshine") as mock_moonshine:
+    with patch("stream_agents.plugins.moonshine.stt.stt.moonshine") as mock_moonshine:
         # Extract expected text from mia.json metadata
         expected_segments = mia_metadata.get("segments", [])
         expected_full_text = " ".join(

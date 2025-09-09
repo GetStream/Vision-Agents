@@ -64,7 +64,7 @@ class _Events(TypedDict):
 
 @pytest.fixture
 def fake_image(monkeypatch):
-    import getstream.plugins.gemini.live.live as live_mod
+    import stream_agents.plugins.gemini.realtime as live_mod
 
     monkeypatch.setattr(live_mod, "Image", _FakeImageModule)
     return _FakeImageModule

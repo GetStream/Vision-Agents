@@ -37,7 +37,7 @@ class MockAsyncElevenLabsClient:
 
 @pytest.mark.asyncio
 @patch(
-    "getstream.plugins.elevenlabs.tts.tts.AsyncElevenLabs", MockAsyncElevenLabsClient
+    "elevenlabs.AsyncElevenLabs", MockAsyncElevenLabsClient
 )
 async def test_elevenlabs_tts_initialization():
     """Test that the ElevenLabs TTS initializes correctly with explicit API key."""
@@ -48,7 +48,7 @@ async def test_elevenlabs_tts_initialization():
 
 @pytest.mark.asyncio
 @patch(
-    "getstream.plugins.elevenlabs.tts.tts.AsyncElevenLabs", MockAsyncElevenLabsClient
+    "elevenlabs.AsyncElevenLabs", MockAsyncElevenLabsClient
 )
 @patch.dict(os.environ, {"ELEVENLABS_API_KEY": "env-var-api-key"})
 async def test_elevenlabs_tts_initialization_with_env_var():
@@ -61,7 +61,7 @@ async def test_elevenlabs_tts_initialization_with_env_var():
 
 @pytest.mark.asyncio
 @patch(
-    "getstream.plugins.elevenlabs.tts.tts.AsyncElevenLabs", MockAsyncElevenLabsClient
+    "elevenlabs.AsyncElevenLabs", MockAsyncElevenLabsClient
 )
 async def test_elevenlabs_tts_synthesize():
     """Test that synthesize returns an audio stream."""
@@ -84,7 +84,7 @@ async def test_elevenlabs_tts_synthesize():
 
 @pytest.mark.asyncio
 @patch(
-    "getstream.plugins.elevenlabs.tts.tts.AsyncElevenLabs", MockAsyncElevenLabsClient
+    "elevenlabs.AsyncElevenLabs", MockAsyncElevenLabsClient
 )
 async def test_elevenlabs_tts_send():
     """Test that send writes audio to the track and emits events."""
