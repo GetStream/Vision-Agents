@@ -510,6 +510,45 @@ class CallMemberAddedEvent(CallBaseEvent):
 class CallMemberRemovedEvent(CallBaseEvent):
     event_type: EventType = field(default=EventType.CALL_MEMBER_ADDED, init=False)
 
+# ==
+# Sfu events
+# ==
+
+@dataclass
+class ParticipantJoinedEvent(ConnectionBaseEvent):
+    event_type: EventType = field(default=EventType.PARTICIPANT_JOINED, init=False)
+    user_id: str | None = None
+    session_id: str | None = None
+    joined_at: dict | None = None
+    track_lookup_prefix: str | None = None
+    name: str | None = None
+    roles: str | None = None
+
+    @classmethod
+    def from_stream_event(cls, data):
+        # TODO: this should be removed when we get rid of this event system
+        pt = data.participant
+        return cls(
+            user_id=pt.user_id, session_id=pt.session_id,
+            joined_at=pt.joined_at, track_lookup_prefix=pt.track_lookup_prefix,
+            name=pt.name, roles=pt.roles
+        )
+
+# example of event
+# participant {
+#   user_id: "user-4632517e-98d8-4400-adc3-2e8dfd4287b8"
+#   session_id: "877c1343-ac7c-4546-8373-73c2c5c8670d"
+#   joined_at {
+#     seconds: 1757342608
+#     nanos: 665457470
+#   }
+#   track_lookup_prefix: "04b40e5bc38c8eb5"
+#   connection_quality: CONNECTION_QUALITY_EXCELLENT
+#   name: "Human User"
+#   roles: "user"
+# }
+
+
 
 # ============================================================================
 # Event Type Mappings for Easy Access
@@ -543,8 +582,7 @@ EVENT_CLASS_MAP = {
     EventType.PLUGIN_INITIALIZED: PluginInitializedEvent,
     EventType.PLUGIN_CLOSED: PluginClosedEvent,
     EventType.PLUGIN_ERROR: PluginErrorEvent,
-    EventType.CALL_MEMBER_ADDED: CallMemberAddedEvent,
-    EventType.CALL_MEMBER_REMOVED: CallMemberRemovedEvent
+    EventType.PARTICIPANT_JOINED: ParticipantJoinedEvent
 }
 
 

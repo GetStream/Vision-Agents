@@ -31,9 +31,12 @@ async def start_agent() -> None:
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
-    @agent.on(EventType.CALL_MEMBER_ADDED)
-    def my_handler(event):
-        agent.logger.info(f"handled event {event}")
+    @agent.on(EventType.PARTICIPANT_JOINED)
+    async def my_handler(participant):
+        # TODO: wait till we have confirmation from client it can hear us
+        await asyncio.sleep(5)
+        await agent.queue.say_text(f"Hello, {participant.name}")
+        agent.logger.info(f"handled event {participant}")
 
     # Create a call
     call = client.video.call("default", str(uuid4()))

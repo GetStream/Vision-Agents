@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Dict, Any, List, Optional, Callable
 from functools import partial
 from collections import defaultdict, deque
 
-from .events import BaseEvent, EventType
+from .events import BaseEvent, EventType, ConnectionBaseEvent
 
 logger = logging.getLogger(__name__)
 
@@ -114,24 +114,27 @@ class EventRegistry:
             except Exception as e:
                 logger.error(f"Error in event listener: {e}")
 
-    def register_call_event(self, event_dataclass, event_name, data):
-        logger.info(f"event call received {event_dataclass}, {event_name}")
-        logger.info(f"event {data}")
-        #self.register_event(event_dataclass)
-        pass
+    async def register_connection_event(self, event_name, data, event_dataclass, handler):
+        logger.info(f"event call received {event_name}: {data}")
+        await handler(event_dataclass.from_stream_event(data))
 
-    def add_connection_listeners(self, connection: 'rtc.ConnectionManager', event_mapping):
-        # add connection sfu listeners for events
-        # add connection.ws listeners for events
-        for event_type in self.listeners:
-            if not event_type.name.startswith("call_"):
+
+    def add_connection_listeners(self, connection: 'rtc.ConnectionManager'):
+        # TODO: add connection call (member etc. ws) events listeners (need call ws)
+        mapping = {c.event_type: c for c in ConnectionBaseEvent.__subclasses__()}
+        for event_type, handlers in self.listeners.items():
+            if event_type not in mapping:
                 continue
-            call_event_name = event_type.name.rstrip("call_", 1)
-            connection.ws_client.on(
-                call_event_name, partial(
-                    self.register_call_event, event_dataclass=event_mapping[event_type]
+            event_name = event_type.value.lstrip('connection_')
+
+            logger.info(f"new handler added: {event_type} {event_name}, {handlers}")
+            for handler in handlers:
+                connection.ws_client.on_wildcard(
+                    event_name, partial(
+                        self.register_connection_event,
+                        event_dataclass=mapping[event_type], handler=handler
+                    )
                 )
-            )
 
     def add_listener(
         self, event_type: EventType, listener: Callable[[BaseEvent], None]
