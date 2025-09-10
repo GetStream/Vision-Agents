@@ -52,7 +52,7 @@ async def start_agent() -> None:
         )
 
         # Example 2: provider-native passthrough for advanced control
-        await agent.llm.native_send_realtime_input(
+        await agent.llm.simple_response(
             text="Please say verbatim: 'this is a test using the gemini realtime api native input method.'."
         )
 
