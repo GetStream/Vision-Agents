@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from stream_agents.core.llm.llm import LLMResponse
-from stream_agents.plugins.openai.realtime_webrtc import Realtime
+from stream_agents.plugins.openai.realtime import Realtime
 from stream_agents.core.events import (
     RealtimeConnectedEvent,
     RealtimeTranscriptEvent,
