@@ -26,23 +26,23 @@ dependencies = [
     "krisp-audio>=1.4.0; sys_platform == 'win32'",
     "krisp-audio>=1.4.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "krisp-audio>=1.4.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
-    "stream-agents-plugin-anthropic",
-    "getstream-plugins-cartesia",
-    "getstream-plugins-deepgram",
-    "getstream-plugins-elevenlabs",
-    "getstream-plugins-fal",
-    "getstream-plugins-gemini",
-    "getstream-plugins-kokoro",
-    "getstream-plugins-moonshine",
-    "getstream-plugins-openai",
-    "getstream-plugins-silero",
-    "stream-agents-plugin-xai"
+    "stream-agents-plugins-anthropic",
+    "stream-agents-plugins-cartesia",
+    "stream-agents-plugins-deepgram",
+    "stream-agents-plugins-elevenlabs",
+    "stream-agents-plugins-fal",
+    "stream-agents-plugins-gemini",
+    "stream-agents-plugins-kokoro",
+    "stream-agents-plugins-moonshine",
+    "stream-agents-plugins-openai",
+    "stream-agents-plugins-silero",
+    "stream-agents-plugins-xai"
 ]
 
 [project.urls]
 Documentation = "https://getstream.io/video/docs/python-ai/"
 Website = "https://getstream.io/video/voice-agents/"
-Source = "https://github.com/getstream/stream-agents"
+Source = "https://github.com/getstream/agents"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff"]
@@ -52,9 +52,9 @@ elevenlabs = ["getstream-plugins-elevenlabs>=0.1.0"]
 fal = ["fal-client>=0.6.1"]
 gemini = ["google-genai>=0.3.0"]
 all-plugins = [
-  "getstream-plugins-openai>=0.1.0",
-  "getstream-plugins-deepgram>=0.1.0",
-  "getstream-plugins-elevenlabs>=0.1.0",
+  "stream-agents-plugins-openai>=0.1.0",
+  "stream-agents-plugins-deepgram>=0.1.0",
+  "stream-agents-plugins-elevenlabs>=0.1.0",
   "fal-client>=0.6.1",
   "google-genai>=0.3.0",
 ]
@@ -66,17 +66,16 @@ allow-direct-references = true
 source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
-
 [tool.hatch.build.targets.wheel]
-packages = ["src/stream_agents"]
+packages = ["stream_agents"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/stream_agents"]
+include = ["stream_agents"]
 
 [tool.uv.sources]
 krisp-audio = [
-    { path = "./src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", marker = "sys_platform == 'darwin' and platform_machine == 'aarch64'" },
-    { path = "./src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-    { path = "./src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-    { path = "./src/stream_agents/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32'" }
+    { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", marker = "sys_platform == 'darwin' and platform_machine == 'aarch64'" },
+    { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+    { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+    { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32'" }
 ]

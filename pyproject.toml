@@ -1,22 +1,22 @@
 [tool.uv.sources]
 stream-agents = { workspace = true }
-stream-agents-plugin-anthropic = { workspace = true }
-getstream-plugins-cartesia = { workspace = true }
-getstream-plugins-deepgram = { workspace = true }
-getstream-plugins-elevenlabs = { workspace = true }
-getstream-plugins-fal = { workspace = true }
-getstream-plugins-gemini = { workspace = true }
-getstream-plugins-kokoro = { workspace = true }
-getstream-plugins-moonshine = { workspace = true }
-getstream-plugins-openai = { workspace = true }
-getstream-plugins-silero = { workspace = true }
-stream-agents-plugin-xai = { workspace = true }
+stream-agents-plugins-anthropic = { workspace = true }
+stream-agents-plugins-cartesia = { workspace = true }
+stream-agents-plugins-deepgram = { workspace = true }
+stream-agents-plugins-elevenlabs = { workspace = true }
+stream-agents-plugins-fal = { workspace = true }
+stream-agents-plugins-gemini = { workspace = true }
+stream-agents-plugins-kokoro = { workspace = true }
+stream-agents-plugins-moonshine = { workspace = true }
+stream-agents-plugins-openai = { workspace = true }
+stream-agents-plugins-silero = { workspace = true }
+stream-agents-plugins-xai = { workspace = true }
 
 [tool.uv.workspace]
 members = [
-    "stream-agents", 
+    "agents-core",
     "plugins/anthropic",
-    "plugins/cartesia", 
+    "plugins/cartesia",
     "plugins/deepgram",
     "plugins/elevenlabs",
     "plugins/fal",
@@ -54,11 +54,9 @@ dev = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["stream-agents/src/stream_agents", "plugins", "tests"]
-
+mypy_path = ["agents-core"]
 # Gradual typing → can tighten over time
 ignore_missing_imports = true
 check_untyped_defs = true
 namespace_packages = true
 explicit_package_bases = true
-
