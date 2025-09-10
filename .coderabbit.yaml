@@ -1,0 +1,11 @@
+reviews:
+  #...
+  path_instructions:
+    - path: "/**/test_*.py"
+      instructions: |
+        Review the following unit test code written using the pytest test library. Ensure that:
+        - The code adheres to best practices associated with Pytest. The project uses uv.  
+        - Descriptive test names are used to clearly convey the intent of each test.
+        - For Integration tests, we should avoid mocking. Integration tests of classes should use the actual client. 
+        - The test should convey actual value. Tests which initialise a class and test the values of those classes should be discouraged 
+        - Discourage verbosity and redundant tests    
