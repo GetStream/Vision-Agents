@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from stream_agents.core.llm.llm import LLMResponse
-from stream_agents.plugins.openai.realtime_webrtc import OpenAIRealtimeLLM
+from stream_agents.plugins.openai.realtime_webrtc import Realtime
 from stream_agents.core.events import (
     RealtimeConnectedEvent,
     RealtimeTranscriptEvent,
@@ -16,15 +16,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-class TestOpenAIRealtimeLLM:
-    """Test suite for OpenAIRealtimeLLM class with real API calls."""
+class TestRealtime:
+    """Test suite for Realtime class with real API calls."""
 
     @pytest.fixture
-    def llm(self) -> OpenAIRealtimeLLM:
-        """Test OpenAIRealtimeLLM initialization."""
-        return OpenAIRealtimeLLM(model="gpt-4o-realtime-preview-2024-12-17")
+    def llm(self) -> Realtime:
+        """Test Realtime initialization."""
+        return Realtime(model="gpt-4o-realtime-preview-2024-12-17")
 
-    def test_init_defaults(self, llm: OpenAIRealtimeLLM):
+    def test_init_defaults(self, llm: Realtime):
         """Test initialization with default parameters."""
         assert llm.model == "gpt-4o-realtime-preview-2024-12-17"
         assert llm.voice == "alloy"
@@ -33,7 +33,7 @@ class TestOpenAIRealtimeLLM:
 
     def test_init_custom(self):
         """Test initialization with custom parameters."""
-        llm = OpenAIRealtimeLLM(
+        llm = Realtime(
             model="custom-model",
             voice="nova",
             turn_detection=False,
@@ -45,7 +45,7 @@ class TestOpenAIRealtimeLLM:
         assert llm.system_prompt == "You are a pirate."
 
     @pytest.mark.integration
-    async def test_simple(self, llm: OpenAIRealtimeLLM):
+    async def test_simple(self, llm: Realtime):
         """Test simple text response with event listening."""
         # Track events
         events = []
@@ -113,7 +113,7 @@ class TestOpenAIRealtimeLLM:
             await llm.close()
 
     @pytest.mark.integration
-    async def test_native_api(self, llm: OpenAIRealtimeLLM):
+    async def test_native_api(self, llm: Realtime):
         """Test create_response method for compatibility."""
         response = await llm.create_response(
             input="Say hello in French.",
@@ -126,7 +126,7 @@ class TestOpenAIRealtimeLLM:
         )
 
     @pytest.mark.integration
-    async def test_event_emission(self, llm: OpenAIRealtimeLLM):
+    async def test_event_emission(self, llm: Realtime):
         """Test that proper events are emitted during conversation."""
         events = []
 
@@ -176,7 +176,7 @@ class TestOpenAIRealtimeLLM:
             await llm.close()
 
     @pytest.mark.integration
-    async def test_multiple_messages(self, llm: OpenAIRealtimeLLM):
+    async def test_multiple_messages(self, llm: Realtime):
         """Test multiple messages in sequence."""
         try:
             # First message
@@ -199,7 +199,7 @@ class TestOpenAIRealtimeLLM:
     @pytest.mark.integration
     async def test_multiple_exchanges(self):
         """Test multiple question/answer exchanges in the same session."""
-        llm = OpenAIRealtimeLLM(
+        llm = Realtime(
             voice="echo",
             turn_detection=False,
             system_prompt="You are a helpful math tutor. Keep answers very short.",
@@ -223,7 +223,7 @@ class TestOpenAIRealtimeLLM:
     async def test_error_handling(self):
         """Test error handling with invalid configuration."""
         # Create LLM with invalid model
-        llm = OpenAIRealtimeLLM(
+        llm = Realtime(
             model="invalid-model-name",
             voice="alloy",
         )
@@ -258,7 +258,7 @@ class TestOpenAIRealtimeLLM:
             assert error_events[0].context == "connection"
 
     @pytest.mark.integration
-    async def test_close(self, llm: OpenAIRealtimeLLM):
+    async def test_close(self, llm: Realtime):
         """Test closing the connection properly."""
         # Make a request to establish connection
         await llm._simple_response_async("Hello")

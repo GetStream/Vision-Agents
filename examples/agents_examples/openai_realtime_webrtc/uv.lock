@@ -2706,6 +2706,7 @@ dependencies = [
     { name = "openai" },
     { name = "python-dotenv" },
     { name = "stream-agents" },
+    { name = "stream-agents-plugins-openai" },
 ]
 
 [package.metadata]
@@ -2713,8 +2714,9 @@ requires-dist = [
     { name = "aiortc" },
     { name = "asyncio" },
     { name = "openai" },
-    { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "python-dotenv" },
     { name = "stream-agents", editable = "../../../agents-core" },
+    { name = "stream-agents-plugins-openai", editable = "../../../plugins/openai" },
 ]
 
 [[package]]

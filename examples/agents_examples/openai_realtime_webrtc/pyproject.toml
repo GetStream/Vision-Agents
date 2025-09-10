@@ -1,10 +1,16 @@
 [project]
 name = "openai-sts-example"
 version = "1.0.0"
+requires-python = ">=3.10"
 dependencies = [
     "stream-agents",
+    "stream-agents-plugins-openai",
     "python-dotenv",
     "asyncio",
     "aiortc",
     "openai",
 ]
+
+[tool.uv.sources]
+"stream-agents-plugins-openai" = {path = "../../../plugins/openai", editable=true}
+"stream-agents" = {path = "../../../agents-core", editable=true}
