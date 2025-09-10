@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "getstream-plugins-openai"
+name = "stream-agents-plugins-openai"
 version = "0.1.1"
 description = "OpenAI plugin for GetStream"
 readme = "README.md"

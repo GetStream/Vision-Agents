@@ -5,7 +5,7 @@ import numpy as np
 from unittest.mock import patch, MagicMock
 import os
 
-from getstream.plugins import DeepgramSTT
+from stream_agents.plugins import deepgram
 from getstream.video.rtc.track_util import PcmData
 from plugins.plugin_test_utils import get_audio_asset, get_json_metadata
 
@@ -15,7 +15,9 @@ class MockDeepgramConnection:
     def __init__(self):
         self.event_handlers = {}
         self.sent_data = []
+        self.sent_text_messages = []
         self.finished = False
+        self.closed = False
 
     def on(self, event, handler):
         """Register event handlers"""
@@ -32,9 +34,23 @@ class MockDeepgramConnection:
         self.sent_data.append(data)
         return True
 
+    def send_text(self, text_message):
+        """Mock send text message (for keep-alive)"""
+        self.sent_text_messages.append(text_message)
+        return True
+
+    def keep_alive(self):
+        """Mock keep_alive method for SDKs that support it"""
+        self.sent_text_messages.append(json.dumps({"type": "KeepAlive"}))
+        return True
+
     def finish(self):
         """Close the connection"""
         self.finished = True
+
+    def close(self):
+        """Alternative close method"""
+        self.closed = True
 
     def start(self, options):
         """Start the connection"""
@@ -46,35 +62,19 @@ class MockDeepgramConnection:
 
         if LiveTranscriptionEvents.Transcript in self.event_handlers:
             # Create a mock result
-            transcript_data = {
+            mock_result = {
+                "channel": {"alternatives": [{"transcript": text, "confidence": 0.9}]},
                 "is_final": is_final,
-                "channel": {
-                    "alternatives": [
-                        {
-                            "transcript": text,
-                            "confidence": 0.95,
-                            "words": [
-                                {
-                                    "word": word,
-                                    "start": i * 0.5,
-                                    "end": (i + 1) * 0.5,
-                                    "confidence": 0.95,
-                                }
-                                for i, word in enumerate(text.split())
-                            ],
-                        }
-                    ]
-                },
-                "channel_index": 0,
             }
+            self.event_handlers[LiveTranscriptionEvents.Transcript](self, mock_result)
 
-            # Convert to JSON string for the handler
-            transcript_json = json.dumps(transcript_data)
+    def emit_error(self, error_message):
+        """Helper to emit an error event"""
+        from deepgram import LiveTranscriptionEvents
 
-            # Call the handler with the connection and the result
-            self.event_handlers[LiveTranscriptionEvents.Transcript](
-                self, result=transcript_json
-            )
+        if LiveTranscriptionEvents.Error in self.event_handlers:
+            error_obj = Exception(error_message)
+            self.event_handlers[LiveTranscriptionEvents.Error](self, error_obj)
 
 
 class MockDeepgramClient:
@@ -234,32 +234,32 @@ def audio_data(mia_mp3_path):
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClient)
+@patch("stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClient)
 async def test_deepgram_stt_initialization():
     """Test that the Deepgram STT initializes correctly with explicit API key."""
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
     assert stt is not None
     assert stt.deepgram.api_key == "test-api-key"
     await stt.close()
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClient)
+@patch("stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClient)
 @patch.dict(os.environ, {"DEEPGRAM_API_KEY": "env-var-api-key"})
 async def test_deepgram_stt_initialization_with_env_var():
     """Test that the Deepgram STT initializes correctly when DEEPGRAM_API_KEY is set."""
 
     # Initialize without providing an API key – implementation should fall back to env var
-    stt = DeepgramSTT()
+    stt = deepgram.STT()
     assert stt is not None
     assert stt.deepgram.api_key == "env-var-api-key"
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClient)
+@patch("stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClient)
 async def test_deepgram_stt_transcript_events(mia_metadata):
     """Test that the Deepgram STT emits transcript events correctly."""
-    stt = DeepgramSTT()
+    stt = deepgram.STT()
 
     # Track events
     transcripts = []
@@ -268,6 +268,9 @@ async def test_deepgram_stt_transcript_events(mia_metadata):
     def on_transcript(event):
         transcript_meta: dict[str, bool] = {"is_final": True}
         transcripts.append((event.text, event.user_metadata, transcript_meta))
+
+    # Set up the connection with the mocked client
+    stt._setup_connection()
 
     # Emit a transcript using the mock connection
     stt.dg_connection.emit_transcript("This is a final transcript")
@@ -288,10 +291,10 @@ async def test_deepgram_stt_transcript_events(mia_metadata):
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClient)
+@patch("stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClient)
 async def test_deepgram_process_audio(audio_data, mia_metadata):
     """Test that the Deepgram STT can process audio data."""
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
 
     # Track the audio data that was sent
     sent_audio_bytes = []
@@ -320,10 +323,10 @@ async def test_deepgram_process_audio(audio_data, mia_metadata):
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClient)
+@patch("stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClient)
 async def test_deepgram_end_to_end(audio_data, mia_metadata):
     """Test the entire processing pipeline for Deepgram STT."""
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
 
     # Track events
     transcripts = []
@@ -337,6 +340,9 @@ async def test_deepgram_end_to_end(audio_data, mia_metadata):
     @stt.on("error")
     def on_error(event):
         errors.append(event.error)
+
+    # Set up the connection with the mocked client
+    stt._setup_connection()
 
     # Emit a transcript using the mock connection
     stt.dg_connection.emit_transcript("This is the final result")
@@ -384,7 +390,7 @@ async def test_deepgram_with_real_api(
         channels=1,  # Mono audio
     )
 
-    stt = DeepgramSTT(
+    stt = deepgram.STT(
         api_key=deepgram_api_key, options=options, language=deepgram_language
     )
 
@@ -477,7 +483,7 @@ async def test_deepgram_with_real_api(
                     sample_rate=48000,
                     channels=1,
                 )
-                stt = DeepgramSTT(
+                stt = deepgram.STT(
                     api_key=deepgram_api_key,
                     options=options,
                     language=deepgram_language,
@@ -533,12 +539,15 @@ async def test_deepgram_with_real_api(
 
 @pytest.mark.asyncio
 @patch(
-    "getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClientWithKeepAlive
+    "stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClientWithKeepAlive
 )
 async def test_deepgram_keep_alive_mechanism():
     """Test that the keep-alive mechanism works."""
     # Create a Deepgram STT instance with a short keep-alive interval
-    stt = DeepgramSTT(api_key="test-api-key", keep_alive_interval=0.1)
+    stt = deepgram.STT(api_key="test-api-key", keep_alive_interval=0.1)
+
+    # Set up the connection with the mocked client
+    stt._setup_connection()
     connection = stt.dg_connection
 
     # Wait long enough for at least one keep-alive message to be sent
@@ -555,12 +564,15 @@ async def test_deepgram_keep_alive_mechanism():
 
 @pytest.mark.asyncio
 @patch(
-    "getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClientWithKeepAlive
+    "stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClientWithKeepAlive
 )
 async def test_deepgram_keep_alive_after_audio():
     """Test that keep-alive messages are sent after audio is processed."""
     # Create a Deepgram STT instance with a short keep-alive interval
-    stt = DeepgramSTT(api_key="test-api-key", keep_alive_interval=0.1)
+    stt = deepgram.STT(api_key="test-api-key", keep_alive_interval=0.1)
+
+    # Set up the connection with the mocked client
+    stt._setup_connection()
     connection = stt.dg_connection
 
     # Create some empty audio data
@@ -583,12 +595,15 @@ async def test_deepgram_keep_alive_after_audio():
 
 @pytest.mark.asyncio
 @patch(
-    "getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClientWithKeepAlive
+    "stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClientWithKeepAlive
 )
 async def test_deepgram_keep_alive_direct():
     """Test that we can directly send keep-alive messages."""
     # Create a Deepgram STT instance
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
+
+    # Set up the connection with the mocked client
+    stt._setup_connection()
     connection = stt.dg_connection
 
     # Send a keep-alive message directly
@@ -612,12 +627,15 @@ async def test_deepgram_keep_alive_direct():
 
 @pytest.mark.asyncio
 @patch(
-    "getstream.plugins.deepgram.stt.stt.DeepgramClient", MockDeepgramClientWithKeepAlive
+    "stream_agents.plugins.deepgram.stt.DeepgramClient", MockDeepgramClientWithKeepAlive
 )
 async def test_deepgram_close_message():
     """Test that the finish message is sent when the connection is closed."""
     # Create a Deepgram STT instance
-    stt = DeepgramSTT(api_key="test-api-key")
+    stt = deepgram.STT(api_key="test-api-key")
+
+    # Set up the connection with the mocked client
+    stt._setup_connection()
     connection = stt.dg_connection
 
     # Track the original finish method and mock it
@@ -702,7 +720,7 @@ async def test_deepgram_with_real_api_keep_alive():
     except Exception as e:
         pytest.skip(f"Could not load test audio: {e}")
 
-    stt = DeepgramSTT(api_key=api_key, keep_alive_interval=5.0)
+    stt = deepgram.STT(api_key=api_key, keep_alive_interval=5.0)
 
     # Track events
     transcripts = []
@@ -808,7 +826,7 @@ async def test_deepgram_real_integration():
     print(f"Expected transcript: {expected_full_text}")
     print(f"Expected word count: {len(expected_words)}")
 
-    stt = DeepgramSTT(
+    stt = deepgram.STT(
         api_key=api_key, sample_rate=target_sample_rate, interim_results=True
     )
 

@@ -1,31 +1,29 @@
-"""Tests for the FalWizperSTT plugin."""
+"""Tests for the fal.STT plugin."""
 
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 
-from getstream.plugins import FalWizperSTT
+from stream_agents.plugins import fal
 from getstream.video.rtc.track_util import PcmData
 
 
 @pytest.fixture
 def stt():
-    """Provides a FalWizperSTT instance with a mocked fal_client."""
-    with patch(
-        "getstream.plugins.fal.stt.stt.fal_client.AsyncClient"
-    ) as mock_fal_client:
-        stt_instance = FalWizperSTT()
+    """Provides a fal.STT instance with a mocked fal_client."""
+    with patch("fal_client.AsyncClient") as mock_fal_client:
+        stt_instance = fal.STT()
         stt_instance._fal_client = mock_fal_client.return_value
         yield stt_instance
 
 
-class TestFalWizperSTT:
-    """Test suite for the FalWizperSTT class."""
+class TestfalSTT:
+    """Test suite for the fal.STT class."""
 
     def test_init(self):
         """Test that the __init__ method sets attributes correctly."""
-        stt = FalWizperSTT(task="translate", target_language="es", sample_rate=16000)
+        stt = fal.STT(task="translate", target_language="es", sample_rate=16000)
         assert stt.task == "translate"
         assert stt.target_language == "es"
         assert stt.sample_rate == 16000
@@ -95,8 +93,8 @@ class TestFalWizperSTT:
     @pytest.mark.asyncio
     async def test_process_audio_impl_success_translate(self):
         """Test successful translation with target language."""
-        with patch("getstream.plugins.fal.stt.stt.fal_client.AsyncClient"):
-            stt = FalWizperSTT(task="translate", target_language="pt")
+        with patch("fal_client.AsyncClient"):
+            stt = fal.STT(task="translate", target_language="pt")
             stt._fal_client.upload_file = AsyncMock(
                 return_value="http://mock.url/audio.wav"
             )

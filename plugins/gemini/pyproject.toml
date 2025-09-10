@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "getstream-plugins-gemini"
+name = "stream-agents-plugins-gemini"
 version = "0.1.0"
 description = "Google Gemini plugin for GetStream"
 readme = "README.md"
@@ -17,7 +17,10 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["stream_agents"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/stream_agents"]
 
 [tool.uv.sources]
 stream-agents = { workspace = true }

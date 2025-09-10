@@ -1,0 +1,19 @@
+[project]
+name = "simple-agents-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+# put only what this example needs
+dependencies = [
+  "python-dotenv>=1.0",
+  "getstream[webrtc]==2.3.0a5",
+  "stream-agents-plugins-gemini",
+  "stream-agents",
+  "google-genai>=1.33.0",
+  "openai", # remove as soon as scratch code merged
+  "anthropic", # remove as soon as scratch code merged
+]
+
+[tool.uv.sources]
+"stream-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}
+"stream-agents" = {path = "../../../agents-core", editable=true}

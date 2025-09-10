@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Development CLI tool for stream-agents
+Development CLI tool for agents-core
 Essential dev commands for testing, linting, and type checking
 """
 
@@ -40,7 +40,7 @@ def run(
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
-    """Development CLI tool for stream-agents."""
+    """Development CLI tool for agents-core."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 

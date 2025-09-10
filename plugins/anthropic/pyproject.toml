@@ -3,28 +3,25 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugin-anthropic"
-description = "XAI for stream agents"
-dynamic = ["version"]
-license = "Apache-2.0"
-requires-python = ">=3.9.0"
+name = "stream-agents-plugins-anthropic"
+version = "0.1.1"
+description = "Anthropic/Claude plugin for GetStream"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
 dependencies = [
     "stream-agents",
     "anthropic",
 ]
 
-
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-
-
-[tool.hatch.version]
-path = "./version.py"
-
 [tool.hatch.build.targets.wheel]
-packages = ["getstream"]
+packages = ["."]
 
-[tool.hatch.build.targets.sdist]
-include = ["/stream-agents"]
+[tool.uv.sources]
+stream-agents = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+]

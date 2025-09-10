@@ -9,7 +9,7 @@ import pytest
 import os
 from dotenv import load_dotenv
 
-from stream_agents.processors.tavus_processor import TavusClient
+from stream_agents.core.processors.tavus_processor import TavusClient
 
 
 # Load environment variables

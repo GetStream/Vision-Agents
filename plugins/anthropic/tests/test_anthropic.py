@@ -19,6 +19,8 @@ class TestTavus:
 
     @pytest.mark.integration
     async def test_chat_creation_with_system_message(self):
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            pytest.skip("ANTHROPIC_API_KEY not set")
         import anthropic
 
         client = anthropic.Anthropic()

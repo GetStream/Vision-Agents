@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from getstream.plugins import CartesiaTTS
+from stream_agents.plugins import cartesia
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 
@@ -29,7 +29,7 @@ class _AsyncBytesIterator:
 
 # Mock implementation of the Cartesia SDK
 class MockAsyncCartesia:
-    """Light-weight stub mimicking the public surface used by CartesiaTTS."""
+    """Light-weight stub mimicking the public surface used by cartesia.TTS."""
 
     def __init__(self, api_key=None):
         self.api_key = api_key
@@ -60,28 +60,28 @@ class MockAudioTrack(AudioStreamTrack):
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.cartesia.tts.tts.AsyncCartesia", MockAsyncCartesia)
+@patch("stream_agents.plugins.cartesia.tts.AsyncCartesia", MockAsyncCartesia)
 async def test_cartesia_tts_initialization():
-    """CartesiaTTS should instantiate and store the provided api_key."""
-    tts = CartesiaTTS(api_key="test-api-key")
+    """cartesia.TTS should instantiate and store the provided api_key."""
+    tts = cartesia.TTS(api_key="test-api-key")
     assert tts is not None
     assert tts.client.api_key == "test-api-key"
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.cartesia.tts.tts.AsyncCartesia", MockAsyncCartesia)
+@patch("stream_agents.plugins.cartesia.tts.AsyncCartesia", MockAsyncCartesia)
 @patch.dict(os.environ, {"CARTESIA_API_KEY": "env-var-api-key"})
 async def test_cartesia_tts_initialization_with_env_var():
-    """When no api_key arg is supplied CartesiaTTS should read CARTESIA_API_KEY."""
-    tts = CartesiaTTS()  # no explicit key
+    """When no api_key arg is supplied cartesia.TTS should read CARTESIA_API_KEY."""
+    tts = cartesia.TTS()  # no explicit key
     assert tts.client.api_key == "env-var-api-key"
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.cartesia.tts.tts.AsyncCartesia", MockAsyncCartesia)
+@patch("stream_agents.plugins.cartesia.tts.AsyncCartesia", MockAsyncCartesia)
 async def test_cartesia_synthesize_returns_async_iterator():
     """synthesize() should yield an async iterator of PCM byte chunks."""
-    tts = CartesiaTTS(api_key="test")
+    tts = cartesia.TTS(api_key="test")
     stream = await tts.stream_audio("Hello")
 
     # Must be async iterable
@@ -96,9 +96,9 @@ async def test_cartesia_synthesize_returns_async_iterator():
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.cartesia.tts.tts.AsyncCartesia", MockAsyncCartesia)
+@patch("stream_agents.plugins.cartesia.tts.AsyncCartesia", MockAsyncCartesia)
 async def test_cartesia_send_writes_to_track_and_emits_event():
-    tts = CartesiaTTS(api_key="test")
+    tts = cartesia.TTS(api_key="test")
     track = MockAudioTrack()
     tts.set_output_track(track)
 
@@ -116,9 +116,9 @@ async def test_cartesia_send_writes_to_track_and_emits_event():
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.cartesia.tts.tts.AsyncCartesia", MockAsyncCartesia)
+@patch("stream_agents.plugins.cartesia.tts.AsyncCartesia", MockAsyncCartesia)
 async def test_cartesia_invalid_framerate_raises():
-    tts = CartesiaTTS(api_key="test")
+    tts = cartesia.TTS(api_key="test")
     bad_track = MockAudioTrack(framerate=44100)
 
     with pytest.raises(TypeError, match="framerate 44100"):
@@ -126,9 +126,9 @@ async def test_cartesia_invalid_framerate_raises():
 
 
 @pytest.mark.asyncio
-@patch("getstream.plugins.cartesia.tts.tts.AsyncCartesia", MockAsyncCartesia)
+@patch("stream_agents.plugins.cartesia.tts.AsyncCartesia", MockAsyncCartesia)
 async def test_cartesia_send_without_track_raises():
-    tts = CartesiaTTS(api_key="test")
+    tts = cartesia.TTS(api_key="test")
 
     with pytest.raises(ValueError, match="No output track set"):
         await tts.send("Hello, world!")
@@ -143,17 +143,11 @@ async def test_cartesia_send_without_track_raises():
 @pytest.mark.asyncio
 async def test_cartesia_with_real_api():
     """Integration test against Cartesia cloud – skipped if CARTESIA_API_KEY unset."""
-    # Skip if the Cartesia SDK is not available
-    try:
-        import cartesia  # noqa: F401
-    except ImportError:
-        pytest.skip("cartesia package not installed – skipping live API test.")
-
     api_key = os.environ.get("CARTESIA_API_KEY")
     if not api_key:
         pytest.skip("CARTESIA_API_KEY env var not set – skipping live API test.")
 
-    tts = CartesiaTTS(api_key=api_key)
+    tts = cartesia.TTS(api_key=api_key)
     track = MockAudioTrack()
     tts.set_output_track(track)
 

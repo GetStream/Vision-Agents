@@ -36,7 +36,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
-from getstream.plugins.kokoro.tts import KokoroTTS
+from stream_agents.plugins import kokoro
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -129,7 +129,7 @@ async def main() -> None:
     track = audio_track.AudioStreamTrack(framerate=24_000)
 
     # Build TTS pipeline (defaults to American English / af_heart voice)
-    tts = KokoroTTS()
+    tts = kokoro.TTS()
     tts.set_output_track(track)
 
     greeting = (
