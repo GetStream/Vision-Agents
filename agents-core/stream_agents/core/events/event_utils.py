@@ -244,7 +244,13 @@ class EventLogger:
             log_data["error_message"] = str(event.error)
             log_data["error_type"] = type(event.error).__name__
 
-        # Log with appropriate level
+        # Log with appropriate level (suppress high-volume audio I/O events)
+        if getattr(event, "event_type", None) and event.event_type.value in (
+            "realtime_audio_input",
+            "realtime_audio_output",
+        ):
+            # Still register, but do not emit log
+            return
         message = f"{event.event_type.value}: {event.plugin_name or 'unknown'}"
         self.logger.log(log_level, message, extra=log_data)
 

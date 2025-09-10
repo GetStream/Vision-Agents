@@ -60,8 +60,10 @@ class RealtimeConnection:
         # Track how many bytes have been appended since last commit
         self._bytes_since_commit: int = 0
         # For 24kHz mono PCM16: 48000 bytes/sec => 4800 bytes per 100ms
-        # Use a slightly higher threshold to avoid server rounding (e.g., 96ms errors)
-        self._commit_min_bytes: int = 6000
+        # Commit after ~250ms to avoid borderline <100ms commits on server
+        self._commit_min_bytes: int = 12000
+        # Serialize append/commit to avoid race conditions causing 0ms commits
+        self._send_lock: asyncio.Lock = asyncio.Lock()
 
     async def __aenter__(self):
         """Start the WebRTC session with OpenAI."""
@@ -82,25 +84,30 @@ class RealtimeConnection:
 
     async def send_audio(self, audio_data: bytes):
         """Send audio data to OpenAI."""
-        if not self.dc:
-            logger.warning("Data channel not ready, cannot send audio")
-            return
+        async with self._send_lock:
+            if not self.dc:
+                logger.warning("Data channel not ready, cannot send audio")
+                return
 
-        # OpenAI expects audio to be sent via the data channel as events
-        event = {
-            "type": "input_audio_buffer.append",
-            # Base64-encoded PCM16 as required by OpenAI Realtime
-            "audio": base64.b64encode(audio_data).decode("ascii"),
-        }
-        await self._send_event(event)
-        # Track bytes and only commit when we reach at least 100ms of audio
-        self._bytes_since_commit += len(audio_data)
-        if self._bytes_since_commit >= self._commit_min_bytes:
-            await self._send_event({"type": "input_audio_buffer.commit"})
-            self._bytes_since_commit = 0
-            # If server-side VAD is disabled, explicitly request a response
+            if not audio_data:
+                # Skip empty frames entirely to avoid empty appends
+                return
+
+            # OpenAI expects audio to be sent via the data channel as events
+            event = {
+                "type": "input_audio_buffer.append",
+                # Base64-encoded PCM16 as required by OpenAI Realtime
+                "audio": base64.b64encode(audio_data).decode("ascii"),
+            }
+            await self._send_event(event)
+            # With server-side VAD enabled, do NOT send commits. Let the server decide turns.
             if not self.turn_detection:
-                await self._send_event({"type": "response.create"})
+                # Track bytes and only commit when we reach at least threshold
+                self._bytes_since_commit += len(audio_data)
+                if self._bytes_since_commit >= self._commit_min_bytes:
+                    await self._send_event({"type": "input_audio_buffer.commit"})
+                    self._bytes_since_commit = 0
+                    await self._send_event({"type": "response.create"})
 
     async def send_text(self, text: str):
         """Send a text message to OpenAI."""
@@ -297,6 +304,7 @@ class RealtimeConnection:
                 "instructions": self.system_instructions
                 or "You are a helpful assistant.",
                 "voice": self.voice,
+                # Use simple enum values per OpenAI spec
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {"model": "whisper-1"},
@@ -349,7 +357,7 @@ class RealtimeConnection:
         elif event_type == "error":
             error = event.get("error", {})
             logger.error(f"OpenAI error: {error}")
-            # If error is input_audio_buffer_commit_empty, just log and continue; avoid cascading exceptions
+            # For commit_empty, just log and continue (server VAD mode produces these if commits are sent)
             if error.get("code") == "input_audio_buffer_commit_empty":
                 return
 
@@ -525,6 +533,14 @@ class Realtime(realtime.Realtime):
             register_global_event(event)
             self.emit("connected", event)
 
+            # Prime publisher audio pipeline with brief silence to seed timestamps
+            try:
+                if hasattr(self, "output_track") and self.output_track is not None:
+                    # 200ms of silence at 24kHz mono s16 -> 4800 samples -> 9600 bytes
+                    await self.output_track.write(b"\x00" * 9600)
+            except Exception:
+                pass
+
         except Exception as e:
             # Emit error event using Realtime helper
             self._emit_error_event(e, "connection")
@@ -582,7 +598,8 @@ class Realtime(realtime.Realtime):
         # Also push audio to the published output track so remote participants hear it
         try:
             if hasattr(self, "output_track") and self.output_track is not None:
-                await self.output_track.send_audio(audio_bytes)
+                # Match Gemini provider behavior: write raw PCM bytes
+                await self.output_track.write(audio_bytes)
         except Exception as e:
             logger.debug(f"Failed to write audio to output track: {e}")
 
@@ -624,17 +641,27 @@ class Realtime(realtime.Realtime):
                 import numpy as _np
 
                 arr = _np.asarray(samples)
+                if arr.size == 0:
+                    return
                 if arr.dtype != _np.int16:
                     arr = arr.astype(_np.int16)
                 # Resample if needed
                 src_rate = getattr(pcm_data, "sample_rate", target_rate)
+                if not src_rate:
+                    src_rate = 48000
                 if src_rate != 24000:
                     arr = resample_audio(arr, src_rate, 24000).astype(_np.int16)
+                if arr.size == 0:
+                    return
                 audio_bytes = arr.tobytes()
             else:
-                # Raw bytes; assume already int16 at target_rate
+                # Raw bytes; assume already int16; drop too-small frames (<5ms)
+                if len(samples) < 480:
+                    return
                 audio_bytes = bytes(samples)
         elif isinstance(pcm_data, bytes):
+            if len(pcm_data) < 480:
+                return
             audio_bytes = pcm_data
 
         if audio_bytes:
