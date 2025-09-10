@@ -2,43 +2,22 @@ import pytest
 from unittest.mock import Mock, patch
 from dotenv import load_dotenv
 
-from stream_agents.core.llm.gemini_llm import GeminiLLM
 
 from stream_agents.core.agents.conversation import InMemoryConversation, Message
 
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.plugins.gemini.gemini_llm import GeminiLLM
 
 load_dotenv()
 
 
 class TestGeminiLLM:
-    """Test suite for GeminiLLM class with mocked API calls."""
 
     @pytest.fixture
     def llm(self) -> GeminiLLM:
-        """Test GeminiLLM initialization with a mocked client."""
-        with patch('stream_agents.core.llm.gemini_llm.genai.Client') as mock_client:
-            # Create mock response object
-            mock_response = Mock()
-            mock_response.text = "Test response"
-            mock_response.candidates = [Mock()]
-            mock_response.candidates[0].content = Mock()
-            mock_response.candidates[0].content.parts = [Mock()]
-            mock_response.candidates[0].content.parts[0].text = "Test response"
-            
-            # Create mock chat object
-            mock_chat = Mock()
-            mock_chat.send_message.return_value = mock_response
-            mock_chat.send_message_stream.return_value = [mock_response]
-            
-            # Create mock client
-            mock_client_instance = Mock()
-            mock_client_instance.chats.create.return_value = mock_chat
-            mock_client.return_value = mock_client_instance
-            
-            llm = GeminiLLM(model="gemini-1.5-flash", api_key="test-key")
-            llm._conversation = InMemoryConversation("be friendly", [])
-            return llm
+        llm = GeminiLLM(model="gemini-1.5-flash")
+        llm._conversation = InMemoryConversation("be friendly", [])
+        return llm
 
     def test_message(self, llm: GeminiLLM):
         messages = GeminiLLM._normalize_message("say hi")
@@ -81,6 +60,7 @@ class TestGeminiLLM:
     async def test_memory(self, llm: GeminiLLM):
         await llm.simple_response(text="There are 2 dogs in the room")
         response = await llm.simple_response(text="How many paws are there in the room?")
+
         assert "8" in response.text or "eight" in response.text
 
     @pytest.mark.integration

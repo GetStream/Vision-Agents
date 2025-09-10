@@ -78,15 +78,20 @@ class GeminiLLM(LLM):
         if self.chat is None:
             self.chat = self.client.chats.create(model=self.model)
 
-        self.emit("before_llm_response", self._normalize_message(kwargs["input"]))
+        self.emit("before_llm_response", self._normalize_message(kwargs["message"]))
 
         # Generate content using the client
         iterator = self.chat.send_message_stream(*args, **kwargs)
+        text_parts : List[str] = []
         for chunk in iterator:
             response_chunk: GenerateContentResponse = chunk
-            llm_response_optional = self._standardize_and_emit_event(response_chunk)
+            llm_response_optional = self._standardize_and_emit_event(response_chunk, text_parts)
             if llm_response_optional is not None:
                 llm_response = llm_response_optional
+
+        total_text = "".join(text_parts)
+        # Return response for final text
+        llm_response = LLMResponse(chunk, total_text)
 
         self.emit("after_llm_response", llm_response)
 
@@ -113,7 +118,7 @@ class GeminiLLM(LLM):
 
         return messages
 
-    def _standardize_and_emit_event(self, chunk: GenerateContentResponse):
+    def _standardize_and_emit_event(self, chunk: GenerateContentResponse, text_parts: List[str]) -> Optional[LLMResponse[Any]]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
@@ -131,8 +136,8 @@ class GeminiLLM(LLM):
                 delta=chunk.text,
             )
             self.emit("standardized.output_text.delta", standardized_event)
-            
-            # Return response for final text
-            llm_response = LLMResponse(chunk, chunk.text)
-            return llm_response
+
+            text_parts.append(chunk.text)
+
+
         return None
