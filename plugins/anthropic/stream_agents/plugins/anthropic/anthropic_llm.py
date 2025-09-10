@@ -93,7 +93,7 @@ class ClaudeLLM(LLM):
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
 
-        self.emit("before_llm_response", self._normalize_message(kwargs["input"]))
+        self.emit("before_llm_response", self._normalize_message(kwargs["messages"]))
 
         original = await self.client.messages.create(*args, **kwargs)
         if isinstance(original, ClaudeMessage):
