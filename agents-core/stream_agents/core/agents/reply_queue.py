@@ -19,11 +19,9 @@ class ReplyQueue:
 
     async def resume(self, llm_response):
         # Some logic to either refresh (clear old) or simply resume
-        # Conversation API accepts text/user via add_text_message when using StreamConversation
-        self.agent.conversation.add_text_message(
-            llm_response.text, self.agent.agent_user.id
-        )
-
+        # Note: Message creation and streaming is now handled in agent.after_response
+        # using the StreamHandle API, so we don't need to add it here
+        
         # TODO: streaming here to update messages
 
         await self.say_text(llm_response.text)

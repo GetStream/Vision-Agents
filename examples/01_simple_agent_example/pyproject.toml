@@ -6,10 +6,9 @@ requires-python = ">=3.13"
 # put only what this example needs
 dependencies = [
   "python-dotenv>=1.0",
-  "getstream[webrtc]==2.3.0a5",
   "stream-agents-plugins-deepgram",
   "stream-agents-plugins-elevenlabs",
-      "stream-agents-plugins-anthropic",
+  "stream-agents-plugins-anthropic",
   "getstream-plugins-common",
   "stream-agents",
   "openai>=1.101.0",
