@@ -27,8 +27,8 @@ from getstream.video.rtc.tracks import (
     TrackType,
 )
 
-from .conversation import StreamConversation, StreamHandle
-from ..llm.llm import LLM
+from .conversation import StreamConversation, StreamHandle, Message
+from ..llm.llm import LLM, LLMResponse
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
@@ -95,23 +95,50 @@ class Agent:
         self._llm_handle: Optional[StreamHandle] = None
         if self.llm is not None:
             self.llm.attach_agent(self)
-            #TODO: naming?
-            self.llm.on("before_llm_response", self.before_response)
-            self.llm.on("after_llm_response", self.after_response)
+
+            @self.llm.on("before_llm_response")
+            async def handle_before_response(llm_response: LLMResponse):
+                self.logger.debug(
+                    f"handle_before_response: {llm_response}"
+                )
+
+            @self.llm.on("after_llm_response")
+            async def handle_after_response(llm_response: LLMResponse):
+                if self.conversation is None:
+                    return
+
+                if self._llm_handle is None:
+                    message = Message(
+                        original=None,
+                        content=llm_response.text,
+                        role="assistant",
+                        user_id=self.agent_user.id,
+                    )
+                    self.conversation.add_message(message)
+                else:
+                    self.conversation.complete_message(self._llm_handle)
+                    self._llm_handle = None
+
+                # Resume the queue for TTS playback
+                await self.queue.resume(llm_response)
 
             @self.llm.on('standardized.output_text.delta')
-            def _partial_messages(event: StandardizedTextDeltaEvent):
+            def handle_output_text_delta(event: StandardizedTextDeltaEvent):
                 """Handle partial LLM response text deltas."""
-                if event.delta and event.delta.strip():
-                    if self.conversation:
-                        # Create a new streaming message if we don't have one
-                        if self._llm_handle is None:
-                            self._llm_handle = self.conversation.start_streaming_message(
-                                role="assistant",
-                                user_id=self.agent_user.id,
-                                initial_content=event.delta,
-                            )
-                        self.conversation.append_to_message(self._llm_handle, event.delta)
+
+                if not event.delta or not event.delta.strip() or self.conversation is None:
+                    return
+
+                # Create a new streaming message if we don't have one
+                if self._llm_handle is None:
+                    self._llm_handle = self.conversation.start_streaming_message(
+                        role="assistant",
+                        user_id=self.agent_user.id,
+                        initial_content=event.delta,
+                    )
+                else:
+                    self.conversation.append_to_message(self._llm_handle, event.delta)
+
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
@@ -128,36 +155,6 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
-
-    def before_response(self, input):
-        # Start a new streaming message for the LLM response
-        if self.conversation and not self.sts_mode:
-            self._llm_handle = self.conversation.start_streaming_message(
-                role="assistant",
-                user_id=self.agent_user.id
-            )
-
-    async def after_response(self, llm_response):
-        # In Realtime (STS) mode or when not joined to a call, conversation may be None.
-        # Only resume the reply queue (which writes to conversation/tts) when a conversation exists.
-        if self.conversation is not None:
-            # Complete the streaming message if we have one
-            if self._llm_handle is not None:
-                # If we received deltas, the message content is already updated
-                # Just mark it as completed
-                self.conversation.complete_message(self._llm_handle)
-                self._llm_handle = None
-            else:
-                # No deltas were received, create a completed message with the full text
-                handle = self.conversation.start_streaming_message(
-                    role="assistant",
-                    user_id=self.agent_user.id,
-                    initial_content=llm_response.text
-                )
-                self.conversation.complete_message(handle)
-            
-            # Resume the queue for TTS playback
-            await self.queue.resume(llm_response)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
@@ -501,49 +498,62 @@ class Agent:
         self,
         event: STTPartialTranscriptEvent,
     ):
-        if event.text and event.text.strip():
-            if self.conversation:
-                # Get user_id from metadata (it's a Participant object)
-                user_id = getattr(event.user_metadata, 'user_id', 'unknown') if event.user_metadata else 'unknown'
-                
-                # Check if we have an active handle for this user
-                if user_id not in self._stt_handles:
-                    # Start a new streaming message for this user
-                    self._stt_handles[user_id] = self.conversation.start_streaming_message(
-                        role="user",
-                        user_id=user_id
-                    )
-                
-                # Append the partial transcript to the active message
-                self.conversation.append_to_message(self._stt_handles[user_id], event.text)
-            self.logger.debug(f"🎤 [partial]: {event.text}")
+        self.logger.info(f"🎤 [STT partial transcript]: {event.text}")
+
+        if event.text == "" or event.text.strip() == "":
+            return
+
+        if self.conversation is None:
+            return
+
+        # Get user_id from metadata (it's a Participant object)
+        user_id = getattr(event.user_metadata, 'user_id', 'unknown') if event.user_metadata else 'unknown'
+
+        # Check if we have an active handle for this user
+        if user_id not in self._stt_handles:
+            # Start a new streaming message for this user
+            self._stt_handles[user_id] = self.conversation.start_streaming_message(
+                role="user",
+                user_id=user_id
+            )
+
+        # Append the partial transcript to the active message
+        self.conversation.append_to_message(self._stt_handles[user_id], event.text)
 
     async def _on_transcript(
         self, event: STTTranscriptEvent
     ):
-        if event.text and event.text.strip():
-            if self.conversation:
-                # Get user_id from metadata (it's a Participant object)
-                user_id = getattr(event.user_metadata, 'user_id', 'unknown') if event.user_metadata else 'unknown'
-                
-                # Check if we have an active handle for this user
-                if user_id in self._stt_handles:
-                    # Replace with final text and complete the message
-                    self.conversation.replace_message(self._stt_handles[user_id], event.text)
-                    self.conversation.complete_message(self._stt_handles[user_id])
-                    # Clean up the handle
-                    del self._stt_handles[user_id]
-                else:
-                    # No partial transcripts were received, create a completed message directly
-                    handle = self.conversation.start_streaming_message(
-                        role="user",
-                        user_id=user_id,
-                        initial_content=event.text
-                    )
-                    self.conversation.complete_message(handle)
 
-            # Process transcription through LLM and respond
-            await self._process_transcription(event.text, event.user_metadata)
+        self.logger.info(f"🎤 [STT transcript]: {event.text}")
+
+        if event.text == "" or event.text.strip() == "":
+            return
+
+        # Process transcription through LLM and respond
+        await self._process_transcription(event.text, event.user_metadata)
+
+        if self.conversation is None:
+            return
+
+        # Get user_id from metadata (it's a Participant object)
+        user_id = getattr(event.user_metadata, 'user_id', 'unknown') if event.user_metadata else 'unknown'
+
+        # Check if we have an active handle for this user
+        if user_id in self._stt_handles:
+            # Replace with final text and complete the message
+            self.conversation.replace_message(self._stt_handles[user_id], event.text)
+            self.conversation.complete_message(self._stt_handles[user_id])
+            # Clean up the handle
+            del self._stt_handles[user_id]
+        else:
+            # No partial transcripts were received, create a completed message directly
+            message = Message(
+                original=event,
+                content=event.text,
+                role="user",
+                user_id=user_id,
+            )
+            self.conversation.add_message(message)
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""

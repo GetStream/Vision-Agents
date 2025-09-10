@@ -314,6 +314,9 @@ class StreamConversation(InMemoryConversation):
         else:
             message.content = " ".join(message.content.split(" ") +[input_text])
 
+        print(input_text)
+        print(message.content)
+
         if completed:
             return self.chat_client.update_message_partial(
                 stream_id,

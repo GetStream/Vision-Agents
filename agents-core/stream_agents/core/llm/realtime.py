@@ -211,7 +211,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self.after_response_listener = after_response_listener
 
     @abc.abstractmethod
-    def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
+    async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
 
     async def send_text(self, text: str):
         """Send a text message from the human side to the conversation.
