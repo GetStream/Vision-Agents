@@ -274,11 +274,11 @@ wheels = [
 
 [[package]]
 name = "cartesia"
-version = "2.0.7"
+version = "2.0.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "audioop-lts", marker = "python_full_version < '4'" },
+    { name = "audioop-lts", marker = "python_full_version < '4.0'" },
     { name = "httpx" },
     { name = "httpx-sse" },
     { name = "iterators" },
@@ -288,9 +288,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/50/8a7195a138ecbd5a55a82fd92af400af7a63f6c11b83a6084a5be5205367/cartesia-2.0.7.tar.gz", hash = "sha256:beda4b2ae389011c344d35d46bee3a71ca31d1592414f86258be766f0a512cc2", size = 73281, upload-time = "2025-09-05T00:03:07.347Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/a4/8e95e3d031e188da56f7d67550999ff48067fb109fbd3484d3b0a7fdd148/cartesia-2.0.8.tar.gz", hash = "sha256:3acd7436515cda0471594878a6534f8c3d7898fc05b595d50b7d545fdd1b4de4", size = 77829, upload-time = "2025-09-09T21:58:43.436Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/d2/21d7a831c4e7c9e15d6250466f4f6dd7439e6ba5e84b439e625ec4d8437a/cartesia-2.0.7-py3-none-any.whl", hash = "sha256:92a5373593d6570d045c59b48c72b67e06354c0271e991344440da931701fc6a", size = 152959, upload-time = "2025-09-05T00:03:05.93Z" },
+    { url = "https://files.pythonhosted.org/packages/51/2c/9c5825749c2b3140793a362e7d185bbf184cb28b036c0fdc0ecdf84e4649/cartesia-2.0.8-py3-none-any.whl", hash = "sha256:876a7b577b68888e7736a5899f00755fd18082b009805615582761fcce4ab8ed", size = 150140, upload-time = "2025-09-09T21:58:42.014Z" },
 ]
 
 [[package]]
@@ -836,7 +836,7 @@ wheels = [
 [[package]]
 name = "getstream"
 version = "2.3.0a5"
-source = { git = "https://github.com/GetStream/stream-py.git?rev=webrtc#b0882cdb0fc8f86d2f2ad61e49854f51fabab973" }
+source = { git = "https://github.com/GetStream/stream-py.git?rev=webrtc#3dfebe4366829367a9548f9edd307ba81fa64f64" }
 dependencies = [
     { name = "aiohttp" },
     { name = "aiortc" },
@@ -926,7 +926,7 @@ wheels = [
 
 [[package]]
 name = "google-genai"
-version = "1.34.0"
+version = "1.35.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -938,9 +938,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d7/80/54a58abd46b5cb1385d993fd668f8c82c74a8896dceae691da1315a90dc9/google_genai-1.34.0.tar.gz", hash = "sha256:9f963745faaa177a921202aa849c0811f7852089101fa143b7568a32020c9de9", size = 243492, upload-time = "2025-09-09T02:37:31.408Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/e4/9a493c16c8b7ecc9faa73e5dba026e34c7c4acdfa4ae10008503ad4e1def/google_genai-1.35.0.tar.gz", hash = "sha256:08b7f663dd7ff38e2c5b9574cba9016cad1503e7f2ddaa9c234deaf0e8d5b609", size = 243703, upload-time = "2025-09-09T21:51:45.287Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/2f/cd0009936b9fb0bd700a990ea7c8ec8e0f3e7a267279f062222f16823668/google_genai-1.34.0-py3-none-any.whl", hash = "sha256:d944d05c55162f3d408d22ea67bdb8dcc07ff3a9c82074f732acc27653175bdd", size = 244108, upload-time = "2025-09-09T02:37:29.66Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/f2/19999caa9bcdb808ee510434da7c5591bfc805e6436113deff0e350fe7fe/google_genai-1.35.0-py3-none-any.whl", hash = "sha256:c2671a20655ee700704c98dcc6d2742eb8ee71a04ea112dc47e338444de8da8a", size = 244299, upload-time = "2025-09-09T21:51:43.361Z" },
 ]
 
 [[package]]
@@ -1998,16 +1998,16 @@ wheels = [
 
 [[package]]
 name = "polars"
-version = "1.33.0"
+version = "1.33.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b6/3f/d8bc150b548a486f2559586ec6455c2566b9d2fb7ee1acae90ddca14eec1/polars-1.33.0.tar.gz", hash = "sha256:50ad2ab96c701be2c6ac9b584d9aa6a385f228f6c06de15b88c5d10df7990d56", size = 4811393, upload-time = "2025-09-01T16:32:46.106Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/da/8246f1d69d7e49f96f0c5529057a19af1536621748ef214bbd4112c83b8e/polars-1.33.1.tar.gz", hash = "sha256:fa3fdc34eab52a71498264d6ff9b0aa6955eb4b0ae8add5d3cb43e4b84644007", size = 4822485, upload-time = "2025-09-09T08:37:49.062Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/8c/0c4ac34030348ed547b27db0ae7d77ccd12dc4008e91c4f8e896c3161ed8/polars-1.33.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:664ef1c0988e4098518c6acfdd5477f2e11611f4ac8a269db55b94ea4978d0e5", size = 38793275, upload-time = "2025-09-01T16:31:51.038Z" },
-    { url = "https://files.pythonhosted.org/packages/95/2a/87e27ef3cb76e54f92dd177b9f4c80329d66e78f51ed968e9bdf452ccfb1/polars-1.33.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:2477b720c466914549f0f2cfc69f617a602d91e9d90205b64d795ed1ecf99b3c", size = 35238137, upload-time = "2025-09-01T16:31:55.179Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/e2/485c87047e8aaae8dae4e9881517697616b7f79b14132961fbccfc386b29/polars-1.33.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bd9b76abc22fdb20a005c629ee8c056b0545433f18854b929fb54e351d1b98ee", size = 39341268, upload-time = "2025-09-01T16:31:58.269Z" },
-    { url = "https://files.pythonhosted.org/packages/b9/3a/39d784ed547832eb6cbe86cc7f3a6353fa977803e0cec743dd5932ecf50b/polars-1.33.0-cp39-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:6e78026c2ece38c45c6ee0416e2594980652d89deee13a15bd9f83743ec8fa8d", size = 36262606, upload-time = "2025-09-01T16:32:01.981Z" },
-    { url = "https://files.pythonhosted.org/packages/94/1b/4aea12acf2301f4d7fe78b9f4b54611ec2187439fa299e986974cfd956f2/polars-1.33.0-cp39-abi3-win_amd64.whl", hash = "sha256:7973568178117667871455d7969c1929abb890597964ca89290bfd89e4366980", size = 38919180, upload-time = "2025-09-01T16:32:05.087Z" },
-    { url = "https://files.pythonhosted.org/packages/58/13/824a81b43199202fc859c24515cd5b227930d6dce0dea488e4b415edbaba/polars-1.33.0-cp39-abi3-win_arm64.whl", hash = "sha256:c7d614644eda028907965f8203ac54b9a4f5b90303de2723bf1c1087433a0914", size = 35033820, upload-time = "2025-09-01T16:32:08.116Z" },
+    { url = "https://files.pythonhosted.org/packages/19/79/c51e7e1d707d8359bcb76e543a8315b7ae14069ecf5e75262a0ecb32e044/polars-1.33.1-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:3881c444b0f14778ba94232f077a709d435977879c1b7d7bd566b55bd1830bb5", size = 39132875, upload-time = "2025-09-09T08:36:38.609Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/15/1094099a1b9cb4fbff58cd8ed3af8964f4d22a5b682ea0b7bb72bf4bc3d9/polars-1.33.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:29200b89c9a461e6f06fc1660bc9c848407640ee30fe0e5ef4947cfd49d55337", size = 35638783, upload-time = "2025-09-09T08:36:43.748Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/b9/9ac769e4d8e8f22b0f2e974914a63dd14dec1340cd23093de40f0d67d73b/polars-1.33.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:444940646e76342abaa47f126c70e3e40b56e8e02a9e89e5c5d1c24b086db58a", size = 39742297, upload-time = "2025-09-09T08:36:47.132Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/26/4c5da9f42fa067b2302fe62bcbf91faac5506c6513d910fae9548fc78d65/polars-1.33.1-cp39-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:094a37d06789286649f654f229ec4efb9376630645ba8963b70cb9c0b008b3e1", size = 36684940, upload-time = "2025-09-09T08:36:50.561Z" },
+    { url = "https://files.pythonhosted.org/packages/06/a6/dc535da476c93b2efac619e04ab81081e004e4b4553352cd10e0d33a015d/polars-1.33.1-cp39-abi3-win_amd64.whl", hash = "sha256:c9781c704432a2276a185ee25898aa427f39a904fbe8fde4ae779596cdbd7a9e", size = 39456676, upload-time = "2025-09-09T08:36:54.612Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/4e/a4300d52dd81b58130ccadf3873f11b3c6de54836ad4a8f32bac2bd2ba17/polars-1.33.1-cp39-abi3-win_arm64.whl", hash = "sha256:c3cfddb3b78eae01a218222bdba8048529fef7e14889a71e33a5198644427642", size = 35445171, upload-time = "2025-09-09T08:36:58.043Z" },
 ]
 
 [[package]]
@@ -2122,11 +2122,11 @@ wheels = [
 
 [[package]]
 name = "pycparser"
-version = "2.22"
+version = "2.23"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1d/b2/31537cf4b1ca988837256c910a668b553fceb8f069bedc4b1c826024b52c/pycparser-2.22.tar.gz", hash = "sha256:491c8be9c040f5390f5bf44a5b07752bd07f56edf992381b05c701439eec10f6", size = 172736, upload-time = "2024-03-30T13:22:22.564Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/cf/d2d3b9f5699fb1e4615c8e32ff220203e43b248e1dfcc6736ad9057731ca/pycparser-2.23.tar.gz", hash = "sha256:78816d4f24add8f10a06d6f05b4d424ad9e96cfebf68a4ddc99c65c0720d00c2", size = 173734, upload-time = "2025-09-09T13:23:47.91Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/a3/a812df4e2dd5696d1f351d58b8fe16a405b234ad2886a0dab9183fb78109/pycparser-2.22-py3-none-any.whl", hash = "sha256:c3702b6d3dd8c7abc1afa565d7e63d53a1d0bd86cdc24edd75470f4de499cfcc", size = 117552, upload-time = "2024-03-30T13:22:20.476Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/e3/59cd50310fc9b59512193629e1984c1f95e5c8ae6e5d8c69532ccc65a7fe/pycparser-2.23-py3-none-any.whl", hash = "sha256:e5c6e8d3fbad53479cab09ac03729e0a9faf2bee3db8208a550daf5af81a5934", size = 118140, upload-time = "2025-09-09T13:23:46.651Z" },
 ]
 
 [[package]]
@@ -2621,7 +2621,6 @@ source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-common" },
     { name = "google-genai" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
@@ -2639,7 +2638,6 @@ dependencies = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.66.0" },
     { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "getstream-plugins-common" },
     { name = "google-genai", specifier = ">=1.33.0" },
     { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
     { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" },
@@ -3130,15 +3128,11 @@ dev = [
 name = "stream-agents-plugins-xai"
 source = { editable = "../../plugins/xai" }
 dependencies = [
-    { name = "stream-agents" },
     { name = "xai-sdk" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "stream-agents", editable = "../../agents-core" },
-    { name = "xai-sdk" },
-]
+requires-dist = [{ name = "xai-sdk" }]
 
 [[package]]
 name = "structlog"
@@ -3411,7 +3405,7 @@ wheels = [
 
 [[package]]
 name = "ultralytics"
-version = "8.3.196"
+version = "8.3.197"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
@@ -3427,9 +3421,9 @@ dependencies = [
     { name = "torchvision" },
     { name = "ultralytics-thop" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a1/a7/f9df6aaf7b1d8f1ccc9237a32d2d01f26b77dc1fa11f0b0785b99d60a0fa/ultralytics-8.3.196.tar.gz", hash = "sha256:ede2739b8f41ba071b93cdfe8b72462f27ba5e4eb97139f9d85c1d0dbd60ddd5", size = 916583, upload-time = "2025-09-08T11:46:13.734Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/5b/0adb2087526353d361123471b494500bd605aaca78e98dc47b63df358f90/ultralytics-8.3.197.tar.gz", hash = "sha256:6fdf8554d609d485463353b060470a56a0ef736c7591c57fb8b648642e4b1b48", size = 916400, upload-time = "2025-09-09T12:05:30.658Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/c3/0472cacf842287ef6bf407b5f0c10635659633418901235c834ed70eff20/ultralytics-8.3.196-py3-none-any.whl", hash = "sha256:371ca2c250fd4f976de78bd68761d4e8b971428d9e338b7ce75271713bb5495a", size = 1068376, upload-time = "2025-09-08T11:46:09.899Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/78/ea1826897a4beea548b5f79730c627b16a98f00f1843978966fb2c6a5cc6/ultralytics-8.3.197-py3-none-any.whl", hash = "sha256:5ee4c3608787b9fe95c39bd80bc5689bcee00ff9530e62c9b58535672e6bd65a", size = 1068769, upload-time = "2025-09-09T12:05:27.935Z" },
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [project]
-name = "simple-agents-example"
+name = "gemini-live-realtime-example"
 version = "0.0.0"
 requires-python = ">=3.10"
 
@@ -10,8 +10,6 @@ dependencies = [
   "stream-agents-plugins-gemini",
   "stream-agents",
   "google-genai>=1.33.0",
-  "openai", # remove as soon as scratch code merged
-  "anthropic", # remove as soon as scratch code merged
 ]
 
 [tool.uv.sources]

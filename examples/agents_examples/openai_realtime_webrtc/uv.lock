@@ -248,6 +248,15 @@ wheels = [
 ]
 
 [[package]]
+name = "asyncio"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/ea/26c489a11f7ca862d5705db67683a7361ce11c23a7b98fc6c2deaeccede2/asyncio-4.0.0.tar.gz", hash = "sha256:570cd9e50db83bc1629152d4d0b7558d6451bb1bfd5dfc2e935d96fc2f40329b", size = 5371, upload-time = "2025-08-05T02:51:46.605Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/64/eff2564783bd650ca25e15938d1c5b459cda997574a510f7de69688cb0b4/asyncio-4.0.0-py3-none-any.whl", hash = "sha256:c1eddb0659231837046809e68103969b2bef8b0400d59cfa6363f6b5ed8cc88b", size = 5555, upload-time = "2025-08-05T02:51:45.767Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "25.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1295,30 +1304,9 @@ wheels = [
 ]
 
 [[package]]
-name = "gemini-live-realtime-example"
-version = "0.0.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "google-genai" },
-    { name = "python-dotenv" },
-    { name = "stream-agents" },
-    { name = "stream-agents-plugins-gemini" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
-    { name = "google-genai", specifier = ">=1.33.0" },
-    { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "stream-agents", editable = "../../../agents-core" },
-    { name = "stream-agents-plugins-gemini", editable = "../../../plugins/gemini" },
-]
-
-[[package]]
 name = "getstream"
 version = "2.3.0a5"
-source = { git = "https://github.com/GetStream/stream-py.git?rev=webrtc#3dfebe4366829367a9548f9edd307ba81fa64f64" }
+source = { git = "https://github.com/GetStream/stream-py.git?rev=webrtc#b0882cdb0fc8f86d2f2ad61e49854f51fabab973" }
 dependencies = [
     { name = "aiohttp" },
     { name = "aiortc" },
@@ -2706,6 +2694,27 @@ wheels = [
 [package.optional-dependencies]
 realtime = [
     { name = "websockets" },
+]
+
+[[package]]
+name = "openai-sts-example"
+version = "1.0.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "aiortc" },
+    { name = "asyncio" },
+    { name = "openai" },
+    { name = "python-dotenv" },
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiortc" },
+    { name = "asyncio" },
+    { name = "openai" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "stream-agents", editable = "../../../agents-core" },
 ]
 
 [[package]]

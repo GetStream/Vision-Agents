@@ -4,7 +4,9 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import elevenlabs, deepgram, anthropic
+from stream_agents.plugins.elevenlabs import TTS
+from stream_agents.plugins.deepgram import STT
+from stream_agents.plugins.openai import LLM
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher
@@ -22,18 +24,16 @@ async def start_agent() -> None:
     client = Stream.from_env()
     agent_user = client.create_user(name="My happy AI friend")
 
-
-
     # Create the agent
     agent = Agent(
         edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         # tts, llm, stt more. see the realtime example for sts
-        #llm=openai.LLM(model="gpt-4o-mini"),
-        llm=anthropic.LLM(model="gpt-4o-mini"),
-        tts=elevenlabs.TTS(),
-        stt=deepgram.STT(),
+        # llm=openai.LLM(model="gpt-4o-mini"),
+        llm=LLM(model="gpt-4o-mini"),
+        tts=TTS(),
+        stt=STT(),
         # turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
