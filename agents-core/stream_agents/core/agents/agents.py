@@ -108,9 +108,9 @@ class Agent:
                         if self._llm_handle is None:
                             self._llm_handle = self.conversation.start_streaming_message(
                                 role="assistant",
-                                user_id=self.agent_user.id
+                                user_id=self.agent_user.id,
+                                initial_content=event.delta,
                             )
-                        # Append the delta to the active message
                         self.conversation.append_to_message(self._llm_handle, event.delta)
         # Initialize state variables
         self._is_running: bool = False
@@ -204,6 +204,7 @@ class Agent:
                             f"Error updating conversation from response: {e}"
                         )
 
+                # TODO: this needs some cleaning up because it interacts with STT and LLM in a weird way (only some models emit this event)
                 @self.llm.on("transcript")  # type: ignore[attr-defined]
                 async def _on_llm_transcript(event):
                     try:

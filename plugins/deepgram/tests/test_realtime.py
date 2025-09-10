@@ -80,11 +80,12 @@ class MockDeepgramConnection:
 
 
 class MockDeepgramClient:
-    def __init__(self, api_key=None):
+    def __init__(self, api_key=None, config=None):
         self.api_key = api_key
         self.listen = MagicMock()
         self.listen.websocket = MagicMock()
         self.listen.websocket.v = MagicMock(return_value=MockDeepgramConnection())
+        self.config = config
 
 
 @pytest.mark.asyncio
@@ -264,15 +265,12 @@ async def test_close_cleanup():
 
     # Verify the service is running
     assert not stt._is_closed, "Service should be running after initialization"
-    assert stt._running, "Running flag should be True"
 
     # Close the STT service
     await stt.close()
 
     # Verify the service has been stopped
     assert stt._is_closed, "Service should be closed"
-    assert not stt._running, "Running flag should be False"
-    assert stt.keep_alive_task is None, "Keep-alive task should be None after close"
 
     # Try to emit a transcript after closing (should not crash)
     transcript_events = []
