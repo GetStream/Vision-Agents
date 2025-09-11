@@ -31,7 +31,7 @@ async def start_agent() -> None:
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         # tts, llm, stt more. see the realtime example for sts
         # llm=openai.LLM(model="gpt-4o-mini"),
-        llm=anthropic.LLM(model="gpt-4o-mini"),
+        llm=anthropic.LLM(model="claude-3-7-sonnet-20250219"),
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         # turn_detection=FalTurnDetection(api_key=os.getenv("FAL_KEY")),
