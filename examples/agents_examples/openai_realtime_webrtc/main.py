@@ -16,7 +16,6 @@ from stream_agents.plugins.openai import Realtime
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher
-from stream_agents.core.utils import open_demo
 from getstream import Stream
 
 # Temporarily suppress most logs to surface audio-track prints
@@ -51,7 +50,7 @@ You are a voice assistant. Speak English only. Keep responses short, natural, an
     call = client.video.call("default", str(uuid4()))
 
     # Open the demo UI
-    open_demo(call)
+    agent.edge.open_demo(call)
 
     logger.info("🤖 Starting OpenAI STS Agent...")
 
