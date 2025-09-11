@@ -3130,15 +3130,11 @@ dev = [
 name = "stream-agents-plugins-xai"
 source = { editable = "../../plugins/xai" }
 dependencies = [
-    { name = "stream-agents" },
     { name = "xai-sdk" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "stream-agents", editable = "../../agents-core" },
-    { name = "xai-sdk" },
-]
+requires-dist = [{ name = "xai-sdk" }]
 
 [[package]]
 name = "structlog"

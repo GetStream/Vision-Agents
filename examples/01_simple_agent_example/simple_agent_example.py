@@ -35,7 +35,7 @@ async def start_agent() -> None:
     call = client.video.call("default", str(uuid4()))
 
     # Open the demo UI
-    utils.open_demo(call)
+    agent.edge.open_demo(call)
 
     # Have the agent join the call/room
     with await agent.join(call):
