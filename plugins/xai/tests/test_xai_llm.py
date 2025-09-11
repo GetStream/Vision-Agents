@@ -1,25 +1,25 @@
-
 import pytest
 from dotenv import load_dotenv
+import os
 
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from stream_agents.core.agents.conversation import Message
-from stream_agents.plugins.openai.openai_llm import OpenAILLM
+from stream_agents.plugins.xai.llm import XAILLM
 
 load_dotenv()
 
 
-class TestOpenAILLM:
-    """Test suite for OpenAILLM class with mocked API calls."""
+class TestXAILLM:
+    """Test suite for XAILLM class with live API calls."""
 
     def test_message(self):
-        messages = OpenAILLM._normalize_message("say hi")
+        messages = XAILLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
         assert message.content == "say hi"
 
-    def test_advanced_message(self):
+    async def test_advanced_message(self):
         img_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
 
         advanced = [
@@ -31,54 +31,50 @@ class TestOpenAILLM:
                 ],
             }
         ]
-        messages2 = OpenAILLM._normalize_message(advanced)
+        messages2 = XAILLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
-    @pytest.fixture
-    def llm(self) -> OpenAILLM:
-        llm = OpenAILLM(model="gpt-4o")
-        return llm
-
     @pytest.mark.integration
-    async def test_simple(self, llm: OpenAILLM):
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_simple(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
-
         assert response.text
 
     @pytest.mark.integration
-    async def test_native_api(self, llm: OpenAILLM):
-
-
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_native_api(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
         response = await llm.create_response(
             input="say hi", instructions="You are a helpful assistant."
         )
-
-        # Assertions
         assert response.text
-        assert hasattr(response.original, 'id')  # OpenAI response has id
-
 
     @pytest.mark.integration
-    async def test_streaming(self, llm: OpenAILLM):
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_streaming(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        streaming_works = False
 
-        streamingWorks = False
-        @llm.on('standardized.output_text.delta')
+        @llm.on("standardized.output_text.delta")
         def passed(event: StandardizedTextDeltaEvent):
-            nonlocal streamingWorks
-            streamingWorks = True
+            nonlocal streaming_works
+            streaming_works = True
+
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
         print(response.text)
 
-
         assert response.text
-        assert streamingWorks
+        assert streaming_works
 
     @pytest.mark.integration
-    async def test_memory(self, llm: OpenAILLM):
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_memory(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
         await llm.simple_response(
             text="There are 2 dogs in the room",
         )
@@ -88,12 +84,11 @@ class TestOpenAILLM:
         assert "8" in response.text or "eight" in response.text
 
     @pytest.mark.integration
-    async def test_native_memory(self, llm: OpenAILLM):
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_native_memory(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
         await llm.create_response(
             input="There are 2 dogs in the room",
-        )
-        await llm.create_response(
-            input=0,
         )
         response = await llm.create_response(
             input="How many paws are there in the room?",
