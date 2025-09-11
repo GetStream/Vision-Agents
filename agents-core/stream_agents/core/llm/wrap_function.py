@@ -47,8 +47,12 @@ result = call_twice(
     system=system_prompt,
     messages=messages,
 <<<<<<<< HEAD:agents-core/stream_agents/core/llm/wrap_function.py
+<<<<<<<< HEAD:agents-core/stream_agents/core/llm/wrap_function.py
     max_tokens="4",
 ========
     max_tokens=1000,
 >>>>>>>> 098b81b (Update with latest main):agents-core/stream_agents/core/llm/mini_test2.py
+========
+    max_tokens=1000,
+>>>>>>>> 098b81bffc9200dcc4885eee2532eb7ab9afb95c:agents-core/stream_agents/core/llm/mini_test2.py
 )
