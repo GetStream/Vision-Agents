@@ -46,5 +46,5 @@ result = call_twice(
     "ok",
     system=system_prompt,
     messages=messages,
-    max_tokens=1000,
+    max_tokens="4",
 )

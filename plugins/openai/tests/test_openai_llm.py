@@ -92,6 +92,9 @@ class TestOpenAILLM:
         await llm.create_response(
             input="There are 2 dogs in the room",
         )
+        await llm.create_response(
+            input=0,
+        )
         response = await llm.create_response(
             input="How many paws are there in the room?",
         )

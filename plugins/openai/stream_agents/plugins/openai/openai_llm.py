@@ -93,7 +93,7 @@ class OpenAILLM(LLM):
             instructions=instructions,
         )
 
-    async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponse[Response]:
+    async def create_response(self, *args: P.args, **kwargs: P.kwargs) -> LLMResponse[Response]:
         """
         create_response gives you full support/access to the native openAI responses.create method
         this method wraps the openAI method and ensures we broadcast an event which the agent class hooks into
