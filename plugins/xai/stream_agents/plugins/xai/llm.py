@@ -10,6 +10,7 @@ from stream_agents.core.processors import BaseProcessor
 if TYPE_CHECKING:
     from stream_agents.core.agents.conversation import Message
     from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+    from xai_sdk.aio.chat import Chat
 else:
     from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
@@ -46,7 +47,7 @@ class XAILLM(LLM):
         """
         super().__init__()
         self.model = model
-        self.xai_chat = None
+        self.xai_chat: Optional["Chat"] = None
         self.conversation = None
 
         if client is not None:
@@ -100,6 +101,7 @@ class XAILLM(LLM):
             )
 
         # Add user message
+        assert self.xai_chat is not None
         self.xai_chat.append(user(input_text))
 
         self.emit("before_llm_response", self._normalize_message(input_text))
@@ -108,6 +110,7 @@ class XAILLM(LLM):
         if stream:
             # Handle streaming response
             llm_response: Optional[LLMResponse[Response]] = None
+            assert self.xai_chat is not None
             async for response, chunk in self.xai_chat.stream():
                 llm_response_optional = self._standardize_and_emit_chunk(chunk, response)
                 if llm_response_optional is not None:
@@ -115,13 +118,16 @@ class XAILLM(LLM):
             
             # Add response to chat history
             if llm_response and llm_response.original:
+                assert self.xai_chat is not None
                 self.xai_chat.append(llm_response.original)
         else:
             # Handle non-streaming response
+            assert self.xai_chat is not None
             response = await self.xai_chat.sample()
             llm_response = LLMResponse[Response](response, response.content)
             
             # Add response to chat history
+            assert self.xai_chat is not None
             self.xai_chat.append(response)
 
         self.emit("after_llm_response", llm_response)
