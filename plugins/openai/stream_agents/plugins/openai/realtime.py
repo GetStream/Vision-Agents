@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import traceback
 from typing import Optional, List, Any, AsyncIterator
 from contextlib import asynccontextmanager
 import requests
@@ -111,8 +112,6 @@ class RealtimeConnection:
         await self._send_event(
             {
                 "type": "response.create",
-                "modalities": ["audio", "text"],
-                "audio": {"voice": self.voice},
             }
         )
 
@@ -142,7 +141,6 @@ class RealtimeConnection:
             # Session configuration with correct structure
             session_config = {
                 "model": self.model,
-                "modalities": ["text", "audio"],  # Enable both text and audio
                 # Set voice at session creation so assistant will produce audio over media track
                 "voice": self.voice,
             }
@@ -218,6 +216,19 @@ class RealtimeConnection:
                         )
                     except Exception:
                         logger.info("on_track: remote audio track attached")
+                    # Extra diagnostics for the audio track in debug mode
+                    try:
+                        print(
+                            "[OpenAI Realtime] Remote audio track attached:",
+                            {
+                                "id": getattr(track, "id", None),
+                                "kind": getattr(track, "kind", None),
+                                "class": track.__class__.__name__,
+                                "readyState": getattr(track, "readyState", None),
+                            },
+                        )
+                    except Exception:
+                        pass
                     asyncio.create_task(self._process_audio_track(track))
                 else:
                     logger.info(f"on_track: non-audio track received kind={track.kind}")
@@ -338,7 +349,6 @@ class RealtimeConnection:
         event = {
             "type": "session.update",
             "session": {
-                "modalities": ["text", "audio"],
                 "instructions": self.system_instructions
                 or "You are a helpful assistant.",
                 "voice": self.voice,
@@ -396,13 +406,41 @@ class RealtimeConnection:
     async def _process_audio_track(self, track: MediaStreamTrack):
         """Process incoming audio track from OpenAI."""
         logger.info("Starting to process audio track from OpenAI (expect PCM frames)")
+        try:
+            print(
+                "[OpenAI Realtime] Begin processing remote audio track",
+                {
+                    "id": getattr(track, "id", None),
+                    "kind": getattr(track, "kind", None),
+                    "class": track.__class__.__name__,
+                    "readyState": getattr(track, "readyState", None),
+                },
+            )
+        except Exception:
+            print("🔊 Error processing audio track")
+            print(traceback.format_exc())
+            pass
 
         try:
+            # Wait briefly for _running to become True in case on_track fired early
+            if not self._running:
+                for _ in range(50):  # up to ~5 seconds total
+                    if self._running:
+                        break
+                    await asyncio.sleep(0.1)
+
+            last_ready_state = getattr(track, "readyState", None)
             while self._running:
                 try:
+                    current_ready_state = getattr(track, "readyState", None)
+                    if current_ready_state != last_ready_state:
+                        print(
+                            f"[OpenAI Realtime] Track readyState changed: {last_ready_state} -> {current_ready_state}"
+                        )
+                        last_ready_state = current_ready_state
                     frame = await asyncio.wait_for(track.recv(), timeout=1.0)
 
-                    # Convert audio frame to mono int16 and resample to 24kHz
+                    # Convert audio frame to mono int16 and resample to 48kHz (match WebRTC)
                     if hasattr(frame, "to_ndarray"):
                         samples = frame.to_ndarray()
                         # Downmix stereo/planar to mono if needed (axis 0 = channels)
@@ -411,15 +449,13 @@ class RealtimeConnection:
                         # Normalize dtype to int16
                         if samples.dtype != np.int16:
                             samples = (samples * 32767).astype(np.int16)
-                        # Resample to 24k if incoming is 48k (common for WebRTC/Opus)
+                        # OpenAI media track typically carries 24k PCM over data channel or 48k via WebRTC.
+                        # We will upsample to 48000 Hz for publication to SFU.
                         in_rate = getattr(frame, "sample_rate", 48000) or 48000
-                        if in_rate != 24000:
-                            samples = resample_audio(samples, in_rate, 24000).astype(
-                                np.int16
-                            )
+                        if in_rate != 48000:
+                            samples = resample_audio(samples, in_rate, 48000).astype(np.int16)
                         audio_bytes = samples.tobytes()
 
-                        # Notify audio callbacks (provider will publish to call output track)
                         for callback in self._audio_callbacks:
                             await callback(audio_bytes)
 
@@ -428,10 +464,15 @@ class RealtimeConnection:
                     continue
                 except MediaStreamError:
                     logger.info("Media stream ended")
+                    print("[OpenAI Realtime] Remote audio media stream ended")
                     break
 
         except Exception as e:
             logger.error(f"Error processing audio track: {e}")
+            try:
+                print("[OpenAI Realtime] Error processing audio track:", e)
+            except Exception:
+                pass
 
     async def _log_inbound_audio_stats(self):
         """Periodically log inbound audio RTP stats if available."""
@@ -650,12 +691,12 @@ class Realtime(realtime.Realtime):
         # Emit audio output event using Realtime helper
         self._emit_audio_output_event(
             audio_data=audio_bytes,
-            sample_rate=24000,  # OpenAI uses 24kHz
+            sample_rate=48000,
         )
         # Also push audio to the published output track so remote participants hear it
         try:
             if hasattr(self, "output_track") and self.output_track is not None:
-                # Match Gemini provider behavior: write raw PCM bytes
+                # Write raw PCM bytes at 48kHz to published output track
                 await self.output_track.write(audio_bytes)
         except Exception as e:
             logger.debug(f"Failed to write audio to output track: {e}")
@@ -756,13 +797,12 @@ class Realtime(realtime.Realtime):
         self,
         *,
         text: str,
-        processors: Optional[List[BaseProcessor]] = None,
-        participant: Optional[Participant] = None,
+
         timeout: Optional[float] = 30.0,
     ):
         """Standardized single-turn response using base aggregation."""
         return await super().simple_response(
-            text=text, processors=processors, participant=participant, timeout=timeout
+            text=text, timeout=timeout
         )
 
     async def create_response(self, *args, **kwargs):

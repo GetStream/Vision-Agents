@@ -383,8 +383,6 @@ class Realtime(realtime.Realtime):
         *,
         text: str,
         timeout: Optional[float] = 30.0,
-        processors: Optional[List[Any]] = None,
-        participant: Any = None,
     ):
         """Standardized single-turn response that aggregates deltas and speaks into the call.
 
@@ -392,7 +390,7 @@ class Realtime(realtime.Realtime):
         delta/done and returns a RealtimeResponse. Playback is ensured via send_text.
         """
         return await super().simple_response(
-            text=text, processors=processors, participant=participant, timeout=timeout
+            text=text, timeout=timeout
         )
 
     async def start_response_listener(
