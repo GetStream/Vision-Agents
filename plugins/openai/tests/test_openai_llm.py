@@ -12,19 +12,14 @@ load_dotenv()
 class TestOpenAILLM:
     """Test suite for OpenAILLM class with mocked API calls."""
 
-    @pytest.fixture
-    def llm(self) -> OpenAILLM:
-        llm = OpenAILLM(model="gpt-4o")
-        return llm
-
-    def test_message(self, llm: OpenAILLM):
+    def test_message(self):
         messages = OpenAILLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
         assert message.content == "say hi"
 
-    def test_advanced_message(self, llm: OpenAILLM):
+    def test_advanced_message(self):
         img_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
 
         advanced = [
@@ -38,6 +33,11 @@ class TestOpenAILLM:
         ]
         messages2 = OpenAILLM._normalize_message(advanced)
         assert messages2[0].original is not None
+
+    @pytest.fixture
+    def llm(self) -> OpenAILLM:
+        llm = OpenAILLM(model="gpt-4o")
+        return llm
 
     @pytest.mark.integration
     async def test_simple(self, llm: OpenAILLM):
