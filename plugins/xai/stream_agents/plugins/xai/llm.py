@@ -36,7 +36,12 @@ class XAILLM(LLM):
 
     """
 
-    def __init__(self, model: str = "grok-4", api_key: Optional[str] = None, client: Optional[AsyncClient] = None):
+    def __init__(
+        self,
+        model: str = "grok-4",
+        api_key: Optional[str] = None,
+        client: Optional[AsyncClient] = None,
+    ):
         """
         Initialize the XAILLM class.
 
@@ -57,8 +62,12 @@ class XAILLM(LLM):
         else:
             self.client = AsyncClient()
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
-                              participant: Optional[Participant] = None):
+    async def simple_response(
+        self,
+        text: str,
+        processors: Optional[List[BaseProcessor]] = None,
+        participant: Optional[Participant] = None,
+    ):
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
 
@@ -95,10 +104,7 @@ class XAILLM(LLM):
             messages = []
             if instructions:
                 messages.append(system(instructions))
-            self.xai_chat = self.client.chat.create(
-                model=model,
-                messages=messages
-            )
+            self.xai_chat = self.client.chat.create(model=model, messages=messages)
 
         # Add user message
         assert self.xai_chat is not None
@@ -112,10 +118,12 @@ class XAILLM(LLM):
             llm_response: Optional[LLMResponse[Response]] = None
             assert self.xai_chat is not None
             async for response, chunk in self.xai_chat.stream():
-                llm_response_optional = self._standardize_and_emit_chunk(chunk, response)
+                llm_response_optional = self._standardize_and_emit_chunk(
+                    chunk, response
+                )
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
-            
+
             # Add response to chat history
             if llm_response and llm_response.original:
                 assert self.xai_chat is not None
@@ -125,14 +133,16 @@ class XAILLM(LLM):
             assert self.xai_chat is not None
             response = await self.xai_chat.sample()
             llm_response = LLMResponse[Response](response, response.content)
-            
+
             # Add response to chat history
             assert self.xai_chat is not None
             self.xai_chat.append(response)
 
         self.emit("after_llm_response", llm_response)
 
-        return llm_response or LLMResponse[Response](Response(chat_pb2.GetChatCompletionResponse(), 0), "")
+        return llm_response or LLMResponse[Response](
+            Response(chat_pb2.GetChatCompletionResponse(), 0), ""
+        )
 
     @staticmethod
     def _normalize_message(input_text: str) -> List["Message"]:
@@ -144,36 +154,37 @@ class XAILLM(LLM):
         # Create a standardized message from input text
         message = Message(
             original={"content": input_text, "role": "user", "type": "message"},
-            content=input_text
+            content=input_text,
         )
 
         return [message]
 
-
-    def _standardize_and_emit_chunk(self, chunk: Chunk, response: Response) -> Optional[LLMResponse[Response]]:
+    def _standardize_and_emit_chunk(
+        self, chunk: Chunk, response: Response
+    ) -> Optional[LLMResponse[Response]]:
         """
         Forwards the chunk events and also send out a standardized version (the agent class hooks into that)
         """
         # Emit the raw chunk event
         self.emit("chunk", chunk)
-        
+
         # Emit standardized delta events for content
         if chunk.content:
             standardized_event = StandardizedTextDeltaEvent(
                 content_index=0,  # xAI doesn't have content_index
-                item_id=chunk.proto.id if hasattr(chunk.proto, 'id') else "",
+                item_id=chunk.proto.id if hasattr(chunk.proto, "id") else "",
                 output_index=0,  # xAI doesn't have output_index
                 sequence_number=0,  # xAI doesn't have sequence_number
                 type="response.output_text.delta",
                 delta=chunk.content,
             )
             self.emit("standardized.output_text.delta", standardized_event)
-        
+
         # Check if this is the final chunk (finish_reason indicates completion)
         if chunk.choices and chunk.choices[0].finish_reason:
             # This is the final chunk, return the complete response
             llm_response = LLMResponse[Response](response, response.content)
             self.emit("standardized.response.completed", llm_response)
             return llm_response
-        
+
         return None

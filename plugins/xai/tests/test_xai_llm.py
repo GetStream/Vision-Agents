@@ -57,17 +57,17 @@ class TestXAILLM:
     async def test_streaming(self):
         llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
         streaming_works = False
-        
-        @llm.on('standardized.output_text.delta')
+
+        @llm.on("standardized.output_text.delta")
         def passed(event: StandardizedTextDeltaEvent):
             nonlocal streaming_works
             streaming_works = True
-            
+
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
         print(response.text)
-        
+
         assert response.text
         assert streaming_works
 
