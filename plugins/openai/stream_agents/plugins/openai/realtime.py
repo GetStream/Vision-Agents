@@ -352,13 +352,12 @@ class RealtimeConnection:
                 "instructions": self.system_instructions
                 or "You are a helpful assistant.",
                 "voice": self.voice,
-                "input_audio_transcription": {"model": "whisper-1"},
+                "input_audio_transcription": {"model": "gpt-4o-transcribe"},
                 "turn_detection": {
-                    "type": "server_vad" if self.turn_detection else None,
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 200,
+                    "type": "semantic_vad" if self.turn_detection else None,
+                    "eagerness": "auto",
                     "create_response": True,
+                    "interrupt_response": True,
                 }
                 if self.turn_detection
                 else None,

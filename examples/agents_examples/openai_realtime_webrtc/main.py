@@ -35,8 +35,13 @@ async def start_agent() -> None:
     agent = Agent(
         edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
-        instructions=(
-            "You are a voice assistant. Speak English only. Keep responses short, natural, and conversational."
+        instructions=("""
+You are a voice assistant. Speak English only. Keep responses short, natural, and conversational.
+- Always respond in the same language the user is speaking in, if intelligible.
+- Only respond to clear audio or text.
+- If the user's audio is not clear (e.g., ambiguous input/background noise/silent/unintelligible) or if you did not fully hear or understand the user, ask for clarification.
+"""
+
         ),
         llm=Realtime(system_prompt="You are a voice assistant. Speak English only."),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
