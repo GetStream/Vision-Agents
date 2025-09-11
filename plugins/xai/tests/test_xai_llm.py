@@ -1,6 +1,5 @@
 import pytest
 from dotenv import load_dotenv
-from unittest.mock import Mock, patch
 import os
 
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
