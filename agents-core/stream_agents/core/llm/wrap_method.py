@@ -6,7 +6,7 @@ from typing import Any, Concatenate, ParamSpec, TypeVar
 import functools
 
 # ---------- The function whose signature we want to reuse ----------
-def _echo(
+def _native_method(
     text: str,
     system: str,
     messages: list[dict[str, Any]],
@@ -20,7 +20,7 @@ R = TypeVar("R")       # will be bound to _echo's return type
 T = TypeVar("T", bound="MyClass")  # the instance type (self)
 
 # ---------- The decorator factory ----------
-def wrap_echo(target: Callable[P, R]) -> Callable[
+def wrap_native_method(target: Callable[P, R]) -> Callable[
     [Callable[Concatenate[T, P], R]],
     Callable[Concatenate[T, P], R]
 ]:
@@ -32,17 +32,17 @@ def wrap_echo(target: Callable[P, R]) -> Callable[
     return decorator
 
 # ---------- Usage on an instance method ----------
-class MyClass:
-    @wrap_echo(_echo)
-    def class_create(self, *args: P.args, **kwargs: P.kwargs) -> R:
+class MyLLM:
+    @wrap_native_method(_native_method)
+    def native_method(self, *args: P.args, **kwargs: P.kwargs) -> R:
         # The body is not used because the decorator replaces it,
         # but keeping the signature here lets IDEs show proper hints even before decoration.
-        return _echo(*args, **kwargs)
+        return _native_method(*args, **kwargs)
 
 # ---------- Example calls (with full typing support propagated) ----------
-mc = MyClass()
+mc = MyLLM()
 
-result = mc.class_create(
+result = mc.native_method(
     mc,
     text="hi",
     system="assistant",
