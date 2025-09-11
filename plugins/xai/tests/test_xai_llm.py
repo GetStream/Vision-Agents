@@ -19,6 +19,21 @@ class TestXAILLM:
         assert message.original is not None
         assert message.content == "say hi"
 
+    async def test_advanced_message(self):
+        img_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
+
+        advanced = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "what do you see in this image?"},
+                    {"type": "input_image", "image_url": f"{img_url}"},
+                ],
+            }
+        ]
+        messages2 = XAILLM._normalize_message(advanced)
+        assert messages2[0].original is not None
+
     @pytest.mark.integration
     @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
     async def test_simple(self):
