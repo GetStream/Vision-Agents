@@ -8,7 +8,6 @@ from stream_agents.plugins import elevenlabs, deepgram, anthropic
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher
-from stream_agents.core.utils import open_demo
 from getstream import Stream
 
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +41,7 @@ async def start_agent() -> None:
     call = client.video.call("default", str(uuid4()))
 
     # Open the demo UI
-    open_demo(call)
+    agent.edge.open_demo(call)
 
     # Have the agent join the call/room
     with await agent.join(call):
