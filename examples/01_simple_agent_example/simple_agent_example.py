@@ -5,7 +5,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from stream_agents.plugins import elevenlabs, deepgram, xai
-from stream_agents.core import agents, edge, cli, utils
+from stream_agents.core import agents, edge, cli
 from getstream import Stream
 
 logging.basicConfig(level=logging.INFO)
