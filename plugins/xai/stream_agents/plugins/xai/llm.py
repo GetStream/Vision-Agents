@@ -1,6 +1,6 @@
 from typing import Optional, List, Any, TYPE_CHECKING
 from xai_sdk import AsyncClient
-from xai_sdk.chat import system, user, assistant, Response, Chunk
+from xai_sdk.chat import system, user, Response, Chunk
 from xai_sdk.proto import chat_pb2
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
@@ -35,12 +35,12 @@ class XAILLM(LLM):
 
     """
 
-    def __init__(self, model: str = "grok-beta", api_key: Optional[str] = None, client: Optional[AsyncClient] = None):
+    def __init__(self, model: str = "grok-4", api_key: Optional[str] = None, client: Optional[AsyncClient] = None):
         """
         Initialize the XAILLM class.
 
         Args:
-            model (str): The xAI model to use. Defaults to "grok-beta"
+            model (str): The xAI model to use. Defaults to "grok-4"
             api_key: optional API key. by default loads from XAI_API_KEY
             client: optional xAI client. by default creates a new client object.
         """

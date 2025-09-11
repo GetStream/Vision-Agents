@@ -1,0 +1,82 @@
+import pytest
+from dotenv import load_dotenv
+from unittest.mock import Mock, patch
+import os
+
+from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.agents.conversation import Message
+from stream_agents.plugins.xai.llm import XAILLM
+
+load_dotenv()
+
+
+class TestXAILLM:
+    """Test suite for XAILLM class with live API calls."""
+
+    def test_message(self):
+        messages = XAILLM._normalize_message("say hi")
+        assert isinstance(messages[0], Message)
+        message = messages[0]
+        assert message.original is not None
+        assert message.content == "say hi"
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_simple(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        response = await llm.simple_response(
+            "Explain quantum computing in 1 paragraph",
+        )
+        assert response.text
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_native_api(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        response = await llm.create_response(
+            input="say hi", instructions="You are a helpful assistant."
+        )
+        assert response.text
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_streaming(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        streaming_works = False
+        
+        @llm.on('standardized.output_text.delta')
+        def passed(event: StandardizedTextDeltaEvent):
+            nonlocal streaming_works
+            streaming_works = True
+            
+        response = await llm.simple_response(
+            "Explain quantum computing in 1 paragraph",
+        )
+        print(response.text)
+        
+        assert response.text
+        assert streaming_works
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_memory(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        await llm.simple_response(
+            text="There are 2 dogs in the room",
+        )
+        response = await llm.simple_response(
+            text="How many paws are there in the room?",
+        )
+        assert "8" in response.text or "eight" in response.text
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+    async def test_native_memory(self):
+        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        await llm.create_response(
+            input="There are 2 dogs in the room",
+        )
+        response = await llm.create_response(
+            input="How many paws are there in the room?",
+        )
+        assert "8" in response.text or "eight" in response.text
