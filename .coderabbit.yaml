@@ -9,3 +9,4 @@ reviews:
         - For Integration tests, we should avoid mocking. Integration tests of classes should use the actual client. 
         - The test should convey actual value. Tests which initialise a class and test the values of those classes should be discouraged 
         - Discourage verbosity and redundant tests    
+tone_instructions: "If you must write a poem, write it in the style of Sylvia Plath."
