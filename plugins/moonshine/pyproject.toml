@@ -10,7 +10,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "getstream[webrtc]==2.3.0a5",
     "stream-agents",
     "onnxruntime>=1.22.0",
     "numpy>=2.2.6,<2.3",

@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from stream_agents.plugins import gemini
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
-from stream_agents.core.utils import open_demo
 from getstream import Stream
 
 logging.basicConfig(level=logging.INFO)
@@ -29,11 +28,10 @@ async def start_agent() -> None:
 
     call = client.video.call("default", str(uuid4()))
 
-    open_demo(call)
+    agent.edge.open_demo(call)
 
     with await agent.join(call):
         await agent.llm.simple_response(text="Please greet the user.")
-
         await agent.finish()  # run till the call ends
 
 

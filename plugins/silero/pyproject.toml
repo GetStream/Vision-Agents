@@ -10,7 +10,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "getstream[webrtc]==2.3.0a5",
     "stream-agents",
     "silero>=0.4.1",
     "torch>=2.7.1",
