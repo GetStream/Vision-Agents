@@ -48,6 +48,7 @@ Notes
 
 from __future__ import annotations
 
+import pprint
 from typing import (
     Any,
     Callable,
@@ -202,18 +203,9 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
 
     def attach_agent(self, agent: Agent):
         self.agent = agent
-        # Keep callbacks consistent with Agent methods
-        self.before_response_listener = lambda x: agent.before_response(x)
-        self.after_response_listener = lambda x: agent.after_response(x)
-
-    def set_before_response_listener(self, before_response_listener: BeforeCb):
-        self.before_response_listener = before_response_listener
-
-    def set_after_response_listener(self, after_response_listener: AfterCb):
-        self.after_response_listener = after_response_listener
 
     @abc.abstractmethod
-    def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
+    async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
 
     @abc.abstractmethod
     async def send_text(self, text: str):
@@ -440,23 +432,25 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         register_global_event(event)
         self.emit("audio_output", event)
 
+    def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
+        event = RealtimeTranscriptEvent(
+            text=text,
+            user_metadata=user_metadata,
+            original=original,
+        )
+        register_global_event(event)
+        self.emit("partial_transcript", event)
+
     def _emit_transcript_event(
         self,
-        text,
-        is_user=True,
-        confidence=None,
-        conversation_item_id=None,
+        text: str,
         user_metadata=None,
+        original=None,
     ):
-        """Emit a structured transcript event."""
         event = RealtimeTranscriptEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
             text=text,
-            is_user=is_user,
-            confidence=confidence,
-            conversation_item_id=conversation_item_id,
             user_metadata=user_metadata,
+            original=original,
         )
         register_global_event(event)
         self.emit("transcript", event)

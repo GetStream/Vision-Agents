@@ -114,6 +114,7 @@ class OpenAILLM(LLM):
         )
 
         llm_response : Optional[LLMResponse[Response]] = None
+
         if isinstance(response, Response):
             llm_response = LLMResponse[Response](response, response.output_text)
         elif isinstance(response, Stream):
@@ -124,9 +125,10 @@ class OpenAILLM(LLM):
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
 
-        self.emit("after_llm_response", llm_response)
+        if llm_response is not None:
+            self.emit("after_llm_response", llm_response)
 
-        return llm_response or LLMResponse[Response](Response(duration=0.0), "")
+        return llm_response or LLMResponse[Response](Response(duration="0.0"), "")
 
     @staticmethod
     def _normalize_message(openai_input) -> List["Message"]:

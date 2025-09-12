@@ -8,6 +8,7 @@ import traceback
 from typing import Optional, Any, AsyncIterator
 from contextlib import asynccontextmanager
 import contextlib
+import time
 import requests
 from aiortc import (
     RTCPeerConnection,
@@ -40,7 +41,7 @@ class RealtimeConnection:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o-realtime-preview-2024-12-17",
+        model: str = "gpt-realtime",
         voice: str = "alloy",
         turn_detection: bool = True,
         system_instructions: Optional[str] = None,
@@ -139,72 +140,82 @@ class RealtimeConnection:
 
     def _get_session_token(self) -> Optional[str]:
         """Get a session token from OpenAI."""
-        try:
-            # Use the correct endpoint for ephemeral keys
-            url = "https://api.openai.com/v1/realtime/sessions"
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
+        # Retry ephemeral session creation to handle transient 5xx/edge network hiccups
+        url = "https://api.openai.com/v1/realtime/sessions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        session_config = {
+            "model": self.model,
+            "voice": self.voice,
+        }
 
-            # Session configuration with correct structure
-            session_config = {
-                "model": self.model,
-                # Set voice at session creation so assistant will produce audio over media track
-                "voice": self.voice,
-            }
-
-            response = requests.post(url, headers=headers, json=session_config)
-            response.raise_for_status()
-
-            data = response.json()
-            logger.info("Successfully obtained OpenAI session token")
-
-            # Extract the client secret value
-            client_secret = data.get("client_secret")
-            if isinstance(client_secret, dict):
-                return client_secret.get("value")
-            return client_secret
-
-        except Exception as e:
-            logger.error(f"Failed to get session token: {e}")
-            if hasattr(e, "response") and e.response is not None:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-            return None
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    url, headers=headers, json=session_config, timeout=15
+                )
+                response.raise_for_status()
+                data = response.json()
+                logger.info("Successfully obtained OpenAI session token")
+                client_secret = data.get("client_secret")
+                if isinstance(client_secret, dict):
+                    return client_secret.get("value")
+                return client_secret
+            except Exception as e:
+                logger.error(f"Failed to get session token (attempt {attempt+1}/3): {e}")
+                if hasattr(e, "response") and e.response is not None:
+                    logger.error(f"Response status: {e.response.status_code}")
+                    logger.error(f"Response body: {e.response.text}")
+                    # Retry only on 5xx
+                    status = getattr(e.response, "status_code", 0)
+                    if status and 500 <= status < 600 and attempt < 2:
+                        time.sleep(1.5 * (attempt + 1))
+                        continue
+                # Network/timeout or non-retryable
+                if attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                return None
 
     def _exchange_sdp(self, sdp: str) -> Optional[str]:
         """Exchange SDP with OpenAI."""
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/sdp",
-            }
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/sdp",
+        }
+        url = f"https://api.openai.com/v1/realtime?model={self.model}"
 
-            # Use the correct endpoint format
-            url = f"https://api.openai.com/v1/realtime?model={self.model}"
-
-            response = requests.post(
-                url,
-                headers=headers,
-                data=sdp,
-            )
-
-            response.raise_for_status()
-            logger.info("SDP exchange successful")
-
-            if response.text:
-                return response.text
-            else:
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    data=sdp,
+                    timeout=20,
+                )
+                response.raise_for_status()
+                logger.info("SDP exchange successful")
+                if response.text:
+                    return response.text
                 logger.error("Received empty SDP response")
                 return None
-
-        except Exception as e:
-            logger.error(f"SDP exchange failed: {e}")
-            if hasattr(e, "response") and e.response is not None:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response body: {e.response.text}")
-            return None
+            except Exception as e:
+                logger.error(
+                    f"SDP exchange failed (attempt {attempt+1}/3): {e}"
+                )
+                if hasattr(e, "response") and e.response is not None:
+                    logger.error(f"Response status: {e.response.status_code}")
+                    logger.error(f"Response body: {e.response.text}")
+                    status = getattr(e.response, "status_code", 0)
+                    if status and 500 <= status < 600 and attempt < 2:
+                        time.sleep(1.5 * (attempt + 1))
+                        continue
+                if attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                return None
 
     async def _start_session(self):
         """Start the WebRTC session with OpenAI."""
@@ -254,6 +265,12 @@ class RealtimeConnection:
             @self.dc.on("open")
             def on_open():
                 logger.info("Data channel opened")
+                # Fallback: if provider doesn't send session.created promptly, consider session ready
+                try:
+                    if not self.session_created_event.is_set():
+                        self.session_created_event.set()
+                except Exception:
+                    pass
 
             @self.dc.on("message")
             def on_message(message):
@@ -331,8 +348,11 @@ class RealtimeConnection:
 
             logger.info("WebRTC connection established, waiting for session creation")
 
-            # Wait for session.created event
-            await asyncio.wait_for(self.session_created_event.wait(), timeout=10.0)
+            # Wait for session.created event, but don't hard-fail if it doesn't arrive
+            try:
+                await asyncio.wait_for(self.session_created_event.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("session.created not received within timeout; proceeding")
 
             # Update session configuration
             await self._update_session()
@@ -561,7 +581,7 @@ class Realtime(realtime.Realtime):
         api_key: Optional[str] = None,
         voice: str = "alloy",
         turn_detection: bool = True,
-        system_prompt: Optional[str] = None,
+        instructions: Optional[str] = None,
         client: Optional[Any] = None,  # For compatibility with base class
         *,
         barge_in: bool = True,
@@ -575,13 +595,13 @@ class Realtime(realtime.Realtime):
             api_key: OpenAI API key (defaults to OPENAI_API_KEY env var)
             voice: Voice to use (alloy, echo, fable, onyx, nova, shimmer)
             turn_detection: Enable automatic turn detection
-            system_prompt: System instructions for the assistant
+            instructions: System instructions for the assistant
             client: Not used, kept for compatibility
         """
         super().__init__(
             provider_name="openai-realtime",
             model=model,
-            instructions=system_prompt,
+            instructions=instructions,
             voice=voice,
             provider_config={
                 "turn_detection": turn_detection,
@@ -593,7 +613,7 @@ class Realtime(realtime.Realtime):
             raise ValueError("OpenAI API key is required")
 
         self.turn_detection = turn_detection
-        self.system_prompt = system_prompt
+        self.system_prompt = instructions
         self.realtime = True  # This is a Realtime-capable LLM
         self._connection: Optional[RealtimeConnection] = None
         self.conversation = None  # For compatibility

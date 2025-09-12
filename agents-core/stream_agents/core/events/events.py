@@ -45,6 +45,7 @@ class EventType(Enum):
     REALTIME_AUDIO_INPUT = "realtime_audio_input"
     REALTIME_AUDIO_OUTPUT = "realtime_audio_output"
     REALTIME_TRANSCRIPT = "realtime_transcript"
+    REALTIME_PARTIAL_TRANSCRIPT = "realtime_partial_transcript"
     REALTIME_RESPONSE = "realtime_response"
     REALTIME_ERROR = "realtime_error"
     REALTIME_CONVERSATION_ITEM = "realtime_conversation_item"
@@ -322,11 +323,18 @@ class RealtimeAudioOutputEvent(PluginBaseEvent):
 @dataclass
 class RealtimeTranscriptEvent(PluginBaseEvent):
     """Event emitted when realtime session provides a transcript."""
+    original: Optional[Any] = None
     event_type: EventType = field(default=EventType.REALTIME_TRANSCRIPT, init=False)
     text: Optional[str] = None
-    is_user: bool = True
-    confidence: Optional[float] = None
-    conversation_item_id: Optional[str] = None
+    user_metadata: Optional[Any] = None
+
+
+@dataclass
+class RealtimePartialTranscriptEvent(BaseEvent):
+    original: Optional[any] = None
+    event_type: EventType = field(default=EventType.REALTIME_PARTIAL_TRANSCRIPT, init=False)
+    text: Optional[str] = None
+    user_metadata: Optional[Any] = None
 
 
 @dataclass

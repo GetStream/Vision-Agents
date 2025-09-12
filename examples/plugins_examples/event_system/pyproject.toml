@@ -4,7 +4,6 @@ version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc]>=2.3.0a5",
     "stream-agents",
 ]
 

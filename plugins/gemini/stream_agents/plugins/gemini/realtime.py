@@ -10,6 +10,7 @@ import contextlib
 import io
 import logging
 import os
+import pprint
 from typing import Any, Dict, List, Optional, cast
 
 from aiortc.mediastreams import MediaStreamTrack
@@ -214,6 +215,7 @@ class Realtime(realtime.Realtime):
             await self.start_response_listener()
             # Wait until asked to stop
             await self._stop_event.wait()
+
         # After context exits
         self._session = None
         self._is_connected = False
@@ -232,11 +234,6 @@ class Realtime(realtime.Realtime):
     async def send_text(self, text: str):
         """Send a text message from the human side to the conversation."""
         session = await self._require_session()
-        # Emit user transcript event
-        try:
-            self._emit_transcript_event(text=text, is_user=True)
-        except Exception:
-            pass
         # Ensure playback is enabled before expecting an assistant reply
         self._ensure_playback()
         await session.send_realtime_input(text=text)
@@ -405,9 +402,9 @@ class Realtime(realtime.Realtime):
         await self._require_session()
 
         if self._audio_receiver_task and not self._audio_receiver_task.done():
-            return
+            return None
 
-        async def _audio_receive_loop():
+        async def _receive_loop():
             try:
                 assert self._session is not None
                 # Continuously read turns; receive() yields one complete model turn
@@ -426,24 +423,27 @@ class Realtime(realtime.Realtime):
                                 self._emit_audio_output_event(data, sample_rate=24000)
                             except Exception:
                                 pass
+
+                        # TODO: figure out if this is ever true
                         text = getattr(resp, "text", None)
                         if text:
                             if emit_events:
                                 self.emit("text", text)
-                            try:
-                                self._emit_response_event(text, is_complete=False)
-                                self._emit_transcript_event(text, is_user=False)
-                            except Exception:
-                                pass
+                            self._emit_response_event(text, is_complete=False)
                             turn_text_parts.append(text)
 
+                        # TODO: this needs more work, Gemini does not tell you when a transcription is completed
+                        # so we need to wait, accumulate and then flush with _emit_transcript_event
+                        if resp.server_content is not None and resp.server_content.input_transcription is not None:
+                            self._emit_partial_transcript_event(
+                                resp.server_content.input_transcription.text,
+                                user_metadata=None,
+                                original=resp,
+                            )
                     # Small pause between turns to avoid tight loop
-                    try:
-                        # Always emit a final done event at end-of-turn, even if text was empty.
-                        final_text = "".join(turn_text_parts) if turn_text_parts else ""
-                        self._emit_response_event(final_text, is_complete=True)
-                    except Exception:
-                        pass
+                    # Always emit a final done event at end-of-turn, even if text was empty.
+                    final_text = "".join(turn_text_parts) if turn_text_parts else ""
+                    self._emit_response_event(final_text, is_complete=True)
                     turn_text_parts.clear()
                     await asyncio.sleep(0)
             except asyncio.CancelledError:  # graceful stop
@@ -452,7 +452,7 @@ class Realtime(realtime.Realtime):
                 self.emit("error", e)
 
         logger.info("Response listener started")
-        self._audio_receiver_task = asyncio.create_task(_audio_receive_loop())
+        self._audio_receiver_task = asyncio.create_task(_receive_loop())
         return None
 
     async def interrupt_playback(self) -> None:

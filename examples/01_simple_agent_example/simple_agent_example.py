@@ -35,7 +35,7 @@ async def start_agent() -> None:
     async def my_handler(participant):
         # TODO: wait till we have confirmation from client it can hear us
         await asyncio.sleep(5)
-        await agent.queue.say_text(f"Hello, {participant.name}")
+        await agent.say(f"Hello, {participant.name}")
         agent.logger.info(f"handled event {participant}")
 
     @agent.on(EventType.CALL_MEMBER_ADDED)
