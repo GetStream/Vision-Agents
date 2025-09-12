@@ -405,17 +405,6 @@ class Realtime(realtime.Realtime):
             return None
 
         async def _receive_loop():
-            # # TODO move this to its separate task
-            # async for message in session.receive():
-            #     pprint.pprint(message)
-            #     if message.server_content is not None and message.server_content.input_transcription is not None:
-            #         self._emit_partial_transcript_event(
-            #             message.server_content.input_transcription.text,
-            #             user_metadata=None,
-            #             original=message,
-            #         )
-            #         # TODO after waiting for a bit, we should call _emit_transcript_event with the accumulated text
-            #         # this is needed because Gemini events do not populate the finished field at all :(
             try:
                 assert self._session is not None
                 # Continuously read turns; receive() yields one complete model turn
@@ -434,17 +423,23 @@ class Realtime(realtime.Realtime):
                                 self._emit_audio_output_event(data, sample_rate=24000)
                             except Exception:
                                 pass
+
+                        # TODO: figure out if this is ever true
                         text = getattr(resp, "text", None)
                         if text:
                             if emit_events:
                                 self.emit("text", text)
                             self._emit_response_event(text, is_complete=False)
+                            turn_text_parts.append(text)
+
+                        # TODO: this needs more work, Gemini does not tell you when a transcription is completed
+                        # so we need to wait, accumulate and then flush with _emit_transcript_event
+                        if resp.server_content is not None and resp.server_content.input_transcription is not None:
                             self._emit_partial_transcript_event(
-                                text,
+                                resp.server_content.input_transcription.text,
                                 user_metadata=None,
                                 original=resp,
                             )
-                            turn_text_parts.append(text)
                     # Small pause between turns to avoid tight loop
                     # Always emit a final done event at end-of-turn, even if text was empty.
                     final_text = "".join(turn_text_parts) if turn_text_parts else ""
