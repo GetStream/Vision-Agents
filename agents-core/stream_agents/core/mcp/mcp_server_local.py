@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import subprocess
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
@@ -32,6 +32,8 @@ class MCPServerLocal(MCPBaseServer):
         self.env = env or {}
         self._server_params: Optional[StdioServerParameters] = None
         self._client_context = None
+        self._session_context = None
+        self._get_session_id_cb: Optional[Callable[[], str]] = None
         
         # Parse command into executable and arguments
         self._parse_command()
@@ -65,10 +67,14 @@ class MCPServerLocal(MCPBaseServer):
             self._client_context = stdio_client(self._server_params)
             
             # Enter the context to get the read/write streams
+            # Note: stdio_client only returns (read, write), no session ID callback
             read, write = await self._client_context.__aenter__()
             
-            # Create the client session
-            self._session = ClientSession(read, write)
+            # Create the client session context manager
+            self._session_context = ClientSession(read, write)
+            
+            # Enter the session context and get the actual session
+            self._session = await self._session_context.__aenter__()
             
             # Initialize the connection
             await self._session.initialize()
@@ -82,15 +88,7 @@ class MCPServerLocal(MCPBaseServer):
         except Exception as e:
             self.logger.error(f"Failed to connect to local MCP server: {e}")
             # Clean up any partial connection state
-            self._is_connected = False
-            self._session = None
-            if self._client_context:
-                try:
-                    await self._client_context.__aexit__(None, None, None)
-                except Exception:
-                    pass
-                finally:
-                    self._client_context = None
+            await self._cleanup_connection()
             raise
             
     async def disconnect(self) -> None:
@@ -104,19 +102,8 @@ class MCPServerLocal(MCPBaseServer):
             # Stop timeout monitoring
             await self._stop_timeout_monitor()
             
-            # Close the session
-            if self._session:
-                # Note: ClientSession doesn't have a close method, but we can clean up our references
-                self._session = None
-                
-            # Exit the client context
-            if self._client_context:
-                try:
-                    await self._client_context.__aexit__(None, None, None)
-                except Exception as e:
-                    self.logger.debug(f"Error closing client context: {e}")
-                finally:
-                    self._client_context = None
+            # Clean up the connection
+            await self._cleanup_connection()
                     
             self._is_connected = False
             self.logger.info("Disconnected from local MCP server")
@@ -124,6 +111,27 @@ class MCPServerLocal(MCPBaseServer):
         except Exception as e:
             self.logger.error(f"Error disconnecting from local MCP server: {e}")
             self._is_connected = False
+    
+    async def _cleanup_connection(self) -> None:
+        """Clean up the MCP connection resources."""
+        # Close the session context
+        if self._session_context:
+            try:
+                await self._session_context.__aexit__(None, None, None)
+            except Exception as e:
+                self.logger.warning(f"Error closing MCP session context: {e}")
+            self._session_context = None
+        
+        # Close the client context
+        if self._client_context:
+            try:
+                await self._client_context.__aexit__(None, None, None)
+            except Exception as e:
+                self.logger.warning(f"Error closing MCP client context: {e}")
+            self._client_context = None
+        
+        self._session = None
+        self._get_session_id_cb = None
             
     async def __aenter__(self):
         """Async context manager entry."""
@@ -134,6 +142,7 @@ class MCPServerLocal(MCPBaseServer):
         """Async context manager exit."""
         await self.disconnect()
         
+
     def __repr__(self) -> str:
         """String representation of the local MCP server."""
         return f"MCPServerLocal(command='{self.command}', connected={self._is_connected})"
