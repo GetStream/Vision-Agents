@@ -10,9 +10,12 @@ import contextlib
 import io
 import logging
 import os
+import pprint
 from typing import Any, Dict, List, Optional, cast
 
 from aiortc.mediastreams import MediaStreamTrack
+
+from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 
 try:
     from PIL import Image  # type: ignore
@@ -212,6 +215,19 @@ class Realtime(realtime.Realtime):
             logger.info("Connected Gemini agent using model %s", self.model)
             # Start listener automatically
             await self.start_response_listener()
+
+            # TODO move this to its separate task
+            async for message in session.receive():
+                pprint.pprint(message)
+                if message.server_content is not None and message.server_content.input_transcription is not None:
+                    self._emit_partial_transcript_event(
+                        message.server_content.input_transcription.text,
+                        user_metadata=None,
+                        original=message,
+                    )
+                    # TODO after waiting for a bit, we should call _emit_transcript_event with the accumulated text
+                    # this is needed because Gemini events do not populate the finished field at all :(
+
             # Wait until asked to stop
             await self._stop_event.wait()
         # After context exits
@@ -407,7 +423,7 @@ class Realtime(realtime.Realtime):
         await self._require_session()
 
         if self._audio_receiver_task and not self._audio_receiver_task.done():
-            return
+            return None
 
         async def _audio_receive_loop():
             try:

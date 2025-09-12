@@ -48,6 +48,7 @@ Notes
 
 from __future__ import annotations
 
+import pprint
 from typing import (
     Any,
     Callable,
@@ -439,23 +440,25 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         register_global_event(event)
         self.emit("audio_output", event)
 
+    def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
+        event = RealtimeTranscriptEvent(
+            text=text,
+            user_metadata=user_metadata,
+            original=original,
+        )
+        register_global_event(event)
+        self.emit("partial_transcript", event)
+
     def _emit_transcript_event(
         self,
-        text,
-        is_user=True,
-        confidence=None,
-        conversation_item_id=None,
+        text: str,
         user_metadata=None,
+        original=None,
     ):
-        """Emit a structured transcript event."""
         event = RealtimeTranscriptEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
             text=text,
-            is_user=is_user,
-            confidence=confidence,
-            conversation_item_id=conversation_item_id,
             user_metadata=user_metadata,
+            original=original,
         )
         register_global_event(event)
         self.emit("transcript", event)
