@@ -74,6 +74,12 @@ class StreamEdge(EdgeTransport):
 
         return connection_cm
 
+    def create_audio_track(self):
+        pass
+
+    def create_video_track(self):
+        pass
+
     async def publish_tracks(self, audio_track, video_track):
         """
         Add the tracks to publish audio and video

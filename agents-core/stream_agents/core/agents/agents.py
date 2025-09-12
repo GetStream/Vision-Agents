@@ -214,6 +214,8 @@ class Agent:
 
         connection_cm = await self.edge.join(self, call)
 
+        # TODO: remove me
+        self._connection = self.edge._connection
 
 
         self._is_running = True
