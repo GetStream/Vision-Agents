@@ -17,7 +17,7 @@ def _native_method(
 # ---------- Typing setup ----------
 P = ParamSpec("P")     # will be bound to _echo's parameters
 R = TypeVar("R")       # will be bound to _echo's return type
-T = TypeVar("T", bound="MyClass")  # the instance type (self)
+T = TypeVar("T")  # the instance type (self)
 
 # ---------- The decorator factory ----------
 def wrap_native_method(target: Callable[P, R]) -> Callable[

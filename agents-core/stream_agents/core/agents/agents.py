@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import traceback
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from uuid import uuid4
 
 from aiortc import VideoStreamTrack
@@ -9,11 +9,11 @@ from aiortc import VideoStreamTrack
 from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
-from ..utils.utils import bytes_to_pcm_data
 from ..vad import VAD
-from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADSpeechStartEvent, VADAudioEvent
+from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
+from ..mcp import MCPBaseServer
 from getstream.chat.client import ChatClient
 from getstream.models import User, ChannelInput, UserRequest
 from ..events import get_global_registry, EventType
@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
 
 
-from getstream.video.rtc.coordinator.ws import StreamAPIWS
 
 
 class Agent:
@@ -65,6 +64,8 @@ class Agent:
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
         processors: Optional[List[BaseProcessor]] = None,
+        # MCP servers for external tool and resource access
+        mcp_servers: Optional[List[MCPBaseServer]] = None,
     ):
         self.instructions = instructions
         if edge is None:
@@ -93,6 +94,7 @@ class Agent:
         self.turn_detection = turn_detection
         self.vad = vad
         self.processors = processors or []
+        self.mcp_servers = mcp_servers or []
         self.queue = ReplyQueue(self)
 
         self.conversation: Optional[StreamConversation] = None
@@ -125,6 +127,7 @@ class Agent:
         self._setup_stt()
         self._setup_turn_detection()
         self._setup_vad()
+        self._setup_mcp_servers()
 
     def before_response(self, input):
         pass
@@ -147,6 +150,9 @@ class Agent:
         self.call = call
         self.channel = None
         self.conversation = None
+
+        # Connect to MCP servers
+        await self._connect_mcp_servers()
 
         # Only set up chat if we have LLM (for conversation capabilities)
         if self.llm:
@@ -274,6 +280,15 @@ class Agent:
         if self.vad:
             self.logger.info("🎙️ Setting up VAD listeners")
             self.vad.on("audio", self._on_vad_audio)
+            
+    def _setup_mcp_servers(self):
+        """Set up MCP servers if any are configured."""
+        if self.mcp_servers:
+            self.logger.info(f"🔌 Setting up {len(self.mcp_servers)} MCP server(s)")
+            for i, server in enumerate(self.mcp_servers):
+                self.logger.info(f"  {i+1}. {server.__class__.__name__}")
+        else:
+            self.logger.debug("No MCP servers configured")
 
     def _setup_turn_detection(self):
         if self.turn_detection:
@@ -674,6 +689,9 @@ class Agent:
         """Clean up all connections and resources."""
         self._is_running = False
 
+        # Disconnect from MCP servers
+        await self._disconnect_mcp_servers()
+
         try:
             if self._sts_connection and hasattr(self._sts_connection, "__aexit__"):
                 await self._sts_connection.__aexit__(None, None, None)
@@ -730,6 +748,72 @@ class Agent:
             self.logger.debug(f"Error canceling interval task: {e}")
         finally:
             self._interval_task = None
+
+    async def _connect_mcp_servers(self):
+        """Connect to all configured MCP servers."""
+        if not self.mcp_servers:
+            return
+            
+        self.logger.info(f"🔌 Connecting to {len(self.mcp_servers)} MCP server(s)")
+        
+        for i, server in enumerate(self.mcp_servers):
+            try:
+                self.logger.info(f"  Connecting to MCP server {i+1}/{len(self.mcp_servers)}: {server.__class__.__name__}")
+                await server.connect()
+                self.logger.info(f"  ✅ Connected to MCP server {i+1}/{len(self.mcp_servers)}")
+            except Exception as e:
+                self.logger.error(f"  ❌ Failed to connect to MCP server {i+1}/{len(self.mcp_servers)}: {e}")
+                # Continue with other servers even if one fails
+                
+    async def _disconnect_mcp_servers(self):
+        """Disconnect from all configured MCP servers."""
+        if not self.mcp_servers:
+            return
+            
+        self.logger.info(f"🔌 Disconnecting from {len(self.mcp_servers)} MCP server(s)")
+        
+        for i, server in enumerate(self.mcp_servers):
+            try:
+                self.logger.info(f"  Disconnecting from MCP server {i+1}/{len(self.mcp_servers)}: {server.__class__.__name__}")
+                await server.disconnect()
+                self.logger.info(f"  ✅ Disconnected from MCP server {i+1}/{len(self.mcp_servers)}")
+            except Exception as e:
+                self.logger.error(f"  ❌ Error disconnecting from MCP server {i+1}/{len(self.mcp_servers)}: {e}")
+                # Continue with other servers even if one fails
+
+    async def get_mcp_tools(self) -> List[Any]:
+        """Get all available tools from all connected MCP servers."""
+        tools = []
+        
+        for server in self.mcp_servers:
+            if server.is_connected:
+                try:
+                    server_tools = await server.list_tools()
+                    tools.extend(server_tools)
+                except Exception as e:
+                    self.logger.error(f"Error getting tools from MCP server {server.__class__.__name__}: {e}")
+                    
+        return tools
+        
+    async def call_mcp_tool(self, server_index: int, tool_name: str, arguments: Dict[str, Any]) -> Any:
+        """Call a tool on a specific MCP server.
+        
+        Args:
+            server_index: Index of the MCP server in the mcp_servers list
+            tool_name: Name of the tool to call
+            arguments: Arguments to pass to the tool
+            
+        Returns:
+            The result of the tool call
+        """
+        if server_index >= len(self.mcp_servers):
+            raise ValueError(f"Invalid server index: {server_index}")
+            
+        server = self.mcp_servers[server_index]
+        if not server.is_connected:
+            raise RuntimeError(f"MCP server {server_index} is not connected")
+            
+        return await server.call_tool(tool_name, arguments)
 
     async def finish(self):
         """Wait for the call to end gracefully."""

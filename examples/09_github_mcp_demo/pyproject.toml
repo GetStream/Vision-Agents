@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "github-mcp-demo"
+version = "0.1.0"
+description = "GitHub MCP Demo for Stream Agents"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "stream-agents",
+    "python-dotenv>=1.1.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "mypy", "ruff"]
+
+[tool.uv.sources]
+"stream-agents" = {path = "../../agents-core", editable=true}
