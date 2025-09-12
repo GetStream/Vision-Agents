@@ -9,9 +9,8 @@ from aiortc import VideoStreamTrack
 from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
-from ..utils.utils import bytes_to_pcm_data
 from ..vad import VAD
-from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADSpeechStartEvent, VADAudioEvent
+from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from ..mcp import MCPBaseServer
@@ -42,7 +41,6 @@ if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
 
 
-from getstream.video.rtc.coordinator.ws import StreamAPIWS
 
 
 class Agent:

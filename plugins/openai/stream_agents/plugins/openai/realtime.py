@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import traceback
-from typing import Optional, List, Any, AsyncIterator
+from typing import Optional, Any, AsyncIterator
 from contextlib import asynccontextmanager
 import requests
 from aiortc import (
@@ -21,11 +21,9 @@ from fractions import Fraction
 
 from getstream.video.call import Call
 from getstream.audio.utils import resample_audio
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
 from stream_agents.core.llm import realtime
 from stream_agents.core.llm.llm import LLMResponse
-from stream_agents.core.processors import BaseProcessor
 from stream_agents.core.events import (
     RealtimeConnectedEvent,
     register_global_event,

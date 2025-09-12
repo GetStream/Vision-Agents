@@ -1,12 +1,10 @@
 """Remote MCP server connection using HTTP Streamable transport."""
 
-import asyncio
-import logging
 from datetime import timedelta
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Callable
 from urllib.parse import urlparse
 
-from mcp import ClientSession, types
+from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 from .mcp_base import MCPBaseServer

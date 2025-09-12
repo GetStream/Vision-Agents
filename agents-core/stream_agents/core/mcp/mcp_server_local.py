@@ -1,11 +1,8 @@
 """Local MCP server connection using stdio transport."""
 
-import asyncio
-import logging
-import subprocess
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Callable
 
-from mcp import ClientSession, StdioServerParameters, types
+from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from .mcp_base import MCPBaseServer

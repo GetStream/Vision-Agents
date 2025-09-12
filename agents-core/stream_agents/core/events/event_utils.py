@@ -13,9 +13,9 @@ from collections import defaultdict, deque
 
 from .events import BaseEvent, EventType, ConnectionBaseEvent, CallBaseEvent
 
-logger = logging.getLogger(__name__)
-
 from getstream.video import rtc
+
+logger = logging.getLogger(__name__)
 
 
 class EventFilter:

@@ -87,7 +87,7 @@ async def main():
                     
                     # Call the tool with empty arguments (most GitHub tools don't require args)
                     result = await agent.call_mcp_tool(0, tool_to_call.name, {})
-                    logger.info(f"✅ Tool call successful!")
+                    logger.info("✅ Tool call successful!")
                     logger.info(f"Result: {result}")
                 else:
                     logger.info("No simple tools found to call")
