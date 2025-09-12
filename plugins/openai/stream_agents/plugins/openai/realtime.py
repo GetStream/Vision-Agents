@@ -59,7 +59,10 @@ class RealtimeConnection:
         self._event_callbacks = []
         self._running = False
         # Queue and media track for microphone audio over WebRTC
-        self._mic_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self._mic_queue: asyncio.Queue = asyncio.Queue(maxsize=32)
+        # Backpressure params: keep queue tiny to avoid latency buildup
+        self._max_queue_frames: int = 3  # ~60ms at 20ms per frame
+        self._frames_dropped: int = 0
         self._mic_track: Optional[AudioStreamTrack] = None
         # Remote audio receive counters (removed verbose logging)
 
@@ -80,22 +83,29 @@ class RealtimeConnection:
         """Register a callback for events from OpenAI."""
         self._event_callbacks.append(callback)
 
-    async def send_audio(self, audio_data: bytes):
-        """Enqueue audio bytes to the microphone media track (48 kHz PCM16)."""
+    async def send_audio(self, audio_data: bytes, sample_rate: int = 48000):
+        """Enqueue audio bytes to the microphone media track (PCM16 mono).
+
+        The sample_rate is carried with the frame to avoid Python-side resampling.
+        """
         if not audio_data:
             return
-        # Push to queue with simple drop-oldest backpressure
+        # Aggressive backpressure: keep only a few most recent frames
         try:
-            self._mic_queue.put_nowait(audio_data)
-        except asyncio.QueueFull:
-            try:
-                _ = self._mic_queue.get_nowait()
-            except Exception:
-                pass
-            try:
-                self._mic_queue.put_nowait(audio_data)
-            except Exception:
-                pass
+            while self._mic_queue.qsize() >= self._max_queue_frames:
+                try:
+                    _ = self._mic_queue.get_nowait()
+                    self._frames_dropped += 1
+                except Exception:
+                    break
+            # Store (bytes, sample_rate) tuple
+            self._mic_queue.put_nowait((audio_data, sample_rate))
+            if self._frames_dropped and (self._frames_dropped % 50 == 0):
+                logger.debug(
+                    f"mic_queue: dropped_frames={self._frames_dropped} size={self._mic_queue.qsize()}"
+                )
+        except Exception as e:
+            logger.debug(f"mic_queue enqueue error: {e}")
 
     async def send_text(self, text: str):
         """Send a text message to OpenAI."""
@@ -265,15 +275,19 @@ class RealtimeConnection:
                 def __init__(self, queue: asyncio.Queue, sample_rate: int = 48000):
                     super().__init__()
                     self._queue = queue
-                    self._sample_rate = sample_rate
+                    self._sample_rate = sample_rate  # last-seen or default
                     self._ts = 0
 
                 async def recv(self):
                     # Try to get the next chunk quickly; emit 20 ms silence if none
                     try:
-                        data: bytes = await asyncio.wait_for(
-                            self._queue.get(), timeout=0.02
-                        )
+                        item = await asyncio.wait_for(self._queue.get(), timeout=0.02)
+                        if isinstance(item, tuple):
+                            data, sr = item
+                        else:
+                            data, sr = item, self._sample_rate
+                        # Update current sample rate to what we received
+                        self._sample_rate = int(sr) if sr else self._sample_rate
                         arr = np.frombuffer(data, dtype=np.int16)
                         if arr.ndim == 1:
                             samples = arr.reshape(1, -1)
@@ -286,9 +300,10 @@ class RealtimeConnection:
                     frame = AudioFrame.from_ndarray(
                         samples, format="s16", layout="mono"
                     )
-                    frame.sample_rate = self._sample_rate
+                    sr = int(self._sample_rate)
+                    frame.sample_rate = sr
                     frame.pts = self._ts
-                    frame.time_base = Fraction(1, self._sample_rate)
+                    frame.time_base = Fraction(1, sr)
                     self._ts += samples.shape[1]
                     return frame
 
@@ -742,12 +757,10 @@ class Realtime(realtime.Realtime):
                     return
                 if arr.dtype != _np.int16:
                     arr = arr.astype(_np.int16)
-                # Resample if needed to 48000
+                # Use source sample rate; avoid Python-side resampling
                 src_rate = getattr(pcm_data, "sample_rate", target_rate)
                 if not src_rate:
                     src_rate = 48000
-                if src_rate != 48000:
-                    arr = resample_audio(arr, src_rate, 48000).astype(_np.int16)
                 if arr.size == 0:
                     return
                 audio_bytes = arr.tobytes()
@@ -763,22 +776,33 @@ class Realtime(realtime.Realtime):
             audio_bytes = pcm_data
 
         if audio_bytes:
-            # Emit input event using Realtime helper (report 48000)
+            # Emit input event using Realtime helper (report source rate)
+            src_rate_emit = int(getattr(pcm_data, "sample_rate", 48000)) if hasattr(pcm_data, "sample_rate") else 48000
             self._emit_audio_input_event(
                 audio_data=audio_bytes,
-                sample_rate=48000,
+                sample_rate=src_rate_emit,
             )
 
-            # Chunk into ~20ms frames (960 samples -> 1920 bytes) and enqueue
-            frame_bytes = 1920
-            for i in range(0, len(audio_bytes), frame_bytes):
+            # Compute 20ms frame size at source sample rate
+            src_rate = src_rate_emit
+            samples_per_frame = int(0.02 * src_rate)
+            frame_bytes = samples_per_frame * 2  # int16 mono
+            if frame_bytes <= 0:
+                frame_bytes = 1920  # fallback to 48k 20ms
+
+            total_frames = max(1, (len(audio_bytes) + frame_bytes - 1) // frame_bytes)
+            max_forward_frames = 3
+            start_frame = max(0, total_frames - max_forward_frames)
+            start_offset = start_frame * frame_bytes
+
+            # Chunk only the recent portion and enqueue with backpressure, carrying sample rate
+            for i in range(start_offset, len(audio_bytes), frame_bytes):
                 chunk = audio_bytes[i : i + frame_bytes]
                 if not chunk:
                     continue
-                # Pad last chunk to full frame with silence for timing stability
                 if len(chunk) < frame_bytes:
                     chunk = chunk + b"\x00" * (frame_bytes - len(chunk))
-                await self._connection.send_audio(chunk)
+                await self._connection.send_audio(chunk, sample_rate=src_rate)
 
     async def send_text(self, text: str):
         """Send a text message from the human side to the conversation."""
