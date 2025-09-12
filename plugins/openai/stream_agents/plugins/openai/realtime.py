@@ -7,6 +7,7 @@ import os
 import traceback
 from typing import Optional, Any, AsyncIterator
 from contextlib import asynccontextmanager
+import contextlib
 import requests
 from aiortc import (
     RTCPeerConnection,
@@ -275,6 +276,8 @@ class RealtimeConnection:
                     self._queue = queue
                     self._sample_rate = sample_rate  # last-seen or default
                     self._ts = 0
+                    # Cache of 20ms mono int16 silence arrays per sample rate
+                    self._silence_cache = {}
 
                 async def recv(self):
                     # Try to get the next chunk quickly; emit 20 ms silence if none
@@ -292,8 +295,13 @@ class RealtimeConnection:
                         else:
                             samples = arr[:1, :]
                     except asyncio.TimeoutError:
-                        num_samples = int(0.02 * self._sample_rate)
-                        samples = np.zeros((1, num_samples), dtype=np.int16)
+                        sr = int(self._sample_rate) if self._sample_rate else 48000
+                        cached = self._silence_cache.get(sr)
+                        if cached is None:
+                            num_samples = int(0.02 * sr)
+                            cached = np.zeros((1, num_samples), dtype=np.int16)
+                            self._silence_cache[sr] = cached
+                        samples = cached
 
                     frame = AudioFrame.from_ndarray(
                         samples, format="s16", layout="mono"
@@ -555,6 +563,10 @@ class Realtime(realtime.Realtime):
         turn_detection: bool = True,
         system_prompt: Optional[str] = None,
         client: Optional[Any] = None,  # For compatibility with base class
+        *,
+        barge_in: bool = True,
+        activity_threshold: int = 3000,
+        silence_timeout_ms: int = 1000,
     ):
         """Initialize OpenAI Realtime Realtime.
 
@@ -586,6 +598,14 @@ class Realtime(realtime.Realtime):
         self._connection: Optional[RealtimeConnection] = None
         self.conversation = None  # For compatibility
         self._connection_lock = asyncio.Lock()
+        # Local playback gating to allow barge-in style interruption if desired
+        self._playback_enabled: bool = True
+        # Barge-in controls (optional, local playback only; provider VAD still used upstream)
+        self._barge_in_enabled: bool = barge_in
+        self._activity_threshold: int = activity_threshold
+        self._silence_timeout_ms: int = silence_timeout_ms
+        self._user_speaking: bool = False
+        self._eos_timer_task: Optional[asyncio.Task] = None
 
         # Auto-start the realtime connection so Agent.wait_until_ready() does not hang
         try:
@@ -646,8 +666,8 @@ class Realtime(realtime.Realtime):
             # Prime publisher audio pipeline with brief silence to seed timestamps
             try:
                 if hasattr(self, "output_track") and self.output_track is not None:
-                    # 200ms of silence at 24kHz mono s16 -> 4800 samples -> 9600 bytes
-                    await self.output_track.write(b"\x00" * 9600)
+                    # 200ms of silence at 48kHz mono s16 -> 9600 samples -> 19200 bytes
+                    await self.output_track.write(b"\x00" * 19200)
             except Exception:
                 pass
 
@@ -700,16 +720,26 @@ class Realtime(realtime.Realtime):
 
     async def _handle_audio_output(self, audio_bytes: bytes):
         """Handle audio output from OpenAI."""
-        # Emit audio output event using Realtime helper
-        self._emit_audio_output_event(
-            audio_data=audio_bytes,
-            sample_rate=48000,
-        )
+        # Emit audio output event only if someone is listening to avoid overhead
+        try:
+            has_listeners = False
+            try:
+                has_listeners = len(self.listeners("audio_output")) > 0  # type: ignore[attr-defined]
+            except Exception:
+                has_listeners = False
+            if has_listeners:
+                self._emit_audio_output_event(
+                    audio_data=audio_bytes,
+                    sample_rate=48000,
+                )
+        except Exception:
+            pass
         # Also push audio to the published output track so remote participants hear it
         try:
             if hasattr(self, "output_track") and self.output_track is not None:
-                # Write raw PCM bytes at 48kHz to published output track
-                await self.output_track.write(audio_bytes)
+                # Write raw PCM bytes at 48kHz to published output track if playback enabled
+                if self._playback_enabled:
+                    await self.output_track.write(audio_bytes)
         except Exception as e:
             logger.debug(f"Failed to write audio to output track: {e}")
 
@@ -800,6 +830,24 @@ class Realtime(realtime.Realtime):
                     continue
                 if len(chunk) < frame_bytes:
                     chunk = chunk + b"\x00" * (frame_bytes - len(chunk))
+                # Optional local barge-in: detect activity and interrupt playback immediately
+                if self._barge_in_enabled:
+                    try:
+                        arr = np.frombuffer(chunk, dtype=np.int16)
+                        if arr.size:
+                            energy = float(np.mean(np.abs(arr)))
+                            is_active = energy > float(self._activity_threshold)
+                            if is_active and not self._user_speaking:
+                                await self.interrupt_playback()
+                                self._user_speaking = True
+                            if is_active:
+                                # Restart end-of-speech timer
+                                if self._eos_timer_task and not self._eos_timer_task.done():
+                                    self._eos_timer_task.cancel()
+                                self._eos_timer_task = asyncio.create_task(self._silence_timeout_task())
+                    except Exception:
+                        # Do not let barge-in logic disrupt audio sending
+                        pass
                 await self._connection.send_audio(chunk, sample_rate=src_rate)
 
     async def send_text(self, text: str):
@@ -810,6 +858,8 @@ class Realtime(realtime.Realtime):
             self._emit_transcript_event(text=text, is_user=True)
         except Exception:
             pass
+        # Ensure playback is enabled before expecting an assistant reply
+        self._playback_enabled = True
         if not self._connection:
             raise RuntimeError("Failed to establish connection")
         await self._connection.send_text(text)
@@ -835,6 +885,12 @@ class Realtime(realtime.Realtime):
 
     async def _close_impl(self):
         """Close the Realtime service and release resources."""
+        # Cancel end-of-speech timer if running
+        if self._eos_timer_task and not self._eos_timer_task.done():
+            self._eos_timer_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._eos_timer_task
+        self._eos_timer_task = None
         if self._connection:
             try:
                 await self._connection._stop_session()
@@ -844,3 +900,25 @@ class Realtime(realtime.Realtime):
                 self._connection = None
 
         # Do not call parent close here; base .close() orchestrates lifecycle
+
+    async def interrupt_playback(self) -> None:
+        """Stop current playback immediately and clear queued audio chunks."""
+        self._playback_enabled = False
+        try:
+            if hasattr(self, "output_track") and self.output_track is not None:
+                await self.output_track.flush()
+        except Exception:
+            # Best-effort flush; ignore if track doesn't support it
+            pass
+
+    def resume_playback(self) -> None:
+        """Re-enable playback after an interruption."""
+        self._playback_enabled = True
+
+    async def _silence_timeout_task(self) -> None:
+        try:
+            await asyncio.sleep(self._silence_timeout_ms / 1000)
+            self._user_speaking = False
+            self.resume_playback()
+        except asyncio.CancelledError:
+            return
