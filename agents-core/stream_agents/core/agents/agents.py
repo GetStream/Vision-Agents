@@ -311,6 +311,17 @@ class Agent:
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
+            # Log approximate duration for debugging latency (disabled at higher log levels)
+            try:
+                sr = getattr(pcm, "sample_rate", 16000) or 16000
+                n = len(getattr(pcm, "samples", []) or [])
+                if isinstance(getattr(pcm, "samples", None), bytes):
+                    n = len(pcm.samples) // 2
+                duration_ms = int(1000 * n / sr) if sr else 0
+                self.logger.debug(f"rx audio chunk ~{duration_ms}ms from {getattr(participant, 'user_id', None)}")
+            except Exception:
+                pass
+
             await self.reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
@@ -352,9 +363,9 @@ class Agent:
             except Exception as e:
                 self.logger.error(f"Error processing audio for processors: {e}")
 
-            # when in Realtime mode call the Realtime directly
+            # when in Realtime mode call the Realtime directly (non-blocking)
             if self.sts_mode and isinstance(self.llm, Realtime):
-                await self.llm.send_audio_pcm(pcm_data)
+                asyncio.create_task(self.llm.send_audio_pcm(pcm_data))
             else:
                 # Process audio through STT
                 if self.stt:

@@ -2,8 +2,12 @@ from typing import Optional, List, TYPE_CHECKING, Any
 
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
-from anthropic.types import RawMessageStreamEvent, Message as ClaudeMessage, \
-    RawContentBlockDeltaEvent, RawMessageStopEvent
+from anthropic.types import (
+    RawMessageStreamEvent,
+    Message as ClaudeMessage,
+    RawContentBlockDeltaEvent,
+    RawMessageStopEvent,
+)
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
 
@@ -36,7 +40,12 @@ class ClaudeLLM(LLM):
         llm = anthropic.LLM(model="claude-opus-4-1-20250805")
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[AsyncAnthropic] = None):
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        client: Optional[AsyncAnthropic] = None,
+    ):
         """
         Initialize the ClaudeLLM class.
 
@@ -53,8 +62,12 @@ class ClaudeLLM(LLM):
         else:
             self.client = anthropic.AsyncAnthropic(api_key=api_key)
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
-                              participant: Participant = None):
+    async def simple_response(
+        self,
+        text: str,
+        processors: Optional[List[BaseProcessor]] = None,
+        participant: Participant = None,
+    ):
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
 
@@ -68,8 +81,7 @@ class ClaudeLLM(LLM):
             llm.simple_response("say hi to the user, be mean")
         """
         return await self.create_message(
-            messages=[{"role": "user", "content": text}],
-            max_tokens=1000
+            messages=[{"role": "user", "content": text}], max_tokens=1000
         )
 
     async def create_message(self, *args, **kwargs) -> LLMResponse:
@@ -101,14 +113,16 @@ class ClaudeLLM(LLM):
             text = ""
             if original.content and len(original.content) > 0:
                 content_block = original.content[0]
-                if hasattr(content_block, 'text'):
+                if hasattr(content_block, "text"):
                     text = content_block.text
             llm_response = LLMResponse(original, text)
         elif isinstance(original, AsyncStream):
             stream: AsyncStream[RawMessageStreamEvent] = original
-            text_parts : List[str] = []
+            text_parts: List[str] = []
             async for event in stream:
-                llm_response_optional = self._standardize_and_emit_event(event, text_parts)
+                llm_response_optional = self._standardize_and_emit_event(
+                    event, text_parts
+                )
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
 
@@ -116,17 +130,19 @@ class ClaudeLLM(LLM):
 
         return llm_response
 
-    def _standardize_and_emit_event(self, event: RawMessageStreamEvent, text_parts: List[str]) -> Optional[LLMResponse]:
+    def _standardize_and_emit_event(
+        self, event: RawMessageStreamEvent, text_parts: List[str]
+    ) -> Optional[LLMResponse]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
         # forward the native event
         self.emit("claude_event", event)
-        
+
         # send a standardized version for delta and response
         if event.type == "content_block_delta":
             delta_event: RawContentBlockDeltaEvent = event
-            if hasattr(delta_event.delta, 'text') and delta_event.delta.text:
+            if hasattr(delta_event.delta, "text") and delta_event.delta.text:
                 text_parts.append(delta_event.delta.text)
 
                 standardized_event = StandardizedTextDeltaEvent(
@@ -150,7 +166,9 @@ class ClaudeLLM(LLM):
         from stream_agents.core.agents.conversation import Message
 
         if isinstance(claude_messages, str):
-            claude_messages = [{"content": claude_messages, "role": "user", "type": "text"}]
+            claude_messages = [
+                {"content": claude_messages, "role": "user", "type": "text"}
+            ]
 
         if not isinstance(claude_messages, (List, tuple)):
             claude_messages = [claude_messages]
