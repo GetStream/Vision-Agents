@@ -38,6 +38,14 @@ async def start_agent() -> None:
         await agent.queue.say_text(f"Hello, {participant.name}")
         agent.logger.info(f"handled event {participant}")
 
+    @agent.on(EventType.CALL_MEMBER_ADDED)
+    async def my_other_handler(participant):
+        # TODO: wait till we have confirmation from client it can hear us
+        #await asyncio.sleep(5)
+        #await agent.queue.say_text(f"Hello, {participant.name}")
+        agent.logger.info(f"handled event {participant}")
+
+
     # Create a call
     call = client.video.call("default", str(uuid4()))
 
@@ -47,7 +55,7 @@ async def start_agent() -> None:
     # Have the agent join the call/room
     with await agent.join(call):
         # Example 1: standardized simple response (aggregates delta/done)
-        await agent.llm.simple_response("Please say verbatim: 'this is a test of the OpenAI realtime api.'.")
+        #:await agent.llm.simple_response("Please say verbatim: 'this is a test of the OpenAI realtime api.'.")
 
         await agent.finish()  # run till the call ends
 

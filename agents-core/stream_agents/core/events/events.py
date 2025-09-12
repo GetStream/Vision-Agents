@@ -505,6 +505,11 @@ class PluginErrorEvent(PluginBaseEvent):
 class CallMemberAddedEvent(CallBaseEvent):
     event_type: EventType = field(default=EventType.CALL_MEMBER_ADDED, init=False)
 
+    @classmethod
+    def from_stream_event(cls, data):
+        print('data', data)
+        return cls()
+
 
 @dataclass
 class CallMemberRemovedEvent(CallBaseEvent):

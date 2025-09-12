@@ -7,11 +7,11 @@ and debugging across all plugin types.
 
 import logging
 import time
-from typing import TYPE_CHECKING, Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable
 from functools import partial
 from collections import defaultdict, deque
 
-from .events import BaseEvent, EventType, ConnectionBaseEvent
+from .events import BaseEvent, EventType, ConnectionBaseEvent, CallBaseEvent
 
 logger = logging.getLogger(__name__)
 
@@ -114,27 +114,40 @@ class EventRegistry:
             except Exception as e:
                 logger.error(f"Error in event listener: {e}")
 
-    async def register_connection_event(self, event_name, data, event_dataclass, handler):
+    async def _handle_event(self, event_name, data, event_dataclass, handler):
         logger.info(f"event call received {event_name}: {data}")
         await handler(event_dataclass.from_stream_event(data))
 
 
     def add_connection_listeners(self, connection: 'rtc.ConnectionManager'):
-        # TODO: add connection call (member etc. ws) events listeners (need call ws)
-        mapping = {c.event_type: c for c in ConnectionBaseEvent.__subclasses__()}
-        for event_type, handlers in self.listeners.items():
-            if event_type not in mapping:
-                continue
-            event_name = event_type.value.lstrip('connection_')
+        connection_mapping = {c.event_type: c for c in ConnectionBaseEvent.__subclasses__()}
+        call_mapping = {c.event_type: c for c in CallBaseEvent.__subclasses__()}
 
-            logger.info(f"new handler added: {event_type} {event_name}, {handlers}")
-            for handler in handlers:
-                connection.ws_client.on_wildcard(
-                    event_name, partial(
-                        self.register_connection_event,
-                        event_dataclass=mapping[event_type], handler=handler
+        for event_type, handlers in self.listeners.items():
+            if event_type in connection_mapping:
+                event_name = event_type.value.lstrip('connection_')
+                logger.info(f"Event handler added for: {event_type} - {event_name}, {handlers}")
+                for handler in handlers:
+                    connection.ws_client.on_wildcard(
+                        event_name, partial(
+                            self._handle_event,
+                            event_dataclass=connection_mapping[event_type], handler=handler
+                        )
                     )
-                )
+            elif event_type in call_mapping:
+                event_name = event_type.value.lstrip('call_')
+                event_name = f"call.{event_name}"
+                logger.info(f"Event handler added for: {event_type} {event_name}, {handlers}")
+                def my_handler(event_name, data):
+                    logger.info(f"Call ws event {event_name}: {data}")
+                for handler in handlers:
+                    connection._coordinator_ws_client.on_wildcard("*", my_handler)
+
+                    # partial(
+                    #     self._handle_event,
+                    #     event_dataclass=call_mapping[event_type], handler=handler
+                    # ))
+
 
     def add_listener(
         self, event_type: EventType, listener: Callable[[BaseEvent], None]
