@@ -130,6 +130,7 @@ class Agent:
         pass
 
     def on(self, event_type: EventType):
+        #TODO: this approach is a bit ugly. also breaks with multiple agents.
         def decorator(func):
             registry = get_global_registry()
             registry.add_listener(event_type, func)
