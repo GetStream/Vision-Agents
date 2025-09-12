@@ -10,11 +10,14 @@ from ..events.events import RealtimePartialTranscriptEvent
 from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
-from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, RealtimeTranscriptEvent
+from ..vad import VAD
+from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent, RealtimeTranscriptEvent
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
+from ..mcp import MCPBaseServer
 from getstream.chat.client import ChatClient
 from getstream.models import User, ChannelInput, UserRequest
+from ..events import get_global_registry, EventType
 from getstream.video import rtc
 from getstream.video.call import Call
 from getstream.video.rtc import audio_track
@@ -35,9 +38,10 @@ from ..processors.base_processor import filter_processors, ProcessorType, BasePr
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
 
-
 if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
+
+
 
 
 class Agent:
@@ -53,6 +57,7 @@ class Agent:
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
         turn_detection: Optional[BaseTurnDetector] = None,
+        vad: Optional[VAD] = None,
         # the agent's user info
         agent_user: Optional[UserRequest] = None,
         # for video gather data at an interval
@@ -60,6 +65,8 @@ class Agent:
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
         processors: Optional[List[BaseProcessor]] = None,
+        # MCP servers for external tool and resource access
+        mcp_servers: Optional[List[MCPBaseServer]] = None,
     ):
         self.instructions = instructions
         if edge is None:
@@ -86,14 +93,18 @@ class Agent:
         self.stt = stt
         self.tts = tts
         self.turn_detection = turn_detection
+        self.vad = vad
         self.processors = processors or []
+        self.mcp_servers = mcp_servers or []
         self.queue = ReplyQueue(self)
 
+        # we sync the user talking and the agent responses to the conversation
+        # because we want to support streaming responses and can have delta updates for both
+        # user and agent we keep an handle for both
         self.conversation: Optional[StreamConversation] = None
-        # Track active STT handles by user_id
-        self._stt_handles: Dict[str, StreamHandle] = {}
-        # Track active LLM streaming handle
-        self._llm_handle: Optional[StreamHandle] = None
+        self._user_conversation_handle: Optional[StreamHandle] = None
+        self._agent_conversation_handle: Optional[StreamHandle] = None
+
         if self.llm is not None:
             self.llm.attach_agent(self)
 
@@ -108,44 +119,44 @@ class Agent:
                 if self.conversation is None:
                     return
 
-                if self._llm_handle is None:
+                if self._agent_conversation_handle is None:
                     message = Message(
-                        original=None,
                         content=llm_response.text,
                         role="assistant",
                         user_id=self.agent_user.id,
                     )
                     self.conversation.add_message(message)
                 else:
-                    self.conversation.complete_message(self._llm_handle)
-                    self._llm_handle = None
+                    self.conversation.complete_message(self._agent_conversation_handle)
+                    self._agent_conversation_handle = None
 
                 # Resume the queue for TTS playback
-                await self.queue.resume(llm_response)
+                await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
             @self.llm.on('standardized.output_text.delta')
             def handle_output_text_delta(event: StandardizedTextDeltaEvent):
                 """Handle partial LLM response text deltas."""
 
-                if not event.delta or not event.delta.strip() or self.conversation is None:
+                if self.conversation is None:
                     return
 
+                self.logger.info(f"received standardized.output_text.delta {event}")
                 # Create a new streaming message if we don't have one
-                if self._llm_handle is None:
-                    self._llm_handle = self.conversation.start_streaming_message(
+                if self._agent_conversation_handle is None:
+                    self._agent_conversation_handle = self.conversation.start_streaming_message(
                         role="assistant",
                         user_id=self.agent_user.id,
                         initial_content=event.delta,
                     )
                 else:
-                    self.conversation.append_to_message(self._llm_handle, event.delta)
+                    self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
 
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
         self._interval_task = None
         self._callback_executed = False
-        self._connection: Optional[rtc.RTCConnection] = None
+        self._connection: Optional[rtc.ConnectionManager] = None
         self._audio_track: Optional[audio_track.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
         self._sts_connection = None
@@ -156,11 +167,27 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
+        self._setup_vad()
+        self._setup_mcp_servers()
+
+    def before_response(self, input):
+        pass
+
+    def on(self, event_type: EventType):
+        #TODO: this approach is a bit ugly. also breaks with multiple agents.
+        def decorator(func):
+            registry = get_global_registry()
+            registry.add_listener(event_type, func)
+            return func
+        return decorator
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
         self.channel = None
         self.conversation = None
+
+        # Connect to MCP servers
+        await self._connect_mcp_servers()
 
         # Only set up chat if we have LLM (for conversation capabilities)
         if self.llm:
@@ -212,6 +239,9 @@ class Agent:
         self._connection = connection
         self._is_running = True
 
+        registry = get_global_registry()
+        registry.add_connection_listeners(connection)
+
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
         # Set up audio and video tracks together to avoid SDP issues
@@ -224,7 +254,6 @@ class Agent:
                 self.logger.debug("🤖 Agent ready to speak")
             if video_track:
                 self.logger.debug("🎥 Agent ready to publish video")
-
             # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
             # Set up event handlers for audio processing
@@ -241,10 +270,24 @@ class Agent:
         return AgentSessionContextManager(self, connection_cm)
 
     async def say(self, text):
-        await self.queue.say_text(text)
+        await self.queue.say_text(text, self.agent_user.id)
 
     async def play_audio(self, pcm):
         await self.queue.send_audio(pcm)
+
+    def _setup_vad(self):
+        if self.vad:
+            self.logger.info("🎙️ Setting up VAD listeners")
+            self.vad.on("audio", self._on_vad_audio)
+            
+    def _setup_mcp_servers(self):
+        """Set up MCP servers if any are configured."""
+        if self.mcp_servers:
+            self.logger.info(f"🔌 Setting up {len(self.mcp_servers)} MCP server(s)")
+            for i, server in enumerate(self.mcp_servers):
+                self.logger.info(f"  {i+1}. {server.__class__.__name__}")
+        else:
+            self.logger.debug("No MCP servers configured")
 
     def _setup_turn_detection(self):
         if self.turn_detection:
@@ -303,6 +346,17 @@ class Agent:
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
+            # Log approximate duration for debugging latency (disabled at higher log levels)
+            try:
+                sr = getattr(pcm, "sample_rate", 16000) or 16000
+                n = len(getattr(pcm, "samples", []) or [])
+                if isinstance(getattr(pcm, "samples", None), bytes):
+                    n = len(pcm.samples) // 2
+                duration_ms = int(1000 * n / sr) if sr else 0
+                self.logger.debug(f"rx audio chunk ~{duration_ms}ms from {getattr(participant, 'user_id', None)}")
+            except Exception:
+                pass
+
             await self.reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
@@ -317,23 +371,15 @@ class Agent:
         if participant and getattr(participant, "user_id", None) != self.agent_user.id:
             # first forward to processors
             try:
-                # TODO: remove this nonsense, we know its pcm
-                # Extract audio bytes for processors
-                audio_bytes = None
-                if hasattr(pcm_data, "samples"):
-                    samples = pcm_data.samples
-                    if hasattr(samples, "tobytes"):
-                        audio_bytes = samples.tobytes()
-                    else:
-                        audio_bytes = samples.astype("int16").tobytes()
-                elif isinstance(pcm_data, bytes):
-                    audio_bytes = pcm_data
-                else:
-                    self.logger.debug(f"Unknown PCM data format: {type(pcm_data)}")
-                    audio_bytes = pcm_data  # Try as-is
-
-                # Forward to audio processors
+                # Extract audio bytes for processors using the proper PCM data structure
+                # PCM data has: format, sample_rate, samples, pts, dts, time_base
+                audio_bytes = pcm_data.samples.tobytes()
+                if self.vad:
+                    asyncio.create_task(self.vad.process_audio(pcm_data, participant))
+                # Forward to audio processors (skip None values)
                 for processor in self.audio_processors:
+                    if processor is None:
+                        continue
                     try:
                         await processor.process_audio(audio_bytes, participant.user_id)
                     except Exception as e:
@@ -344,9 +390,9 @@ class Agent:
             except Exception as e:
                 self.logger.error(f"Error processing audio for processors: {e}")
 
-            # when in Realtime mode call the Realtime directly
+            # when in Realtime mode call the Realtime directly (non-blocking)
             if self.sts_mode and isinstance(self.llm, Realtime):
-                await self.llm.send_audio_pcm(pcm_data)
+                asyncio.create_task(self.llm.send_audio_pcm(pcm_data))
             else:
                 # Process audio through STT
                 if self.stt:
@@ -419,6 +465,8 @@ class Agent:
                         img = video_frame.to_image()
 
                         for processor in self.image_processors:
+                            if processor is None:
+                                continue
                             try:
                                 await processor.process_image(img, participant.user_id)
                             except Exception as e:
@@ -428,6 +476,8 @@ class Agent:
 
                     # video processors
                     for processor in self.video_processors:
+                        if processor is None:
+                            continue
                         try:
                             await processor.process_video(track, participant.user_id)
                         except Exception as e:
@@ -441,6 +491,11 @@ class Agent:
                     f"📸 Error receiving track: {e} - {type(e)}, trying again"
                 )
                 await asyncio.sleep(0.5)
+
+    def _on_vad_audio(self, event:VADAudioEvent):
+        # bytes_to_pcm = bytes_to_pcm_data(event.audio_data)
+        # asyncio.create_task(self.stt.process_audio(bytes_to_pcm, event.user_metadata))
+        pass
 
     def _on_turn_started(self, event_data: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
@@ -468,15 +523,15 @@ class Agent:
                 user_id = getattr(event.user_metadata, "user_id", "unknown")
 
             # Check if we have an active handle for this user
-            if user_id not in self._stt_handles:
+            if self._user_conversation_handle is None:
                 # Start a new streaming message for this user
-                self._stt_handles[user_id] = self.conversation.start_streaming_message(
+                self._user_conversation_handle = self.conversation.start_streaming_message(
                     role="user",
                     user_id=user_id
                 )
 
             # Append the partial transcript to the active message
-            self.conversation.append_to_message(self._stt_handles[user_id], event.text)
+            self.conversation.append_to_message(self._user_conversation_handle, event.text)
 
     async def _on_transcript(
         self, event: Union[STTTranscriptEvent|RealtimeTranscriptEvent]
@@ -495,14 +550,7 @@ class Agent:
         if hasattr(event, "user_metadata"):
             user_id = getattr(event.user_metadata, "user_id", "unknown")
 
-        # Check if we have an active handle for this user
-        if user_id in self._stt_handles:
-            # Replace with final text and complete the message
-            self.conversation.replace_message(self._stt_handles[user_id], event.text)
-            self.conversation.complete_message(self._stt_handles[user_id])
-            # Clean up the handle
-            del self._stt_handles[user_id]
-        else:
+        if self._user_conversation_handle is None:
             # No partial transcripts were received, create a completed message directly
             message = Message(
                 original=event,
@@ -511,6 +559,11 @@ class Agent:
                 user_id=user_id,
             )
             self.conversation.add_message(message)
+        else:
+            # Replace with final text and complete the message
+            self.conversation.replace_message(self._user_conversation_handle, event.text)
+            self.conversation.complete_message(self._user_conversation_handle)
+            self._user_conversation_handle = None
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""
@@ -666,11 +719,11 @@ class Agent:
     async def close(self):
         """Clean up all connections and resources."""
         self._is_running = False
-        
-        # Clean up any active STT handles
-        self._stt_handles.clear()
-        # Clean up LLM handle
-        self._llm_handle = None
+        self._user_conversation_handle = None
+        self._agent_conversation_handle = None
+
+        # Disconnect from MCP servers
+        await self._disconnect_mcp_servers()
 
         try:
             if self._sts_connection and hasattr(self._sts_connection, "__aexit__"):
@@ -728,6 +781,72 @@ class Agent:
             self.logger.debug(f"Error canceling interval task: {e}")
         finally:
             self._interval_task = None
+
+    async def _connect_mcp_servers(self):
+        """Connect to all configured MCP servers."""
+        if not self.mcp_servers:
+            return
+            
+        self.logger.info(f"🔌 Connecting to {len(self.mcp_servers)} MCP server(s)")
+        
+        for i, server in enumerate(self.mcp_servers):
+            try:
+                self.logger.info(f"  Connecting to MCP server {i+1}/{len(self.mcp_servers)}: {server.__class__.__name__}")
+                await server.connect()
+                self.logger.info(f"  ✅ Connected to MCP server {i+1}/{len(self.mcp_servers)}")
+            except Exception as e:
+                self.logger.error(f"  ❌ Failed to connect to MCP server {i+1}/{len(self.mcp_servers)}: {e}")
+                # Continue with other servers even if one fails
+                
+    async def _disconnect_mcp_servers(self):
+        """Disconnect from all configured MCP servers."""
+        if not self.mcp_servers:
+            return
+            
+        self.logger.info(f"🔌 Disconnecting from {len(self.mcp_servers)} MCP server(s)")
+        
+        for i, server in enumerate(self.mcp_servers):
+            try:
+                self.logger.info(f"  Disconnecting from MCP server {i+1}/{len(self.mcp_servers)}: {server.__class__.__name__}")
+                await server.disconnect()
+                self.logger.info(f"  ✅ Disconnected from MCP server {i+1}/{len(self.mcp_servers)}")
+            except Exception as e:
+                self.logger.error(f"  ❌ Error disconnecting from MCP server {i+1}/{len(self.mcp_servers)}: {e}")
+                # Continue with other servers even if one fails
+
+    async def get_mcp_tools(self) -> List[Any]:
+        """Get all available tools from all connected MCP servers."""
+        tools = []
+        
+        for server in self.mcp_servers:
+            if server.is_connected:
+                try:
+                    server_tools = await server.list_tools()
+                    tools.extend(server_tools)
+                except Exception as e:
+                    self.logger.error(f"Error getting tools from MCP server {server.__class__.__name__}: {e}")
+                    
+        return tools
+        
+    async def call_mcp_tool(self, server_index: int, tool_name: str, arguments: Dict[str, Any]) -> Any:
+        """Call a tool on a specific MCP server.
+        
+        Args:
+            server_index: Index of the MCP server in the mcp_servers list
+            tool_name: Name of the tool to call
+            arguments: Arguments to pass to the tool
+            
+        Returns:
+            The result of the tool call
+        """
+        if server_index >= len(self.mcp_servers):
+            raise ValueError(f"Invalid server index: {server_index}")
+            
+        server = self.mcp_servers[server_index]
+        if not server.is_connected:
+            raise RuntimeError(f"MCP server {server_index} is not connected")
+            
+        return await server.call_tool(tool_name, arguments)
 
     async def finish(self):
         """Wait for the call to end gracefully."""

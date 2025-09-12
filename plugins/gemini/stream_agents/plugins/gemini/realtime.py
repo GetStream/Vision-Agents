@@ -15,8 +15,6 @@ from typing import Any, Dict, List, Optional, cast
 
 from aiortc.mediastreams import MediaStreamTrack
 
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
-
 try:
     from PIL import Image  # type: ignore
 except Exception:  # pragma: no cover
@@ -215,21 +213,9 @@ class Realtime(realtime.Realtime):
             logger.info("Connected Gemini agent using model %s", self.model)
             # Start listener automatically
             await self.start_response_listener()
-
-            # TODO move this to its separate task
-            async for message in session.receive():
-                pprint.pprint(message)
-                if message.server_content is not None and message.server_content.input_transcription is not None:
-                    self._emit_partial_transcript_event(
-                        message.server_content.input_transcription.text,
-                        user_metadata=None,
-                        original=message,
-                    )
-                    # TODO after waiting for a bit, we should call _emit_transcript_event with the accumulated text
-                    # this is needed because Gemini events do not populate the finished field at all :(
-
             # Wait until asked to stop
             await self._stop_event.wait()
+
         # After context exits
         self._session = None
         self._is_connected = False
@@ -248,11 +234,6 @@ class Realtime(realtime.Realtime):
     async def send_text(self, text: str):
         """Send a text message from the human side to the conversation."""
         session = await self._require_session()
-        # Emit user transcript event
-        try:
-            self._emit_transcript_event(text=text, is_user=True)
-        except Exception:
-            pass
         # Ensure playback is enabled before expecting an assistant reply
         self._ensure_playback()
         await session.send_realtime_input(text=text)
@@ -399,8 +380,6 @@ class Realtime(realtime.Realtime):
         *,
         text: str,
         timeout: Optional[float] = 30.0,
-        processors: Optional[List[Any]] = None,
-        participant: Any = None,
     ):
         """Standardized single-turn response that aggregates deltas and speaks into the call.
 
@@ -408,7 +387,7 @@ class Realtime(realtime.Realtime):
         delta/done and returns a RealtimeResponse. Playback is ensured via send_text.
         """
         return await super().simple_response(
-            text=text, processors=processors, participant=participant, timeout=timeout
+            text=text, timeout=timeout
         )
 
     async def start_response_listener(
@@ -425,7 +404,18 @@ class Realtime(realtime.Realtime):
         if self._audio_receiver_task and not self._audio_receiver_task.done():
             return None
 
-        async def _audio_receive_loop():
+        async def _receive_loop():
+            # # TODO move this to its separate task
+            # async for message in session.receive():
+            #     pprint.pprint(message)
+            #     if message.server_content is not None and message.server_content.input_transcription is not None:
+            #         self._emit_partial_transcript_event(
+            #             message.server_content.input_transcription.text,
+            #             user_metadata=None,
+            #             original=message,
+            #         )
+            #         # TODO after waiting for a bit, we should call _emit_transcript_event with the accumulated text
+            #         # this is needed because Gemini events do not populate the finished field at all :(
             try:
                 assert self._session is not None
                 # Continuously read turns; receive() yields one complete model turn
@@ -448,20 +438,17 @@ class Realtime(realtime.Realtime):
                         if text:
                             if emit_events:
                                 self.emit("text", text)
-                            try:
-                                self._emit_response_event(text, is_complete=False)
-                                self._emit_transcript_event(text, is_user=False)
-                            except Exception:
-                                pass
+                            self._emit_response_event(text, is_complete=False)
+                            self._emit_partial_transcript_event(
+                                text,
+                                user_metadata=None,
+                                original=resp,
+                            )
                             turn_text_parts.append(text)
-
                     # Small pause between turns to avoid tight loop
-                    try:
-                        # Always emit a final done event at end-of-turn, even if text was empty.
-                        final_text = "".join(turn_text_parts) if turn_text_parts else ""
-                        self._emit_response_event(final_text, is_complete=True)
-                    except Exception:
-                        pass
+                    # Always emit a final done event at end-of-turn, even if text was empty.
+                    final_text = "".join(turn_text_parts) if turn_text_parts else ""
+                    self._emit_response_event(final_text, is_complete=True)
                     turn_text_parts.clear()
                     await asyncio.sleep(0)
             except asyncio.CancelledError:  # graceful stop
@@ -470,7 +457,7 @@ class Realtime(realtime.Realtime):
                 self.emit("error", e)
 
         logger.info("Response listener started")
-        self._audio_receiver_task = asyncio.create_task(_audio_receive_loop())
+        self._audio_receiver_task = asyncio.create_task(_receive_loop())
         return None
 
     async def interrupt_playback(self) -> None:

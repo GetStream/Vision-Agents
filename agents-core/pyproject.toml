@@ -27,6 +27,7 @@ dependencies = [
     "krisp-audio>=1.4.0; sys_platform == 'win32'",
     "krisp-audio>=1.4.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "krisp-audio>=1.4.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "mcp>=1.14.0",
     "stream-agents-plugins-anthropic",
     "stream-agents-plugins-cartesia",
     "stream-agents-plugins-deepgram",

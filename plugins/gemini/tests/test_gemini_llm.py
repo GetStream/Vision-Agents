@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import Mock, patch
 from dotenv import load_dotenv
 
 
@@ -13,23 +12,23 @@ load_dotenv()
 
 class TestGeminiLLM:
 
-    @pytest.fixture
-    def llm(self) -> GeminiLLM:
-        llm = GeminiLLM(model="gemini-1.5-flash")
-        llm._conversation = InMemoryConversation("be friendly", [])
-        return llm
-
-    def test_message(self, llm: GeminiLLM):
+    def test_message(self):
         messages = GeminiLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
         assert message.content == "say hi"
 
-    def test_advanced_message(self, llm: GeminiLLM):
+    def test_advanced_message(self):
         advanced = ["say hi"]
         messages2 = GeminiLLM._normalize_message(advanced)
         assert messages2[0].original is not None
+
+    @pytest.fixture
+    def llm(self) -> GeminiLLM:
+        llm = GeminiLLM(model="gemini-1.5-flash")
+        llm._conversation = InMemoryConversation("be friendly", [])
+        return llm
 
     @pytest.mark.integration
     async def test_simple(self, llm: GeminiLLM):

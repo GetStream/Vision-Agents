@@ -16,14 +16,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Message:
-    original: Any  # the original openai, claude or gemini message
     content: str
+    original: Optional[Any] = None  # the original openai, claude or gemini message
     timestamp: Optional[datetime.datetime] = None
     role: Optional[str] = None
     user_id: Optional[str] = None
     id: Optional[str] = None
 
     def __post_init__(self):
+        self.id = self.id or str(uuid.uuid4())
         self.timestamp = datetime.datetime.now()
 
 
@@ -58,13 +59,8 @@ class Conversation(ABC):
         messages: List[Message],
     ):
         self.instructions = instructions
-        self.messages = []
+        self.messages = [m for m in messages]
 
-        for m in messages:
-            if not hasattr(m, 'id') or m.id is None:
-                m.id = uuid.uuid4().__str__()
-            self.messages.append(m)
-    
     @abstractmethod
     def add_message(self, message: Message, completed: bool = True):
         """Add a message to the conversation.
@@ -209,9 +205,6 @@ class InMemoryConversation(Conversation):
         return None
 
     def add_message(self, message: Message, completed: bool = True):
-        # Ensure message has an ID
-        if not hasattr(message, 'id') or message.id is None:
-            message.id = uuid.uuid4().__str__()
         self.messages.append(message)
         # In-memory conversation doesn't need to handle completed flag
         return None
@@ -359,9 +352,6 @@ class StreamConversation(InMemoryConversation):
         Returns:
             None (operations are processed asynchronously)
         """
-        # Ensure message has an ID
-        if not hasattr(message, 'id') or message.id is None:
-            message.id = uuid.uuid4().__str__()
         self.messages.append(message)
         
         # Queue the send_message operation
@@ -449,43 +439,8 @@ class StreamConversation(InMemoryConversation):
         with self._operations_lock:
             self._pending_operations += 1
         
-        self._api_queue.put(update_op)
+        return self._api_queue.put(update_op)
 
-    # Backward compatibility methods for easier migration
-    def add_text_message(self, input_text: str, user_id: str) -> None:
-        """Add a message to the conversation (text/user form) - backward compatibility method."""
-        message = Message(
-            original=None,
-            content=input_text,
-            role="user",
-            user_id=user_id
-        )
-        self.add_message(message, completed=True)
-    
-    def finish_last_message(self, text: str):
-        """Backward compatibility wrapper - mark the last message as completed with final text."""
-        if self.messages:
-            last_msg = self.messages[-1]
-            self.update_message(last_msg.id, text, last_msg.user_id, replace_content=True, completed=True)
-    
-    def partial_update_message(self, text: str, user_metadata: Optional[Any] = None):
-        """Backward compatibility wrapper - update the last message partially (append text)."""
-        if self.messages:
-            last_msg = self.messages[-1]
-            # If user_metadata is provided and has user_id, use it; otherwise use the message's user_id
-            user_id = getattr(user_metadata, 'user_id', last_msg.user_id) if user_metadata else last_msg.user_id
-            self.update_message(last_msg.id, text, user_id, replace_content=False, completed=False)
-        else:
-            # No messages yet, create a new one
-            user_id = getattr(user_metadata, 'user_id', 'unknown') if user_metadata else 'unknown'
-            message = Message(
-                original=None,
-                content=text,
-                role="assistant",
-                user_id=user_id
-            )
-            self.add_message(message, completed=False)
-    
     def __del__(self):
         """Cleanup when the conversation is destroyed."""
         try:

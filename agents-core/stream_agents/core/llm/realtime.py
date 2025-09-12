@@ -73,6 +73,7 @@ import logging
 import uuid
 
 from pyee.asyncio import AsyncIOEventEmitter
+from pyee.base import PyeeError
 
 
 from ..events.events import (
@@ -185,8 +186,9 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self.tools = tools
         # Default outbound audio track for assistant speech; providers can override
         try:
+            # Use 48000 Hz stereo to match common WebRTC Opus SDP (opus/48000/2)
             self.output_track: AudioStreamTrack = AudioStreamTrack(
-                framerate=24000, stereo=False, format="s16"
+                framerate=48000, stereo=True, format="s16"
             )
         except Exception:  # pragma: no cover - allow providers to set later
             self.output_track = None  # type: ignore[assignment]
@@ -201,25 +203,17 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
 
     def attach_agent(self, agent: Agent):
         self.agent = agent
-        # Keep callbacks consistent with Agent methods
-        self.before_response_listener = lambda x: agent.before_response(x)
-        self.after_response_listener = lambda x: agent.after_response(x)
-
-    def set_before_response_listener(self, before_response_listener: BeforeCb):
-        self.before_response_listener = before_response_listener
-
-    def set_after_response_listener(self, after_response_listener: AfterCb):
-        self.after_response_listener = after_response_listener
 
     @abc.abstractmethod
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
 
+    @abc.abstractmethod
     async def send_text(self, text: str):
         """Send a text message from the human side to the conversation.
 
-        Providers should override to forward text upstream. Base implementation raises.
+        Providers should override to forward text upstream.
         """
-        raise NotImplementedError("send_text must be implemented by Realtime providers")
+        ...
 
     async def wait_until_ready(self, timeout: Optional[float] = None) -> bool:
         """Wait until the realtime session is ready. Returns True if ready."""
@@ -295,8 +289,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self,
         *,
         text: str,
-        processors: Optional[List[Any]] = None,
-        participant: Any = None,
         timeout: Optional[float] = 30.0,
     ) -> RealtimeResponse[Any]:
         """Send text and resolve when the assistant finishes the turn.
@@ -511,7 +503,19 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             user_metadata=user_metadata,
         )
         register_global_event(event)
-        self.emit("error", event)  # Structured event
+        try:
+            self.emit("error", event)  # Structured event
+        except PyeeError:
+            # No error listeners registered; log instead of crashing
+            logger.error(
+                "Uncaught error event (no listeners)",
+                extra={
+                    "session_id": self.session_id,
+                    "provider": self.provider_name,
+                    "context": context,
+                    "error": str(error),
+                },
+            )
 
     async def close(self):
         """Close the Realtime service and release any resources."""

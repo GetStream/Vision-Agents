@@ -50,6 +50,7 @@ dev = [
     "pytest-asyncio",
     "python-dotenv",
     "pre-commit",
+    "scalene>=1.5.54",
 ]
 
 [tool.mypy]
