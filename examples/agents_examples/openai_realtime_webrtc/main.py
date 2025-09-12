@@ -42,7 +42,7 @@ You are a voice assistant. Speak English only. Keep responses short, natural, an
 """
 
         ),
-        llm=Realtime(system_prompt="You are a voice assistant. Speak English only."),
+        llm=Realtime(instructions="You are a voice assistant. Speak English only."),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
