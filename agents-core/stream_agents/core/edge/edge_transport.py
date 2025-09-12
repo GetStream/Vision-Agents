@@ -12,6 +12,10 @@ from getstream import Stream
 from getstream.models import UserRequest, Call
 from typing import TYPE_CHECKING
 
+from getstream.video import rtc
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
+from getstream.video.rtc.tracks import TrackSubscriptionConfig, SubscriptionConfig
+
 if TYPE_CHECKING:
 
     from stream_agents.core.agents import Agent
@@ -42,7 +46,7 @@ class StreamEdge(EdgeTransport):
         self.client = Stream.from_env()
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def join(self, agent: "Agent", call: Call):
+    async def join(self, agent: "Agent", call: Call):
         """
         The logic for joining a call is different for each edge network/realtime audio/video provider
 
@@ -55,9 +59,39 @@ class StreamEdge(EdgeTransport):
         TODO:
         - not implemented yet since this will change after realtime STS integration
         """
-        pass
+        # Traditional mode - use WebRTC connection
+        # Configure subscription for audio and video
+        subscription_config = SubscriptionConfig(
+            default=self._get_subscription_config()
+        )
 
+        # Open RTC connection and keep it alive for the duration of the returned context manager
+        connection_cm = await rtc.join(
+            call, agent.agent_user.id, subscription_config=subscription_config
+        )
+        connection = await connection_cm.__aenter__()
+        self._connection = connection
 
+        return connection_cm
+
+    async def publish_tracks(self, audio_track, video_track):
+        """
+        Add the tracks to publish audio and video
+        """
+        await self._connection.add_tracks(audio=audio_track, video=video_track)
+        if audio_track:
+            self.logger.debug("🤖 Agent ready to speak")
+        if video_track:
+            self.logger.debug("🎥 Agent ready to publish video")
+        # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
+
+    def _get_subscription_config(self):
+        return TrackSubscriptionConfig(
+            track_types=[
+                TrackType.TRACK_TYPE_VIDEO,
+                TrackType.TRACK_TYPE_AUDIO,
+            ]
+        )
 
     def open_demo(self, call: Call) -> str:
         client = call.client.stream

@@ -129,22 +129,7 @@ class Agent:
         self._setup_vad()
         self._setup_mcp_servers()
 
-    def before_response(self, input):
-        pass
 
-    def on(self, event_type: EventType):
-        #TODO: this approach is a bit ugly. also breaks with multiple agents.
-        def decorator(func):
-            registry = get_global_registry()
-            registry.add_listener(event_type, func)
-            return func
-        return decorator
-
-    async def after_response(self, llm_response):
-        # In Realtime (STS) mode or when not joined to a call, conversation may be None.
-        # Only resume the reply queue (which writes to conversation/tts) when a conversation exists.
-        if self.conversation is not None:
-            await self.queue.resume(llm_response)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
@@ -226,22 +211,15 @@ class Agent:
         if self.sts_mode and isinstance(self.llm, Realtime):
             await self.llm.wait_until_ready()
 
-        # Traditional mode - use WebRTC connection
-        # Configure subscription for audio and video
-        subscription_config = SubscriptionConfig(
-            default=self._get_subscription_config()
-        )
 
-        # Open RTC connection and keep it alive for the duration of the returned context manager
-        connection_cm = await rtc.join(
-            call, self.agent_user.id, subscription_config=subscription_config
-        )
-        connection = await connection_cm.__aenter__()
-        self._connection = connection
+        connection_cm = await self.edge.join(self, call)
+
+
+
         self._is_running = True
 
-        registry = get_global_registry()
-        registry.add_connection_listeners(connection)
+        #registry = get_global_registry()
+        #registry.add_connection_listeners(connection)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -250,12 +228,7 @@ class Agent:
         video_track = self._video_track if self.publish_video else None
 
         if audio_track or video_track:
-            await connection.add_tracks(audio=audio_track, video=video_track)
-            if audio_track:
-                self.logger.debug("🤖 Agent ready to speak")
-            if video_track:
-                self.logger.debug("🎥 Agent ready to publish video")
-            # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
+            await self.edge.publish_tracks(audio_track, video_track)
 
             # Set up event handlers for audio processing
             await self._listen_to_audio_and_video()
@@ -269,6 +242,24 @@ class Agent:
         from .agent_session import AgentSessionContextManager
 
         return AgentSessionContextManager(self, connection_cm)
+
+    def before_response(self, input):
+        pass
+
+    def on(self, event_type: EventType):
+        #TODO: this approach is a bit ugly. also breaks with multiple agents.
+        def decorator(func):
+            registry = get_global_registry()
+            registry.add_listener(event_type, func)
+            return func
+        return decorator
+
+    async def after_response(self, llm_response):
+        # In Realtime (STS) mode or when not joined to a call, conversation may be None.
+        # Only resume the reply queue (which writes to conversation/tts) when a conversation exists.
+        if self.conversation is not None:
+            await self.queue.resume(llm_response)
+
 
     async def say(self, text):
         await self.queue.say_text(text)
@@ -307,13 +298,7 @@ class Agent:
         else:
             self._stt_setup = False
 
-    def _get_subscription_config(self):
-        return TrackSubscriptionConfig(
-            track_types=[
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_AUDIO,
-            ]
-        )
+
 
     async def _listen_to_audio_and_video(self) -> None:
         """Set up event handlers for the connection."""
