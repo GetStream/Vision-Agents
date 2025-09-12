@@ -213,6 +213,10 @@ class EventLogger:
         """Log an event with structured information."""
         self.registry.register_event(event)
 
+        # Skip logging for VAD_INFERENCE events to reduce noise
+        if event.event_type.value == "vad_inference":
+            return
+
         # Create structured log entry
         log_data: Dict[str, Any] = {
             "event_type": event.event_type.value,

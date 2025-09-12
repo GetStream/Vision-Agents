@@ -9,8 +9,9 @@ from aiortc import VideoStreamTrack
 from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
+from ..utils.utils import bytes_to_pcm_data
 from ..vad import VAD
-from ..events import STTTranscriptEvent, STTPartialTranscriptEvent
+from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADSpeechStartEvent, VADAudioEvent
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from getstream.chat.client import ChatClient
@@ -258,8 +259,7 @@ class Agent:
     def _setup_vad(self):
         if self.vad:
             self.logger.info("🎙️ Setting up VAD listeners")
-            self.vad.on("partial", self._on_vad_speech_start)
-            # self.vad.on("speech_end", self._on_vad_speech_end)
+            self.vad.on("audio", self._on_vad_audio)
 
     def _setup_turn_detection(self):
         if self.turn_detection:
@@ -337,7 +337,8 @@ class Agent:
                 # Extract audio bytes for processors using the proper PCM data structure
                 # PCM data has: format, sample_rate, samples, pts, dts, time_base
                 audio_bytes = pcm_data.samples.tobytes()
-                asyncio.create_task(self.vad.process_audio(pcm_data, participant))
+                if self.vad:
+                    asyncio.create_task(self.vad.process_audio(pcm_data, participant))
                 # Forward to audio processors (skip None values)
                 for processor in self.audio_processors:
                     if processor is None:
@@ -454,10 +455,9 @@ class Agent:
                 )
                 await asyncio.sleep(0.5)
 
-    def _on_vad_speech_start(self, event):
-        self.logger.info(f"============== VAD EVENT {event.is_speech_active} ==============")
-
-    def _on_vad_speech_end(self, event):
+    def _on_vad_audio(self, event:VADAudioEvent):
+        # bytes_to_pcm = bytes_to_pcm_data(event.audio_data)
+        # asyncio.create_task(self.stt.process_audio(bytes_to_pcm, event.user_metadata))
         pass
 
     def _on_turn_started(self, event_data: TurnEventData) -> None:

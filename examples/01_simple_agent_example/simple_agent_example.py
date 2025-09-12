@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import elevenlabs, deepgram, openai
+from stream_agents.plugins import elevenlabs, deepgram, openai, silero
 from stream_agents.core import agents, edge, cli
 from getstream import Stream
 
@@ -26,6 +26,7 @@ async def start_agent() -> None:
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
+        vad=silero.VAD(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
