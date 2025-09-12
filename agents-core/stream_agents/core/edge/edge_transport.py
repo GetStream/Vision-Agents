@@ -8,11 +8,13 @@ import webbrowser
 from urllib.parse import urlencode
 from uuid import uuid4
 
+import aiortc
 from getstream import Stream
 from getstream.models import UserRequest, Call
 from typing import TYPE_CHECKING
 
 from getstream.video import rtc
+from getstream.video.rtc import audio_track
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from getstream.video.rtc.tracks import TrackSubscriptionConfig, SubscriptionConfig
 
@@ -75,10 +77,10 @@ class StreamEdge(EdgeTransport):
         return connection_cm
 
     def create_audio_track(self):
-        pass
+        return audio_track.AudioStreamTrack(framerate=16000)
 
     def create_video_track(self):
-        pass
+        return aiortc.VideoStreamTrack()
 
     async def publish_tracks(self, audio_track, video_track):
         """
@@ -98,6 +100,9 @@ class StreamEdge(EdgeTransport):
                 TrackType.TRACK_TYPE_AUDIO,
             ]
         )
+
+    def close(self):
+        pass
 
     def open_demo(self, call: Call) -> str:
         client = call.client.stream

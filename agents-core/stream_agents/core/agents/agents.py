@@ -202,6 +202,7 @@ class Agent:
             )
 
         # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
+        # TODO: maybe agent.on(transcript?)
         if self.sts_mode:
             self.llm.on("transcript", self._on_transcript)
             self.llm.on("partial_transcript", self._on_partial_transcript)
@@ -215,10 +216,6 @@ class Agent:
 
         self.logger.info(f"🤖 Agent joining call: {call.id}")
 
-        if self.sts_mode:
-            self.logger.info("🎤 Using Realtime (Speech-to-Speech) mode")
-        else:
-            self.logger.info("🎤 Using STT/TTS mode")
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.sts_mode and isinstance(self.llm, Realtime):
@@ -662,9 +659,10 @@ class Agent:
         if self.publish_audio:
             if self.sts_mode and isinstance(self.llm, Realtime):
                 self._audio_track = self.llm.output_track
+                # TODO: why is this different...? (48k framerate vs 16k below)
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
-                self._audio_track = audio_track.AudioStreamTrack(framerate=16000)
+                self._audio_track = self.edge.create_audio_track()
                 if self.tts:
                     self.tts.set_output_track(self._audio_track)
 
@@ -675,53 +673,13 @@ class Agent:
             self._video_track = video_publisher.create_video_track()
             self.logger.info("🎥 Video track initialized from video publisher")
 
-    async def _setup_sts_audio_forwarding(self, sts_connection, rtc_connection):
-        """Set up audio forwarding from Realtime connection to WebRTC connection."""
-        self.logger.info("🔗 Setting up Realtime audio forwarding")
-
-        # Set up audio forwarding from Realtime to WebRTC
-        if self._audio_track:
-
-            async def forward_sts_audio(audio_data):
-                """Forward audio from Realtime connection to WebRTC connection."""
-                try:
-                    self.logger.info(
-                        f"🎵 Forwarding {len(audio_data)} bytes of Realtime audio to WebRTC"
-                    )
-                    # Send audio data to the audio track
-                    if self._audio_track is not None:
-                        await self._audio_track.send_audio(audio_data)
-                    self.logger.debug("✅ Audio forwarded successfully")
-                except Exception as e:
-                    self.logger.error(f"Error forwarding Realtime audio: {e}")
-                    self.logger.error(traceback.format_exc())
-
-            # Check which type of Realtime connection we have
-            if hasattr(sts_connection, "on_audio") and callable(
-                getattr(sts_connection, "on_audio")
-            ):
-                # Gemini Live-style connection - register audio callback
-                sts_connection.on_audio(forward_sts_audio)
-                self.logger.info("✅ Gemini Live audio forwarding configured")
-            elif hasattr(sts_connection, "on_audio"):
-                # OpenAI-style connection with on_audio decorator
-                @sts_connection.on_audio
-                async def forward_openai_audio(audio_data):
-                    await forward_sts_audio(audio_data)
-
-                self.logger.info("✅ OpenAI audio forwarding configured")
-            else:
-                self.logger.warning(
-                    "⚠️ Realtime connection doesn't support audio forwarding"
-                )
-        else:
-            self.logger.warning("⚠️ Audio track not available for forwarding")
-
     async def close(self):
         """Clean up all connections and resources."""
         self._is_running = False
         self._user_conversation_handle = None
         self._agent_conversation_handle = None
+
+        # TODO: cleanup this function
 
         # Disconnect from MCP servers
         await self._disconnect_mcp_servers()
@@ -782,6 +740,8 @@ class Agent:
             self.logger.debug(f"Error canceling interval task: {e}")
         finally:
             self._interval_task = None
+
+        self.edge.close()
 
     async def _connect_mcp_servers(self):
         """Connect to all configured MCP servers."""
