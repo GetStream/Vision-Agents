@@ -122,7 +122,7 @@ class EventRegistry:
     def add_connection_listeners(self, connection: 'rtc.ConnectionManager'):
         connection_mapping = {c.event_type: c for c in ConnectionBaseEvent.__subclasses__()}
         call_mapping = {c.event_type: c for c in CallBaseEvent.__subclasses__()}
-
+        connection._coordinator_ws_client._logger = logger
         for event_type, handlers in self.listeners.items():
             if event_type in connection_mapping:
                 event_name = event_type.value.lstrip('connection_')
@@ -143,6 +143,7 @@ class EventRegistry:
                 for handler in handlers:
                     connection._coordinator_ws_client.on_wildcard("*", my_handler)
 
+                    # TODO: make work for call events fix
                     # partial(
                     #     self._handle_event,
                     #     event_dataclass=call_mapping[event_type], handler=handler

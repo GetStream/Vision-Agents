@@ -41,6 +41,9 @@ if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
 
 
+from getstream.video.rtc.coordinator.ws import StreamAPIWS
+
+
 class Agent:
     def __init__(
         self,

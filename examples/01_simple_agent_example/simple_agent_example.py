@@ -14,15 +14,15 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-
 async def start_agent() -> None:
     # create a stream client and a user object
     client = Stream.from_env()
-    agent_user = client.create_user(name="My happy AI friend")
+    #client.video.query_calls
+    #agent_user = client.create_user(name="My happy AI friend")
 
     agent = agents.Agent(
         edge=edge.StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-        agent_user=agent_user,  # the user object for the agent (name, image etc)
+        #agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=elevenlabs.TTS(),
@@ -50,13 +50,13 @@ async def start_agent() -> None:
     call = client.video.call("default", str(uuid4()))
 
     # Open the demo UI
-    agent.edge.open_demo(call)
 
     # Have the agent join the call/room
     with await agent.join(call):
         # Example 1: standardized simple response (aggregates delta/done)
         #:await agent.llm.simple_response("Please say verbatim: 'this is a test of the OpenAI realtime api.'.")
-
+        await asyncio.sleep(2)
+        agent.edge.open_demo(call)
         await agent.finish()  # run till the call ends
 
 
