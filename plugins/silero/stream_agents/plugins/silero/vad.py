@@ -576,6 +576,7 @@ class VAD(vad.VAD):
                 activation_threshold=self.activation_th,
                 frame_count=1,
                 user_metadata=user,
+                audio_data=frame
             )
             register_global_event(speech_start_event)
             self.emit("speech_start", speech_start_event)

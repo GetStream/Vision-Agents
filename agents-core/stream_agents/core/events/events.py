@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from getstream.video.rtc.track_util import PcmData
+
 
 class EventType(Enum):
     """Enumeration of all event types across plugin systems."""
@@ -364,6 +366,7 @@ class VADSpeechStartEvent(BaseEvent):
     speech_probability: float = 0.0
     activation_threshold: float = 0.0
     frame_count: int = 1
+    audio_data: PcmData = None
 
 
 @dataclass
