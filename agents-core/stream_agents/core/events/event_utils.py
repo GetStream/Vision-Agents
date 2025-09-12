@@ -8,11 +8,14 @@ and debugging across all plugin types.
 import logging
 import time
 from typing import Dict, Any, List, Optional, Callable
+from functools import partial
 from collections import defaultdict, deque
 
-from .events import BaseEvent, EventType
+from .events import BaseEvent, EventType, ConnectionBaseEvent, CallBaseEvent
 
 logger = logging.getLogger(__name__)
+
+from getstream.video import rtc
 
 
 class EventFilter:
@@ -110,6 +113,42 @@ class EventRegistry:
                 listener(event)
             except Exception as e:
                 logger.error(f"Error in event listener: {e}")
+
+    async def _handle_event(self, event_name, data, event_dataclass, handler):
+        logger.info(f"event call received {event_name}: {data}")
+        await handler(event_dataclass.from_stream_event(data))
+
+
+    def add_connection_listeners(self, connection: 'rtc.ConnectionManager'):
+        connection_mapping = {c.event_type: c for c in ConnectionBaseEvent.__subclasses__()}
+        call_mapping = {c.event_type: c for c in CallBaseEvent.__subclasses__()}
+        connection._coordinator_ws_client._logger = logger
+        for event_type, handlers in self.listeners.items():
+            if event_type in connection_mapping:
+                event_name = event_type.value.lstrip('connection_')
+                logger.info(f"Event handler added for: {event_type} - {event_name}, {handlers}")
+                for handler in handlers:
+                    connection.ws_client.on_wildcard(
+                        event_name, partial(
+                            self._handle_event,
+                            event_dataclass=connection_mapping[event_type], handler=handler
+                        )
+                    )
+            elif event_type in call_mapping:
+                event_name = event_type.value.lstrip('call_')
+                event_name = f"call.{event_name}"
+                logger.info(f"Event handler added for: {event_type} {event_name}, {handlers}")
+                def my_handler(event_name, data):
+                    logger.info(f"Call ws event {event_name}: {data}")
+                for handler in handlers:
+                    connection._coordinator_ws_client.on_wildcard("*", my_handler)
+
+                    # TODO: make work for call events fix
+                    # partial(
+                    #     self._handle_event,
+                    #     event_dataclass=call_mapping[event_type], handler=handler
+                    # ))
+
 
     def add_listener(
         self, event_type: EventType, listener: Callable[[BaseEvent], None]

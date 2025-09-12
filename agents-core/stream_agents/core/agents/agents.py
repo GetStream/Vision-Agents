@@ -16,6 +16,7 @@ from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from getstream.chat.client import ChatClient
 from getstream.models import User, ChannelInput, UserRequest
+from ..events import get_global_registry, EventType
 from getstream.video import rtc
 from getstream.video.call import Call
 from getstream.video.rtc import audio_track
@@ -38,6 +39,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
+
+
+from getstream.video.rtc.coordinator.ws import StreamAPIWS
 
 
 class Agent:
@@ -109,7 +113,7 @@ class Agent:
         self._current_frame = None
         self._interval_task = None
         self._callback_executed = False
-        self._connection: Optional[rtc.RTCConnection] = None
+        self._connection: Optional[rtc.ConnectionManager] = None
         self._audio_track: Optional[audio_track.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
         self._sts_connection = None
@@ -124,6 +128,13 @@ class Agent:
 
     def before_response(self, input):
         pass
+
+    def on(self, event_type: EventType):
+        def decorator(func):
+            registry = get_global_registry()
+            registry.add_listener(event_type, func)
+            return func
+        return decorator
 
     async def after_response(self, llm_response):
         # In Realtime (STS) mode or when not joined to a call, conversation may be None.
@@ -222,6 +233,9 @@ class Agent:
         self._connection = connection
         self._is_running = True
 
+        registry = get_global_registry()
+        registry.add_connection_listeners(connection)
+
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
         # Set up audio and video tracks together to avoid SDP issues
@@ -234,7 +248,6 @@ class Agent:
                 self.logger.debug("🤖 Agent ready to speak")
             if video_track:
                 self.logger.debug("🎥 Agent ready to publish video")
-
             # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
             # Set up event handlers for audio processing

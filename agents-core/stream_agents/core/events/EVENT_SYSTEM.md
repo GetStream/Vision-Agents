@@ -17,7 +17,7 @@ The Plugins Event System provides a structured, type-safe approach to event hand
 
 ### Base Event Structure
 
-All events inherit from `BaseEvent` which provides:
+All plugin events inherit from `PluginBaseEvent` which provides:
 
 ```python
 @dataclass
@@ -27,6 +27,9 @@ class BaseEvent:
     timestamp: datetime = field(default_factory=datetime.utcnow)
     session_id: Optional[str] = None
     user_metadata: Optional[Dict[str, Any]] = None
+
+@dataclass
+class PluginBaseEvent(BaseEvent):
     plugin_name: Optional[str] = None
     plugin_version: Optional[str] = None
 ```
@@ -50,7 +53,7 @@ Emitted when a complete transcript is available.
 
 ```python
 @dataclass
-class STTTranscriptEvent(BaseEvent):
+class STTTranscriptEvent(PluginBaseEvent):
     text: str = ""
     confidence: float = 1.0
     language: Optional[str] = None
@@ -66,7 +69,7 @@ Emitted when a partial transcript is available.
 
 ```python
 @dataclass
-class STTPartialTranscriptEvent(BaseEvent):
+class STTPartialTranscriptEvent(PluginBaseEvent):
     text: str = ""
     confidence: float = 1.0
     # ... similar fields to STTTranscriptEvent
@@ -80,7 +83,7 @@ Emitted when TTS audio data is available.
 
 ```python
 @dataclass
-class TTSAudioEvent(BaseEvent):
+class TTSAudioEvent(PluginBaseEvent):
     audio_data: bytes
     audio_format: AudioFormat = AudioFormat.PCM_S16
     sample_rate: int = 16000
@@ -104,7 +107,7 @@ Emitted when VAD detects a complete speech segment.
 
 ```python
 @dataclass
-class VADAudioEvent(BaseEvent):
+class VADAudioEvent(PluginBaseEvent):
     audio_data: bytes  # PCM audio data
     sample_rate: int
     audio_format: AudioFormat = AudioFormat.PCM_S16
