@@ -2644,7 +2644,6 @@ requires-dist = [
     { name = "krisp-audio", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" },
     { name = "krisp-audio", marker = "sys_platform == 'win32'", path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" },
     { name = "openai", specifier = ">=1.101.0" },
-    { name = "openai", specifier = ">=1.106.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "stream-agents", editable = "../../agents-core" },
     { name = "stream-agents-plugins-anthropic", editable = "../../plugins/anthropic" },
