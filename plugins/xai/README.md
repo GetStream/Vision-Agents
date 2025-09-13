@@ -67,7 +67,8 @@ llm = LLM(
 # Create a response with system instructions
 response = await llm.create_response(
     input="Tell me about the weather",
-    instructions="You are a helpful weather assistant. Always be cheerful and optimistic."
+    instructions="You are a helpful weather assistant. Always be cheerful and optimistic.",
+    stream=True
 )
 ```
 
