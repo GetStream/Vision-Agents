@@ -22,7 +22,7 @@ async def start_agent() -> None:
     agent = agents.Agent(
         edge=edge.StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
-        instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
+        instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful. Read @instructions.md",
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),

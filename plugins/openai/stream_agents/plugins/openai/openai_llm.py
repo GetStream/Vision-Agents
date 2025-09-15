@@ -112,6 +112,7 @@ class OpenAILLM(LLM):
 
         # Use parsed instructions if available (includes markdown file contents)
         if hasattr(self, 'parsed_instructions') and self.parsed_instructions:
+
             # Combine original instructions with markdown file contents
             enhanced_instructions = self._build_enhanced_instructions()
             if enhanced_instructions:
