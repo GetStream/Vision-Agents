@@ -17,12 +17,11 @@ load_dotenv()
 async def start_agent() -> None:
     # create a stream client and a user object
     client = Stream.from_env()
-    #client.video.query_calls
-    #agent_user = client.create_user(name="My happy AI friend")
+    agent_user = client.create_user(name="My happy AI friend")
 
     agent = agents.Agent(
         edge=edge.StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-        #agent_user=agent_user,  # the user object for the agent (name, image etc)
+        agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=elevenlabs.TTS(),
@@ -33,16 +32,12 @@ async def start_agent() -> None:
 
     @agent.on(EventType.PARTICIPANT_JOINED)
     async def my_handler(participant):
-        # TODO: wait till we have confirmation from client it can hear us
         await asyncio.sleep(5)
         await agent.say(f"Hello, {participant.name}")
         agent.logger.info(f"handled event {participant}")
 
     @agent.on(EventType.CALL_MEMBER_ADDED)
     async def my_other_handler(participant):
-        # TODO: wait till we have confirmation from client it can hear us
-        #await asyncio.sleep(5)
-        #await agent.queue.say_text(f"Hello, {participant.name}")
         agent.logger.info(f"Call.* handled event {participant}")
 
 
@@ -54,7 +49,6 @@ async def start_agent() -> None:
     # Have the agent join the call/room
     with await agent.join(call):
         # Example 1: standardized simple response (aggregates delta/done)
-        #:await agent.llm.simple_response("Please say verbatim: 'this is a test of the OpenAI realtime api.'.")
         await asyncio.sleep(2)
         agent.edge.open_demo(call)
         await agent.finish()  # run till the call ends
