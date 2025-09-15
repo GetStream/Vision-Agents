@@ -15,15 +15,17 @@ from typing import TYPE_CHECKING
 
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType, Participant
+from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import TrackSubscriptionConfig, SubscriptionConfig
+from pyee.asyncio import AsyncIOEventEmitter
 
 if TYPE_CHECKING:
 
     from stream_agents.core.agents import Agent
 
 
-class EdgeTransport(abc.ABC):
+class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
     """
     To normalize
 
@@ -45,6 +47,7 @@ class StreamEdge(EdgeTransport):
 
     def __init__(self, **kwargs):
         # Initialize Stream client
+        super().__init__()
         self.client = Stream.from_env()
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -59,7 +62,8 @@ class StreamEdge(EdgeTransport):
         - connecting agent's outgoing audio/video to the call
 
         TODO:
-        - not implemented yet since this will change after realtime STS integration
+        - process track flow
+
         """
         # Traditional mode - use WebRTC connection
         # Configure subscription for audio and video
@@ -73,6 +77,15 @@ class StreamEdge(EdgeTransport):
         )
         connection = await connection_cm.__aenter__()
         self._connection = connection
+
+        @self._connection.on("audio")
+        async def on_audio_received(pcm: PcmData, participant: Participant):
+            self.emit("audio", pcm, participant)
+
+        @self._connection.on("track_added")
+        async def on_track(track_id, track_type, user):
+            # TODO: maybe make it easy to subscribe only to video tracks?
+            self.emit("track_added", track_id, track_type, user)
 
         return connection_cm
 

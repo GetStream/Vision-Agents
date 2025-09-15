@@ -108,11 +108,7 @@ class Agent:
         if self.llm is not None:
             self.llm.attach_agent(self)
 
-            @self.llm.on("before_llm_response")
-            async def handle_before_response(llm_response: LLMResponse):
-                self.logger.debug(
-                    f"handle_before_response: {llm_response}"
-                )
+            # TODO: move the chat update flow stuff
 
             @self.llm.on("after_llm_response")
             async def handle_after_response(llm_response: LLMResponse):
@@ -308,59 +304,18 @@ class Agent:
         else:
             self._stt_setup = False
 
-
-
     async def _listen_to_audio_and_video(self) -> None:
-        """Set up event handlers for the connection."""
-        if not self._connection:
-            self.logger.error("❌ No active connections found")
-            return
-
-        # Handle new participants joining
-        async def on_track_published(event: events_pb2.TrackPublished):
-            try:
-                self.logger.info(f"📢 Track published: {event}")
-            except Exception as e:
-                self.logger.error(f"❌ Error handling track published event: {e}")
-                self.logger.error(traceback.format_exc())
-
-        # Set up WebSocket event handlers
-        try:
-            if hasattr(self._connection, "_ws_client") and self._connection._ws_client:
-                self._connection._ws_client.on_event(
-                    "track_published", on_track_published
-                )
-        except Exception as e:
-            self.logger.error(f"Error setting up WebSocket event handlers: {e}")
-
         # Handle audio data for STT or Realtime
-        @self._connection.on("audio")
+        @self.edge.on("audio")
         async def on_audio_received(pcm: PcmData, participant: Participant):
-            if not participant:
-                import pdb
-
-                pdb.set_trace()
-
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
-
-            # Log approximate duration for debugging latency (disabled at higher log levels)
-            try:
-                sr = getattr(pcm, "sample_rate", 16000) or 16000
-                n = len(getattr(pcm, "samples", []) or [])
-                if isinstance(getattr(pcm, "samples", None), bytes):
-                    n = len(pcm.samples) // 2
-                duration_ms = int(1000 * n / sr) if sr else 0
-                self.logger.debug(f"rx audio chunk ~{duration_ms}ms from {getattr(participant, 'user_id', None)}")
-            except Exception:
-                pass
 
             await self.reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
-        @self._connection.on("track_added")
+        @self.edge.on("track_added")
         async def on_track(track_id, track_type, user):
-            self.logger.info("VDP: on track")
             asyncio.create_task(self._process_track(track_id, track_type, user))
 
     async def reply_to_audio(
@@ -398,24 +353,19 @@ class Agent:
                     await self.stt.process_audio(pcm_data, participant)
 
     async def _process_track(self, track_id: str, track_type: str, participant):
+        """
+        - connect the track to video sender...
+        -
+        """
+
         """Process video frames from a specific track."""
         self.logger.info(
             f"🎥VDP: Processing track: {track_id} from user {getattr(participant, 'user_id', 'unknown')} (type: {track_type})"
-        )
-        self.logger.info(
-            f"🎥 Participant object: {participant}, type: {type(participant)}"
         )
 
         # Only process video tracks - track_type might be string, enum or numeric (2 for video)
         if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
             self.logger.debug(f"Ignoring non-video track: {track_type}")
-            return
-
-        self.logger.info(f"🎥 Processing VIDEO track: {track_id}")
-
-        # Subscribe to the video track
-        if self._connection is None:
-            self.logger.error("❌ No active connection")
             return
 
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
@@ -431,7 +381,7 @@ class Agent:
         await asyncio.sleep(0.5)
 
         # If Realtime provider supports video, forward frames upstream once per track
-        if self.sts_mode and isinstance(self.llm, Realtime):
+        if self.sts_mode:
             try:
                 await self.llm.start_video_sender(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
@@ -448,12 +398,7 @@ class Agent:
         self.logger.info(
             f"📸 Starting video processing loop for track {track_id} {participant.user_id} {participant.name}"
         )
-        self.logger.info(
-            f"📸 Track readyState: {getattr(track, 'readyState', 'unknown')}"
-        )
-        self.logger.info(f"📸 Track kind: {getattr(track, 'kind', 'unknown')}")
-        self.logger.info(f"📸 Track enabled: {getattr(track, 'enabled', 'unknown')}")
-        self.logger.info(f"📸 Track muted: {getattr(track, 'muted', 'unknown')}")
+
         # Use the exact same pattern as the working example
         while True:
             try:

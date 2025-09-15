@@ -1,48 +1,88 @@
 # Video/Vision Agents by Stream
 
 Video/Vision AI agents on [Stream's edge network](https://getstream.io/video/).
+Open Agent library. Goal is to support our video/audio competitors.
 
 -  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with realtime models
--  **Low Latency**: Quickly join (500ms) and fast audio latency (30ms)
+-  **Low Latency**: Join quickly (500ms) and low audio/video latency (30ms)
 -  **Open**: Built by Stream, but use any video edge network that you like
--  **Voice & Chat**: Store & query conversation history
 -  **Native APIs**: Native SDK methods from OpenAI (create response), Gemini (generate) and Claude (create message). So you're never behind on the latest features
-
-Open Agent library. Goal is to support most of our video/audio competitors. (See adding support section)
-SDKs for React, Android, iOS, Flutter, React, React Native and Unity.
+-  **SDKs**: SDKs for React, Android, iOS, Flutter, React, React Native and Unity.
 
 ## Examples
 
-### Cluely example
-
-Listen to voice and watch the screen but don't respond. Show suggestions as text/chat.
-
-Demo video
-
-```python
-# partial example, see the example file for full details
-```
-
 ### Golf Coaching Example
 
-Use Yolo to determine body position. Share this with gemini for live coaching.
+It's easy to build a golf coaching AI. The example below combines Yolo with openAI realtime.
 
 Demo video
 
 ```python
-# partial example, see the example file for full details
+# partial example, full example: examples/03_golf_coach_example/golf_coach_example.py
+agent = Agent(
+    edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
+    agent_user=agent_user,  # the user object for the agent (name, image etc)
+    instructions="Help users perfect their swing. Read @golf_coach.md",
+    # openai realtime, no need to set tts, or sst (though that's also supported)
+    llm=openai.Realtime(model="gpt-realtime"),
+    processors=[
+        YOLOPoseProcessor()
+    ],  # processors can fetch extra data, check images/audio data or transform video
+)
+```
+
+### Cluely style example
+
+Cluely offers realtime coaching via an invisible overlay. This example shows you how you can build your own app like Cluely.
+It combines Gemini realtime (to watch your screen), and doesn't broadcast audio (only text).
+
+Demo video
+
+```python
+# partial example, full example: examples/...
+agent = Agent(
+    edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
+    agent_user=agent_user,  # the user object for the agent (name, image etc)
+    instructions="You are silently helping the user pass this interview. See @interview_coach.md",
+    # gemini realtime, no need to set tts, or sst (though that's also supported)
+    llm=gemini.Realtime()
+)
 ```
 
 ### Dota Coaching Example
 
-Use API calls to retrieve game state, while also analysing the gameplay.
-OpenAI + API calls.
+Video agents typically need a lot of context to be effective. 
+This example combines OpenDota, Stratz, valve game state together with Gemini to improve your Dota skills.
+It highlights how you can combine multiple APIs for a full coaching experience.
 
 Demo video
 
-### Security Camera Example
+```python
+# partial example, full example: examples/...
+agent = Agent(
+    edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
+    agent_user=agent_user,  # the user object for the agent (name, image etc)
+    instructions="You are silently helping the user pass this interview. See @interview_coach.md",
+    # gemini realtime, no need to set tts, or sst (though that's also supported)
+    llm=gemini.Realtime()
+)
+```
 
-Demo video
+### Other examples
+
+* Video AI avatar
+* React UI customization
+* Linear standup agent
+
+## Docs
+
+TODO Link to docs
+
+
+
+
+
+
 
 ## OpenAI Proxy mode vs Stream agents
 
@@ -68,155 +108,8 @@ This python framework gives you full control.
 ```bash
 # Install dependencies using uv
 uv add openai python-dotenv stream_agents
-
-# Or with pip
-pip install openai python-dotenv stream_agents
 ```
 
-## ⚡ Quick Start - Cluely style AI
-
-```python
-from agents import Agent
-
-# Roboflow for object detection (finetuned)
-# load docs from @ai-dota-coaching.md
-# use speech to speech (STS) gemini model
-agent = Agent(
-    pre_processors=[Roboflow(), dota_api("gameid")],
-    interval=1
-second,
-llm = GeminiSTS(),
-# turn_detection=your_turn_detector
-)
-
-# Join a Stream video call
-await agent.join(call)
-
-# gemini is available at
-agent.llm.client
-
-# history at
-agent._conversation
-```
-
-
-
-
-## ⚡ Quick Start - Video AI Coach
-
-```python
-from agents import Agent
-
-# Roboflow for object detection (finetuned)
-# load docs from @ai-dota-coaching.md
-# use speech to speech (STS) gemini model
-agent = Agent(
-    pre_processors=[Roboflow(), dota_api("gameid")],
-    interval=1 second,
-    llm=GeminiSTS(),
-    # turn_detection=your_turn_detector
-)
-
-# Join a Stream video call
-await agent.join(call)
-```
-
-## Video Transform
-
-Roboflow server side transform of video
-
-
-```python
-from agents import Agent
-
-
-# Create an agent with the exact syntax you requested
-agent = Agent(
-    video_transformer=RoboflowTransform() # transform live video from python (instead of on-device). use for AI avatars
-)
-
-# Join a Stream video call
-await agent.join(call)
-```
-
-## Quick Example - Voice AI (TTS, STT) and STS
-
-```python
-from agents import Agent
-from models import OpenAILLM
-
-# Create an AI model
-llm = OpenAILLM(
-    api_key="<your-api-key>",
-    model="gpt-4o-mini",
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello there"},
-    ],
-    default_temperature=0.8,
-)
-
-# Create an agent with the exact syntax you requested
-agent = Agent(
-    stt=your_stt_service,
-    pre_processors=[Roboflow()],
-    llm=llm,
-    tts=your_tts_service,
-    turn_detection=your_turn_detector
-)
-
-sts_model = OpenAIRealtime(
-    api_key="<your-api-key>",
-    model="gpt-4o-realtime-preview",
-    voice="Pluck"
-)
-speechToSpeechAgent = Agent(
-    sts=sts_model,
-)
-
-# Join a Stream video call
-await agent.join(call)
-```
-
-
-## 📚 Examples
-
-Other example to build
-- Simple image
-- Simple video capture
-- Simple audio capture
-- Moderation example (AWS image. comarketing)
-- SIP with twilio
-- Cluely clone
-
-Check out the [`examples/`](./examples/) directory for complete working examples:
-
-- **`examples/main.py`** - Basic TTS bot with ElevenLabs
-- **`examples/example_agent.py`** - Agent framework with tools and pre-processors
-- **`examples/example_openai_model.py`** - OpenAI model integration
-- **`examples/example_agent_with_openai.py`** - Complete AI agent with OpenAI
-
-```bash
-# Run any example
-python examples/example_agent_with_openai.py
-```
-
-## 🔧 Configuration
-
-Create a `.env` file with your API keys:
-
-```bash
-# Stream API (required)
-STREAM_API_KEY=your_stream_api_key
-STREAM_API_SECRET=your_stream_api_secret
-EXAMPLE_BASE_URL=https://pronto-staging.getstream.io
-
-# ElevenLabs TTS (for voice examples)
-ELEVENLABS_API_KEY=your_elevenlabs_api_key
-
-# OpenAI (for AI model examples)
-OPENAI_API_KEY=your_openai_api_key
-```
 
 ## 🏗️ Architecture
 
