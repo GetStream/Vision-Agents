@@ -84,8 +84,11 @@ class OpenAILLM(LLM):
 
             llm.simple_response("say hi to the user, be mean")
         """
+        # Use enhanced instructions if available (includes markdown file contents)
         instructions = None
-        if self.conversation is not None:
+        if hasattr(self, 'parsed_instructions') and self.parsed_instructions:
+            instructions = self._build_enhanced_instructions()
+        elif self.conversation is not None:
             instructions = self.conversation.instructions
 
         return await self.create_response(
@@ -106,6 +109,13 @@ class OpenAILLM(LLM):
         if not self.openai_conversation:
             self.openai_conversation = self.client.conversations.create()
         kwargs["conversation"] = self.openai_conversation.id
+
+        # Use parsed instructions if available (includes markdown file contents)
+        if hasattr(self, 'parsed_instructions') and self.parsed_instructions:
+            # Combine original instructions with markdown file contents
+            enhanced_instructions = self._build_enhanced_instructions()
+            if enhanced_instructions:
+                kwargs["instructions"] = enhanced_instructions
 
         self.emit("before_llm_response", self._normalize_message(kwargs["input"]))
 
@@ -151,6 +161,32 @@ class OpenAILLM(LLM):
             messages.append(message)
 
         return messages
+
+    def _build_enhanced_instructions(self) -> Optional[str]:
+        """
+        Build enhanced instructions by combining the original instructions with markdown file contents.
+        
+        Returns:
+            Enhanced instructions string with markdown file contents included, or None if no parsed instructions
+        """
+        if not hasattr(self, 'parsed_instructions') or not self.parsed_instructions:
+            return None
+        
+        parsed = self.parsed_instructions
+        enhanced_instructions = [parsed.input_text]
+        
+        # Add markdown file contents if any exist
+        if parsed.markdown_contents:
+            enhanced_instructions.append("\n\n## Referenced Documentation:")
+            for filename, content in parsed.markdown_contents.items():
+                if content:  # Only include non-empty content
+                    enhanced_instructions.append(f"\n### {filename}")
+                    enhanced_instructions.append(content)
+                else:
+                    enhanced_instructions.append(f"\n### {filename}")
+                    enhanced_instructions.append("*(File not found or could not be read)*")
+        
+        return "\n".join(enhanced_instructions)
 
     def _standardize_and_emit_event(self, event: ResponseStreamEvent) -> Optional[LLMResponse]:
         """

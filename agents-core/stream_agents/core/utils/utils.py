@@ -1,5 +1,20 @@
 import numpy as np
+import re
+import os
+from dataclasses import dataclass
+from typing import Dict, Optional
 from getstream.video.rtc.track_util import PcmData
+
+
+# Type alias for markdown file contents: maps filename to file content
+MarkdownFileContents = Dict[str, str]
+
+
+@dataclass
+class Instructions:
+    """Container for parsed instructions with input text and markdown files."""
+    input_text: str
+    markdown_contents: MarkdownFileContents  # Maps filename to file content
 
 
 def to_mono(samples: np.ndarray, num_channels: int) -> np.ndarray:
@@ -25,3 +40,56 @@ def bytes_to_pcm_data(
     """Convert raw bytes to PcmData object."""
     audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
     return PcmData(samples=audio_array, sample_rate=sample_rate, format=format)
+
+
+def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instructions:
+    """
+    Parse instructions from a string, extracting @ mentioned markdown files and their contents.
+    
+    Args:
+        text: Input text that may contain @ mentions of markdown files
+        base_dir: Base directory to search for markdown files. If None, uses current working directory.
+        
+    Returns:
+        Instructions object containing the input text and file contents
+        
+    Example:
+        >>> text = "Please read @file1.md and @file2.md for context"
+        >>> result = parse_instructions(text)
+        >>> result.input_text
+        "Please read @file1.md and @file2.md for context"
+        >>> result.markdown_contents
+        {"file1.md": "# File 1 content...", "file2.md": "# File 2 content..."}
+    """
+    # Find all @ mentions that look like markdown files
+    # Pattern matches @ followed by filename with .md extension
+    markdown_pattern = r'@([^\s@]+\.md)'
+    matches = re.findall(markdown_pattern, text)
+    
+    # Create a dictionary mapping filename to file content
+    markdown_contents = {}
+    
+    # Set base directory for file search
+    if base_dir is None:
+        base_dir = os.getcwd()
+    
+    for match in matches:
+        # Try to read the markdown file content
+        file_path = os.path.join(base_dir, match)
+        try:
+            if os.path.isfile(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    markdown_contents[match] = f.read()
+            else:
+                # File not found, store empty string
+                markdown_contents[match] = ""
+        except (OSError, IOError, UnicodeDecodeError):
+            # File read error, store empty string
+            markdown_contents[match] = ""
+    
+    return Instructions(
+        input_text=text,
+        markdown_contents=markdown_contents
+    )
+
+
