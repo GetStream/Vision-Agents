@@ -45,11 +45,22 @@ if TYPE_CHECKING:
 
 
 class Agent:
+    """
+    Agent class makes it easy to build your own video AI.
+
+    Commonly used methods
+
+    * agent.join(call) // join a call
+    * agent.llm.simple_response("greet the user")
+    * await agent.finish() // (wait for the call session to finish)
+    * agent.close() // cleanup
+
+    """
     def __init__(
         self,
         # edge network for video & audio
         edge: Optional[EdgeTransport] = None,
-        # llm, optionally with sts capabilities
+        # llm, optionally with sts/realtime capabilities
         llm: Optional[LLM | Realtime] = None,
         # instructions
         instructions: str = "Keep your replies short and dont use special characters.",
@@ -74,6 +85,7 @@ class Agent:
         self.edge = edge
         # Create agent user if not provided
         if agent_user is None:
+            # TODO: should we have a default...? or just raise an error.
             agent_id = f"agent-{uuid4()}"
             # Create a basic User object with required parameters
             self.agent_user = User(
@@ -107,45 +119,8 @@ class Agent:
 
         if self.llm is not None:
             self.llm.attach_agent(self)
-
-            # TODO: move the chat update flow stuff
-
-            @self.llm.on("after_llm_response")
-            async def handle_after_response(llm_response: LLMResponse):
-                if self.conversation is None:
-                    return
-
-                if self._agent_conversation_handle is None:
-                    message = Message(
-                        content=llm_response.text,
-                        role="assistant",
-                        user_id=self.agent_user.id,
-                    )
-                    self.conversation.add_message(message)
-                else:
-                    self.conversation.complete_message(self._agent_conversation_handle)
-                    self._agent_conversation_handle = None
-
-                # Resume the queue for TTS playback
-                await self.queue.resume(llm_response, user_id=self.agent_user.id)
-
-            @self.llm.on('standardized.output_text.delta')
-            def handle_output_text_delta(event: StandardizedTextDeltaEvent):
-                """Handle partial LLM response text deltas."""
-
-                if self.conversation is None:
-                    return
-
-                self.logger.info(f"received standardized.output_text.delta {event}")
-                # Create a new streaming message if we don't have one
-                if self._agent_conversation_handle is None:
-                    self._agent_conversation_handle = self.conversation.start_streaming_message(
-                        role="assistant",
-                        user_id=self.agent_user.id,
-                        initial_content=event.delta,
-                    )
-                else:
-                    self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
+            self.llm.on("after_llm_response", self._handle_after_response)
+            self.llm.on('standardized.output_text.delta', self._handle_output_text_delta)
 
         # Initialize state variables
         self._is_running: bool = False
@@ -166,6 +141,40 @@ class Agent:
         self._setup_vad()
         self._setup_mcp_servers()
 
+    def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
+        """Handle partial LLM response text deltas."""
+
+        if self.conversation is None:
+            return
+
+        self.logger.info(f"received standardized.output_text.delta {event}")
+        # Create a new streaming message if we don't have one
+        if self._agent_conversation_handle is None:
+            self._agent_conversation_handle = self.conversation.start_streaming_message(
+                role="assistant",
+                user_id=self.agent_user.id,
+                initial_content=event.delta,
+            )
+        else:
+            self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
+
+    async def _handle_after_response(self, llm_response: LLMResponse):
+        if self.conversation is None:
+            return
+
+        if self._agent_conversation_handle is None:
+            message = Message(
+                content=llm_response.text,
+                role="assistant",
+                user_id=self.agent_user.id,
+            )
+            self.conversation.add_message(message)
+        else:
+            self.conversation.complete_message(self._agent_conversation_handle)
+            self._agent_conversation_handle = None
+
+        # Resume the queue for TTS playback
+        await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
 
     def on(self, event_type: EventType):
@@ -251,29 +260,8 @@ class Agent:
 
         return AgentSessionContextManager(self, connection_cm)
 
-    def before_response(self, input):
-        pass
-
-    def on(self, event_type: EventType):
-        #TODO: this approach is a bit ugly. also breaks with multiple agents.
-        def decorator(func):
-            registry = get_global_registry()
-            registry.add_listener(event_type, func)
-            return func
-        return decorator
-
-    async def after_response(self, llm_response):
-        # In Realtime (STS) mode or when not joined to a call, conversation may be None.
-        # Only resume the reply queue (which writes to conversation/tts) when a conversation exists.
-        if self.conversation is not None:
-            await self.queue.resume(llm_response)
-
-
     async def say(self, text):
         await self.queue.say_text(text, self.agent_user.id)
-
-    async def play_audio(self, pcm):
-        await self.queue.send_audio(pcm)
 
     def _setup_vad(self):
         if self.vad:
@@ -311,14 +299,14 @@ class Agent:
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
-            await self.reply_to_audio(pcm, participant)
+            await self._reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
         @self.edge.on("track_added")
         async def on_track(track_id, track_type, user):
             asyncio.create_task(self._process_track(track_id, track_type, user))
 
-    async def reply_to_audio(
+    async def _reply_to_audio(
         self, pcm_data: PcmData, participant: models_pb2.Participant
     ) -> None:
         if participant and getattr(participant, "user_id", None) != self.agent_user.id:
@@ -408,8 +396,6 @@ class Agent:
                         img = video_frame.to_image()
 
                         for processor in self.image_processors:
-                            if processor is None:
-                                continue
                             try:
                                 await processor.process_image(img, participant.user_id)
                             except Exception as e:
@@ -419,8 +405,6 @@ class Agent:
 
                     # video processors
                     for processor in self.video_processors:
-                        if processor is None:
-                            continue
                         try:
                             await processor.process_video(track, participant.user_id)
                         except Exception as e:
@@ -624,68 +608,47 @@ class Agent:
         self._user_conversation_handle = None
         self._agent_conversation_handle = None
 
-        # TODO: cleanup this function
-
         # Disconnect from MCP servers
         await self._disconnect_mcp_servers()
 
-        try:
-            if self._sts_connection and hasattr(self._sts_connection, "__aexit__"):
-                await self._sts_connection.__aexit__(None, None, None)
-        except Exception as e:
-            self.logger.debug(f"Error closing Realtime connection: {e}")
-        finally:
-            self._sts_connection = None
+        # Close Realtime connection
+        if self._sts_connection:
+            await self._sts_connection.__aexit__(None, None, None)
+        self._sts_connection = None
 
-        try:
-            if self._connection and hasattr(self._connection, "__aexit__"):
-                await self._connection.__aexit__(None, None, None)
-        except Exception as e:
-            self.logger.debug(f"Error closing RTC connection: {e}")
-        finally:
-            self._connection = None
+        # Close RTC connection
+        if self._connection:
+            await self._connection.__aexit__(None, None, None)
+        self._connection = None
 
-        try:
-            if self.stt and hasattr(self.stt, "close"):
-                await self.stt.close()
-        except Exception as e:
-            self.logger.debug(f"Error closing STT: {e}")
+        # Close STT
+        if self.stt:
+            await self.stt.close()
 
-        try:
-            if self.tts and hasattr(self.tts, "close"):
-                await self.tts.close()
-        except Exception as e:
-            self.logger.debug(f"Error closing TTS: {e}")
-        try:
-            if self.turn_detection and hasattr(self.turn_detection, "stop"):
-                self.turn_detection.stop()
-        except Exception as e:
-            self.logger.debug(f"Error closing turn detection: {e}")
+        # Close TTS
+        if self.tts:
+            await self.tts.close()
 
-        try:
-            if self._audio_track and hasattr(self._audio_track, "stop"):
-                self._audio_track.stop()
-        except Exception as e:
-            self.logger.debug(f"Error stopping audio track: {e}")
-        finally:
-            self._audio_track = None
+        # Stop turn detection
+        if self.turn_detection:
+            self.turn_detection.stop()
 
-        try:
-            if self._video_track and hasattr(self._video_track, "stop"):
-                self._video_track.stop()
-        except Exception as e:
-            self.logger.debug(f"Error stopping video track: {e}")
-        finally:
-            self._video_track = None
+        # Stop audio track
+        if self._audio_track:
+            self._audio_track.stop()
+        self._audio_track = None
 
-        try:
-            if self._interval_task:
-                self._interval_task.cancel()
-        except Exception as e:
-            self.logger.debug(f"Error canceling interval task: {e}")
-        finally:
-            self._interval_task = None
+        # Stop video track
+        if self._video_track:
+            self._video_track.stop()
+        self._video_track = None
 
+        # Cancel interval task
+        if self._interval_task:
+            self._interval_task.cancel()
+        self._interval_task = None
+
+        # Close edge transport
         self.edge.close()
 
     async def _connect_mcp_servers(self):
