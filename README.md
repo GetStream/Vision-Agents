@@ -1,6 +1,6 @@
 # Video/Vision Agents by Stream
 
-Video/Vision AI agents on [Stream's edge network](https://getstream.io/video/).
+Video/Vision AI agents running on [Stream's edge network](https://getstream.io/video/).
 Open Agent library. Goal is to support our video/audio competitors.
 
 -  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with realtime models
@@ -78,12 +78,6 @@ agent = Agent(
 
 TODO Link to docs
 
-
-
-
-
-
-
 ## OpenAI Proxy mode vs Stream agents
 
 ** OpenAI Proxy mode **:
@@ -99,7 +93,7 @@ Benefits:
 * Faster/lowest latency
 * All programming languages
 
-** Stream agents **
+**Stream agents**
 
 This python framework gives you full control.
 
@@ -158,11 +152,11 @@ Reach out to nash@getstream.io, and we'll collaborate on getting you added
 AI is changing daily. This makes it important to use light wrapping. IE
 
 ```python
-tts = ElevenLabsTTS(client=ElevenLabsClient())
+tts = ElevenLabsTTS(client=ElevenLabs())
 ```
 
 Note how the ElevenLabsTTS handles standardization.
-But if the init for ElevenLabsClient changes, nothing breaks.
+But if the init for ElevenLabs changes, nothing breaks.
 If features are added to the client, you can use them easily via tts.client
 
 ### Typing

@@ -40,9 +40,8 @@ You are a voice assistant. Speak English only. Keep responses short, natural, an
 - Only respond to clear audio or text.
 - If the user's audio is not clear (e.g., ambiguous input/background noise/silent/unintelligible) or if you did not fully hear or understand the user, ask for clarification.
 """
-
         ),
-        llm=Realtime(instructions="You are a voice assistant. Speak English only."),
+        llm=Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

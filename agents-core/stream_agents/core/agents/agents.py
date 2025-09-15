@@ -124,7 +124,9 @@ class Agent:
             self.llm.attach_agent(self)
             self.llm.on("after_llm_response", self._handle_after_response)
             self.llm.on('standardized.output_text.delta', self._handle_output_text_delta)
-
+            if hasattr(self.llm, "instructions") and not getattr(self.llm, "instructions", None):
+                self.llm.instructions = self.instructions
+                
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
@@ -251,8 +253,8 @@ class Agent:
 
         self._is_running = True
 
-        #registry = get_global_registry()
-        #registry.add_connection_listeners(connection)
+        registry = get_global_registry()
+        registry.add_connection_listeners(connection_cm)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
