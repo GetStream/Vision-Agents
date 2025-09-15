@@ -135,15 +135,6 @@ Create a response with full control over parameters.
 
 **Returns:** `LLMResponse[Response]` with the generated text
 
-#### Events
-
-The LLM emits several events you can subscribe to:
-
-- `"chunk"`: Raw response chunks from xAI
-- `"standardized.output_text.delta"`: Standardized text delta events
-- `"standardized.response.completed"`: When response is fully generated
-- `"before_llm_response"`: Before processing input
-- `"after_llm_response"`: After generating response
 
 ## Configuration
 
