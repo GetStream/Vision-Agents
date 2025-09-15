@@ -109,6 +109,15 @@ class Agent:
             self.llm.attach_agent(self)
 
             # TODO: move the chat update flow stuff
+            # Propagate Agent instructions to realtime/LLM provider instance
+            if hasattr(self.llm, "instructions") and not getattr(self.llm, "instructions", None):
+                self.llm.instructions = self.instructions
+
+            @self.llm.on("before_llm_response")
+            async def handle_before_response(llm_response: LLMResponse):
+                self.logger.debug(
+                    f"handle_before_response: {llm_response}"
+                )
 
             @self.llm.on("after_llm_response")
             async def handle_after_response(llm_response: LLMResponse):

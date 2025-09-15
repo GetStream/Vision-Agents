@@ -203,6 +203,9 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
 
     def attach_agent(self, agent: Agent):
         self.agent = agent
+        # If provider has no explicit instructions set, inherit from Agent
+        if not getattr(self, "instructions", None) and getattr(agent, "instructions", None):
+            self.instructions = agent.instructions  # type: ignore[assignment]
 
     @abc.abstractmethod
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...

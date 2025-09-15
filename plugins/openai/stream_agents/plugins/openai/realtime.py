@@ -1,35 +1,33 @@
 """OpenAI Realtime API integration with WebRTC."""
 
 import asyncio
+from contextlib import asynccontextmanager
+import contextlib
+from fractions import Fraction
 import json
 import logging
 import os
+import httpx
 import traceback
-from typing import Optional, Any, AsyncIterator
-from contextlib import asynccontextmanager
-import contextlib
-import time
-import requests
+from typing import Any, AsyncIterator, Optional
+ 
+
 from aiortc import (
+    AudioStreamTrack,
+    RTCDataChannel,
     RTCPeerConnection,
     RTCSessionDescription,
-    RTCDataChannel,
-    AudioStreamTrack,
 )
-from aiortc.contrib.media import MediaStreamTrack, MediaStreamError
-import numpy as np
+from aiortc.contrib.media import MediaStreamError, MediaStreamTrack
 from av import AudioFrame
-from fractions import Fraction
-
-from getstream.video.call import Call
 from getstream.audio.utils import resample_audio
-
+from getstream.video.call import Call
+import numpy as np
+from stream_agents.core.events import RealtimeConnectedEvent, register_global_event
 from stream_agents.core.llm import realtime
 from stream_agents.core.llm.llm import LLMResponse
-from stream_agents.core.events import (
-    RealtimeConnectedEvent,
-    register_global_event,
-)
+
+ 
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +63,8 @@ class RealtimeConnection:
         self._frames_dropped: int = 0
         self._mic_track: Optional[AudioStreamTrack] = None
         # Remote audio receive counters (removed verbose logging)
+        # Shared HTTP client for REST calls to OpenAI
+        self._http: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self):
         """Start the WebRTC session with OpenAI."""
@@ -138,22 +138,34 @@ class RealtimeConnection:
         except Exception as e:
             logger.error(f"Failed to send event: {e}")
 
-    def _get_session_token(self) -> Optional[str]:
-        """Get a session token from OpenAI."""
-        # Retry ephemeral session creation to handle transient 5xx/edge network hiccups
+    async def _get_session_token(self) -> Optional[str]:
+        """Get a session token from OpenAI using async httpx."""
         url = "https://api.openai.com/v1/realtime/sessions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        session_config = {
-            "model": self.model,
-            "voice": self.voice,
-        }
+        session_config = {"model": self.model, "voice": self.voice}
+        client = self._http
+        if client is None:
+            async with httpx.AsyncClient() as tmp_client:
+                return await self._get_session_token_with_client(
+                    tmp_client, url, headers, session_config
+                )
+        return await self._get_session_token_with_client(
+            client, url, headers, session_config
+        )
 
+    async def _get_session_token_with_client(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        headers: dict,
+        session_config: dict,
+    ) -> Optional[str]:
         for attempt in range(3):
             try:
-                response = requests.post(
+                response = await client.post(
                     url, headers=headers, json=session_config, timeout=15
                 )
                 response.raise_for_status()
@@ -163,37 +175,57 @@ class RealtimeConnection:
                 if isinstance(client_secret, dict):
                     return client_secret.get("value")
                 return client_secret
-            except Exception as e:
-                logger.error(f"Failed to get session token (attempt {attempt+1}/3): {e}")
-                if hasattr(e, "response") and e.response is not None:
-                    logger.error(f"Response status: {e.response.status_code}")
-                    logger.error(f"Response body: {e.response.text}")
-                    # Retry only on 5xx
-                    status = getattr(e.response, "status_code", 0)
-                    if status and 500 <= status < 600 and attempt < 2:
-                        time.sleep(1.5 * (attempt + 1))
-                        continue
-                # Network/timeout or non-retryable
+            except httpx.HTTPStatusError as e:
+                logger.error(
+                    f"Failed to get session token (attempt {attempt+1}/3): {e}"
+                )
+                status = e.response.status_code if e.response is not None else 0
+                try:
+                    body = e.response.text if e.response is not None else ""
+                    logger.error(f"Response status: {status}")
+                    logger.error(f"Response body: {body}")
+                except Exception:
+                    pass
+                if status and 500 <= status < 600 and attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
                 if attempt < 2:
-                    time.sleep(1.5 * (attempt + 1))
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                return None
+            except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPError) as e:
+                logger.error(
+                    f"Failed to get session token (attempt {attempt+1}/3): {e}"
+                )
+                if attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 return None
 
-    def _exchange_sdp(self, sdp: str) -> Optional[str]:
-        """Exchange SDP with OpenAI."""
+    async def _exchange_sdp(self, sdp: str) -> Optional[str]:
+        """Exchange SDP with OpenAI using async httpx."""
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/sdp",
         }
         url = f"https://api.openai.com/v1/realtime?model={self.model}"
+        client = self._http
+        if client is None:
+            async with httpx.AsyncClient() as tmp_client:
+                return await self._exchange_sdp_with_client(tmp_client, url, headers, sdp)
+        return await self._exchange_sdp_with_client(client, url, headers, sdp)
 
+    async def _exchange_sdp_with_client(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        headers: dict,
+        sdp: str,
+    ) -> Optional[str]:
         for attempt in range(3):
             try:
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    data=sdp,
-                    timeout=20,
+                response = await client.post(
+                    url, headers=headers, content=sdp, timeout=20
                 )
                 response.raise_for_status()
                 logger.info("SDP exchange successful")
@@ -201,27 +233,41 @@ class RealtimeConnection:
                     return response.text
                 logger.error("Received empty SDP response")
                 return None
-            except Exception as e:
+            except httpx.HTTPStatusError as e:
                 logger.error(
                     f"SDP exchange failed (attempt {attempt+1}/3): {e}"
                 )
-                if hasattr(e, "response") and e.response is not None:
-                    logger.error(f"Response status: {e.response.status_code}")
-                    logger.error(f"Response body: {e.response.text}")
-                    status = getattr(e.response, "status_code", 0)
-                    if status and 500 <= status < 600 and attempt < 2:
-                        time.sleep(1.5 * (attempt + 1))
-                        continue
+                status = e.response.status_code if e.response is not None else 0
+                try:
+                    body = e.response.text if e.response is not None else ""
+                    logger.error(f"Response status: {status}")
+                    logger.error(f"Response body: {body}")
+                except Exception:
+                    pass
+                if status and 500 <= status < 600 and attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
                 if attempt < 2:
-                    time.sleep(1.5 * (attempt + 1))
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                return None
+            except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPError) as e:
+                logger.error(
+                    f"SDP exchange failed (attempt {attempt+1}/3): {e}"
+                )
+                if attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 return None
 
     async def _start_session(self):
         """Start the WebRTC session with OpenAI."""
         try:
+            # Ensure shared HTTP client exists
+            if self._http is None:
+                self._http = httpx.AsyncClient()
             # Get session token
-            self.token = self._get_session_token()
+            self.token = await self._get_session_token()
             if not self.token:
                 raise RuntimeError("Failed to obtain session token")
 
@@ -337,7 +383,7 @@ class RealtimeConnection:
             offer = await self.pc.createOffer()
             await self.pc.setLocalDescription(offer)
 
-            answer_sdp = self._exchange_sdp(offer.sdp)
+            answer_sdp = await self._exchange_sdp(offer.sdp)
             if not answer_sdp:
                 raise RuntimeError("Failed to exchange SDP")
 
@@ -384,6 +430,14 @@ class RealtimeConnection:
 
         except Exception as e:
             logger.error(f"Error stopping session: {e}")
+        finally:
+            # Close shared HTTP client
+            try:
+                if self._http is not None:
+                    await self._http.aclose()
+            except Exception:
+                pass
+            self._http = None
 
     async def _update_session(self):
         """Update session configuration after creation."""
@@ -531,9 +585,9 @@ class RealtimeConnection:
                             logger.info(
                                 f"inbound audio stats: bytes={bytes_rcv} packets={packs_rcv} jitter={jitter}"
                             )
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(3.0)
                 except Exception:
-                    await asyncio.sleep(2.0)
+                    await asyncio.sleep(3.0)
         except Exception:
             pass
 
@@ -707,8 +761,7 @@ class Realtime(realtime.Realtime):
                 # Emit transcript event using Realtime helper
                 self._emit_transcript_event(
                     text=transcript,
-                    is_user=False,
-                    conversation_item_id=event.get("item_id"),
+                    user_metadata={"role": "assistant", "source": "openai"},
                 )
 
                 # Also emit response event using Realtime helper
@@ -726,8 +779,7 @@ class Realtime(realtime.Realtime):
                 # Emit transcript event using Realtime helper
                 self._emit_transcript_event(
                     text=transcript,
-                    is_user=True,
-                    conversation_item_id=event.get("item_id"),
+                    user_metadata={"role": "user", "source": "openai"},
                 )
 
         elif event_type == "error":
@@ -875,7 +927,7 @@ class Realtime(realtime.Realtime):
         await self._ensure_connection()
         # Emit user transcript event for UI mirroring
         try:
-            self._emit_transcript_event(text=text, is_user=True)
+            self._emit_transcript_event(text=text, user_metadata={"role": "user"})
         except Exception:
             pass
         # Ensure playback is enabled before expecting an assistant reply
@@ -918,7 +970,6 @@ class Realtime(realtime.Realtime):
                 logger.error(f"Error closing connection: {e}")
             finally:
                 self._connection = None
-
         # Do not call parent close here; base .close() orchestrates lifecycle
 
     async def interrupt_playback(self) -> None:
