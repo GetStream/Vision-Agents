@@ -27,11 +27,13 @@ if TYPE_CHECKING:
 
 class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
     """
-    To normalize
+    TODO: what's not done yet
 
-    - join method
-    - call/room object
-    - open demo/ browser
+    - call type
+    - participant type
+    - audio track type
+    - pcm data type
+
     """
 
     def open_demo(self, *args, **kwargs):

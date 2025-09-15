@@ -21,13 +21,9 @@ from ..events import get_global_registry, EventType
 from getstream.video import rtc
 from getstream.video.call import Call
 from getstream.video.rtc import audio_track
-from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
-from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import (
-    SubscriptionConfig,
-    TrackSubscriptionConfig,
     TrackType,
 )
 
@@ -121,12 +117,10 @@ class Agent:
         self._agent_conversation_handle: Optional[StreamHandle] = None
 
         if self.llm is not None:
-            self.llm.attach_agent(self)
+            self.llm._attach_agent(self)
             self.llm.on("after_llm_response", self._handle_after_response)
             self.llm.on('standardized.output_text.delta', self._handle_output_text_delta)
-            if hasattr(self.llm, "instructions") and not getattr(self.llm, "instructions", None):
-                self.llm.instructions = self.instructions
-                
+
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
@@ -384,7 +378,7 @@ class Agent:
             asyncio.create_task(self._process_track(track_id, track_type, user))
 
     async def _reply_to_audio(
-        self, pcm_data: PcmData, participant: models_pb2.Participant
+        self, pcm_data: PcmData, participant: Participant
     ) -> None:
         if participant and getattr(participant, "user_id", None) != self.agent_user.id:
             # first forward to processors
