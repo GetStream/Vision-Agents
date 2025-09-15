@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+'''
+TODO:
+- show function calling
+- show realtime vs stt (as a comment)
+- stream should be a plugin (not an import)
+- probably should not show events in this example
+- show native and simple response methods in example
+'''
+
 async def start_agent() -> None:
     # create a stream client and a user object
     client = Stream.from_env()
@@ -45,12 +54,11 @@ async def start_agent() -> None:
     call = client.video.call("default", str(uuid4()))
 
     # Open the demo UI
+    agent.edge.open_demo(call)
 
     # Have the agent join the call/room
     with await agent.join(call):
         # Example 1: standardized simple response (aggregates delta/done)
-        await asyncio.sleep(2)
-        agent.edge.open_demo(call)
         await agent.finish()  # run till the call ends
 
 

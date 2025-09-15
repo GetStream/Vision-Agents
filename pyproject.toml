@@ -11,6 +11,7 @@ stream-agents-plugins-moonshine = { workspace = true }
 stream-agents-plugins-openai = { workspace = true }
 stream-agents-plugins-silero = { workspace = true }
 stream-agents-plugins-xai = { workspace = true }
+stream-agents-plugins-getstream = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -25,7 +26,8 @@ members = [
     "plugins/moonshine",
     "plugins/openai",
     "plugins/silero",
-    "plugins/xai"
+    "plugins/xai",
+    "plugins/getstream"
 ]
 exclude = [
 "**/__pycache__",

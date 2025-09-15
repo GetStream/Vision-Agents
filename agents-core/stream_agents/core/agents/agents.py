@@ -4,8 +4,10 @@ import traceback
 from typing import Optional, List, Any, Union
 from uuid import uuid4
 
+import aiortc
 from aiortc import VideoStreamTrack
 
+from ..edge.types import Participant, PcmData, Connection, TrackType
 from ..events.events import RealtimePartialTranscriptEvent
 from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
@@ -13,25 +15,12 @@ from ..stt.stt import STT
 from ..vad import VAD
 from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent, RealtimeTranscriptEvent
 from .reply_queue import ReplyQueue
-from ..edge.edge_transport import EdgeTransport, StreamEdge
+from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
-from getstream.chat.client import ChatClient
-from getstream.models import User, ChannelInput, UserRequest
+from getstream.models import User, UserRequest
 from ..events import get_global_registry, EventType
-from getstream.video import rtc
-from getstream.video.call import Call
-from getstream.video.rtc import audio_track
-from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
-from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from getstream.video.rtc.track_util import PcmData
-from getstream.video.rtc.tracks import (
-    SubscriptionConfig,
-    TrackSubscriptionConfig,
-    TrackType,
-)
 
-from .conversation import StreamConversation, StreamHandle, Message
+from .conversation import StreamHandle, Message, Conversation
 from ..llm.llm import LLM, LLMResponse
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
@@ -57,7 +46,7 @@ class Agent:
 
     TODO:
     - MCP functionality should be moved into its own class
-
+    - Should edge be required?
     """
     def __init__(
         self,
@@ -83,8 +72,6 @@ class Agent:
         mcp_servers: Optional[List[MCPBaseServer]] = None,
     ):
         self.instructions = instructions
-        if edge is None:
-            edge = StreamEdge()
         self.edge = edge
         # Create agent user if not provided
         if agent_user is None:
@@ -116,7 +103,7 @@ class Agent:
         # we sync the user talking and the agent responses to the conversation
         # because we want to support streaming responses and can have delta updates for both
         # user and agent we keep an handle for both
-        self.conversation: Optional[StreamConversation] = None
+        self.conversation: Optional[Conversation] = None
         self._user_conversation_handle: Optional[StreamHandle] = None
         self._agent_conversation_handle: Optional[StreamHandle] = None
 
@@ -132,8 +119,8 @@ class Agent:
         self._current_frame = None
         self._interval_task = None
         self._callback_executed = False
-        self._connection: Optional[rtc.ConnectionManager] = None
-        self._audio_track: Optional[audio_track.AudioStreamTrack] = None
+        self._connection: Optional[Connection] = None
+        self._audio_track: Optional[aiortc.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
         self._sts_connection = None
 
@@ -203,7 +190,7 @@ class Agent:
             return func
         return decorator
 
-    async def join(self, call: Call) -> "AgentSessionContextManager":
+    async def join(self, call: Any) -> "AgentSessionContextManager":
         self.call = call
         self.channel = None
         self.conversation = None
@@ -213,16 +200,8 @@ class Agent:
 
         # Only set up chat if we have LLM (for conversation capabilities)
         if self.llm:
-            # TODO: I don't know the human user at this point in the code...
-            chat_client: ChatClient = call.client.stream.chat
-            self.channel = chat_client.get_or_create_channel(
-                "videocall",
-                call.id,
-                data=ChannelInput(created_by_id=self.agent_user.id),
-            )
-            self.conversation = StreamConversation(
-                self.instructions, [], self.channel.data.channel, chat_client
-            )
+            # ask the edge to start the chat
+            self.channel, self.conversation = self.edge.create_chat_channel(call, self.agent_user)
 
         # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
         # TODO: maybe agent.on(transcript?)
@@ -384,7 +363,7 @@ class Agent:
             asyncio.create_task(self._process_track(track_id, track_type, user))
 
     async def _reply_to_audio(
-        self, pcm_data: PcmData, participant: models_pb2.Participant
+        self, pcm_data: PcmData, participant: Participant
     ) -> None:
         if participant and getattr(participant, "user_id", None) != self.agent_user.id:
             # first forward to processors
@@ -429,7 +408,7 @@ class Agent:
         )
 
         # Only process video tracks - track_type might be string, enum or numeric (2 for video)
-        if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
+        if track_type != TrackType.TRACK_TYPE_VIDEO:
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
 
