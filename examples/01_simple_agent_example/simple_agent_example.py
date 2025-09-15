@@ -43,7 +43,7 @@ async def start_agent() -> None:
         # TODO: wait till we have confirmation from client it can hear us
         #await asyncio.sleep(5)
         #await agent.queue.say_text(f"Hello, {participant.name}")
-        agent.logger.info(f"handled event {participant}")
+        agent.logger.info(f"Call.* handled event {participant}")
 
 
     # Create a call

@@ -12,7 +12,8 @@ dynamic = ["version"]
 requires-python = ">=3.10"
 dependencies = [
     # getstream[webrtc] currently comes from the latest commit on the webrtc branch in git
-    "getstream[webrtc] @ git+https://github.com/GetStream/stream-py.git@e57847e#egg=getstream",
+    # "getstream[webrtc] @ git+https://github.com/GetStream/stream-py.git@e57847e#egg=getstream",
+    "getstream",
     "python-dotenv>=1.1.1",
     "pillow>=11.3.0",
     "aiortc>=1.13.0",
@@ -81,3 +82,4 @@ krisp-audio = [
     { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
     { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32'" }
 ]
+getstream = { path = "../../stream-py", editable = true }
