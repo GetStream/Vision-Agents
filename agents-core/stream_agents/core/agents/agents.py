@@ -55,6 +55,9 @@ class Agent:
     * await agent.finish() // (wait for the call session to finish)
     * agent.close() // cleanup
 
+    TODO:
+    - MCP functionality should be moved into its own class
+
     """
     def __init__(
         self,
@@ -141,41 +144,54 @@ class Agent:
         self._setup_vad()
         self._setup_mcp_servers()
 
-    def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
-        """Handle partial LLM response text deltas."""
+    async def close(self):
+        """Clean up all connections and resources."""
+        self._is_running = False
+        self._user_conversation_handle = None
+        self._agent_conversation_handle = None
 
-        if self.conversation is None:
-            return
+        # Disconnect from MCP servers
+        await self._disconnect_mcp_servers()
 
-        self.logger.info(f"received standardized.output_text.delta {event}")
-        # Create a new streaming message if we don't have one
-        if self._agent_conversation_handle is None:
-            self._agent_conversation_handle = self.conversation.start_streaming_message(
-                role="assistant",
-                user_id=self.agent_user.id,
-                initial_content=event.delta,
-            )
-        else:
-            self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
+        # Close Realtime connection
+        if self._sts_connection:
+            await self._sts_connection.__aexit__(None, None, None)
+        self._sts_connection = None
 
-    async def _handle_after_response(self, llm_response: LLMResponse):
-        if self.conversation is None:
-            return
+        # Close RTC connection
+        if self._connection:
+            await self._connection.__aexit__(None, None, None)
+        self._connection = None
 
-        if self._agent_conversation_handle is None:
-            message = Message(
-                content=llm_response.text,
-                role="assistant",
-                user_id=self.agent_user.id,
-            )
-            self.conversation.add_message(message)
-        else:
-            self.conversation.complete_message(self._agent_conversation_handle)
-            self._agent_conversation_handle = None
+        # Close STT
+        if self.stt:
+            await self.stt.close()
 
-        # Resume the queue for TTS playback
-        await self.queue.resume(llm_response, user_id=self.agent_user.id)
+        # Close TTS
+        if self.tts:
+            await self.tts.close()
 
+        # Stop turn detection
+        if self.turn_detection:
+            self.turn_detection.stop()
+
+        # Stop audio track
+        if self._audio_track:
+            self._audio_track.stop()
+        self._audio_track = None
+
+        # Stop video track
+        if self._video_track:
+            self._video_track.stop()
+        self._video_track = None
+
+        # Cancel interval task
+        if self._interval_task:
+            self._interval_task.cancel()
+        self._interval_task = None
+
+        # Close edge transport
+        self.edge.close()
 
     def on(self, event_type: EventType):
         #TODO: this approach is a bit ugly. also breaks with multiple agents.
@@ -260,8 +276,67 @@ class Agent:
 
         return AgentSessionContextManager(self, connection_cm)
 
+
+    async def finish(self):
+        """Wait for the call to end gracefully."""
+        # If connection is None or already closed, return immediately
+        if not self._connection:
+            logging.info("🔚 Agent connection already closed, finishing immediately")
+            return
+
+        try:
+            fut = asyncio.get_event_loop().create_future()
+
+            @self._connection.on("call_ended")
+            def on_ended():
+                if not fut.done():
+                    fut.set_result(None)
+
+            await fut
+        except Exception as e:
+            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
+            # Don't raise the exception, just log it and continue cleanup
+
     async def say(self, text):
+        """
+        Say exactly this
+        """
         await self.queue.say_text(text, self.agent_user.id)
+
+    def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
+        """Handle partial LLM response text deltas."""
+
+        if self.conversation is None:
+            return
+
+        self.logger.info(f"received standardized.output_text.delta {event}")
+        # Create a new streaming message if we don't have one
+        if self._agent_conversation_handle is None:
+            self._agent_conversation_handle = self.conversation.start_streaming_message(
+                role="assistant",
+                user_id=self.agent_user.id,
+                initial_content=event.delta,
+            )
+        else:
+            self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
+
+    async def _handle_after_response(self, llm_response: LLMResponse):
+        if self.conversation is None:
+            return
+
+        if self._agent_conversation_handle is None:
+            message = Message(
+                content=llm_response.text,
+                role="assistant",
+                user_id=self.agent_user.id,
+            )
+            self.conversation.add_message(message)
+        else:
+            self.conversation.complete_message(self._agent_conversation_handle)
+            self._agent_conversation_handle = None
+
+        # Resume the queue for TTS playback
+        await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
     def _setup_vad(self):
         if self.vad:
@@ -602,55 +677,6 @@ class Agent:
             self._video_track = video_publisher.create_video_track()
             self.logger.info("🎥 Video track initialized from video publisher")
 
-    async def close(self):
-        """Clean up all connections and resources."""
-        self._is_running = False
-        self._user_conversation_handle = None
-        self._agent_conversation_handle = None
-
-        # Disconnect from MCP servers
-        await self._disconnect_mcp_servers()
-
-        # Close Realtime connection
-        if self._sts_connection:
-            await self._sts_connection.__aexit__(None, None, None)
-        self._sts_connection = None
-
-        # Close RTC connection
-        if self._connection:
-            await self._connection.__aexit__(None, None, None)
-        self._connection = None
-
-        # Close STT
-        if self.stt:
-            await self.stt.close()
-
-        # Close TTS
-        if self.tts:
-            await self.tts.close()
-
-        # Stop turn detection
-        if self.turn_detection:
-            self.turn_detection.stop()
-
-        # Stop audio track
-        if self._audio_track:
-            self._audio_track.stop()
-        self._audio_track = None
-
-        # Stop video track
-        if self._video_track:
-            self._video_track.stop()
-        self._video_track = None
-
-        # Cancel interval task
-        if self._interval_task:
-            self._interval_task.cancel()
-        self._interval_task = None
-
-        # Close edge transport
-        self.edge.close()
-
     async def _connect_mcp_servers(self):
         """Connect to all configured MCP servers."""
         if not self.mcp_servers:
@@ -717,22 +743,3 @@ class Agent:
             
         return await server.call_tool(tool_name, arguments)
 
-    async def finish(self):
-        """Wait for the call to end gracefully."""
-        # If connection is None or already closed, return immediately
-        if not self._connection:
-            logging.info("🔚 Agent connection already closed, finishing immediately")
-            return
-
-        try:
-            fut = asyncio.get_event_loop().create_future()
-
-            @self._connection.on("call_ended")
-            def on_ended():
-                if not fut.done():
-                    fut.set_result(None)
-
-            await fut
-        except Exception as e:
-            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
-            # Don't raise the exception, just log it and continue cleanup
