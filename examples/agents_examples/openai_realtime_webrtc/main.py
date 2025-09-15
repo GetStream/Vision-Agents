@@ -18,8 +18,8 @@ from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher
 from getstream import Stream
 
-# Temporarily suppress most logs to surface audio-track prints
-logging.basicConfig(level=logging.WARNING)
+# Enable info-level logs to surface track subscription and forwarding diagnostics
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -35,13 +35,18 @@ async def start_agent() -> None:
         edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions=("""
-You are a voice assistant. Speak English only. Keep responses short, natural, and conversational.
-- Always respond in the same language the user is speaking in, if intelligible.
+You are a voice assistant.
+- Greet the user once when asked, then wait for the next input.
+- Speak English only.
+- If you see images/video, describe them when asked. Don't hallucinate.
+- If you don't see images/video, say you don't see them.
+- Keep responses natural and conversational.
 - Only respond to clear audio or text.
-- If the user's audio is not clear (e.g., ambiguous input/background noise/silent/unintelligible) or if you did not fully hear or understand the user, ask for clarification.
+- If the user's audio is not clear (e.g., ambiguous input/background noise/silent/unintelligible) or you didn't fully understand, ask for clarification.
 """
         ),
-        llm=Realtime(),
+        # Enable video input and set a conservative default frame rate for realtime responsiveness
+        llm=Realtime(enable_video_input=True, video_fps=5),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

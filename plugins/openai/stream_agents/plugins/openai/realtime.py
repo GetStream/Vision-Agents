@@ -5,6 +5,9 @@ from contextlib import asynccontextmanager
 import contextlib
 from fractions import Fraction
 import json
+import hashlib
+import time
+import os
 import logging
 import os
 import httpx
@@ -19,7 +22,7 @@ from aiortc import (
     RTCSessionDescription,
 )
 from aiortc.contrib.media import MediaStreamError, MediaStreamTrack
-from av import AudioFrame
+from av import AudioFrame, VideoFrame
 from getstream.audio.utils import resample_audio
 from getstream.video.call import Call
 import numpy as np
@@ -43,12 +46,16 @@ class RealtimeConnection:
         voice: str = "alloy",
         turn_detection: bool = True,
         system_instructions: Optional[str] = None,
+        enable_video_input: bool = False,
+        video_fps: int = 1,
     ):
         self.api_key = api_key
         self.model = model
         self.voice = voice
         self.turn_detection = turn_detection
         self.system_instructions = system_instructions
+        self.enable_video_input = enable_video_input
+        self._video_fps = max(1, int(video_fps))
 
         self.pc = RTCPeerConnection()
         self.dc: Optional[RTCDataChannel] = None
@@ -65,6 +72,21 @@ class RealtimeConnection:
         # Remote audio receive counters (removed verbose logging)
         # Shared HTTP client for REST calls to OpenAI
         self._http: Optional[httpx.AsyncClient] = None
+        # Video negotiation/sender state
+        self._black_video_track: Optional[MediaStreamTrack] = None
+        self._forward_video_track: Optional[MediaStreamTrack] = None
+        self._video_sender = None
+        self._last_frame_rgb: Optional[np.ndarray] = None
+        self._last_frame_ts: float = 0.0
+        self._out_video_prev: dict = {}
+        self._snapshot_task: Optional[asyncio.Task] = None
+        self._snapshot_dir: str = os.path.join(os.getcwd(), "snapshots", "openai_forwarded")
+        self._snapshot_interval_sec: float = 3.0
+        # Cache of last seen connection state
+        self._last_conn_state: Optional[str] = None
+        # Video diagnostics
+        self._video_stall_count: int = 0
+        self._saved_first_snapshot: bool = False
 
     async def __aenter__(self):
         """Start the WebRTC session with OpenAI."""
@@ -303,6 +325,7 @@ class RealtimeConnection:
             # Minimal connection state diagnostics
             @self.pc.on("connectionstatechange")
             async def on_conn_state_change():
+                self._last_conn_state = self.pc.connectionState
                 logger.info(f"pc.connectionState={self.pc.connectionState}")
 
             # Create data channel for events
@@ -379,6 +402,57 @@ class RealtimeConnection:
             self._mic_track = MicAudioTrack(self._mic_queue, 48000)
             self.pc.addTrack(self._mic_track)
 
+            # Optionally pre-negotiate a sendonly video m-line using a blank video track
+            if self.enable_video_input:
+                from aiortc.mediastreams import VideoStreamTrack as _VideoStreamTrack
+
+                class BlackVideoTrack(_VideoStreamTrack):
+                    kind = "video"
+
+                    def __init__(self, width: int = 1280, height: int = 720, fps: int = 1):
+                        super().__init__()
+                        self._width = width
+                        self._height = height
+                        self._fps = max(1, int(fps))
+                        self._last_ts = None
+
+                    async def recv(self):
+                        # Generate a black frame
+                        import numpy as _np
+                        import time as _time
+
+                        # Pace output frames to the configured FPS
+                        interval = 1.0 / float(self._fps)
+                        now = _time.monotonic()
+                        if self._last_ts is not None:
+                            remaining = (self._last_ts + interval) - now
+                            if remaining > 0:
+                                await asyncio.sleep(remaining)
+                                now = _time.monotonic()
+                        self._last_ts = now
+
+                        pts, time_base = await self.next_timestamp()
+                        frame = VideoFrame.from_ndarray(
+                            _np.zeros((self._height, self._width, 3), dtype=_np.uint8),
+                            format="bgr24",
+                        )
+                        frame.pts = pts
+                        frame.time_base = time_base
+                        return frame
+
+                self._black_video_track = BlackVideoTrack(fps=self._video_fps)
+                try:
+                    self._video_sender = self.pc.addTrack(self._black_video_track)
+                    logger.info(
+                        f"Negotiated sendonly video: sender={'yes' if self._video_sender else 'no'} "
+                        f"black_track={'yes' if self._black_video_track else 'no'} fps={self._video_fps}"
+                    )
+                except Exception:
+                    # If addTrack fails, disable video input gracefully
+                    logger.warning("Failed to add black video track; video input disabled")
+                    self._black_video_track = None
+                    self._video_sender = None
+
             # Create offer and exchange SDP
             offer = await self.pc.createOffer()
             await self.pc.setLocalDescription(offer)
@@ -405,6 +479,17 @@ class RealtimeConnection:
 
             self._running = True
             logger.info("OpenAI Realtime session started successfully")
+
+            # Start outbound video RTP stats logging if video is enabled
+            if self.enable_video_input:
+                asyncio.create_task(self._log_outbound_video_stats())
+                # Start periodic snapshot saver of the forwarded frame for verification
+                try:
+                    os.makedirs(self._snapshot_dir, exist_ok=True)
+                    logger.info(f"Snapshot directory ready: {self._snapshot_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to create snapshot directory: {e}")
+                self._snapshot_task = asyncio.create_task(self._periodic_snapshot_saver())
 
         except Exception as e:
             logger.error(f"Failed to start session: {e}")
@@ -438,6 +523,22 @@ class RealtimeConnection:
             except Exception:
                 pass
             self._http = None
+            # Stop any video tracks
+            try:
+                if self._forward_video_track is not None:
+                    with contextlib.suppress(Exception):
+                        self._forward_video_track.stop()  # type: ignore[attr-defined]
+                if self._black_video_track is not None:
+                    with contextlib.suppress(Exception):
+                        self._black_video_track.stop()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            # Stop snapshot task
+            try:
+                if self._snapshot_task is not None and not self._snapshot_task.done():
+                    self._snapshot_task.cancel()
+            except Exception:
+                pass
 
     async def _update_session(self):
         """Update session configuration after creation."""
@@ -489,6 +590,17 @@ class RealtimeConnection:
         elif event_type == "error":
             error = event.get("error", {})
             logger.error(f"OpenAI error: {error}")
+            try:
+                # On video-related errors, dump one frame snapshot stats if available
+                msg = str(error)
+                if "video" in msg.lower() and self._last_frame_rgb is not None:
+                    mean = float(self._last_frame_rgb.mean())
+                    h, w, *_ = self._last_frame_rgb.shape
+                    logger.warning(
+                        f"Latest forwarded frame stats: mean={mean:.2f} size={w}x{h} age={max(0.0, asyncio.get_event_loop().time() - self._last_frame_ts):.2f}s"
+                    )
+            except Exception:
+                pass
 
         # Notify event callbacks
         for callback in self._event_callbacks:
@@ -591,6 +703,93 @@ class RealtimeConnection:
         except Exception:
             pass
 
+    async def _log_outbound_video_stats(self):
+        """Periodically log outbound video RTP stats if available."""
+        try:
+            while self._running and self.enable_video_input:
+                try:
+                    stats = await self.pc.getStats()
+                    # Build a codec lookup by id for richer logging
+                    codecs = {rid: r for rid, r in stats.items() if getattr(r, "type", None) == "codec"}
+                    for report in stats.values():
+                        if (
+                            report.type == "outbound-rtp"
+                            and getattr(report, "kind", None) == "video"
+                        ):
+                            bytes_sent = int(getattr(report, "bytesSent", 0) or 0)
+                            frames_sent = int(getattr(report, "framesSent", 0) or 0) if hasattr(report, "framesSent") else None
+                            packets_sent = int(getattr(report, "packetsSent", 0) or 0)
+                            frame_w = getattr(report, "frameWidth", None)
+                            frame_h = getattr(report, "frameHeight", None)
+                            codec_id = getattr(report, "codecId", None)
+                            codec = codecs.get(codec_id) if codec_id else None
+                            mime = getattr(codec, "mimeType", None) if codec else None
+                            clock = getattr(codec, "clockRate", None) if codec else None
+                            fmtp = getattr(codec, "sdpFmtpLine", None) if codec else None
+                            # Include diffs to see whether content is actually flowing
+                            prev = self._out_video_prev
+                            d_bytes = bytes_sent - int(prev.get("bytes", 0))
+                            d_pkts = packets_sent - int(prev.get("pkts", 0))
+                            d_frames = (frames_sent - int(prev.get("frames", 0))) if frames_sent is not None else None
+                            parts = [
+                                f"bytes={bytes_sent} (+{d_bytes})",
+                                f"packets={packets_sent} (+{d_pkts})",
+                            ]
+                            if d_frames is not None:
+                                parts.append(f"frames={frames_sent} (+{d_frames})")
+                            if frame_w and frame_h:
+                                parts.append(f"size={frame_w}x{frame_h}")
+                            if mime:
+                                parts.append(f"codec={mime}")
+                            logger.info("outbound video stats: " + " ".join(parts))
+                            self._out_video_prev = {"bytes": bytes_sent, "pkts": packets_sent, "frames": frames_sent or 0}
+                            # Stall detection: warn if frames not increasing for multiple intervals
+                            if d_frames is not None and d_frames <= 0:
+                                self._video_stall_count += 1
+                                if self._video_stall_count >= 3:
+                                    logger.warning("outbound video appears stalled (no new frames for ~%ss)", 3 * 3)
+                            else:
+                                self._video_stall_count = 0
+                    await asyncio.sleep(3.0)
+                except Exception:
+                    await asyncio.sleep(3.0)
+        except Exception:
+            pass
+
+    async def _periodic_snapshot_saver(self):
+        """Save the last forwarded frame to disk every N seconds if available."""
+        try:
+            while self._running and self.enable_video_input:
+                try:
+                    await asyncio.sleep(self._snapshot_interval_sec)
+                    if self._last_frame_rgb is None:
+                        logger.debug("snapshot: no last_frame_rgb yet")
+                        continue
+                    rgb = self._last_frame_rgb
+                    # Convert to PNG and write
+                    try:
+                        from PIL import Image  # type: ignore
+                        img = Image.fromarray(rgb, mode="RGB")
+                        ts = int(time.time())
+                        path = os.path.join(self._snapshot_dir, f"frame_{ts}.png")
+                        img.save(path, format="PNG")
+                        logger.info(f"Saved forwarded frame snapshot: {path}")
+                    except Exception as e:
+                        # Fallback: save raw RGB as .npy if Pillow not available or save failed
+                        try:
+                            ts = int(time.time())
+                            path = os.path.join(self._snapshot_dir, f"frame_{ts}.npy")
+                            np.save(path, rgb)
+                            logger.warning(f"Snapshot PNG failed ({e}); saved raw RGB to: {path}")
+                        except Exception as e2:
+                            logger.debug(f"snapshot save failed (both PNG and NPY): {e2}")
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    await asyncio.sleep(self._snapshot_interval_sec)
+        except Exception:
+            pass
+
     async def __aiter__(self) -> AsyncIterator[dict]:
         """Iterate over events from OpenAI."""
         event_queue = asyncio.Queue()
@@ -606,6 +805,203 @@ class RealtimeConnection:
                 yield event
             except asyncio.TimeoutError:
                 continue
+
+    # ---- Video input control ----
+    async def start_video_sender(self, source_track: MediaStreamTrack, fps: Optional[int] = None) -> None:
+        """Swap the negotiated dummy video to a forwarding track from source_track.
+
+        Requires video to have been pre-negotiated (enable_video_input=True).
+        """
+        try:
+            if not self.enable_video_input:
+                raise RuntimeError("Video input not enabled for this session")
+            # Find the active video sender dynamically to avoid stale references
+            video_sender = None
+            for transceiver in self.pc.getTransceivers():
+                try:
+                    if getattr(transceiver, "kind", None) == "video" and getattr(transceiver, "sender", None):
+                        video_sender = transceiver.sender
+                        logger.warning(
+                            f"start_video_sender: using transceiver kind=video dir={getattr(transceiver, 'direction', None)}"
+                        )
+                        break
+                except Exception:
+                    continue
+            if video_sender is None:
+                # Fallback to negotiated sender if present
+                video_sender = self._video_sender
+            if video_sender is None:
+                raise RuntimeError("No active video sender found for replaceTrack")
+
+            from aiortc.mediastreams import VideoStreamTrack as _VideoStreamTrack
+
+            class ForwardingVideoTrack(_VideoStreamTrack):
+                kind = "video"
+
+                def __init__(self, source: MediaStreamTrack, fps_limit: int, outer_conn: "RealtimeConnection"):
+                    super().__init__()
+                    self._source = source
+                    self._fps_limit = max(1, int(fps_limit))
+                    self._last_ts = None
+                    self._outer = outer_conn
+
+                async def recv(self):
+                    import time as _time
+
+                    # Receive source frame first
+                    frame = await self._source.recv()
+
+                    # Throttle output to fps_limit
+                    interval = 1.0 / float(self._fps_limit)
+                    now = _time.monotonic()
+                    if self._last_ts is not None:
+                        remaining = (self._last_ts + interval) - now
+                        if remaining > 0:
+                            await asyncio.sleep(remaining)
+                            now = _time.monotonic()
+                    self._last_ts = now
+
+                    # Stamp pts/time_base for the forwarded frame
+                    pts, time_base = await self.next_timestamp()
+                    frame.pts = pts
+                    frame.time_base = time_base
+
+                    # Debug once: confirm non-black payload and cache last frame
+                    arr = frame.to_ndarray(format="rgb24")
+                    try:
+                        # Cache the last forwarded RGB frame for snapshotting
+                        self._outer._last_frame_rgb = arr
+                        self._outer._last_frame_ts = _time.monotonic()
+                    except Exception:
+                        pass
+                    # Lightweight content fingerprint and stats (first frame only)
+                    if getattr(self, "_debugged", False) is not True:
+                        try:
+                            mean = float(arr.mean()) if arr.size else 0.0
+                            vmin = float(arr.min()) if arr.size else 0.0
+                            vmax = float(arr.max()) if arr.size else 0.0
+                            h, w, c = arr.shape
+                            digest = hashlib.sha256(arr.tobytes()).hexdigest()[:16]
+                            logger.info(
+                                f"Forwarding video frame: sha256={digest} size={w}x{h} chans={c} mean={mean:.2f} min={vmin:.0f} max={vmax:.0f}"
+                            )
+                            # Save a one-off immediate snapshot for debugging
+                            try:
+                                if not self._outer._saved_first_snapshot:
+                                    asyncio.create_task(self._outer._save_snapshot_now(arr, label="first_frame"))
+                                    self._outer._saved_first_snapshot = True
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                        self._debugged = True
+
+                    return frame
+
+            _fps = max(1, int(fps)) if fps is not None else self._video_fps
+            # Pass outer connection reference into the forwarding track for snapshots
+            self._forward_video_track = ForwardingVideoTrack(source_track, _fps, self)
+            logger.warning(
+                "start_video_sender: prepared ForwardingVideoTrack fps=%s source_kind=%s source_cls=%s",
+                _fps,
+                getattr(source_track, "kind", None),
+                source_track.__class__.__name__,
+            )
+            # Ensure we are connected before swapping, to avoid early no-op
+            tries = 0
+            while self._last_conn_state not in ("connected", "completed") and tries < 50:
+                await asyncio.sleep(0.1)
+                tries += 1
+            # replaceTrack may be synchronous in some aiortc versions
+            _res = video_sender.replaceTrack(self._forward_video_track)
+            if asyncio.iscoroutine(_res):
+                logger.warning("start_video_sender: replaceTrack returned coroutine; awaiting")
+                await _res
+            else:
+                logger.warning("start_video_sender: replaceTrack returned %s (not awaited)", type(_res).__name__)
+            try:
+                track_info = {
+                    "sender_has_track": bool(getattr(video_sender, "track", None)),
+                    "track_class": getattr(getattr(video_sender, "track", None), "__class__", type(None)).__name__,
+                }
+            except Exception:
+                track_info = {"sender_has_track": False}
+            logger.warning("Video sender switched to forwarding track (fps=%s) %s", _fps, track_info)
+
+            # Kick once more after 1s to ensure downstream latched onto the new track
+            async def _ensure_swap():
+                await asyncio.sleep(1)
+                try:
+                    _again = video_sender.replaceTrack(self._forward_video_track)
+                    if asyncio.iscoroutine(_again):
+                        await _again
+                    logger.warning("Video sender reasserted forwarding track after delay")
+                except Exception as e:
+                    logger.debug(f"Reassert replaceTrack failed: {e}")
+
+            # Verify outbound stats shortly after swap
+            async def _verify_outbound():
+                try:
+                    await asyncio.sleep(2)
+                    stats = await self.pc.getStats()
+                    frames = None
+                    width = None
+                    height = None
+                    for r in stats.values():
+                        if getattr(r, "type", None) == "outbound-rtp" and getattr(r, "kind", None) == "video":
+                            frames = getattr(r, "framesSent", None)
+                            width = getattr(r, "frameWidth", None)
+                            height = getattr(r, "frameHeight", None)
+                            break
+                    logger.info("post-replaceTrack check: framesSent=%s size=%sx%s", frames, width, height)
+                except Exception as e:
+                    logger.debug(f"post-replaceTrack stats check failed: {e}")
+
+            asyncio.create_task(_ensure_swap())
+            asyncio.create_task(_verify_outbound())
+        except Exception as e:
+            logger.error(f"Failed to start video sender: {e}")
+            raise
+
+    async def stop_video_sender(self) -> None:
+        """Restore the black video track (or disable if unavailable)."""
+        try:
+            if self._video_sender and self._black_video_track:
+                _res = self._video_sender.replaceTrack(self._black_video_track)
+                if asyncio.iscoroutine(_res):
+                    await _res
+                logger.info("Video sender reverted to black video track")
+            # Stop forwarding track if it exists
+            if self._forward_video_track is not None:
+                with contextlib.suppress(Exception):
+                    self._forward_video_track.stop()  # type: ignore[attr-defined]
+            self._forward_video_track = None
+        except Exception as e:
+            logger.error(f"Failed to stop video sender: {e}")
+
+
+    async def _save_snapshot_now(self, rgb, label: str = "immediate") -> None:
+        """Immediately save a snapshot from provided RGB ndarray for diagnostics."""
+        try:
+            os.makedirs(self._snapshot_dir, exist_ok=True)
+        except Exception:
+            pass
+        ts = int(time.time())
+        # Try PNG first
+        try:
+            from PIL import Image  # type: ignore
+            img = Image.fromarray(rgb, mode="RGB")
+            path = os.path.join(self._snapshot_dir, f"{label}_{ts}.png")
+            img.save(path, format="PNG")
+            logger.info(f"Saved immediate snapshot: {path}")
+            return
+        except Exception as e:
+            try:
+                path = os.path.join(self._snapshot_dir, f"{label}_{ts}.npy")
+                np.save(path, rgb)
+                logger.warning(f"Immediate snapshot PNG failed ({e}); saved raw RGB to: {path}")
+            except Exception as e2:
+                logger.debug(f"Immediate snapshot save failed (both PNG and NPY): {e2}")
 
 
 class Realtime(realtime.Realtime):
@@ -641,6 +1037,8 @@ class Realtime(realtime.Realtime):
         barge_in: bool = True,
         activity_threshold: int = 3000,
         silence_timeout_ms: int = 1000,
+        enable_video_input: bool = False,
+        video_fps: int = 1,
     ):
         """Initialize OpenAI Realtime Realtime.
 
@@ -680,6 +1078,9 @@ class Realtime(realtime.Realtime):
         self._silence_timeout_ms: int = silence_timeout_ms
         self._user_speaking: bool = False
         self._eos_timer_task: Optional[asyncio.Task] = None
+        # Video input enablement (pre-negotiate sendonly video with a black track)
+        self.enable_video_input: bool = enable_video_input
+        self.video_fps: int = max(1, int(video_fps))
 
         # Auto-start the realtime connection so Agent.wait_until_ready() does not hang
         try:
@@ -704,6 +1105,8 @@ class Realtime(realtime.Realtime):
                 voice=self.voice,
                 turn_detection=self.turn_detection,
                 system_instructions=self.system_prompt or self.instructions,
+                enable_video_input=self.enable_video_input,
+                video_fps=self.video_fps,
             )
 
             # Register event handlers
@@ -954,6 +1357,16 @@ class Realtime(realtime.Realtime):
         rt_resp = await self.simple_response(text=text)
         # Wrap into legacy LLMResponse for compatibility with older tests
         return LLMResponse(original=rt_resp.original, text=rt_resp.text)
+
+    async def start_video_sender(self, track: MediaStreamTrack, fps: Optional[int] = None) -> None:
+        """Start forwarding video frames upstream. Requires enable_video_input=True."""
+        await self._ensure_connection()
+        await self._connection.start_video_sender(track, fps if fps is not None else self.video_fps)
+
+    async def stop_video_sender(self) -> None:
+        """Stop forwarding and revert to the negotiated black track (if any)."""
+        if self._connection:
+            await self._connection.stop_video_sender()
 
     async def _close_impl(self):
         """Close the Realtime service and release resources."""

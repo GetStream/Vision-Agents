@@ -5,6 +5,7 @@ from typing import Optional, List, Any, Union
 from uuid import uuid4
 
 from aiortc import VideoStreamTrack
+from aiortc.contrib.media import MediaRelay
 
 from ..events.events import RealtimePartialTranscriptEvent
 from ..llm.types import StandardizedTextDeltaEvent
@@ -165,6 +166,7 @@ class Agent:
         self._audio_track: Optional[audio_track.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
         self._sts_connection = None
+        self._pc_track_handler_attached: bool = False
 
         # validation time
         self._validate_configuration()
@@ -231,6 +233,32 @@ class Agent:
 
         # TODO: remove me
         self._connection = self.edge._connection
+
+        # Attach fallback pc.on('track') handler ASAP to avoid missing early remote video tracks
+        try:
+            if not self._pc_track_handler_attached:
+                base_pc = getattr(self._connection, "subscriber_pc", None)
+                pc = None
+                if base_pc is not None:
+                    pc = getattr(base_pc, "pc", None) or getattr(base_pc, "_pc", None) or base_pc
+                if pc is not None and hasattr(pc, "on"):
+                    self.logger.info("🔗 Attaching pc.on('track') handler to subscriber peer connection (early)")
+                    @pc.on("track")
+                    async def _on_pc_track_early(track):
+                        try:
+                            kind = getattr(track, "kind", None)
+                            if kind == "video":
+                                from aiortc.contrib.media import MediaRelay
+                                relay = MediaRelay()
+                                forward_branch = relay.subscribe(track)
+                                if self.sts_mode and isinstance(self.llm, Realtime):
+                                    await self.llm.start_video_sender(forward_branch)
+                                    self.logger.info("🎥 Forwarding video frames to Realtime provider (pc.on early track)")
+                        except Exception as e:
+                            self.logger.error(f"Error handling pc.on('track') video (early): {e}")
+                    self._pc_track_handler_attached = True
+        except Exception:
+            pass
 
 
         self._is_running = True
@@ -327,6 +355,33 @@ class Agent:
         async def on_track(track_id, track_type, user):
             asyncio.create_task(self._process_track(track_id, track_type, user))
 
+        # Fallback: if the edge layer doesn't emit track_added reliably, listen on the
+        # underlying subscriber peer connection for aiortc-style track events and forward.
+        try:
+            base_pc = getattr(self._connection, "subscriber_pc", None)
+            pc = None
+            if base_pc is not None:
+                # Try common attributes for underlying RTCPeerConnection
+                pc = getattr(base_pc, "pc", None) or getattr(base_pc, "_pc", None) or base_pc
+            if pc is not None and hasattr(pc, "on"):
+                self.logger.info("🔗 Attaching pc.on('track') handler to subscriber peer connection")
+                @pc.on("track")
+                async def _on_pc_track(track):
+                    try:
+                        kind = getattr(track, "kind", None)
+                        if kind == "video":
+                            # Relay the track and start forwarding to the Realtime provider
+                            from aiortc.contrib.media import MediaRelay
+                            relay = MediaRelay()
+                            forward_branch = relay.subscribe(track)
+                            if self.sts_mode and isinstance(self.llm, Realtime):
+                                await self.llm.start_video_sender(forward_branch)
+                                self.logger.info("🎥 Forwarding video frames to Realtime provider (pc.on track)")
+                    except Exception as e:
+                        self.logger.error(f"Error handling pc.on('track') video: {e}")
+        except Exception:
+            pass
+
     async def reply_to_audio(
         self, pcm_data: PcmData, participant: models_pb2.Participant
     ) -> None:
@@ -372,28 +427,55 @@ class Agent:
             f"🎥VDP: Processing track: {track_id} from user {getattr(participant, 'user_id', 'unknown')} (type: {track_type})"
         )
 
-        # Only process video tracks - track_type might be string, enum or numeric (2 for video)
-        if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
-            self.logger.debug(f"Ignoring non-video track: {track_type}")
-            return
-
+        # Subscribe first, then inspect actual kind reported by aiortc
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
         if not track:
             self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
             return
 
-        self.logger.info(
-            f"✅ Successfully subscribed to video track: {track_id}, track object: {track}"
-        )
+        # Determine if this is a video track using both reported kind and original type
+        is_video_type = track_type in ("video", TrackType.TRACK_TYPE_VIDEO, 2)
+        kind = getattr(track, "kind", None)
+        is_video_kind = (kind == "video")
+        if not (is_video_kind or is_video_type):
+            self.logger.debug(
+                f"Ignoring non-video track after subscribe: kind={kind} original_type={track_type}"
+            )
+            return
+
+        try:
+            self.logger.info(
+                f"✅ Subscribed to track: {track_id}, kind={getattr(track, 'kind', None)}, class={track.__class__.__name__}"
+            )
+        except Exception:
+            self.logger.info(f"✅ Subscribed to track: {track_id}")
 
         # Give the track a moment to be ready
         await asyncio.sleep(0.5)
 
+        # Use a MediaRelay to allow multiple consumers to read the same source track
+        # - One branch feeds the Realtime provider
+        # - Another branch stays in this method for processors
+        relay = MediaRelay()
+        forward_branch = relay.subscribe(track)
+        processing_branch = relay.subscribe(track)
+        try:
+            self.logger.info(
+                "🎥 Relay created: forward_branch kind=%s cls=%s, processing_branch kind=%s cls=%s",
+                getattr(forward_branch, "kind", None),
+                forward_branch.__class__.__name__,
+                getattr(processing_branch, "kind", None),
+                processing_branch.__class__.__name__,
+            )
+        except Exception:
+            pass
+
         # If Realtime provider supports video, forward frames upstream once per track
         if self.sts_mode:
             try:
-                await self.llm.start_video_sender(track)
-                self.logger.info("🎥 Forwarding video frames to Realtime provider")
+                self.logger.info("🎥 Attempting start_video_sender for track %s", track_id)
+                await self.llm.start_video_sender(forward_branch)
+                self.logger.info("🎥 Forwarding video frames to Realtime provider (started)")
             except Exception as e:
                 self.logger.error(
                     f"Error starting video sender to Realtime provider: {e}"
@@ -411,7 +493,7 @@ class Agent:
         # Use the exact same pattern as the working example
         while True:
             try:
-                video_frame = await asyncio.wait_for(track.recv(), timeout=5.0)
+                video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=5.0)
                 if video_frame:
                     if hasImageProcessers:
                         img = video_frame.to_image()

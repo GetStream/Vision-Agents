@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from getstream.video import rtc
 from getstream.video.rtc import audio_track
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType, Participant
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType, Participant, VideoDimension
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import TrackSubscriptionConfig, SubscriptionConfig
 from pyee.asyncio import AsyncIOEventEmitter
@@ -107,11 +107,13 @@ class StreamEdge(EdgeTransport):
         # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
     def _get_subscription_config(self):
+        # Request 720p video and subscribe to both video and audio tracks
         return TrackSubscriptionConfig(
             track_types=[
                 TrackType.TRACK_TYPE_VIDEO,
                 TrackType.TRACK_TYPE_AUDIO,
-            ]
+            ],
+            video_dimension=VideoDimension(width=1280, height=720),
         )
 
     def close(self):
