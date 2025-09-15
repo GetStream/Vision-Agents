@@ -9,6 +9,7 @@ dependencies = [
   "stream-agents",
   "ultralytics>=8.3.184",
   "av>=14.4.0",
+  "fastapi>=0.116.1",
 ]
 
 [tool.uv.sources]
