@@ -19,6 +19,7 @@ from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
 from ..events import get_global_registry, EventType
 
+
 from .conversation import StreamHandle, Message, Conversation
 from ..llm.llm import LLM, LLMResponse
 from ..llm.realtime import Realtime
@@ -107,12 +108,10 @@ class Agent:
         self._agent_conversation_handle: Optional[StreamHandle] = None
 
         if self.llm is not None:
-            self.llm.attach_agent(self)
+            self.llm._attach_agent(self)
             self.llm.on("after_llm_response", self._handle_after_response)
             self.llm.on('standardized.output_text.delta', self._handle_output_text_delta)
-            if hasattr(self.llm, "instructions") and not getattr(self.llm, "instructions", None):
-                self.llm.instructions = self.instructions
-                
+
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None

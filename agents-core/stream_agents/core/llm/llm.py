@@ -15,6 +15,7 @@ from typing import List, TypeVar, Any, Callable, Generic, Dict, Optional as Typi
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.utils.utils import parse_instructions
 from .function_registry import FunctionRegistry
 from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolResultItem
 
@@ -54,9 +55,16 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
     ) -> LLMResponse[Any]:
         raise NotImplementedError
 
-    def attach_agent(self, agent: Agent):
+    def _attach_agent(self, agent: Agent):
+        """
+        Attach agent to the llm
+        """
         self.agent = agent
         self._conversation = agent.conversation
+        self.instructions = agent.instructions
+        
+        # Parse instructions to extract @ mentioned markdown files
+        self.parsed_instructions = parse_instructions(agent.instructions)
 
     def register_function(self, 
                          name: Optional[str] = None,
