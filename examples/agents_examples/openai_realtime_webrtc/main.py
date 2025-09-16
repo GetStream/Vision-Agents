@@ -46,7 +46,12 @@ You are a voice assistant.
 """
         ),
         # Enable video input and set a conservative default frame rate for realtime responsiveness
-        llm=Realtime(enable_video_input=True, video_fps=5),
+        llm=Realtime(
+            enable_video_input=True,
+            video_fps=3,
+            video_width=854,
+            video_height=480,
+        ),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

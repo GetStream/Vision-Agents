@@ -46,6 +46,12 @@ class RealtimeConnection:
         system_instructions: Optional[str] = None,
         enable_video_input: bool = False,
         video_fps: int = 1,
+        *,
+        target_video_width: int = 1280,
+        target_video_height: int = 720,
+        video_debug_enabled: bool = False,
+        save_snapshots_enabled: bool = False,
+        snapshot_interval_sec: float = 3.0,
     ):
         self.api_key = api_key
         self.model = model
@@ -79,10 +85,13 @@ class RealtimeConnection:
         self._out_video_prev: dict = {}
         self._snapshot_task: Optional[asyncio.Task] = None
         self._snapshot_dir: str = os.path.join(os.getcwd(), "snapshots", "openai_forwarded")
-        self._snapshot_interval_sec: float = 3.0
+        self._snapshot_interval_sec: float = max(0.5, float(snapshot_interval_sec))
+        # Debug / diagnostics feature flags (configurable by client)
+        self._video_debug_enabled: bool = bool(video_debug_enabled)
+        self._save_snapshots_enabled: bool = bool(save_snapshots_enabled)
         # Target dimensions for optional downscale before sending
-        self._target_video_width: int = 1280
-        self._target_video_height: int = 720
+        self._target_video_width: int = max(1, int(target_video_width))
+        self._target_video_height: int = max(1, int(target_video_height))
         # Cache of last seen connection state
         self._last_conn_state: Optional[str] = None
         # Video diagnostics
@@ -90,6 +99,8 @@ class RealtimeConnection:
         self._saved_first_snapshot: bool = False
         # Provider session id (from OpenAI session.created)
         self.openai_session_id: Optional[str] = None
+        # Cache active video sender
+        self._active_video_sender = None
 
     async def __aenter__(self):
         """Start the WebRTC session with OpenAI."""
@@ -425,7 +436,7 @@ class RealtimeConnection:
                         frame.time_base = time_base
                         return frame
 
-                self._black_video_track = BlackVideoTrack(fps=self._video_fps)
+                self._black_video_track = BlackVideoTrack(width=self._target_video_width, height=self._target_video_height, fps=self._video_fps)
                 try:
                     self._video_sender = self.pc.addTrack(self._black_video_track)
                     logger.info(
@@ -468,13 +479,14 @@ class RealtimeConnection:
             # Start outbound video RTP stats logging if video is enabled
             if self.enable_video_input:
                 asyncio.create_task(self._log_outbound_video_stats())
-                # Start periodic snapshot saver of the forwarded frame for verification
-                try:
-                    os.makedirs(self._snapshot_dir, exist_ok=True)
-                    logger.info(f"snapshot.dir.ready origin=SFU->OpenAI cache dir={self._snapshot_dir}")
-                except OSError as e:
-                    logger.warning(f"Failed to create snapshot directory: {e}")
-                self._snapshot_task = asyncio.create_task(self._periodic_snapshot_saver())
+                # Start periodic snapshot saver of the forwarded frame for verification (opt-in)
+                if self._save_snapshots_enabled:
+                    try:
+                        os.makedirs(self._snapshot_dir, exist_ok=True)
+                        logger.info(f"snapshot.dir.ready origin=SFU->OpenAI cache dir={self._snapshot_dir}")
+                    except OSError as e:
+                        logger.warning(f"Failed to create snapshot directory: {e}")
+                    self._snapshot_task = asyncio.create_task(self._periodic_snapshot_saver())
 
         except Exception as e:
             logger.error(f"Failed to start session: {e}")
@@ -551,6 +563,14 @@ class RealtimeConnection:
     async def _handle_event(self, event: dict):
         """Handle events from OpenAI."""
         event_type = event.get("type")
+
+        # Prominent logging for any event whose type contains 'video'
+        try:
+            if isinstance(event_type, str) and "video" in event_type.lower():
+                banner = "\n" + ("🟪" * 40)
+                logger.warning(f"{banner}\n🎥 OPENAI VIDEO EVENT: type={event_type}\n{banner}")
+        except Exception:
+            pass
 
         if event_type == "session.created":
             self.openai_session_id = event["session"]["id"]
@@ -761,7 +781,7 @@ class RealtimeConnection:
 
     async def _periodic_snapshot_saver(self):
         """Save the last forwarded frame to disk every N seconds if available."""
-        while self._running and self.enable_video_input:
+        while self._running and self.enable_video_input and self._save_snapshots_enabled:
             try:
                 await asyncio.sleep(self._snapshot_interval_sec)
                 if self._last_frame_rgb is None:
@@ -770,18 +790,16 @@ class RealtimeConnection:
                 rgb = self._last_frame_rgb
                 # Convert to PNG and write
                 try:
-                    from PIL import Image  # type: ignore
-                    img = Image.fromarray(rgb, mode="RGB")
                     ts = int(time.time())
                     path = os.path.join(self._snapshot_dir, f"frame_{ts}.png")
-                    img.save(path, format="PNG")
+                    await asyncio.to_thread(self._save_png, rgb, path)
                     logger.info(f"snapshot.saved (origin=SFU->OpenAI forward cache) path={path} ts={ts}")
                 except Exception as e:
                     # Fallback: save raw RGB as .npy if Pillow not available or save failed
                     try:
                         ts = int(time.time())
                         path = os.path.join(self._snapshot_dir, f"frame_{ts}.npy")
-                        np.save(path, rgb)
+                        await asyncio.to_thread(np.save, path, rgb)
                         logger.warning(f"snapshot.saved.raw (origin=SFU->OpenAI forward cache) path={path} ts={ts} error={e}")
                     except Exception as e2:
                         logger.debug(f"snapshot save failed (both PNG and NPY): {e2}")
@@ -815,15 +833,22 @@ class RealtimeConnection:
         try:
             if not self.enable_video_input:
                 raise RuntimeError("Video input not enabled for this session")
-            # Find the active video sender dynamically to avoid stale references
-            video_sender = None
-            for transceiver in self.pc.getTransceivers():
-                if getattr(transceiver, "kind", None) == "video" and getattr(transceiver, "sender", None):
-                    video_sender = transceiver.sender
-                    logger.warning(
-                        f"start_video_sender: using transceiver kind=video dir={getattr(transceiver, 'direction', None)}"
-                    )
-                    break
+            # If already forwarding this exact source, skip
+            if self._forward_video_track is not None and getattr(self._forward_video_track, "_source", None) is source_track:
+                logger.info("start_video_sender: already forwarding this source; skipping")
+                return
+
+            # Find or reuse the active video sender to avoid repeated scans
+            video_sender = self._active_video_sender
+            if video_sender is None:
+                for transceiver in self.pc.getTransceivers():
+                    if getattr(transceiver, "kind", None) == "video" and getattr(transceiver, "sender", None):
+                        video_sender = transceiver.sender
+                        self._active_video_sender = video_sender
+                        logger.warning(
+                            f"start_video_sender: using transceiver kind=video dir={getattr(transceiver, 'direction', None)}"
+                        )
+                        break
             if video_sender is None:
                 # Fallback to negotiated sender if present
                 video_sender = self._video_sender
@@ -875,34 +900,39 @@ class RealtimeConnection:
                     frame.pts = pts
                     frame.time_base = time_base
 
-                    # Debug once: confirm non-black payload and cache last frame
-                    arr = frame.to_ndarray(format="rgb24")
-                    # Cache the last forwarded RGB frame for snapshotting
-                    self._outer._last_frame_rgb = arr
-                    self._outer._last_frame_ts = _time.monotonic()
-                    logger.debug(
-                        "video.forward: stage=SFU->OpenAI ts=%.3f pts=%s size=%sx%s fps_limit=%s",
-                        _time.time(),
-                        pts,
-                        arr.shape[1],
-                        arr.shape[0],
-                        self._fps_limit,
-                    )
-                    # Lightweight content fingerprint and stats (first frame only)
-                    if getattr(self, "_debugged", False) is not True:
-                        mean = float(arr.mean()) if arr.size else 0.0
-                        vmin = float(arr.min()) if arr.size else 0.0
-                        vmax = float(arr.max()) if arr.size else 0.0
-                        h, w, c = arr.shape
-                        digest = hashlib.sha256(arr.tobytes()).hexdigest()[:16]
-                        logger.debug(
-                            f"Forwarding video frame: sha256={digest} size={w}x{h} chans={c} mean={mean:.2f} min={vmin:.0f} max={vmax:.0f}"
-                        )
-                        # Save a one-off immediate snapshot for debugging
-                        if not self._outer._saved_first_snapshot:
-                            asyncio.create_task(self._outer._save_snapshot_now(arr, label="first_frame"))
-                            self._outer._saved_first_snapshot = True
-                        self._debugged = True
+                    # Optional: cache RGB for diagnostics/snapshots; avoid per-frame conversion unless enabled
+                    if self._outer._video_debug_enabled or self._outer._save_snapshots_enabled:
+                        arr = frame.to_ndarray(format="rgb24")
+                        # Cache the last forwarded RGB frame for snapshotting
+                        self._outer._last_frame_rgb = arr
+                        self._outer._last_frame_ts = _time.monotonic()
+                        if self._outer._video_debug_enabled:
+                            try:
+                                logger.debug(
+                                    "video.forward: stage=SFU->OpenAI ts=%.3f pts=%s size=%sx%s fps_limit=%s",
+                                    _time.time(),
+                                    pts,
+                                    arr.shape[1],
+                                    arr.shape[0],
+                                    self._fps_limit,
+                                )
+                                # Lightweight content fingerprint and stats (first frame only)
+                                if getattr(self, "_debugged", False) is not True:
+                                    mean = float(arr.mean()) if arr.size else 0.0
+                                    vmin = float(arr.min()) if arr.size else 0.0
+                                    vmax = float(arr.max()) if arr.size else 0.0
+                                    h, w, c = arr.shape
+                                    digest = hashlib.sha256(arr.tobytes()).hexdigest()[:16]
+                                    logger.debug(
+                                        f"Forwarding video frame: sha256={digest} size={w}x{h} chans={c} mean={mean:.2f} min={vmin:.0f} max={vmax:.0f}"
+                                    )
+                                    # Save a one-off immediate snapshot for debugging
+                                    if not self._outer._saved_first_snapshot:
+                                        asyncio.create_task(self._outer._save_snapshot_now(arr, label="first_frame"))
+                                        self._outer._saved_first_snapshot = True
+                                    self._debugged = True
+                            except Exception:
+                                pass
 
                     return frame
 
@@ -961,8 +991,10 @@ class RealtimeConnection:
                 except Exception as e:
                     logger.debug(f"post-replaceTrack stats check failed: {e}")
 
-            asyncio.create_task(_ensure_swap())
-            asyncio.create_task(_verify_outbound())
+            if not getattr(self, "_video_sender_started", False):
+                asyncio.create_task(_ensure_swap())
+                asyncio.create_task(_verify_outbound())
+                self._video_sender_started = True
         except Exception as e:
             logger.error(f"Failed to start video sender: {e}")
             raise
@@ -971,6 +1003,7 @@ class RealtimeConnection:
         """Best-effort attempt to apply encoding constraints to the video sender.
 
         Works across aiortc versions by probing for setParameters or set_parameters.
+        Currently only applies maxFramerate to avoid adding latency via encoder buffering.
         """
         params = None
         # Try modern API first
@@ -991,9 +1024,7 @@ class RealtimeConnection:
 
         if encs is not None and len(encs) > 0:
             enc = encs[0]
-            # Conservative bitrate and framerate limits suitable for realtime vision
-            # Reduce bitrate for lower latency and to avoid congestion
-            enc["maxBitrate"] = int(600 * 1024)  # ~600 kbps
+            # Apply only framerate; leave bitrate to defaults negotiated with SFU/provider
             enc["maxFramerate"] = int(self._video_fps)
 
         # Apply back using whichever method exists
@@ -1030,19 +1061,22 @@ class RealtimeConnection:
         ts = int(time.time())
         # Try PNG first
         try:
-            from PIL import Image  # type: ignore
-            img = Image.fromarray(rgb, mode="RGB")
             path = os.path.join(self._snapshot_dir, f"{label}_{ts}.png")
-            img.save(path, format="PNG")
+            await asyncio.to_thread(self._save_png, rgb, path)
             logger.info(f"Saved immediate snapshot: {path}")
             return
         except Exception as e:
             try:
                 path = os.path.join(self._snapshot_dir, f"{label}_{ts}.npy")
-                np.save(path, rgb)
+                await asyncio.to_thread(np.save, path, rgb)
                 logger.warning(f"Immediate snapshot PNG failed ({e}); saved raw RGB to: {path}")
             except Exception as e2:
                 logger.debug(f"Immediate snapshot save failed (both PNG and NPY): {e2}")
+
+    def _save_png(self, rgb, path: str) -> None:
+        from PIL import Image  # type: ignore
+        img = Image.fromarray(rgb, mode="RGB")
+        img.save(path, format="PNG")
 
 
 class Realtime(realtime.Realtime):
@@ -1080,6 +1114,12 @@ class Realtime(realtime.Realtime):
         silence_timeout_ms: int = 1000,
         enable_video_input: bool = False,
         video_fps: int = 1,
+        # Client-configurable video parameters
+        video_width: int = 1280,
+        video_height: int = 720,
+        video_debug_enabled: bool = False,
+        save_snapshots_enabled: bool = False,
+        snapshot_interval_sec: float = 3.0,
     ):
         """Initialize OpenAI Realtime Realtime.
 
@@ -1123,6 +1163,12 @@ class Realtime(realtime.Realtime):
         self.enable_video_input: bool = enable_video_input
         self.video_fps: int = max(1, int(video_fps))
         self.openai_session_id: Optional[str] = None
+        # Exposed video parameters to pass into the connection
+        self.video_width: int = max(1, int(video_width))
+        self.video_height: int = max(1, int(video_height))
+        self.video_debug_enabled: bool = bool(video_debug_enabled)
+        self.save_snapshots_enabled: bool = bool(save_snapshots_enabled)
+        self.snapshot_interval_sec: float = max(0.5, float(snapshot_interval_sec))
 
         # Auto-start the realtime connection so Agent.wait_until_ready() does not hang
         try:
@@ -1149,6 +1195,11 @@ class Realtime(realtime.Realtime):
                 system_instructions=self.system_prompt or self.instructions,
                 enable_video_input=self.enable_video_input,
                 video_fps=self.video_fps,
+                target_video_width=self.video_width,
+                target_video_height=self.video_height,
+                video_debug_enabled=self.video_debug_enabled,
+                save_snapshots_enabled=self.save_snapshots_enabled,
+                snapshot_interval_sec=self.snapshot_interval_sec,
             )
 
             # Register event handlers

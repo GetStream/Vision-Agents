@@ -91,10 +91,7 @@ class StreamEdge(EdgeTransport):
         # Forward it to the same 'track_added' hook for compatibility.
         @self._connection.on("track_published")
         async def on_track_published(*args, **kwargs):
-            try:
-                self.emit("track_added", *args, **kwargs)
-            except Exception:
-                pass
+            self.emit("track_added", *args, **kwargs)
 
         return connection_cm
 
