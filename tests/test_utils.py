@@ -1,4 +1,3 @@
-import pytest
 import os
 import tempfile
 from stream_agents.core.utils.utils import parse_instructions, Instructions

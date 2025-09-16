@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import traceback
 from typing import Optional, List, Any, Union
 from uuid import uuid4
 
@@ -21,11 +20,14 @@ from ..events import get_global_registry, EventType
 
 
 from .conversation import StreamHandle, Message, Conversation
+from ..events.manager import EventManager
 from ..llm.llm import LLM, LLMResponse
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
+
+import getstream.models
 
 if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
@@ -76,6 +78,9 @@ class Agent:
         self.agent_user = agent_user
 
         self.logger = logging.getLogger(f"Agent[{self.agent_user.id}]")
+
+        self._em = EventManager()
+        self._em.register_events_from_module(getstream.models, 'call.')
 
         self.llm = llm
         self.stt = stt
@@ -174,7 +179,11 @@ class Agent:
             return func
         return decorator
 
-    async def join(self, call: Any) -> "AgentSessionContextManager":
+    def subscribe(self, function):
+        """Subscribe to event"""
+        return self._em.subscribe(function)
+
+    async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
         self.conversation = None
 
@@ -213,8 +222,7 @@ class Agent:
 
         self._is_running = True
 
-        registry = get_global_registry()
-        #registry.add_connection_listeners(self._connection)
+        connection._coordinator_ws_client.on_wildcard("*", self._em.handle_from_pyee)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
