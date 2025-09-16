@@ -8,6 +8,7 @@ from asyncio import AbstractEventLoop
 from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.track_util import PcmData
 
+from ..edge.types import Participant
 from ..events import (
     STTTranscriptEvent,
     STTPartialTranscriptEvent,
@@ -263,7 +264,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
         self.emit("error", event)  # Structured event
 
     async def process_audio(
-        self, pcm_data: PcmData, user_metadata: Optional[Dict[str, Any]] = None
+        self, pcm_data: PcmData, participant: Optional[Participant] = None
     ):
         """
         Process audio data for transcription and emit appropriate events.
@@ -290,12 +291,12 @@ class STT(AsyncIOEventEmitter, abc.ABC):
                 "Processing audio chunk",
                 extra={
                     "duration_ms": audio_duration_ms,
-                    "has_user_metadata": user_metadata is not None,
+                    "has_user_metadata": participant is not None,
                 },
             )
 
             start_time = time.time()
-            results = await self._process_audio_impl(pcm_data, user_metadata)
+            results = await self._process_audio_impl(pcm_data, participant)
             processing_time = time.time() - start_time
 
             # If no results were returned, just return
@@ -316,13 +317,13 @@ class STT(AsyncIOEventEmitter, abc.ABC):
                     metadata["processing_time_ms"] = processing_time * 1000
 
                 if is_final:
-                    self._emit_transcript_event(text, user_metadata, metadata)
+                    self._emit_transcript_event(text, participant, metadata)
                 else:
-                    self._emit_partial_transcript_event(text, user_metadata, metadata)
+                    self._emit_partial_transcript_event(text, participant, metadata)
 
         except Exception as e:
             # Emit any errors that occur during processing
-            self._emit_error_event(e, "audio processing", user_metadata)
+            self._emit_error_event(e, "audio processing", participant)
 
     @abc.abstractmethod
     async def _process_audio_impl(

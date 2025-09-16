@@ -176,7 +176,6 @@ class Agent:
 
     async def join(self, call: Any) -> "AgentSessionContextManager":
         self.call = call
-        self.channel = None
         self.conversation = None
 
         # Connect to MCP servers
@@ -185,7 +184,7 @@ class Agent:
         # Only set up chat if we have LLM (for conversation capabilities)
         if self.llm:
             # ask the edge to start the chat
-            self.channel, self.conversation = self.edge.create_chat_channel(call, self.agent_user, self.instructions)
+            self.conversation = self.edge.create_conversation(call, self.agent_user, self.instructions)
 
         # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
         # TODO: maybe agent.on(transcript?)
@@ -398,7 +397,7 @@ class Agent:
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
 
-        track = self._connection.subscriber_pc.add_track_subscriber(track_id)
+        track = self.edge.add_track_subscriber(track_id)
         if not track:
             self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
             return
@@ -412,6 +411,7 @@ class Agent:
 
         # If Realtime provider supports video, forward frames upstream once per track
         if self.sts_mode:
+
             try:
                 await self.llm.start_video_sender(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
@@ -539,7 +539,7 @@ class Agent:
         self.logger.error(f"❌ STT Error: {error}")
 
     async def _process_transcription(
-        self, text: str, participant: Participant = None
+        self, text: str, participant: Optional[Participant] = None
     ) -> None:
         if self.llm is not None:
             await self.llm.simple_response(

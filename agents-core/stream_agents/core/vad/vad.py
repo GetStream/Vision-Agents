@@ -10,6 +10,7 @@ from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.pcm_utils import pcm_to_numpy_array, numpy_array_to_bytes
 
+from ..edge.types import Participant
 from ..events import (
     VADSpeechStartEvent,
     VADSpeechEndEvent,
@@ -134,7 +135,7 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
         pass
 
     async def process_audio(
-        self, pcm_data: PcmData, user: Optional[Dict[str, Any]] = None
+        self, pcm_data: PcmData, participant: Optional[Participant] = None
     ) -> None:
         """
         Process raw PCM audio data for voice activity detection.
@@ -175,7 +176,7 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
                     sample_rate=pcm_data.sample_rate,
                     format=pcm_data.format,
                 ),
-                user,
+                participant,
             )
 
         # Store any remaining samples for the next call
@@ -188,7 +189,7 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
             logger.debug(f"Keeping {len(self._leftover)} samples for next processing")
 
     async def _process_frame(
-        self, frame: PcmData, user: Optional[Dict[str, Any]] = None
+        self, frame: PcmData, participant: Optional[Participant] = None
     ) -> None:
         """
         Process a single audio frame.
@@ -236,7 +237,7 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
                     audio_data=current_bytes,
                     duration_ms=current_duration_ms,
                     frame_count=len(current_samples) // self.frame_size,
-                    user_metadata=user,
+                    user_metadata=participant,
                 )
                 register_global_event(partial_event)
                 self.emit("partial", partial_event)  # Structured event
