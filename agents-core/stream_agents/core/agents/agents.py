@@ -51,9 +51,11 @@ class Agent:
     def __init__(
         self,
         # edge network for video & audio
-        edge: Optional[EdgeTransport] = None,
+        edge: EdgeTransport,
         # llm, optionally with sts/realtime capabilities
-        llm: Optional[LLM | Realtime] = None,
+        llm: LLM | Realtime,
+        # the agent's user info
+        agent_user: User,
         # instructions
         instructions: str = "Keep your replies short and dont use special characters.",
         # setup stt, tts, and turn detection if not using an llm with realtime/sts
@@ -61,8 +63,6 @@ class Agent:
         tts: Optional[TTS] = None,
         turn_detection: Optional[BaseTurnDetector] = None,
         vad: Optional[VAD] = None,
-        # the agent's user info
-        agent_user: Optional[User] = None,
         # for video gather data at an interval
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
@@ -73,21 +73,7 @@ class Agent:
     ):
         self.instructions = instructions
         self.edge = edge
-        # Create agent user if not provided
-        if agent_user is None:
-            # TODO: should we have a default...? or just raise an error.
-            agent_id = f"agent-{uuid4()}"
-            # Create a basic User object with required parameters
-            self.agent_user = User(
-                id=agent_id,
-                banned=False,
-                online=True,
-                role="user",
-                custom={"name": "AI Agent"},
-                teams_role={},
-            )
-        else:
-            self.agent_user = agent_user
+        self.agent_user = agent_user
 
         self.logger = logging.getLogger(f"Agent[{self.agent_user.id}]")
 

@@ -65,6 +65,8 @@ from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.audio_track import AudioStreamTrack
 import asyncio
 
+from ..utils.utils import parse_instructions
+
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
 
@@ -198,14 +200,19 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         """Return True if the realtime session is currently active."""
         return self._is_connected
 
+    def _attach_agent(self, agent: Agent):
+        """
+        Attach agent to the llm
+        """
+        self.agent = agent
+        self._conversation = agent.conversation
+        self.instructions = agent.instructions
+
+        # Parse instructions to extract @ mentioned markdown files
+        self.parsed_instructions = parse_instructions(agent.instructions)
+
     @abc.abstractmethod
     async def connect(self): ...
-
-    def attach_agent(self, agent: Agent):
-        self.agent = agent
-        # If provider has no explicit instructions set, inherit from Agent
-        if not getattr(self, "instructions", None) and getattr(agent, "instructions", None):
-            self.instructions = agent.instructions  # type: ignore[assignment]
 
     @abc.abstractmethod
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
