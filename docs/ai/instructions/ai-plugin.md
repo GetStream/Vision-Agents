@@ -41,3 +41,12 @@ When building the plugin read these guides:
 - STT: ai-stt.md
 - STS/realtime/LLM: ai-llm.md
 - Video processor: ai-video-processor.md
+
+## Update pyproject.toml
+
+Be sure to update pyproject.toml at the root of this project. 
+Add the new plugin to 
+[tool.uv.sources]
+and 
+[tool.uv.workspace]
+members = ...

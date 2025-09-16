@@ -4,9 +4,11 @@ import traceback
 from typing import Optional, List, Any, Union
 from uuid import uuid4
 
+import aiortc
 from aiortc import VideoStreamTrack
 from aiortc.contrib.media import MediaRelay
 
+from ..edge.types import Participant, PcmData, Connection, TrackType, User
 from ..events.events import RealtimePartialTranscriptEvent
 from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
@@ -14,25 +16,12 @@ from ..stt.stt import STT
 from ..vad import VAD
 from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent, RealtimeTranscriptEvent
 from .reply_queue import ReplyQueue
-from ..edge.edge_transport import EdgeTransport, StreamEdge
+from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
-from getstream.chat.client import ChatClient
-from getstream.models import User, ChannelInput, UserRequest
 from ..events import get_global_registry, EventType
-from getstream.video import rtc
-from getstream.video.call import Call
-from getstream.video.rtc import audio_track
-from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
-from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from getstream.video.rtc.track_util import PcmData
-from getstream.video.rtc.tracks import (
-    SubscriptionConfig,
-    TrackSubscriptionConfig,
-    TrackType,
-)
 
-from .conversation import StreamConversation, StreamHandle, Message
+
+from .conversation import StreamHandle, Message, Conversation
 from ..llm.llm import LLM, LLMResponse
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
@@ -46,12 +35,28 @@ if TYPE_CHECKING:
 
 
 class Agent:
+    """
+    Agent class makes it easy to build your own video AI.
+
+    Commonly used methods
+
+    * agent.join(call) // join a call
+    * agent.llm.simple_response("greet the user")
+    * await agent.finish() // (wait for the call session to finish)
+    * agent.close() // cleanup
+
+    TODO:
+    - MCP functionality should be moved into its own class
+    - Should edge be required?
+    """
     def __init__(
         self,
         # edge network for video & audio
-        edge: Optional[EdgeTransport] = None,
-        # llm, optionally with sts capabilities
-        llm: Optional[LLM | Realtime] = None,
+        edge: EdgeTransport,
+        # llm, optionally with sts/realtime capabilities
+        llm: LLM | Realtime,
+        # the agent's user info
+        agent_user: User,
         # instructions
         instructions: str = "Keep your replies short and dont use special characters.",
         # setup stt, tts, and turn detection if not using an llm with realtime/sts
@@ -59,8 +64,6 @@ class Agent:
         tts: Optional[TTS] = None,
         turn_detection: Optional[BaseTurnDetector] = None,
         vad: Optional[VAD] = None,
-        # the agent's user info
-        agent_user: Optional[UserRequest] = None,
         # for video gather data at an interval
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
@@ -70,23 +73,8 @@ class Agent:
         mcp_servers: Optional[List[MCPBaseServer]] = None,
     ):
         self.instructions = instructions
-        if edge is None:
-            edge = StreamEdge()
         self.edge = edge
-        # Create agent user if not provided
-        if agent_user is None:
-            agent_id = f"agent-{uuid4()}"
-            # Create a basic User object with required parameters
-            self.agent_user = User(
-                id=agent_id,
-                banned=False,
-                online=True,
-                role="user",
-                custom={"name": "AI Agent"},
-                teams_role={},
-            )
-        else:
-            self.agent_user = agent_user
+        self.agent_user = agent_user
 
         self.logger = logging.getLogger(f"Agent[{self.agent_user.id}]")
 
@@ -102,68 +90,22 @@ class Agent:
         # we sync the user talking and the agent responses to the conversation
         # because we want to support streaming responses and can have delta updates for both
         # user and agent we keep an handle for both
-        self.conversation: Optional[StreamConversation] = None
+        self.conversation: Optional[Conversation] = None
         self._user_conversation_handle: Optional[StreamHandle] = None
         self._agent_conversation_handle: Optional[StreamHandle] = None
 
         if self.llm is not None:
-            self.llm.attach_agent(self)
-
-            # TODO: move the chat update flow stuff
-            # Propagate Agent instructions to realtime/LLM provider instance
-            if hasattr(self.llm, "instructions") and not getattr(self.llm, "instructions", None):
-                self.llm.instructions = self.instructions
-
-            @self.llm.on("before_llm_response")
-            async def handle_before_response(llm_response: LLMResponse):
-                self.logger.debug(
-                    f"handle_before_response: {llm_response}"
-                )
-
-            @self.llm.on("after_llm_response")
-            async def handle_after_response(llm_response: LLMResponse):
-                if self.conversation is None:
-                    return
-
-                if self._agent_conversation_handle is None:
-                    message = Message(
-                        content=llm_response.text,
-                        role="assistant",
-                        user_id=self.agent_user.id,
-                    )
-                    self.conversation.add_message(message)
-                else:
-                    self.conversation.complete_message(self._agent_conversation_handle)
-                    self._agent_conversation_handle = None
-
-                # Resume the queue for TTS playback
-                await self.queue.resume(llm_response, user_id=self.agent_user.id)
-
-            @self.llm.on('standardized.output_text.delta')
-            def handle_output_text_delta(event: StandardizedTextDeltaEvent):
-                """Handle partial LLM response text deltas."""
-
-                if self.conversation is None:
-                    return
-
-                self.logger.info(f"received standardized.output_text.delta {event}")
-                # Create a new streaming message if we don't have one
-                if self._agent_conversation_handle is None:
-                    self._agent_conversation_handle = self.conversation.start_streaming_message(
-                        role="assistant",
-                        user_id=self.agent_user.id,
-                        initial_content=event.delta,
-                    )
-                else:
-                    self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
+            self.llm._attach_agent(self)
+            self.llm.on("after_llm_response", self._handle_after_response)
+            self.llm.on('standardized.output_text.delta', self._handle_output_text_delta)
 
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
         self._interval_task = None
         self._callback_executed = False
-        self._connection: Optional[rtc.ConnectionManager] = None
-        self._audio_track: Optional[audio_track.AudioStreamTrack] = None
+        self._connection: Optional[Connection] = None
+        self._audio_track: Optional[aiortc.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
         self._sts_connection = None
         self._pc_track_handler_attached: bool = False
@@ -177,7 +119,54 @@ class Agent:
         self._setup_vad()
         self._setup_mcp_servers()
 
+    async def close(self):
+        """Clean up all connections and resources."""
+        self._is_running = False
+        self._user_conversation_handle = None
+        self._agent_conversation_handle = None
 
+        # Disconnect from MCP servers
+        await self._disconnect_mcp_servers()
+
+        # Close Realtime connection
+        if self._sts_connection:
+            await self._sts_connection.__aexit__(None, None, None)
+        self._sts_connection = None
+
+        # Close RTC connection
+        if self._connection:
+            await self._connection.close()
+        self._connection = None
+
+        # Close STT
+        if self.stt:
+            await self.stt.close()
+
+        # Close TTS
+        if self.tts:
+            await self.tts.close()
+
+        # Stop turn detection
+        if self.turn_detection:
+            self.turn_detection.stop()
+
+        # Stop audio track
+        if self._audio_track:
+            self._audio_track.stop()
+        self._audio_track = None
+
+        # Stop video track
+        if self._video_track:
+            self._video_track.stop()
+        self._video_track = None
+
+        # Cancel interval task
+        if self._interval_task:
+            self._interval_task.cancel()
+        self._interval_task = None
+
+        # Close edge transport
+        self.edge.close()
 
     def on(self, event_type: EventType):
         #TODO: this approach is a bit ugly. also breaks with multiple agents.
@@ -187,7 +176,7 @@ class Agent:
             return func
         return decorator
 
-    async def join(self, call: Call) -> "AgentSessionContextManager":
+    async def join(self, call: Any) -> "AgentSessionContextManager":
         self.call = call
         self.channel = None
         self.conversation = None
@@ -197,16 +186,8 @@ class Agent:
 
         # Only set up chat if we have LLM (for conversation capabilities)
         if self.llm:
-            # TODO: I don't know the human user at this point in the code...
-            chat_client: ChatClient = call.client.stream.chat
-            self.channel = chat_client.get_or_create_channel(
-                "videocall",
-                call.id,
-                data=ChannelInput(created_by_id=self.agent_user.id),
-            )
-            self.conversation = StreamConversation(
-                self.instructions, [], self.channel.data.channel, chat_client
-            )
+            # ask the edge to start the chat
+            self.channel, self.conversation = self.edge.create_chat_channel(call, self.agent_user, self.instructions)
 
         # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
         # TODO: maybe agent.on(transcript?)
@@ -229,10 +210,8 @@ class Agent:
             await self.llm.wait_until_ready()
 
 
-        connection_cm = await self.edge.join(self, call)
-
-        # TODO: remove me
-        self._connection = self.edge._connection
+        connection = await self.edge.join(self, call)
+        self._connection = connection
 
         # Attach fallback pc.on('track') handler ASAP to avoid missing early remote video tracks
         try:
@@ -270,8 +249,8 @@ class Agent:
 
         self._is_running = True
 
-        #registry = get_global_registry()
-        #registry.add_connection_listeners(connection)
+        registry = get_global_registry()
+        #registry.add_connection_listeners(self._connection)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -289,35 +268,77 @@ class Agent:
 
             from .agent_session import AgentSessionContextManager
 
-            return AgentSessionContextManager(self, connection_cm)
+            return AgentSessionContextManager(self, self._connection)
         # In case tracks are not added, still return context manager
         from .agent_session import AgentSessionContextManager
 
-        return AgentSessionContextManager(self, connection_cm)
+        return AgentSessionContextManager(self, self._connection)
 
-    def before_response(self, input):
-        pass
 
-    def on(self, event_type: EventType):
-        #TODO: this approach is a bit ugly. also breaks with multiple agents.
-        def decorator(func):
-            registry = get_global_registry()
-            registry.add_listener(event_type, func)
-            return func
-        return decorator
+    async def finish(self):
+        """Wait for the call to end gracefully."""
+        # If connection is None or already closed, return immediately
+        if not self._connection:
+            logging.info("🔚 Agent connection already closed, finishing immediately")
+            return
 
-    async def after_response(self, llm_response):
-        # In Realtime (STS) mode or when not joined to a call, conversation may be None.
-        # Only resume the reply queue (which writes to conversation/tts) when a conversation exists.
-        if self.conversation is not None:
-            await self.queue.resume(llm_response)
+        try:
+            fut = asyncio.get_event_loop().create_future()
 
+            @self.edge.on("call_ended")
+            def on_ended():
+                if not fut.done():
+                    fut.set_result(None)
+
+            await fut
+        except Exception as e:
+            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
+            # Don't raise the exception, just log it and continue cleanup
 
     async def say(self, text):
+        """
+        Say exactly this
+        """
         await self.queue.say_text(text, self.agent_user.id)
 
-    async def play_audio(self, pcm):
-        await self.queue.send_audio(pcm)
+    async def create_user(self):
+        response = await self.edge.create_user(self.agent_user)
+        return response
+
+    def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
+        """Handle partial LLM response text deltas."""
+
+        if self.conversation is None:
+            return
+
+        self.logger.info(f"received standardized.output_text.delta {event}")
+        # Create a new streaming message if we don't have one
+        if self._agent_conversation_handle is None:
+            self._agent_conversation_handle = self.conversation.start_streaming_message(
+                role="assistant",
+                user_id=self.agent_user.id,
+                initial_content=event.delta,
+            )
+        else:
+            self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
+
+    async def _handle_after_response(self, llm_response: LLMResponse):
+        if self.conversation is None:
+            return
+
+        if self._agent_conversation_handle is None:
+            message = Message(
+                content=llm_response.text,
+                role="assistant",
+                user_id=self.agent_user.id,
+            )
+            self.conversation.add_message(message)
+        else:
+            self.conversation.complete_message(self._agent_conversation_handle)
+            self._agent_conversation_handle = None
+
+        # Resume the queue for TTS playback
+        await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
     def _setup_vad(self):
         if self.vad:
@@ -355,7 +376,7 @@ class Agent:
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
-            await self.reply_to_audio(pcm, participant)
+            await self._reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
         @self.edge.on("track_added")
@@ -389,8 +410,8 @@ class Agent:
         except Exception:
             pass
 
-    async def reply_to_audio(
-        self, pcm_data: PcmData, participant: models_pb2.Participant
+    async def _reply_to_audio(
+        self, pcm_data: PcmData, participant: Participant
     ) -> None:
         if participant and getattr(participant, "user_id", None) != self.agent_user.id:
             # first forward to processors
@@ -434,7 +455,15 @@ class Agent:
             f"🎥VDP: Processing track: {track_id} from user {getattr(participant, 'user_id', 'unknown')} (type: {track_type})"
         )
 
+<<<<<<< HEAD
         # Subscribe first, then inspect actual kind reported by aiortc
+=======
+        # Only process video tracks - track_type might be string, enum or numeric (2 for video)
+        if track_type != TrackType.TRACK_TYPE_VIDEO:
+            self.logger.debug(f"Ignoring non-video track: {track_type}")
+            return
+
+>>>>>>> main
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
         if not track:
             self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
@@ -508,8 +537,6 @@ class Agent:
                         img = video_frame.to_image()
 
                         for processor in self.image_processors:
-                            if processor is None:
-                                continue
                             try:
                                 await processor.process_image(img, participant.user_id)
                             except Exception as e:
@@ -519,8 +546,6 @@ class Agent:
 
                     # video processors
                     for processor in self.video_processors:
-                        if processor is None:
-                            continue
                         try:
                             await processor.process_video(track, participant.user_id)
                         except Exception as e:
@@ -718,76 +743,6 @@ class Agent:
             self._video_track = video_publisher.create_video_track()
             self.logger.info("🎥 Video track initialized from video publisher")
 
-    async def close(self):
-        """Clean up all connections and resources."""
-        self._is_running = False
-        self._user_conversation_handle = None
-        self._agent_conversation_handle = None
-
-        # TODO: cleanup this function
-
-        # Disconnect from MCP servers
-        await self._disconnect_mcp_servers()
-
-        try:
-            if self._sts_connection and hasattr(self._sts_connection, "__aexit__"):
-                await self._sts_connection.__aexit__(None, None, None)
-        except Exception as e:
-            self.logger.debug(f"Error closing Realtime connection: {e}")
-        finally:
-            self._sts_connection = None
-
-        try:
-            if self._connection and hasattr(self._connection, "__aexit__"):
-                await self._connection.__aexit__(None, None, None)
-        except Exception as e:
-            self.logger.debug(f"Error closing RTC connection: {e}")
-        finally:
-            self._connection = None
-
-        try:
-            if self.stt and hasattr(self.stt, "close"):
-                await self.stt.close()
-        except Exception as e:
-            self.logger.debug(f"Error closing STT: {e}")
-
-        try:
-            if self.tts and hasattr(self.tts, "close"):
-                await self.tts.close()
-        except Exception as e:
-            self.logger.debug(f"Error closing TTS: {e}")
-        try:
-            if self.turn_detection and hasattr(self.turn_detection, "stop"):
-                self.turn_detection.stop()
-        except Exception as e:
-            self.logger.debug(f"Error closing turn detection: {e}")
-
-        try:
-            if self._audio_track and hasattr(self._audio_track, "stop"):
-                self._audio_track.stop()
-        except Exception as e:
-            self.logger.debug(f"Error stopping audio track: {e}")
-        finally:
-            self._audio_track = None
-
-        try:
-            if self._video_track and hasattr(self._video_track, "stop"):
-                self._video_track.stop()
-        except Exception as e:
-            self.logger.debug(f"Error stopping video track: {e}")
-        finally:
-            self._video_track = None
-
-        try:
-            if self._interval_task:
-                self._interval_task.cancel()
-        except Exception as e:
-            self.logger.debug(f"Error canceling interval task: {e}")
-        finally:
-            self._interval_task = None
-
-        self.edge.close()
-
     async def _connect_mcp_servers(self):
         """Connect to all configured MCP servers."""
         if not self.mcp_servers:
@@ -854,22 +809,3 @@ class Agent:
             
         return await server.call_tool(tool_name, arguments)
 
-    async def finish(self):
-        """Wait for the call to end gracefully."""
-        # If connection is None or already closed, return immediately
-        if not self._connection:
-            logging.info("🔚 Agent connection already closed, finishing immediately")
-            return
-
-        try:
-            fut = asyncio.get_event_loop().create_future()
-
-            @self._connection.on("call_ended")
-            def on_ended():
-                if not fut.done():
-                    fut.set_result(None)
-
-            await fut
-        except Exception as e:
-            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
-            # Don't raise the exception, just log it and continue cleanup

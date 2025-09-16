@@ -12,9 +12,8 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins.openai import Realtime
+from stream_agents.plugins import openai, getstream
 from stream_agents.core.agents import Agent
-from stream_agents.core.edge import StreamEdge
 from stream_agents.core.cli import start_dispatcher
 from getstream import Stream
 
@@ -32,7 +31,7 @@ async def start_agent() -> None:
 
     # Create the agent
     agent = Agent(
-        edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
+        edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions=("""
 You are a voice assistant.
