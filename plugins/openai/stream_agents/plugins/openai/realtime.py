@@ -31,8 +31,6 @@ from stream_agents.core.llm import realtime
 from stream_agents.core.llm.llm import LLMResponse
 
  
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +80,9 @@ class RealtimeConnection:
         self._snapshot_task: Optional[asyncio.Task] = None
         self._snapshot_dir: str = os.path.join(os.getcwd(), "snapshots", "openai_forwarded")
         self._snapshot_interval_sec: float = 3.0
+        # Target dimensions for optional downscale before sending
+        self._target_video_width: int = 1280
+        self._target_video_height: int = 720
         # Cache of last seen connection state
         self._last_conn_state: Optional[str] = None
         # Video diagnostics
@@ -470,7 +471,7 @@ class RealtimeConnection:
                 # Start periodic snapshot saver of the forwarded frame for verification
                 try:
                     os.makedirs(self._snapshot_dir, exist_ok=True)
-                    logger.info(f"Snapshot directory ready: {self._snapshot_dir}")
+                    logger.info(f"snapshot.dir.ready origin=SFU->OpenAI cache dir={self._snapshot_dir}")
                 except OSError as e:
                     logger.warning(f"Failed to create snapshot directory: {e}")
                 self._snapshot_task = asyncio.create_task(self._periodic_snapshot_saver())
@@ -552,14 +553,7 @@ class RealtimeConnection:
         event_type = event.get("type")
 
         if event_type == "session.created":
-            session_obj = event.get("session", {}) or {}
-            self.openai_session_id = session_obj.get("id")
-            logger.info(
-                "Session created",
-                extra={
-                    "openai_session_id": self.openai_session_id,
-                },
-            )
+            self.openai_session_id = event["session"]["id"]
             self.session_created_event.set()
 
         elif event_type == "response.created":
@@ -781,14 +775,14 @@ class RealtimeConnection:
                     ts = int(time.time())
                     path = os.path.join(self._snapshot_dir, f"frame_{ts}.png")
                     img.save(path, format="PNG")
-                    logger.info(f"Saved forwarded frame snapshot: {path}")
+                    logger.info(f"snapshot.saved (origin=SFU->OpenAI forward cache) path={path} ts={ts}")
                 except Exception as e:
                     # Fallback: save raw RGB as .npy if Pillow not available or save failed
                     try:
                         ts = int(time.time())
                         path = os.path.join(self._snapshot_dir, f"frame_{ts}.npy")
                         np.save(path, rgb)
-                        logger.warning(f"Snapshot PNG failed ({e}); saved raw RGB to: {path}")
+                        logger.warning(f"snapshot.saved.raw (origin=SFU->OpenAI forward cache) path={path} ts={ts} error={e}")
                     except Exception as e2:
                         logger.debug(f"snapshot save failed (both PNG and NPY): {e2}")
             except asyncio.CancelledError:
@@ -886,6 +880,14 @@ class RealtimeConnection:
                     # Cache the last forwarded RGB frame for snapshotting
                     self._outer._last_frame_rgb = arr
                     self._outer._last_frame_ts = _time.monotonic()
+                    logger.debug(
+                        "video.forward: stage=SFU->OpenAI ts=%.3f pts=%s size=%sx%s fps_limit=%s",
+                        _time.time(),
+                        pts,
+                        arr.shape[1],
+                        arr.shape[0],
+                        self._fps_limit,
+                    )
                     # Lightweight content fingerprint and stats (first frame only)
                     if getattr(self, "_debugged", False) is not True:
                         mean = float(arr.mean()) if arr.size else 0.0
@@ -964,6 +966,43 @@ class RealtimeConnection:
         except Exception as e:
             logger.error(f"Failed to start video sender: {e}")
             raise
+
+    async def _apply_video_sender_constraints(self, sender) -> None:
+        """Best-effort attempt to apply encoding constraints to the video sender.
+
+        Works across aiortc versions by probing for setParameters or set_parameters.
+        """
+        params = None
+        # Try modern API first
+        if hasattr(sender, "getParameters"):
+            params = sender.getParameters()
+        # Fallback older naming
+        if params is None and hasattr(sender, "get_parameters"):
+            params = sender.get_parameters()
+
+        if params is None:
+            return
+
+        # Ensure encodings exists
+        encs = getattr(params, "encodings", None)
+        if encs is None:
+            params.encodings = [{}]
+            encs = params.encodings
+
+        if encs is not None and len(encs) > 0:
+            enc = encs[0]
+            # Conservative bitrate and framerate limits suitable for realtime vision
+            # Reduce bitrate for lower latency and to avoid congestion
+            enc["maxBitrate"] = int(600 * 1024)  # ~600 kbps
+            enc["maxFramerate"] = int(self._video_fps)
+
+        # Apply back using whichever method exists
+        if hasattr(sender, "setParameters"):
+            await sender.setParameters(params)  # type: ignore[func-returns-value]
+            return
+        if hasattr(sender, "set_parameters"):
+            await sender.set_parameters(params)  # type: ignore[func-returns-value]
+            return
 
     async def stop_video_sender(self) -> None:
         """Restore the black video track (or disable if unavailable)."""
@@ -1083,6 +1122,7 @@ class Realtime(realtime.Realtime):
         # Video input enablement (pre-negotiate sendonly video with a black track)
         self.enable_video_input: bool = enable_video_input
         self.video_fps: int = max(1, int(video_fps))
+        self.openai_session_id: Optional[str] = None
 
         # Auto-start the realtime connection so Agent.wait_until_ready() does not hang
         try:
@@ -1155,14 +1195,9 @@ class Realtime(realtime.Realtime):
         event_type = event.get("type")
 
         if event_type == "session.created":
-            session_obj = event.get("session", {}) or {}
-            openai_session_id = session_obj.get("id")
+            self.openai_session_id = event["session"]["id"]
             logger.info(
-                "OpenAI session.created",
-                extra={
-                    "openai_session_id": openai_session_id,
-                    "local_session_id": self.session_id,
-                },
+                f"OpenAI session.created openai_session_id={self.openai_session_id} local_session_id={self.session_id}"
             )
 
         if event_type == "response.audio_transcript.done":
@@ -1200,13 +1235,6 @@ class Realtime(realtime.Realtime):
                 error=Exception(error.get("message", "Unknown error")),
                 context=f"openai_event: {error.get('code', 'unknown')}",
             )
-
-    @property
-    def provider_session_id(self) -> Optional[str]:
-        """Return the provider's native session id if available (OpenAI session id)."""
-        if self._connection is not None:
-            return getattr(self._connection, "openai_session_id", None)
-        return None
 
     async def _handle_audio_output(self, audio_bytes: bytes):
         """Handle audio output from OpenAI."""

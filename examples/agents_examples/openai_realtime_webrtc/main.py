@@ -86,7 +86,6 @@ You are a voice assistant.
 
         # Wait for a human to join the call before greeting
         await wait_for_human_participant(timeout=60.0)
-        print(f'openai session id: {agent.llm.openai_session_id}')
         await agent.llm.simple_response(text="Please greet the user.")
         print("Greeted the user")
         # img_url = "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2670&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"

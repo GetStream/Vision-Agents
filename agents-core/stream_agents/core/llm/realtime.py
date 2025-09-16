@@ -159,13 +159,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         # Ready event for providers to signal readiness
         self._ready_event: asyncio.Event = asyncio.Event()
 
-        logger.debug(
-            "Initialized Realtime base class",
-            extra={
-                "session_id": self.session_id,
-                "provider": self.provider_name,
-            },
-        )
+        logger.debug(f"Initialized Realtime base class with session id: {self.session_id}, provider: {self.provider_name}")
 
         # Emit initialization event
         init_event = PluginInitializedEvent(
