@@ -243,13 +243,20 @@ class Agent:
                     pc = getattr(base_pc, "pc", None) or getattr(base_pc, "_pc", None) or base_pc
                 if pc is not None and hasattr(pc, "on"):
                     self.logger.info("🔗 Attaching pc.on('track') handler to subscriber peer connection (early)")
+                    # Create or reuse a persistent MediaRelay to keep branches alive
+                    try:
+                        self._persistent_media_relay = getattr(self, "_persistent_media_relay", None) or MediaRelay()
+                    except Exception:
+                        self._persistent_media_relay = None
                     @pc.on("track")
                     async def _on_pc_track_early(track):
                         try:
                             kind = getattr(track, "kind", None)
                             if kind == "video":
-                                from aiortc.contrib.media import MediaRelay
-                                relay = MediaRelay()
+                                relay = self._persistent_media_relay
+                                if relay is None:
+                                    relay = MediaRelay()
+                                    self._persistent_media_relay = relay
                                 forward_branch = relay.subscribe(track)
                                 if self.sts_mode and isinstance(self.llm, Realtime):
                                     await self.llm.start_video_sender(forward_branch)
@@ -454,9 +461,11 @@ class Agent:
         await asyncio.sleep(0.5)
 
         # Use a MediaRelay to allow multiple consumers to read the same source track
-        # - One branch feeds the Realtime provider
-        # - Another branch stays in this method for processors
-        relay = MediaRelay()
+        # Reuse a persistent relay to avoid GC and keep branches alive long-term
+        relay = getattr(self, "_persistent_media_relay", None)
+        if relay is None:
+            relay = MediaRelay()
+            self._persistent_media_relay = relay
         forward_branch = relay.subscribe(track)
         processing_branch = relay.subscribe(track)
         try:

@@ -87,6 +87,8 @@ class RealtimeConnection:
         # Video diagnostics
         self._video_stall_count: int = 0
         self._saved_first_snapshot: bool = False
+        # Provider session id (from OpenAI session.created)
+        self.openai_session_id: Optional[str] = None
 
     async def __aenter__(self):
         """Start the WebRTC session with OpenAI."""
@@ -113,21 +115,18 @@ class RealtimeConnection:
         if not audio_data:
             return
         # Aggressive backpressure: keep only a few most recent frames
-        try:
-            while self._mic_queue.qsize() >= self._max_queue_frames:
-                try:
-                    _ = self._mic_queue.get_nowait()
-                    self._frames_dropped += 1
-                except Exception:
-                    break
-            # Store (bytes, sample_rate) tuple
-            self._mic_queue.put_nowait((audio_data, sample_rate))
-            if self._frames_dropped and (self._frames_dropped % 50 == 0):
-                logger.debug(
-                    f"mic_queue: dropped_frames={self._frames_dropped} size={self._mic_queue.qsize()}"
-                )
-        except Exception as e:
-            logger.debug(f"mic_queue enqueue error: {e}")
+        while self._mic_queue.qsize() >= self._max_queue_frames:
+            try:
+                _ = self._mic_queue.get_nowait()
+                self._frames_dropped += 1
+            except asyncio.QueueEmpty:
+                break
+        # Store (bytes, sample_rate) tuple
+        self._mic_queue.put_nowait((audio_data, sample_rate))
+        if self._frames_dropped and (self._frames_dropped % 50 == 0):
+            logger.debug(
+                f"mic_queue: dropped_frames={self._frames_dropped} size={self._mic_queue.qsize()}"
+            )
 
     async def send_text(self, text: str):
         """Send a text message to OpenAI."""
@@ -202,12 +201,9 @@ class RealtimeConnection:
                     f"Failed to get session token (attempt {attempt+1}/3): {e}"
                 )
                 status = e.response.status_code if e.response is not None else 0
-                try:
-                    body = e.response.text if e.response is not None else ""
-                    logger.error(f"Response status: {status}")
-                    logger.error(f"Response body: {body}")
-                except Exception:
-                    pass
+                body = e.response.text if e.response is not None else ""
+                logger.error(f"Response status: {status}")
+                logger.error(f"Response body: {body}")
                 if status and 500 <= status < 600 and attempt < 2:
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
@@ -260,12 +256,9 @@ class RealtimeConnection:
                     f"SDP exchange failed (attempt {attempt+1}/3): {e}"
                 )
                 status = e.response.status_code if e.response is not None else 0
-                try:
-                    body = e.response.text if e.response is not None else ""
-                    logger.error(f"Response status: {status}")
-                    logger.error(f"Response body: {body}")
-                except Exception:
-                    pass
+                body = e.response.text if e.response is not None else ""
+                logger.error(f"Response status: {status}")
+                logger.error(f"Response body: {body}")
                 if status and 500 <= status < 600 and attempt < 2:
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
@@ -297,26 +290,20 @@ class RealtimeConnection:
             @self.pc.on("track")
             async def on_track(track):
                 if track.kind == "audio":
-                    try:
-                        track_id = getattr(track, "id", "<no-id>")
-                        logger.info(
-                            f"on_track: remote audio track attached id={track_id}"
-                        )
-                    except Exception:
-                        logger.info("on_track: remote audio track attached")
+                    track_id = getattr(track, "id", "<no-id>")
+                    logger.info(
+                        f"on_track: remote audio track attached id={track_id}"
+                    )
                     # Extra diagnostics for the audio track in debug mode
-                    try:
-                        print(
-                            "[OpenAI Realtime] Remote audio track attached:",
-                            {
-                                "id": getattr(track, "id", None),
-                                "kind": getattr(track, "kind", None),
-                                "class": track.__class__.__name__,
-                                "readyState": getattr(track, "readyState", None),
-                            },
-                        )
-                    except Exception:
-                        pass
+                    print(
+                        "[OpenAI Realtime] Remote audio track attached:",
+                        {
+                            "id": getattr(track, "id", None),
+                            "kind": getattr(track, "kind", None),
+                            "class": track.__class__.__name__,
+                            "readyState": getattr(track, "readyState", None),
+                        },
+                    )
                     asyncio.create_task(self._process_audio_track(track))
                 else:
                     logger.info(f"on_track: non-audio track received kind={track.kind}")
@@ -335,11 +322,8 @@ class RealtimeConnection:
             def on_open():
                 logger.info("Data channel opened")
                 # Fallback: if provider doesn't send session.created promptly, consider session ready
-                try:
-                    if not self.session_created_event.is_set():
-                        self.session_created_event.set()
-                except Exception:
-                    pass
+                if not self.session_created_event.is_set():
+                    self.session_created_event.set()
 
             @self.dc.on("message")
             def on_message(message):
@@ -487,7 +471,7 @@ class RealtimeConnection:
                 try:
                     os.makedirs(self._snapshot_dir, exist_ok=True)
                     logger.info(f"Snapshot directory ready: {self._snapshot_dir}")
-                except Exception as e:
+                except OSError as e:
                     logger.warning(f"Failed to create snapshot directory: {e}")
                 self._snapshot_task = asyncio.create_task(self._periodic_snapshot_saver())
 
@@ -501,10 +485,8 @@ class RealtimeConnection:
 
         try:
             if self._mic_track is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._mic_track.stop()
-                except Exception:
-                    pass
                 self._mic_track = None
             if self.dc:
                 self.dc.close()
@@ -570,8 +552,48 @@ class RealtimeConnection:
         event_type = event.get("type")
 
         if event_type == "session.created":
-            logger.info("Session created")
+            session_obj = event.get("session", {}) or {}
+            self.openai_session_id = session_obj.get("id")
+            logger.info(
+                "Session created",
+                extra={
+                    "openai_session_id": self.openai_session_id,
+                },
+            )
             self.session_created_event.set()
+
+        elif event_type == "response.created":
+            logger.info(
+                "response.created",
+                extra={
+                    "response_id": event.get("response", {}).get("id") or event.get("id"),
+                },
+            )
+
+        elif event_type == "response.output_text.delta":
+            # Streaming text delta from assistant (verbose only)
+            if os.getenv("OPENAI_REALTIME_DEBUG"):
+                delta = event.get("delta") or event.get("text")
+                if delta:
+                    print("[OpenAI Response Δ]", str(delta)[:200])
+
+        elif event_type == "response.completed":
+            rid = event.get("response", {}).get("id") or event.get("response_id") or event.get("id")
+            logger.info("response.completed", extra={"response_id": rid})
+
+        elif event_type == "conversation.item.created":
+            # Item created in the conversation (user or assistant)
+            item = event.get("item", {}) or {}
+            content = item.get("content") or []
+            content_types = [c.get("type") for c in content if isinstance(c, dict) and c.get("type")]
+            logger.info(
+                "conversation.item.created",
+                extra={
+                    "item_id": item.get("id"),
+                    "role": item.get("role"),
+                    "content_types": content_types,
+                },
+            )
 
         elif event_type == "response.audio.delta":
             # Ignore data-channel audio when using media track
@@ -612,20 +634,15 @@ class RealtimeConnection:
     async def _process_audio_track(self, track: MediaStreamTrack):
         """Process incoming audio track from OpenAI."""
         logger.info("Starting to process audio track from OpenAI (expect PCM frames)")
-        try:
-            print(
-                "[OpenAI Realtime] Begin processing remote audio track",
-                {
-                    "id": getattr(track, "id", None),
-                    "kind": getattr(track, "kind", None),
-                    "class": track.__class__.__name__,
-                    "readyState": getattr(track, "readyState", None),
-                },
-            )
-        except Exception:
-            print("🔊 Error processing audio track")
-            print(traceback.format_exc())
-            pass
+        print(
+            "[OpenAI Realtime] Begin processing remote audio track",
+            {
+                "id": getattr(track, "id", None),
+                "kind": getattr(track, "kind", None),
+                "class": track.__class__.__name__,
+                "readyState": getattr(track, "readyState", None),
+            },
+        )
 
         try:
             # Wait briefly for _running to become True in case on_track fired early
@@ -647,23 +664,22 @@ class RealtimeConnection:
                     frame = await asyncio.wait_for(track.recv(), timeout=1.0)
 
                     # Convert audio frame to mono int16 and resample to 48kHz (match WebRTC)
-                    if hasattr(frame, "to_ndarray"):
-                        samples = frame.to_ndarray()
-                        # Downmix stereo/planar to mono if needed (axis 0 = channels)
-                        if samples.ndim == 2 and samples.shape[0] > 1:
-                            samples = samples.mean(axis=0)
-                        # Normalize dtype to int16
-                        if samples.dtype != np.int16:
-                            samples = (samples * 32767).astype(np.int16)
-                        # OpenAI media track typically carries 24k PCM over data channel or 48k via WebRTC.
-                        # We will upsample to 48000 Hz for publication to SFU.
-                        in_rate = getattr(frame, "sample_rate", 48000) or 48000
-                        if in_rate != 48000:
-                            samples = resample_audio(samples, in_rate, 48000).astype(np.int16)
-                        audio_bytes = samples.tobytes()
+                    samples = frame.to_ndarray()
+                    # Downmix stereo/planar to mono if needed (axis 0 = channels)
+                    if samples.ndim == 2 and samples.shape[0] > 1:
+                        samples = samples.mean(axis=0)
+                    # Normalize dtype to int16
+                    if samples.dtype != np.int16:
+                        samples = (samples * 32767).astype(np.int16)
+                    # OpenAI media track typically carries 24k PCM over data channel or 48k via WebRTC.
+                    # We will upsample to 48000 Hz for publication to SFU.
+                    in_rate = getattr(track, "sample_rate", None) or getattr(frame, "sample_rate", 48000) or 48000
+                    if in_rate != 48000:
+                        samples = resample_audio(samples, in_rate, 48000).astype(np.int16)
+                    audio_bytes = samples.tobytes()
 
-                        for callback in self._audio_callbacks:
-                            await callback(audio_bytes)
+                    for callback in self._audio_callbacks:
+                        await callback(audio_bytes)
 
                 except asyncio.TimeoutError:
                     logger.debug("rx audio: no frame within 1s")
@@ -682,113 +698,103 @@ class RealtimeConnection:
 
     async def _log_inbound_audio_stats(self):
         """Periodically log inbound audio RTP stats if available."""
-        try:
-            while self._running:
-                try:
-                    stats = await self.pc.getStats()
-                    for report in stats.values():
-                        if (
-                            report.type == "inbound-rtp"
-                            and getattr(report, "kind", None) == "audio"
-                        ):
-                            bytes_rcv = getattr(report, "bytesReceived", None)
-                            packs_rcv = getattr(report, "packetsReceived", None)
-                            jitter = getattr(report, "jitter", None)
-                            logger.info(
-                                f"inbound audio stats: bytes={bytes_rcv} packets={packs_rcv} jitter={jitter}"
-                            )
-                    await asyncio.sleep(3.0)
-                except Exception:
-                    await asyncio.sleep(3.0)
-        except Exception:
-            pass
+        while self._running:
+            try:
+                stats = await self.pc.getStats()
+                for report in stats.values():
+                    if (
+                        report.type == "inbound-rtp"
+                        and getattr(report, "kind", None) == "audio"
+                    ):
+                        bytes_rcv = getattr(report, "bytesReceived", None)
+                        packs_rcv = getattr(report, "packetsReceived", None)
+                        jitter = getattr(report, "jitter", None)
+                        logger.info(
+                            f"inbound audio stats: bytes={bytes_rcv} packets={packs_rcv} jitter={jitter}"
+                        )
+            except Exception:
+                pass
+            await asyncio.sleep(3.0)
 
     async def _log_outbound_video_stats(self):
         """Periodically log outbound video RTP stats if available."""
-        try:
-            while self._running and self.enable_video_input:
-                try:
-                    stats = await self.pc.getStats()
-                    # Build a codec lookup by id for richer logging
-                    codecs = {rid: r for rid, r in stats.items() if getattr(r, "type", None) == "codec"}
-                    for report in stats.values():
-                        if (
-                            report.type == "outbound-rtp"
-                            and getattr(report, "kind", None) == "video"
-                        ):
-                            bytes_sent = int(getattr(report, "bytesSent", 0) or 0)
-                            frames_sent = int(getattr(report, "framesSent", 0) or 0) if hasattr(report, "framesSent") else None
-                            packets_sent = int(getattr(report, "packetsSent", 0) or 0)
-                            frame_w = getattr(report, "frameWidth", None)
-                            frame_h = getattr(report, "frameHeight", None)
-                            codec_id = getattr(report, "codecId", None)
-                            codec = codecs.get(codec_id) if codec_id else None
-                            mime = getattr(codec, "mimeType", None) if codec else None
-                            clock = getattr(codec, "clockRate", None) if codec else None
-                            fmtp = getattr(codec, "sdpFmtpLine", None) if codec else None
-                            # Include diffs to see whether content is actually flowing
-                            prev = self._out_video_prev
-                            d_bytes = bytes_sent - int(prev.get("bytes", 0))
-                            d_pkts = packets_sent - int(prev.get("pkts", 0))
-                            d_frames = (frames_sent - int(prev.get("frames", 0))) if frames_sent is not None else None
-                            parts = [
-                                f"bytes={bytes_sent} (+{d_bytes})",
-                                f"packets={packets_sent} (+{d_pkts})",
-                            ]
-                            if d_frames is not None:
-                                parts.append(f"frames={frames_sent} (+{d_frames})")
-                            if frame_w and frame_h:
-                                parts.append(f"size={frame_w}x{frame_h}")
-                            if mime:
-                                parts.append(f"codec={mime}")
-                            logger.info("outbound video stats: " + " ".join(parts))
-                            self._out_video_prev = {"bytes": bytes_sent, "pkts": packets_sent, "frames": frames_sent or 0}
-                            # Stall detection: warn if frames not increasing for multiple intervals
-                            if d_frames is not None and d_frames <= 0:
-                                self._video_stall_count += 1
-                                if self._video_stall_count >= 3:
-                                    logger.warning("outbound video appears stalled (no new frames for ~%ss)", 3 * 3)
-                            else:
-                                self._video_stall_count = 0
-                    await asyncio.sleep(3.0)
-                except Exception:
-                    await asyncio.sleep(3.0)
-        except Exception:
-            pass
+        while self._running and self.enable_video_input:
+            try:
+                stats = await self.pc.getStats()
+                # Build a codec lookup by id for richer logging
+                codecs = {rid: r for rid, r in stats.items() if getattr(r, "type", None) == "codec"}
+                for report in stats.values():
+                    if (
+                        report.type == "outbound-rtp"
+                        and getattr(report, "kind", None) == "video"
+                    ):
+                        bytes_sent = int(getattr(report, "bytesSent", 0) or 0)
+                        frames_sent = getattr(report, "framesSent", None)
+                        frames_sent = int(frames_sent or 0) if frames_sent is not None else None
+                        packets_sent = int(getattr(report, "packetsSent", 0) or 0)
+                        frame_w = getattr(report, "frameWidth", None)
+                        frame_h = getattr(report, "frameHeight", None)
+                        codec_id = getattr(report, "codecId", None)
+                        codec = codecs.get(codec_id) if codec_id else None
+                        mime = getattr(codec, "mimeType", None) if codec else None
+                        # Include diffs to see whether content is actually flowing
+                        prev = self._out_video_prev
+                        d_bytes = bytes_sent - int(prev.get("bytes", 0))
+                        d_pkts = packets_sent - int(prev.get("pkts", 0))
+                        d_frames = (frames_sent - int(prev.get("frames", 0))) if frames_sent is not None else None
+                        parts = [
+                            f"bytes={bytes_sent} (+{d_bytes})",
+                            f"packets={packets_sent} (+{d_pkts})",
+                        ]
+                        if d_frames is not None:
+                            parts.append(f"frames={frames_sent} (+{d_frames})")
+                        if frame_w and frame_h:
+                            parts.append(f"size={frame_w}x{frame_h}")
+                        if mime:
+                            parts.append(f"codec={mime}")
+                        logger.info("outbound video stats: " + " ".join(parts))
+                        self._out_video_prev = {"bytes": bytes_sent, "pkts": packets_sent, "frames": frames_sent or 0}
+                        # Stall detection: warn if frames not increasing for multiple intervals
+                        if d_frames is not None and d_frames <= 0:
+                            self._video_stall_count += 1
+                            if self._video_stall_count >= 3:
+                                logger.warning("outbound video appears stalled (no new frames for ~%ss)", 3 * 3)
+                        else:
+                            self._video_stall_count = 0
+            except Exception:
+                pass
+            await asyncio.sleep(3.0)
 
     async def _periodic_snapshot_saver(self):
         """Save the last forwarded frame to disk every N seconds if available."""
-        try:
-            while self._running and self.enable_video_input:
+        while self._running and self.enable_video_input:
+            try:
+                await asyncio.sleep(self._snapshot_interval_sec)
+                if self._last_frame_rgb is None:
+                    logger.debug("snapshot: no last_frame_rgb yet")
+                    continue
+                rgb = self._last_frame_rgb
+                # Convert to PNG and write
                 try:
-                    await asyncio.sleep(self._snapshot_interval_sec)
-                    if self._last_frame_rgb is None:
-                        logger.debug("snapshot: no last_frame_rgb yet")
-                        continue
-                    rgb = self._last_frame_rgb
-                    # Convert to PNG and write
+                    from PIL import Image  # type: ignore
+                    img = Image.fromarray(rgb, mode="RGB")
+                    ts = int(time.time())
+                    path = os.path.join(self._snapshot_dir, f"frame_{ts}.png")
+                    img.save(path, format="PNG")
+                    logger.info(f"Saved forwarded frame snapshot: {path}")
+                except Exception as e:
+                    # Fallback: save raw RGB as .npy if Pillow not available or save failed
                     try:
-                        from PIL import Image  # type: ignore
-                        img = Image.fromarray(rgb, mode="RGB")
                         ts = int(time.time())
-                        path = os.path.join(self._snapshot_dir, f"frame_{ts}.png")
-                        img.save(path, format="PNG")
-                        logger.info(f"Saved forwarded frame snapshot: {path}")
-                    except Exception as e:
-                        # Fallback: save raw RGB as .npy if Pillow not available or save failed
-                        try:
-                            ts = int(time.time())
-                            path = os.path.join(self._snapshot_dir, f"frame_{ts}.npy")
-                            np.save(path, rgb)
-                            logger.warning(f"Snapshot PNG failed ({e}); saved raw RGB to: {path}")
-                        except Exception as e2:
-                            logger.debug(f"snapshot save failed (both PNG and NPY): {e2}")
-                except asyncio.CancelledError:
-                    break
-                except Exception:
-                    await asyncio.sleep(self._snapshot_interval_sec)
-        except Exception:
-            pass
+                        path = os.path.join(self._snapshot_dir, f"frame_{ts}.npy")
+                        np.save(path, rgb)
+                        logger.warning(f"Snapshot PNG failed ({e}); saved raw RGB to: {path}")
+                    except Exception as e2:
+                        logger.debug(f"snapshot save failed (both PNG and NPY): {e2}")
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
 
     async def __aiter__(self) -> AsyncIterator[dict]:
         """Iterate over events from OpenAI."""
@@ -818,15 +824,12 @@ class RealtimeConnection:
             # Find the active video sender dynamically to avoid stale references
             video_sender = None
             for transceiver in self.pc.getTransceivers():
-                try:
-                    if getattr(transceiver, "kind", None) == "video" and getattr(transceiver, "sender", None):
-                        video_sender = transceiver.sender
-                        logger.warning(
-                            f"start_video_sender: using transceiver kind=video dir={getattr(transceiver, 'direction', None)}"
-                        )
-                        break
-                except Exception:
-                    continue
+                if getattr(transceiver, "kind", None) == "video" and getattr(transceiver, "sender", None):
+                    video_sender = transceiver.sender
+                    logger.warning(
+                        f"start_video_sender: using transceiver kind=video dir={getattr(transceiver, 'direction', None)}"
+                    )
+                    break
             if video_sender is None:
                 # Fallback to negotiated sender if present
                 video_sender = self._video_sender
@@ -849,7 +852,19 @@ class RealtimeConnection:
                     import time as _time
 
                     # Receive source frame first
-                    frame = await self._source.recv()
+                    frame: VideoFrame = await self._source.recv()
+                    # Scale down frame to target resolution if larger
+                    tgt_w = int(self._outer._target_video_width)
+                    tgt_h = int(self._outer._target_video_height)
+                    if tgt_w > 0 and tgt_h > 0 and (frame.width > tgt_w or frame.height > tgt_h):
+                        scale = min(tgt_w / float(frame.width), tgt_h / float(frame.height))
+                        new_w = max(1, int(frame.width * scale))
+                        new_h = max(1, int(frame.height * scale))
+                        try:
+                            frame = frame.reformat(width=new_w, height=new_h)
+                        except Exception:
+                            # Keep original frame if resize unsupported
+                            logger.warning("Failed to resize video frame; using original size")
 
                     # Throttle output to fps_limit
                     interval = 1.0 / float(self._fps_limit)
@@ -868,32 +883,23 @@ class RealtimeConnection:
 
                     # Debug once: confirm non-black payload and cache last frame
                     arr = frame.to_ndarray(format="rgb24")
-                    try:
-                        # Cache the last forwarded RGB frame for snapshotting
-                        self._outer._last_frame_rgb = arr
-                        self._outer._last_frame_ts = _time.monotonic()
-                    except Exception:
-                        pass
+                    # Cache the last forwarded RGB frame for snapshotting
+                    self._outer._last_frame_rgb = arr
+                    self._outer._last_frame_ts = _time.monotonic()
                     # Lightweight content fingerprint and stats (first frame only)
                     if getattr(self, "_debugged", False) is not True:
-                        try:
-                            mean = float(arr.mean()) if arr.size else 0.0
-                            vmin = float(arr.min()) if arr.size else 0.0
-                            vmax = float(arr.max()) if arr.size else 0.0
-                            h, w, c = arr.shape
-                            digest = hashlib.sha256(arr.tobytes()).hexdigest()[:16]
-                            logger.info(
-                                f"Forwarding video frame: sha256={digest} size={w}x{h} chans={c} mean={mean:.2f} min={vmin:.0f} max={vmax:.0f}"
-                            )
-                            # Save a one-off immediate snapshot for debugging
-                            try:
-                                if not self._outer._saved_first_snapshot:
-                                    asyncio.create_task(self._outer._save_snapshot_now(arr, label="first_frame"))
-                                    self._outer._saved_first_snapshot = True
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
+                        mean = float(arr.mean()) if arr.size else 0.0
+                        vmin = float(arr.min()) if arr.size else 0.0
+                        vmax = float(arr.max()) if arr.size else 0.0
+                        h, w, c = arr.shape
+                        digest = hashlib.sha256(arr.tobytes()).hexdigest()[:16]
+                        logger.debug(
+                            f"Forwarding video frame: sha256={digest} size={w}x{h} chans={c} mean={mean:.2f} min={vmin:.0f} max={vmax:.0f}"
+                        )
+                        # Save a one-off immediate snapshot for debugging
+                        if not self._outer._saved_first_snapshot:
+                            asyncio.create_task(self._outer._save_snapshot_now(arr, label="first_frame"))
+                            self._outer._saved_first_snapshot = True
                         self._debugged = True
 
                     return frame
@@ -919,25 +925,21 @@ class RealtimeConnection:
                 await _res
             else:
                 logger.warning("start_video_sender: replaceTrack returned %s (not awaited)", type(_res).__name__)
-            try:
-                track_info = {
-                    "sender_has_track": bool(getattr(video_sender, "track", None)),
-                    "track_class": getattr(getattr(video_sender, "track", None), "__class__", type(None)).__name__,
-                }
-            except Exception:
-                track_info = {"sender_has_track": False}
+            # Re-apply constraints after swap
+            await self._apply_video_sender_constraints(video_sender)
+            track_info = {
+                "sender_has_track": bool(getattr(video_sender, "track", None)),
+                "track_class": getattr(getattr(video_sender, "track", None), "__class__", type(None)).__name__,
+            }
             logger.warning("Video sender switched to forwarding track (fps=%s) %s", _fps, track_info)
 
             # Kick once more after 1s to ensure downstream latched onto the new track
             async def _ensure_swap():
                 await asyncio.sleep(1)
-                try:
-                    _again = video_sender.replaceTrack(self._forward_video_track)
-                    if asyncio.iscoroutine(_again):
-                        await _again
-                    logger.warning("Video sender reasserted forwarding track after delay")
-                except Exception as e:
-                    logger.debug(f"Reassert replaceTrack failed: {e}")
+                _again = video_sender.replaceTrack(self._forward_video_track)
+                if asyncio.iscoroutine(_again):
+                    await _again
+                logger.warning("Video sender reasserted forwarding track after delay")
 
             # Verify outbound stats shortly after swap
             async def _verify_outbound():
@@ -1122,10 +1124,7 @@ class Realtime(realtime.Realtime):
             # Emit connected event using Realtime helper
             # Manually emit connected event (include provider) and mark ready
             self._is_connected = True
-            try:
-                self._ready_event.set()
-            except Exception:
-                pass
+            self._ready_event.set()
             event = RealtimeConnectedEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
@@ -1141,12 +1140,10 @@ class Realtime(realtime.Realtime):
             self.emit("connected", event)
 
             # Prime publisher audio pipeline with brief silence to seed timestamps
-            try:
-                if hasattr(self, "output_track") and self.output_track is not None:
-                    # 200ms of silence at 48kHz mono s16 -> 9600 samples -> 19200 bytes
-                    await self.output_track.write(b"\x00" * 19200)
-            except Exception:
-                pass
+            output_track = getattr(self, "output_track", None)
+            if output_track is not None:
+                # 100ms of silence at 48kHz mono s16 -> 4800 samples -> 9600 bytes
+                await output_track.write(b"\x00" * 9600)
 
         except Exception as e:
             # Emit error event using Realtime helper
@@ -1156,6 +1153,17 @@ class Realtime(realtime.Realtime):
     async def _handle_openai_event(self, event: dict):
         """Handle events from OpenAI and emit appropriate Realtime events."""
         event_type = event.get("type")
+
+        if event_type == "session.created":
+            session_obj = event.get("session", {}) or {}
+            openai_session_id = session_obj.get("id")
+            logger.info(
+                "OpenAI session.created",
+                extra={
+                    "openai_session_id": openai_session_id,
+                    "local_session_id": self.session_id,
+                },
+            )
 
         if event_type == "response.audio_transcript.done":
             # Assistant's transcript
@@ -1193,30 +1201,30 @@ class Realtime(realtime.Realtime):
                 context=f"openai_event: {error.get('code', 'unknown')}",
             )
 
+    @property
+    def provider_session_id(self) -> Optional[str]:
+        """Return the provider's native session id if available (OpenAI session id)."""
+        if self._connection is not None:
+            return getattr(self._connection, "openai_session_id", None)
+        return None
+
     async def _handle_audio_output(self, audio_bytes: bytes):
         """Handle audio output from OpenAI."""
         # Emit audio output event only if someone is listening to avoid overhead
-        try:
-            has_listeners = False
-            try:
-                has_listeners = len(self.listeners("audio_output")) > 0  # type: ignore[attr-defined]
-            except Exception:
-                has_listeners = False
-            if has_listeners:
-                self._emit_audio_output_event(
-                    audio_data=audio_bytes,
-                    sample_rate=48000,
-                )
-        except Exception:
-            pass
+        listeners_fn = getattr(self, "listeners", None)
+        has_listeners = bool(listeners_fn("audio_output")) if callable(listeners_fn) else False
+        if has_listeners:
+            self._emit_audio_output_event(
+                audio_data=audio_bytes,
+                sample_rate=48000,
+            )
         # Also push audio to the published output track so remote participants hear it
-        try:
-            if hasattr(self, "output_track") and self.output_track is not None:
-                # Write raw PCM bytes at 48kHz to published output track if playback enabled
-                if self._playback_enabled:
-                    await self.output_track.write(audio_bytes)
-        except Exception as e:
-            logger.debug(f"Failed to write audio to output track: {e}")
+        output_track = getattr(self, "output_track", None)
+        if output_track is not None and self._playback_enabled:
+            try:
+                await output_track.write(audio_bytes)
+            except Exception as e:
+                logger.debug(f"Failed to write audio to output track: {e}")
 
     @asynccontextmanager
     async def connect(self, call: Call, agent_user_id: str):
@@ -1250,8 +1258,8 @@ class Realtime(realtime.Realtime):
 
         # Extract numpy int16 array from PCM data and resample to 48000 Hz for RTP
         audio_bytes = None
-        if hasattr(pcm_data, "samples"):
-            samples = pcm_data.samples
+        samples = getattr(pcm_data, "samples", None)
+        if samples is not None:
             if not isinstance(samples, (bytes, bytearray)):
                 import numpy as _np
 
@@ -1280,7 +1288,7 @@ class Realtime(realtime.Realtime):
 
         if audio_bytes:
             # Emit input event using Realtime helper (report source rate)
-            src_rate_emit = int(getattr(pcm_data, "sample_rate", 48000)) if hasattr(pcm_data, "sample_rate") else 48000
+            src_rate_emit = int(getattr(pcm_data, "sample_rate", 48000))
             self._emit_audio_input_event(
                 audio_data=audio_bytes,
                 sample_rate=src_rate_emit,
@@ -1329,10 +1337,7 @@ class Realtime(realtime.Realtime):
         """Send a text message from the human side to the conversation."""
         await self._ensure_connection()
         # Emit user transcript event for UI mirroring
-        try:
-            self._emit_transcript_event(text=text, user_metadata={"role": "user"})
-        except Exception:
-            pass
+        self._emit_transcript_event(text=text, user_metadata={"role": "user"})
         # Ensure playback is enabled before expecting an assistant reply
         self._playback_enabled = True
         if not self._connection:
@@ -1388,12 +1393,12 @@ class Realtime(realtime.Realtime):
     async def interrupt_playback(self) -> None:
         """Stop current playback immediately and clear queued audio chunks."""
         self._playback_enabled = False
-        try:
-            if hasattr(self, "output_track") and self.output_track is not None:
-                await self.output_track.flush()
-        except Exception:
-            # Best-effort flush; ignore if track doesn't support it
-            pass
+        output_track = getattr(self, "output_track", None)
+        if output_track is not None:
+            flush_fn = getattr(output_track, "flush", None)
+            if callable(flush_fn):
+                with contextlib.suppress(Exception):
+                    await flush_fn()
 
     def resume_playback(self) -> None:
         """Re-enable playback after an interruption."""

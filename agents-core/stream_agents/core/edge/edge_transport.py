@@ -87,6 +87,15 @@ class StreamEdge(EdgeTransport):
             # TODO: maybe make it easy to subscribe only to video tracks?
             self.emit("track_added", track_id, track_type, user)
 
+        # Some SDK versions emit 'track_published' instead of 'track_added'.
+        # Forward it to the same 'track_added' hook for compatibility.
+        @self._connection.on("track_published")
+        async def on_track_published(*args, **kwargs):
+            try:
+                self.emit("track_added", *args, **kwargs)
+            except Exception:
+                pass
+
         return connection_cm
 
     def create_audio_track(self):

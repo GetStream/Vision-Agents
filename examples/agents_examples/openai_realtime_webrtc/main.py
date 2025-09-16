@@ -82,14 +82,11 @@ You are a voice assistant.
     with await agent.join(call):
         print("Joining call")
         # Ensure the LLM realtime connection is ready (should already be awaited internally)
-        try:
-            await agent.llm.wait_until_ready(timeout=10.0)  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        await agent.llm.wait_until_ready(timeout=10.0)  # type: ignore[attr-defined]
 
         # Wait for a human to join the call before greeting
         await wait_for_human_participant(timeout=60.0)
-
+        print(f'openai session id: {agent.llm.openai_session_id}')
         await agent.llm.simple_response(text="Please greet the user.")
         print("Greeted the user")
         # img_url = "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2670&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
