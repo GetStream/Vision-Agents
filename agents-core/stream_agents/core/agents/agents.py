@@ -7,7 +7,7 @@ from uuid import uuid4
 import aiortc
 from aiortc import VideoStreamTrack
 
-from ..edge.types import Participant, PcmData, Connection, TrackType
+from ..edge.types import Participant, PcmData, Connection, TrackType, User
 from ..events.events import RealtimePartialTranscriptEvent
 from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
@@ -17,7 +17,6 @@ from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEven
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
-from getstream.models import User, UserRequest
 from ..events import get_global_registry, EventType
 
 from .conversation import StreamHandle, Message, Conversation
@@ -62,7 +61,7 @@ class Agent:
         turn_detection: Optional[BaseTurnDetector] = None,
         vad: Optional[VAD] = None,
         # the agent's user info
-        agent_user: Optional[UserRequest] = None,
+        agent_user: Optional[User] = None,
         # for video gather data at an interval
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
@@ -149,7 +148,7 @@ class Agent:
 
         # Close RTC connection
         if self._connection:
-            await self._connection.__aexit__(None, None, None)
+            await self._connection.close()
         self._connection = None
 
         # Close STT
@@ -224,16 +223,14 @@ class Agent:
             await self.llm.wait_until_ready()
 
 
-        connection_cm = await self.edge.join(self, call)
-
-        # TODO: remove me
-        self._connection = self.edge._connection
+        connection = await self.edge.join(self, call)
+        self._connection = connection
 
 
         self._is_running = True
 
         registry = get_global_registry()
-        registry.add_connection_listeners(connection_cm)
+        registry.add_connection_listeners(self._connection)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -251,11 +248,11 @@ class Agent:
 
             from .agent_session import AgentSessionContextManager
 
-            return AgentSessionContextManager(self, connection_cm)
+            return AgentSessionContextManager(self, self._connection)
         # In case tracks are not added, still return context manager
         from .agent_session import AgentSessionContextManager
 
-        return AgentSessionContextManager(self, connection_cm)
+        return AgentSessionContextManager(self, self._connection)
 
 
     async def finish(self):
@@ -268,7 +265,7 @@ class Agent:
         try:
             fut = asyncio.get_event_loop().create_future()
 
-            @self._connection.on("call_ended")
+            @self.edge.on("call_ended")
             def on_ended():
                 if not fut.done():
                     fut.set_result(None)

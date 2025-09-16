@@ -8,13 +8,25 @@ import aiortc
 from getstream import Stream
 from getstream.chat.client import ChatClient
 from getstream.models import UserRequest, Call, ChannelInput
-from getstream.video.rtc import audio_track
+from getstream.video import rtc
+from getstream.video.rtc import audio_track, ConnectionManager
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType, Participant
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import TrackSubscriptionConfig, SubscriptionConfig
 
+from plugins.getstream.stream_agents.plugins.getstream.stream_conversation import StreamConversation
 from stream_agents.core.edge import EdgeTransport
+from stream_agents.core.edge.types import Connection
 
+
+class StreamConnection(Connection):
+    def __init__(self, connection: ConnectionManager):
+        super().__init__()
+        # store the native connection object
+        self._connection = connection
+
+    async def close(self):
+        await self._connection.leave()
 
 class StreamEdge(EdgeTransport):
     """
@@ -41,7 +53,7 @@ class StreamEdge(EdgeTransport):
         )
         return self.channel, self.conversation
 
-    async def join(self, agent: "Agent", call: Call):
+    async def join(self, agent: "Agent", call: Call) -> StreamConnection:
         """
         The logic for joining a call is different for each edge network/realtime audio/video provider
 
@@ -62,10 +74,10 @@ class StreamEdge(EdgeTransport):
         )
 
         # Open RTC connection and keep it alive for the duration of the returned context manager
-        connection_cm = await rtc.join(
+        connection = await rtc.join(
             call, agent.agent_user.id, subscription_config=subscription_config
         )
-        connection = await connection_cm.__aenter__()
+        await connection.__aenter__() # TODO: weird API? there should be a manual version
         self._connection = connection
 
         @self._connection.on("audio")
@@ -77,7 +89,13 @@ class StreamEdge(EdgeTransport):
             # TODO: maybe make it easy to subscribe only to video tracks?
             self.emit("track_added", track_id, track_type, user)
 
-        return connection_cm
+        @self._connection.on("call_ended")
+        async def call_ended(*args, **kwargs):
+            self.emit("call_ended", *args, **kwargs)
+
+        standardize_connection = StreamConnection(connection)
+
+        return standardize_connection
 
     def create_audio_track(self):
         return audio_track.AudioStreamTrack(framerate=16000)

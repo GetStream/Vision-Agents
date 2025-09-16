@@ -1,15 +1,24 @@
 #from __future__ import annotations
-
+from dataclasses import dataclass
 from typing import Any, Optional, NamedTuple
 
 import numpy as np
 from numpy._typing import NDArray
+from pyee.asyncio import AsyncIOEventEmitter
 
-'''
-TODO
-Connection
-- 
-'''
+
+
+@dataclass
+class User:
+    id: str
+    name: str
+    image: Optional[str] = ""
+
+
+@dataclass
+class Participant:
+    original: Any
+    user_id: str
 
 
 from enum import IntEnum
@@ -21,19 +30,21 @@ class TrackType(IntEnum):
     TRACK_TYPE_SCREEN_SHARE    = 3
     TRACK_TYPE_SCREEN_SHARE_AUDIO = 4
 
-# Optional: keep the top-level constants if you like those names/API
 TRACK_TYPE_UNSPECIFIED      = TrackType.TRACK_TYPE_UNSPECIFIED
 TRACK_TYPE_AUDIO            = TrackType.TRACK_TYPE_AUDIO
 TRACK_TYPE_VIDEO            = TrackType.TRACK_TYPE_VIDEO
 TRACK_TYPE_SCREEN_SHARE     = TrackType.TRACK_TYPE_SCREEN_SHARE
 TRACK_TYPE_SCREEN_SHARE_AUDIO = TrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO
 
-class Connection:
-    pass
 
-class Participant:
-    original: Any
-    user_id: str
+class Connection(AsyncIOEventEmitter):
+    """
+    To standardize we need to have a method to close
+    and a way to receive a callback when the call is ended
+    In the future we might want to forward more events
+    """
+    async def close(self):
+        pass
 
 
 class PcmData(NamedTuple):
