@@ -452,6 +452,8 @@ class RealtimeConnection:
             # Create offer and exchange SDP
             offer = await self.pc.createOffer()
             await self.pc.setLocalDescription(offer)
+            
+            import pdb; pdb.set_trace()
 
             answer_sdp = await self._exchange_sdp(offer.sdp)
             if not answer_sdp:
@@ -869,9 +871,41 @@ class RealtimeConnection:
 
                 async def recv(self):
                     import time as _time
+                    # Throttle output to fps_limit first (we target ticks, not every source frame)
+                    interval = 1.0 / float(self._fps_limit)
+                    now = _time.monotonic()
+                    if self._last_ts is not None:
+                        remaining = (self._last_ts + interval) - now
+                        if remaining > 0:
+                            await asyncio.sleep(remaining)
+                            now = _time.monotonic()
+                    self._last_ts = now
 
-                    # Receive source frame first
-                    frame: VideoFrame = await self._source.recv()
+                    # Fetch only the freshest available frame without building a queue.
+                    # Try to drain immediately available frames with tiny timeouts; if none, wait for the next.
+                    frame: Optional[VideoFrame] = None
+                    while True:
+                        try:
+                            f = await asyncio.wait_for(self._source.recv(), timeout=0.001)
+                            frame = f
+                            # loop again to prefer an even newer frame if immediately available
+                            continue
+                        except asyncio.TimeoutError:
+                            break
+                        except MediaStreamError:
+                            # Source ended; synthesize a black frame to keep pipeline sane
+                            from av import VideoFrame as _VF
+                            frame = _VF.from_ndarray(
+                                np.zeros((self._outer._target_video_height, self._outer._target_video_width, 3), dtype=np.uint8),
+                                format="bgr24",
+                            )
+                            break
+                        except Exception:
+                            break
+                    if frame is None:
+                        # No immediate frames; wait for the next produced frame
+                        frame = await self._source.recv()
+
                     # Scale down frame to target resolution if larger
                     tgt_w = int(self._outer._target_video_width)
                     tgt_h = int(self._outer._target_video_height)
@@ -884,16 +918,6 @@ class RealtimeConnection:
                         except Exception:
                             # Keep original frame if resize unsupported
                             logger.warning("Failed to resize video frame; using original size")
-
-                    # Throttle output to fps_limit
-                    interval = 1.0 / float(self._fps_limit)
-                    now = _time.monotonic()
-                    if self._last_ts is not None:
-                        remaining = (self._last_ts + interval) - now
-                        if remaining > 0:
-                            await asyncio.sleep(remaining)
-                            now = _time.monotonic()
-                    self._last_ts = now
 
                     # Stamp pts/time_base for the forwarded frame
                     pts, time_base = await self.next_timestamp()
@@ -933,7 +957,6 @@ class RealtimeConnection:
                                     self._debugged = True
                             except Exception:
                                 pass
-
                     return frame
 
             _fps = max(1, int(fps)) if fps is not None else self._video_fps
@@ -1110,8 +1133,8 @@ class Realtime(realtime.Realtime):
         client: Optional[Any] = None,  # For compatibility with base class
         *,
         barge_in: bool = True,
-        activity_threshold: int = 3000,
-        silence_timeout_ms: int = 1000,
+        activity_threshold: int = 4000,
+        silence_timeout_ms: int = 1200,
         enable_video_input: bool = False,
         video_fps: int = 1,
         # Client-configurable video parameters

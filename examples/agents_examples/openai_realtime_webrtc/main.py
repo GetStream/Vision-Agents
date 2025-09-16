@@ -45,7 +45,7 @@ You are a voice assistant.
 """
         ),
         # Enable video input and set a conservative default frame rate for realtime responsiveness
-        llm=Realtime(
+        llm=openai.Realtime(
             enable_video_input=True,
             video_fps=3,
             video_width=854,
@@ -56,6 +56,8 @@ You are a voice assistant.
 
     # Create a call
     call = client.video.call("default", str(uuid4()))
+    # Ensure the call exists server-side before joining
+    call.get_or_create(data={"created_by_id": agent.agent_user.id})
 
     # Open the demo UI
     agent.edge.open_demo(call)
@@ -92,21 +94,7 @@ You are a voice assistant.
         await wait_for_human_participant(timeout=60.0)
         await agent.llm.simple_response(text="Please greet the user.")
         print("Greeted the user")
-        # img_url = "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2670&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
-        # await agent.llm.create_response(
-        #     input=[
-        #         {
-        #             "role": "user",
-        #             "content": [
-        #                 {
-        #                     "type": "input_text",
-        #                     "text": "Tell me a short poem about this image",
-        #                 },
-        #                 {"type": "input_image", "image_url": f"{img_url}"},
-        #             ],
-        #         }
-        #     ]
-        # )
+
         await agent.finish()  # run till the call ends
 
 

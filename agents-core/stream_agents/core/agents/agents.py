@@ -455,15 +455,11 @@ class Agent:
             f"🎥VDP: Processing track: {track_id} from user {getattr(participant, 'user_id', 'unknown')} (type: {track_type})"
         )
 
-<<<<<<< HEAD
-        # Subscribe first, then inspect actual kind reported by aiortc
-=======
         # Only process video tracks - track_type might be string, enum or numeric (2 for video)
         if track_type != TrackType.TRACK_TYPE_VIDEO:
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
 
->>>>>>> main
         track = self._connection.subscriber_pc.add_track_subscriber(track_id)
         if not track:
             self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
