@@ -229,7 +229,7 @@ class Agent:
         self._is_running = True
 
         registry = get_global_registry()
-        registry.add_connection_listeners(self._connection)
+        #registry.add_connection_listeners(self._connection)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
