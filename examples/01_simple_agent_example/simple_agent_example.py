@@ -4,9 +4,9 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import elevenlabs, deepgram, openai, silero
-from stream_agents.core import agents, edge, cli
-from getstream import Stream
+from stream_agents.core.edge.types import User
+from stream_agents.plugins import elevenlabs, deepgram, openai, silero, getstream
+from stream_agents.core import agents, cli
 from stream_agents.core.events import EventType
 
 logging.basicConfig(level=logging.INFO)
@@ -17,49 +17,52 @@ load_dotenv()
 '''
 TODO:
 - show function calling
-- show realtime vs stt (as a comment)
-- stream should be a plugin (not an import)
-- probably should not show events in this example
-- show native and simple response methods in example
 '''
 
 async def start_agent() -> None:
-    # create a stream client and a user object
-    client = Stream.from_env()
-    agent_user = client.create_user(name="My happy AI friend")
 
+    llm = openai.LLM(model="gpt-4o-mini")
+    # create an agent to run with Stream's edge, openAI llm
     agent = agents.Agent(
-        edge=edge.StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-        agent_user=agent_user,  # the user object for the agent (name, image etc)
+        edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
+        agent_user=User(name="My happy AI friend", id="agent"),  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        llm=openai.LLM(model="gpt-4o-mini"),
+        processors=[],  # processors can fetch extra data, check images/audio data or transform video
+        # llm with tts & stt. if you use a realtime (sts capable) llm the tts, stt and vad aren't needed
+        llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         vad=silero.VAD(),
-        processors=[],  # processors can fetch extra data, check images/audio data or transform video
+        # realtime version (vad, tts and stt not needed)
+        # llm=openai.Realtime()
     )
 
-    @agent.on(EventType.PARTICIPANT_JOINED)
-    async def my_handler(participant):
-        await asyncio.sleep(5)
-        await agent.say(f"Hello, {participant.name}")
-        agent.logger.info(f"handled event {participant}")
-
-    @agent.on(EventType.CALL_MEMBER_ADDED)
-    async def my_other_handler(participant):
-        agent.logger.info(f"Call.* handled event {participant}")
-
+    # ensure the user is created (not needed if it already exists)
+    await agent.create_user()
 
     # Create a call
-    call = client.video.call("default", str(uuid4()))
+    call = agent.edge.client.video.call("default", str(uuid4()))
 
     # Open the demo UI
     agent.edge.open_demo(call)
 
     # Have the agent join the call/room
     with await agent.join(call):
-        # Example 1: standardized simple response (aggregates delta/done)
-        await agent.finish()  # run till the call ends
+        # Example 1: standardized simple response
+        # await agent.llm.simple_response("chat with the user about the weather.")
+        # Example 2: use native openAI create response
+        await llm.create_response(input=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Tell me a short poem about this image"},
+                    {"type": "input_image", "image_url": f"https://images.unsplash.com/photo-1757495361144-0c2bfba62b9e?q=80&w=2340&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"},
+                ],
+            }
+        ],)
+
+        # run till the call ends
+        await agent.finish()
 
 
 if __name__ == "__main__":

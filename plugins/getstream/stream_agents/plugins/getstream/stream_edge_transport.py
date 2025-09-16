@@ -14,9 +14,9 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType,
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import TrackSubscriptionConfig, SubscriptionConfig
 
-from plugins.getstream.stream_agents.plugins.getstream.stream_conversation import StreamConversation
+from stream_agents.plugins.getstream.stream_conversation import StreamConversation
 from stream_agents.core.edge import EdgeTransport
-from stream_agents.core.edge.types import Connection
+from stream_agents.core.edge.types import Connection, User
 
 
 class StreamConnection(Connection):
@@ -41,7 +41,7 @@ class StreamEdge(EdgeTransport):
         self.client = Stream.from_env()
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def create_chat_channel(self, call: Call, user):
+    def create_chat_channel(self, call: Call, user, instructions):
         chat_client: ChatClient = call.client.stream.chat
         self.channel = chat_client.get_or_create_channel(
             "videocall",
@@ -49,9 +49,12 @@ class StreamEdge(EdgeTransport):
             data=ChannelInput(created_by_id=user.id),
         )
         self.conversation = StreamConversation(
-            self.instructions, [], self.channel.data.channel, chat_client
+            instructions, [], self.channel.data.channel, chat_client
         )
         return self.channel, self.conversation
+
+    async def create_user(self, user: User):
+        return self.client.create_user(name=user.name, id=user.id)
 
     async def join(self, agent: "Agent", call: Call) -> StreamConnection:
         """

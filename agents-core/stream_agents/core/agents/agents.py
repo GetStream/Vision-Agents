@@ -200,7 +200,7 @@ class Agent:
         # Only set up chat if we have LLM (for conversation capabilities)
         if self.llm:
             # ask the edge to start the chat
-            self.channel, self.conversation = self.edge.create_chat_channel(call, self.agent_user)
+            self.channel, self.conversation = self.edge.create_chat_channel(call, self.agent_user, self.instructions)
 
         # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
         # TODO: maybe agent.on(transcript?)
@@ -280,6 +280,10 @@ class Agent:
         Say exactly this
         """
         await self.queue.say_text(text, self.agent_user.id)
+
+    async def create_user(self):
+        response = await self.edge.create_user(self.agent_user)
+        return response
 
     def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
         """Handle partial LLM response text deltas."""
