@@ -116,9 +116,9 @@ class StreamEdge(EdgeTransport):
         """
         await self._connection.add_tracks(audio=audio_track, video=video_track)
         if audio_track:
-            self.logger.debug("🤖 Agent ready to speak")
+            self.logger.info("🤖 Agent ready to speak")
         if video_track:
-            self.logger.debug("🎥 Agent ready to publish video")
+            self.logger.info("🎥 Agent ready to publish video")
         # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
     def _get_subscription_config(self):
