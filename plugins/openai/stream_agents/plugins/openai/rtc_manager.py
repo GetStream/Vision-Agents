@@ -8,7 +8,7 @@ import logging
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 
-from aiortc.mediastreams import AudioStreamTrack
+from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack
 from fractions import Fraction
 import numpy as np
 from av import AudioFrame
@@ -23,7 +23,7 @@ OPENAI_SESSIONS_URL = f"{OPENAI_REALTIME_BASE}/sessions"
 
 
 class RTCManager:
-    def __init__(self, model: str, voice: str):
+    def __init__(self, model: str, voice: str, send_video: bool):
         self.api_key = getenv("OPENAI_API_KEY")
         self.model = model
         self.voice = voice
@@ -34,6 +34,8 @@ class RTCManager:
         self._audio_callback: Optional[Callable[[bytes], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
+        self.send_video = send_video
+        self._video_track: Optional[VideoStreamTrack] = None
 
     async def connect(self) -> None:
         self.token = await self._get_session_token()
@@ -42,6 +44,9 @@ class RTCManager:
         logger.info("Added data channel")
         await self._set_audio_track()
         logger.info("Set audio track for the call")
+        if self.send_video:
+            await self._set_video_track()
+            logger.info("Set video track for the call")
         answer_sdp = await self._setup_peer_connection_handlers()
         logger.info("Set up peer connection handlers")
         logger.info(f"Answer SDP: {answer_sdp}")
@@ -94,7 +99,7 @@ class RTCManager:
                 logger.error(f"Failed to decode message: {e}")
 
     async def _set_audio_track(self) -> None:
-        class MicAudioTrack(AudioStreamTrack):
+        class RealtimeAudioTrack(AudioStreamTrack):
             """Minimal audio track without a queue.
 
             - Generates 20 ms mono PCM16 silence by default
@@ -156,7 +161,7 @@ class RTCManager:
                 self._ts += samples.shape[1]
                 return frame
 
-        self._mic_track = MicAudioTrack(48000)
+        self._mic_track = RealtimeAudioTrack(48000)
         self.pc.addTrack(self._mic_track)
 
         @self.pc.on("track")
@@ -191,6 +196,10 @@ class RTCManager:
                             logger.debug(f"Failed to process remote audio frame: {e}")
 
                 asyncio.create_task(_reader())
+
+    async def _set_video_track(self) -> None:
+        self._video_track = VideoStreamTrack()
+        self.pc.addTrack(self._video_track)            
 
     async def send_audio_pcm(self, pcm_data: PcmData) -> None:
         if not self._mic_track:

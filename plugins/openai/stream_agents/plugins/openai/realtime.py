@@ -12,11 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 class Realtime(realtime.Realtime):
-    def __init__(self, model: str = "gpt-realtime", voice: str = "marin"):
+    def __init__(self, model: str = "gpt-realtime", voice: str = "marin", send_video: bool = False):
         super().__init__()
-        self.rtc = RTCManager(model, voice)
         self.model = model
         self.voice = voice
+        self.send_video = send_video
+        self.rtc = RTCManager(self.model, self.voice, self.send_video)
 
         try:
             loop = asyncio.get_running_loop()
