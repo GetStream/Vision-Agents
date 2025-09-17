@@ -16,5 +16,4 @@ class TestRealtime:
         await realtime.connect()
         assert realtime.rtc.token is not None
 
-    async def test_realtime_sdp(self, realtime: Realtime):
-        ...
+        assert False
