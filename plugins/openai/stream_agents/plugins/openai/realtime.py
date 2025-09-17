@@ -30,6 +30,8 @@ class Realtime(realtime.Realtime):
         # Wire callbacks so we can emit audio/events upstream
         self.rtc.set_event_callback(self._handle_openai_event)
         self.rtc.set_audio_callback(self._handle_audio_output)
+        if self.send_video:
+            self.rtc.set_video_callback(self._handle_video_output)
         await self.rtc.connect()
         # Emit connected/ready
         self._emit_connected_event(
@@ -76,3 +78,14 @@ class Realtime(realtime.Realtime):
         output_track = getattr(self, "output_track", None)
         if output_track is not None:
             await output_track.write(audio_bytes)
+
+    async def _handle_video_output(self, video_bytes) -> None:
+        # # Forward video as event and to output track if available
+        # listeners_fn = getattr(self, "listeners", None)
+        # has_listeners = bool(listeners_fn("video_output")) if callable(listeners_fn) else False
+        # if has_listeners:
+        #     self._emit_video_output_event(video_data=video_bytes)
+        # output_track = getattr(self, "output_track", None)
+        # if output_track is not None:
+        #     await output_track.write(video_bytes)
+        pass

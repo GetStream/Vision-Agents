@@ -8,10 +8,10 @@ import logging
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 
-from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack
+from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamTrack
 from fractions import Fraction
 import numpy as np
-from av import AudioFrame
+from av import AudioFrame, VideoFrame
 
 load_dotenv()
 
@@ -33,6 +33,7 @@ class RTCManager:
         self._mic_track: AudioStreamTrack = None
         self._audio_callback: Optional[Callable[[bytes], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
+        self._video_callback: Optional[Callable[[np.ndarray], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
         self.send_video = send_video
         self._video_track: Optional[VideoStreamTrack] = None
@@ -42,12 +43,19 @@ class RTCManager:
         logger.info("Obtained OpenAI session token")
         await self._add_data_channel()
         logger.info("Added data channel")
+        
         await self._set_audio_track()
         logger.info("Set audio track for the call")
+
         if self.send_video:
             await self._set_video_track()
             logger.info("Set video track for the call")
-        answer_sdp = await self._setup_peer_connection_handlers()
+
+        @self.pc.on("track")
+        async def on_track(track):
+            await self._handle_added_track(track)
+
+        answer_sdp = await self._setup_sdp_exchange()
         logger.info("Set up peer connection handlers")
         logger.info(f"Answer SDP: {answer_sdp}")
         # WE ARE HERE
@@ -164,42 +172,29 @@ class RTCManager:
         self._mic_track = RealtimeAudioTrack(48000)
         self.pc.addTrack(self._mic_track)
 
-        @self.pc.on("track")
-        async def on_track(track):
-            if getattr(track, "kind", None) == "audio":
-                logger.info("Remote audio track attached; starting reader")
-
-                async def _reader():
-                    while True:
-                        try:
-                            frame = await asyncio.wait_for(track.recv(), timeout=1.0)
-                        except asyncio.TimeoutError:
-                            continue
-                        except Exception as e:
-                            logger.debug(f"Remote audio track ended or error: {e}")
-                            break
-
-                        try:
-                            samples = frame.to_ndarray()
-                            if samples.ndim == 2 and samples.shape[0] > 1:
-                                samples = samples.mean(axis=0)
-                            if samples.dtype != np.int16:
-                                samples = (samples * 32767).astype(np.int16)
-                            audio_bytes = samples.tobytes()
-                            cb = self._audio_callback
-                            if cb is not None:
-                                if asyncio.iscoroutinefunction(cb):
-                                    await cb(audio_bytes)
-                                else:
-                                    cb(audio_bytes)
-                        except Exception as e:
-                            logger.debug(f"Failed to process remote audio frame: {e}")
-
-                asyncio.create_task(_reader())
-
     async def _set_video_track(self) -> None:
-        self._video_track = VideoStreamTrack()
-        self.pc.addTrack(self._video_track)            
+        class RealtimeVideoTrack(VideoStreamTrack):
+            kind = "video"
+
+            def __init__(self):
+                super().__init__()
+                self._ts = 0
+
+            async def recv(self):
+                await asyncio.sleep(0.02)
+                width = 640
+                height = 480
+                rgb = np.zeros((height, width, 3), dtype=np.uint8)
+                rgb[:, :, 2] = 255  # Blue in RGB
+                frame = VideoFrame.from_ndarray(rgb, format="rgb24", channel_last=True)
+                frame.pts = self._ts
+                frame.time_base = Fraction(1, 50)
+                self._ts += 1
+                return frame
+
+        self._video_track = RealtimeVideoTrack()
+        self._video_sender = self.pc.addTrack(self._video_track)
+
 
     async def send_audio_pcm(self, pcm_data: PcmData) -> None:
         if not self._mic_track:
@@ -285,7 +280,7 @@ class RTCManager:
     #     except Exception as e:
     #         logger.error(f"Failed to send text over data channel: {e}")
 
-    async def _setup_peer_connection_handlers(self) -> str:
+    async def _setup_sdp_exchange(self) -> str:
         # Create local offer and exchange SDP
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)
@@ -318,21 +313,71 @@ class RTCManager:
             logger.error(f"SDP exchange failed: {e}")
             raise
 
+    # When you get a remote track (OpenAI) we write the audio from the track on the call.
+    async def _handle_added_track(self, track: MediaStreamTrack) -> None:
+        if track.kind == "audio":
+            logger.info("Remote audio track attached; starting reader")
+
+            async def _reader():
+                while True:
+                    try:
+                        frame = await asyncio.wait_for(track.recv(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Remote audio track ended or error: {e}")
+                        break
+
+                    try:
+                        samples = frame.to_ndarray()
+                        if samples.ndim == 2 and samples.shape[0] > 1:
+                            samples = samples.mean(axis=0)
+                        if samples.dtype != np.int16:
+                            samples = (samples * 32767).astype(np.int16)
+                        audio_bytes = samples.tobytes()
+                        cb = self._audio_callback
+                        if cb is not None:
+                            await cb(audio_bytes)
+                    except Exception as e:
+                        logger.debug(f"Failed to process remote audio frame: {e}")
+            
+        elif track.kind == "video":
+            logger.info("Remote video track attached; starting reader")
+
+            async def _reader():
+                while True:
+                    try:
+                        frame = await asyncio.wait_for(track.recv(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Remote video track ended or error: {e}")
+                        break
+                    try:
+                        rgb = frame.to_ndarray()
+                        cb = self._video_callback
+                        if cb is not None:
+                            await cb(rgb)
+                    except Exception as e:
+                        logger.debug(f"Failed to process remote video frame: {e}")
+
+            asyncio.create_task(_reader())
+
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""
         logger.info(f"OpenAI event: {event}")
         cb = self._event_callback
         if cb is not None:
             try:
-                if asyncio.iscoroutinefunction(cb):
-                    await cb(event)
-                else:
-                    cb(event)
+                await cb(event)
             except Exception as e:
                 logger.debug(f"Event callback error: {e}")
 
     def set_audio_callback(self, callback: Callable[[bytes], Any]) -> None:
         self._audio_callback = callback
+
+    def set_video_callback(self, callback: Callable[[np.ndarray], Any]) -> None:
+        self._video_callback = callback
 
     def set_event_callback(self, callback: Callable[[dict], Any]) -> None:
         self._event_callback = callback
