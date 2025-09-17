@@ -194,6 +194,8 @@ class RTCManager:
 
         self._video_track = RealtimeVideoTrack()
         self._video_sender = self.pc.addTrack(self._video_track)
+        # Keep a handle to the currently active source (if any) for diagnostics / control
+        self._active_video_source: Optional[MediaStreamTrack] = None
 
 
     async def send_audio_pcm(self, pcm_data: PcmData) -> None:
@@ -258,27 +260,38 @@ class RTCManager:
         except Exception as e:
             logger.error(f"Failed to send event: {e}")
 
+    async def start_video_sender(self, source_track: MediaStreamTrack, fps: int = 1) -> None:
+        """Switch the negotiated video sender to forward frames from source_track.
 
-    # async def send_text(self, text: str) -> None:
-    #     """Send a text turn via the data channel and request a response."""
-    #     if not self.data_channel:
-    #         logger.warning("Data channel not ready; cannot send text")
-    #         return
-    #     try:
-    #         evt_create = {
-    #             "type": "conversation.item.create",
-    #             "item": {
-    #                 "type": "message",
-    #                 "role": "user",
-    #                 "content": [{"type": "input_text", "text": text}],
-    #             },
-    #         }
-    #         self.data_channel.send(json.dumps(evt_create))
-    #         print(f"Sent event: {evt_create}")
-    #         self.data_channel.send(json.dumps({"type": "response.create"}))
-    #         print("Requested response")
-    #     except Exception as e:
-    #         logger.error(f"Failed to send text over data channel: {e}")
+        This uses RTCRtpSender.replaceTrack and does not require renegotiation.
+        """
+        try:
+            if not self.send_video:
+                raise RuntimeError("Video sending not enabled for this session")
+            if self._video_sender is None:
+                raise RuntimeError("Video sender not available; was video track negotiated?")
+            # Swap the sender's track to the provided source
+            self._video_sender.replaceTrack(source_track)
+            self._active_video_source = source_track
+            logger.info("Video sender switched to user source track (fps hint=%s)", fps)
+        except Exception as e:
+            logger.error(f"Failed to start video sender: {e}")
+            raise
+
+    async def stop_video_sender(self) -> None:
+        """Restore the dummy negotiated video track (blue/black frames)."""
+        try:
+            if self._video_sender is None:
+                return
+            if self._video_track is None:
+                # If we have no base track, detach the current track
+                self._video_sender.replaceTrack(None)
+            else:
+                self._video_sender.replaceTrack(self._video_track)
+            self._active_video_source = None
+            logger.info("Video sender reverted to base track")
+        except Exception as e:
+            logger.error(f"Failed to stop video sender: {e}")
 
     async def _setup_sdp_exchange(self) -> str:
         # Create local offer and exchange SDP
@@ -340,6 +353,7 @@ class RTCManager:
                             await cb(audio_bytes)
                     except Exception as e:
                         logger.debug(f"Failed to process remote audio frame: {e}")
+            asyncio.create_task(_reader())
             
         elif track.kind == "video":
             logger.info("Remote video track attached; starting reader")

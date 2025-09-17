@@ -71,21 +71,23 @@ class Realtime(realtime.Realtime):
 
     async def _handle_audio_output(self, audio_bytes: bytes) -> None:
         # Forward audio as event and to output track if available
-        listeners_fn = getattr(self, "listeners", None)
-        has_listeners = bool(listeners_fn("audio_output")) if callable(listeners_fn) else False
+        has_listeners = bool(self.listeners("audio_output")) if callable(self.listeners) else False
         if has_listeners:
             self._emit_audio_output_event(audio_data=audio_bytes, sample_rate=48000)
-        output_track = getattr(self, "output_track", None)
-        if output_track is not None:
-            await output_track.write(audio_bytes)
+        if self.output_track is not None:
+            await self.output_track.write(audio_bytes)
 
     async def _handle_video_output(self, video_bytes) -> None:
-        # # Forward video as event and to output track if available
-        # listeners_fn = getattr(self, "listeners", None)
-        # has_listeners = bool(listeners_fn("video_output")) if callable(listeners_fn) else False
-        # if has_listeners:
-        #     self._emit_video_output_event(video_data=video_bytes)
-        # output_track = getattr(self, "output_track", None)
-        # if output_track is not None:
-        #     await output_track.write(video_bytes)
-        pass
+        logger.info(f"🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥 Forwarding video frames to Realtime provider (pc.on early track)")
+        has_listeners = bool(self.listeners("video_output")) if callable(self.listeners) else False
+        if has_listeners:
+            self._emit_video_output_event(video_data=video_bytes)
+        if self.output_track is not None:
+            await self.output_track.write(video_bytes)
+
+    async def start_video_sender(self, track, fps: int = 1) -> None:
+        # Delegate to RTC manager to swap the negotiated sender's track
+        await self.rtc.start_video_sender(track, fps)
+
+    async def stop_video_sender(self) -> None:
+        await self.rtc.stop_video_sender()
