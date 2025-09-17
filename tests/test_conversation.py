@@ -1,13 +1,11 @@
 import datetime
 import uuid
-import time
-import threading
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, AsyncMock
 
 from getstream.chat.client import ChatClient
-from getstream.models import MessageRequest, ChannelResponse, ChannelInput, MessagePaginationParams
+from getstream.models import MessageRequest, ChannelResponse, ChannelInput
 
 from stream_agents.core.agents.conversation import (
     Conversation,
@@ -16,8 +14,7 @@ from stream_agents.core.agents.conversation import (
     StreamConversation,
     StreamHandle
 )
-import os
-from getstream import Stream
+from getstream import AsyncStream
 from dotenv import load_dotenv
 
 class TestConversation:
@@ -80,7 +77,7 @@ class TestInMemoryConversation:
         assert conversation.instructions == "You are a helpful assistant."
         assert len(conversation.messages) == 2
     
-    def test_add_message(self, conversation):
+    async def test_add_message(self, conversation):
         """Test adding a single message."""
         new_message = Message(
             original=None,
@@ -89,12 +86,12 @@ class TestInMemoryConversation:
             user_id="user2"
         )
         new_message.id = "new-msg"
-        conversation.add_message(new_message)
+        await conversation.add_message(new_message)
         
         assert len(conversation.messages) == 3
         assert conversation.messages[-1] == new_message
     
-    def test_add_message_with_completed(self, conversation):
+    async def test_add_message_with_completed(self, conversation):
         """Test adding a message with completed parameter."""
         # Test with completed=False
         new_message1 = Message(
@@ -104,7 +101,7 @@ class TestInMemoryConversation:
             user_id="user2"
         )
         new_message1.id = "gen-msg"
-        result = conversation.add_message(new_message1, completed=False)
+        result = await conversation.add_message(new_message1, completed=False)
         
         assert len(conversation.messages) == 3
         assert conversation.messages[-1] == new_message1
@@ -118,16 +115,16 @@ class TestInMemoryConversation:
             user_id="user3"
         )
         new_message2.id = "comp-msg"
-        result = conversation.add_message(new_message2, completed=True)
+        result = await conversation.add_message(new_message2, completed=True)
         
         assert len(conversation.messages) == 4
         assert conversation.messages[-1] == new_message2
         assert result is None
     
-    def test_update_message_existing(self, conversation):
+    async def test_update_message_existing(self, conversation):
         """Test updating an existing message by appending content."""
         # Update existing message by appending (replace_content=False)
-        result = conversation.update_message(
+        result = await conversation.update_message(
             message_id="msg-0",
             input_text=" additional text",
             user_id="user1",
@@ -136,12 +133,12 @@ class TestInMemoryConversation:
         )
         
         # Verify message content was appended (with space handling)
-        assert conversation.messages[0].content == "Hello  additional text"
+        assert conversation.messages[0].content == "Hello additional text"
         assert result is None  # InMemoryConversation returns None
     
-    def test_update_message_replace(self, conversation):
+    async def test_update_message_replace(self, conversation):
         """Test replacing message content (replace_content=True)."""
-        result = conversation.update_message(
+        result = await conversation.update_message(
             message_id="msg-0",
             input_text="Replaced content",
             user_id="user1",
@@ -153,11 +150,11 @@ class TestInMemoryConversation:
         assert conversation.messages[0].content == "Replaced content"
         assert result is None
     
-    def test_update_message_not_found(self, conversation):
+    async def test_update_message_not_found(self, conversation):
         """Test updating a non-existent message creates a new one."""
         initial_count = len(conversation.messages)
         
-        result = conversation.update_message(
+        result = await conversation.update_message(
             message_id="non-existent-id",
             input_text="New message content",
             user_id="user2",
@@ -174,10 +171,10 @@ class TestInMemoryConversation:
         assert new_msg.content == "New message content"
         assert new_msg.user_id == "user2"
     
-    def test_streaming_message_handle(self, conversation):
+    async def test_streaming_message_handle(self, conversation):
         """Test streaming message with handle API."""
         # Start a streaming message
-        handle = conversation.start_streaming_message(role="assistant", initial_content="Hello")
+        handle = await conversation.start_streaming_message(role="assistant", initial_content="Hello")
         
         # Verify message was added
         assert len(conversation.messages) == 3
@@ -187,42 +184,42 @@ class TestInMemoryConversation:
         assert handle.user_id == "assistant"
         
         # Append to the message
-        conversation.append_to_message(handle, " world")
-        assert conversation.messages[-1].content == "Hello  world"
+        await conversation.append_to_message(handle, " world")
+        assert conversation.messages[-1].content == "Hello world"
         
         # Replace the message
-        conversation.replace_message(handle, "Goodbye")
+        await conversation.replace_message(handle, "Goodbye")
         assert conversation.messages[-1].content == "Goodbye"
         
         # Complete the message
-        conversation.complete_message(handle)
+        await conversation.complete_message(handle)
         # In-memory conversation doesn't track completed state, just verify no error
         
-    def test_multiple_streaming_handles(self, conversation):
+    async def test_multiple_streaming_handles(self, conversation):
         """Test multiple concurrent streaming messages."""
         # Start two streaming messages
-        handle1 = conversation.start_streaming_message(role="user", user_id="user1", initial_content="Question: ")
-        handle2 = conversation.start_streaming_message(role="assistant", initial_content="Answer: ")
+        handle1 = await conversation.start_streaming_message(role="user", user_id="user1", initial_content="Question: ")
+        handle2 = await conversation.start_streaming_message(role="assistant", initial_content="Answer: ")
         
         assert len(conversation.messages) == 4  # 2 initial + 2 new
         
         # Update them independently
-        conversation.append_to_message(handle1, "What is 2+2?")
-        conversation.append_to_message(handle2, "Let me calculate...")
+        await conversation.append_to_message(handle1, "What is 2+2?")
+        await conversation.append_to_message(handle2, "Let me calculate...")
         
         # Find messages by their handles to verify correct updates
         msg1 = next(msg for msg in conversation.messages if msg.id == handle1.message_id)
         msg2 = next(msg for msg in conversation.messages if msg.id == handle2.message_id)
         
-        assert msg1.content == "Question:  What is 2+2?"
-        assert msg2.content == "Answer:  Let me calculate..."
+        assert msg1.content == "Question: What is 2+2?"
+        assert msg2.content == "Answer: Let me calculate..."
         
         # Complete them
-        conversation.complete_message(handle1)
-        conversation.replace_message(handle2, "Answer: 4")
-        conversation.complete_message(handle2)
+        await conversation.complete_message(handle1)
+        await conversation.replace_message(handle2, "Answer: 4")
+        await conversation.complete_message(handle2)
         
-        assert msg2.content == "Answer: 4"  # Replaced content, no space issue
+        assert msg2.content == "Answer: 4"
 
 
 class TestStreamConversation:
@@ -236,13 +233,13 @@ class TestStreamConversation:
         # Mock send_message response
         mock_response = Mock()
         mock_response.data.message.id = "stream-message-123"
-        client.send_message.return_value = mock_response
+        client.send_message = AsyncMock(return_value=mock_response)
         
         # Mock ephemeral_message_update
-        client.ephemeral_message_update = Mock(return_value=Mock())
+        client.ephemeral_message_update = AsyncMock(return_value=Mock())
         
         # Mock update_message_partial
-        client.update_message_partial = Mock(return_value=Mock())
+        client.update_message_partial = AsyncMock(return_value=Mock())
         
         return client
     
@@ -283,9 +280,6 @@ class TestStreamConversation:
         }
         
         yield conversation
-        
-        # Cleanup after each test
-        conversation.shutdown()
     
     def test_initialization(self, stream_conversation, mock_channel, mock_chat_client):
         """Test StreamConversation initialization."""
@@ -294,7 +288,7 @@ class TestStreamConversation:
         assert isinstance(stream_conversation.internal_ids_to_stream_ids, dict)
         assert len(stream_conversation.messages) == 1
     
-    def test_add_message(self, stream_conversation, mock_chat_client):
+    async def test_add_message(self, stream_conversation, mock_chat_client):
         """Test adding a message to the stream with default completed=True."""
         new_message = Message(
             original=None,
@@ -304,14 +298,11 @@ class TestStreamConversation:
         )
         new_message.id = "new-msg-id"
         
-        stream_conversation.add_message(new_message)
+        await stream_conversation.add_message(new_message)
         
         # Verify message was added locally immediately
         assert len(stream_conversation.messages) == 2
         assert stream_conversation.messages[-1] == new_message
-        
-        # Wait for async operations to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
         
         # Verify Stream API was called
         mock_chat_client.send_message.assert_called_once()
@@ -328,9 +319,6 @@ class TestStreamConversation:
         assert "new-msg-id" in stream_conversation.internal_ids_to_stream_ids
         assert stream_conversation.internal_ids_to_stream_ids["new-msg-id"] == "stream-message-123"
         
-        # Wait a bit more for the update operation to complete
-        time.sleep(0.1)
-        
         # Verify update_message_partial was called (completed=True is default)
         mock_chat_client.update_message_partial.assert_called_once()
         update_args = mock_chat_client.update_message_partial.call_args
@@ -339,10 +327,8 @@ class TestStreamConversation:
         assert update_args[1]["set"]["text"] == "Test message"
         assert update_args[1]["set"]["generating"] is False  # completed=True means not generating
     
-    def test_add_message_with_completed_false(self, stream_conversation, mock_chat_client):
+    async def test_add_message_with_completed_false(self, stream_conversation, mock_chat_client):
         """Test adding a message with completed=False (still generating)."""
-        # Ensure previous operations are complete
-        stream_conversation.wait_for_pending_operations(timeout=1.0)
         
         # Reset mocks
         mock_chat_client.send_message.reset_mock()
@@ -357,20 +343,14 @@ class TestStreamConversation:
         )
         new_message.id = "gen-msg-id"
         
-        stream_conversation.add_message(new_message, completed=False)
+        await stream_conversation.add_message(new_message, completed=False)
         
         # Verify message was added locally
         assert len(stream_conversation.messages) == 2
         assert stream_conversation.messages[-1] == new_message
         
-        # Wait for async operations to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
-        
         # Verify Stream API was called
         mock_chat_client.send_message.assert_called_once()
-        
-        # Give a bit more time for the update operation to be queued and processed
-        time.sleep(0.2)
         
         # Verify ephemeral_message_update was called (completed=False)
         mock_chat_client.ephemeral_message_update.assert_called_once()
@@ -382,10 +362,10 @@ class TestStreamConversation:
         assert update_args[1]["set"]["text"] == "Generating message"
         assert update_args[1]["set"]["generating"] is True  # completed=False means still generating
     
-    def test_update_message_existing(self, stream_conversation, mock_chat_client):
+    async def test_update_message_existing(self, stream_conversation, mock_chat_client):
         """Test updating an existing message by appending content."""
         # Update existing message by appending (replace_content=False, completed=False)
-        result = stream_conversation.update_message(
+        result = await stream_conversation.update_message(
             message_id="msg-0",
             input_text=" additional text",
             user_id="user1",
@@ -396,9 +376,6 @@ class TestStreamConversation:
         # Verify message content was appended immediately
         assert stream_conversation.messages[0].content == "Hello additional text"
         
-        # Wait for async operations to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
-        
         # Verify Stream API was called with ephemeral_message_update (not completed)
         mock_chat_client.ephemeral_message_update.assert_called_once()
         call_args = mock_chat_client.ephemeral_message_update.call_args
@@ -407,12 +384,12 @@ class TestStreamConversation:
         assert call_args[1]["set"]["text"] == "Hello additional text"
         assert call_args[1]["set"]["generating"] is True  # not completed = still generating
     
-    def test_update_message_replace(self, stream_conversation, mock_chat_client):
+    async def test_update_message_replace(self, stream_conversation, mock_chat_client):
         """Test replacing message content (replace_content=True)."""
         # Mock update_message_partial for completed messages
-        mock_chat_client.update_message_partial = Mock(return_value=Mock())
+        mock_chat_client.update_message_partial = AsyncMock(return_value=Mock())
         
-        result = stream_conversation.update_message(
+        result = await stream_conversation.update_message(
             message_id="msg-0",
             input_text="Replaced content",
             user_id="user1",
@@ -423,9 +400,6 @@ class TestStreamConversation:
         # Verify message content was replaced
         assert stream_conversation.messages[0].content == "Replaced content"
         
-        # Wait for async operations to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
-        
         # Verify Stream API was called with update_message_partial (completed)
         mock_chat_client.update_message_partial.assert_called_once()
         call_args = mock_chat_client.update_message_partial.call_args
@@ -434,12 +408,12 @@ class TestStreamConversation:
         assert call_args[1]["set"]["text"] == "Replaced content"
         assert call_args[1]["set"]["generating"] is False  # completed = not generating
     
-    def test_update_message_not_found(self, stream_conversation, mock_chat_client):
+    async def test_update_message_not_found(self, stream_conversation, mock_chat_client):
         """Test updating a non-existent message creates a new one."""
         # Reset the send_message mock for this test
         mock_chat_client.send_message.reset_mock()
         
-        result = stream_conversation.update_message(
+        result = await stream_conversation.update_message(
             message_id="non-existent-id",
             input_text="New message content",
             user_id="user2",
@@ -456,29 +430,23 @@ class TestStreamConversation:
         assert new_msg.content == "New message content"
         assert new_msg.user_id == "user2"
         
-        # Wait for async operations to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
-        time.sleep(0.2)  # Give extra time for update operation
         
         # Verify send_message was called (not update)
         mock_chat_client.send_message.assert_called_once()
     
-    def test_update_message_completed_vs_generating(self, stream_conversation, mock_chat_client):
+    async def test_update_message_completed_vs_generating(self, stream_conversation, mock_chat_client):
         """Test that completed=True calls update_message_partial and completed=False calls ephemeral_message_update."""
         # Mock update_message_partial for completed messages
-        mock_chat_client.update_message_partial = Mock(return_value=Mock())
+        mock_chat_client.update_message_partial = AsyncMock(return_value=Mock())
         
         # Test with completed=False (still generating)
-        stream_conversation.update_message(
+        await stream_conversation.update_message(
             message_id="msg-0",
             input_text=" in progress",
             user_id="user1",
             replace_content=False,
             completed=False
         )
-        
-        # Wait for async operations
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
         
         # Should call ephemeral_message_update
         mock_chat_client.ephemeral_message_update.assert_called()
@@ -488,7 +456,7 @@ class TestStreamConversation:
         mock_chat_client.ephemeral_message_update.reset_mock()
         
         # Test with completed=True
-        stream_conversation.update_message(
+        await stream_conversation.update_message(
             message_id="msg-0",
             input_text="Final content",
             user_id="user1",
@@ -496,14 +464,11 @@ class TestStreamConversation:
             completed=True
         )
         
-        # Wait for async operations
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
-        
         # Should call update_message_partial
         mock_chat_client.update_message_partial.assert_called_once()
         mock_chat_client.ephemeral_message_update.assert_not_called()
     
-    def test_update_message_no_stream_id(self, stream_conversation, mock_chat_client):
+    async def test_update_message_no_stream_id(self, stream_conversation, mock_chat_client):
         """Test updating a message without a stream ID mapping."""
         # Add a message without stream ID mapping
         new_msg = Message(
@@ -516,7 +481,7 @@ class TestStreamConversation:
         stream_conversation.messages.append(new_msg)
         
         # Try to update it by appending
-        result = stream_conversation.update_message(
+        result = await stream_conversation.update_message(
             message_id="unmapped-msg",
             input_text=" updated",
             user_id="user3",
@@ -531,7 +496,7 @@ class TestStreamConversation:
         # This is the expected behavior - we don't sync messages without stream IDs
         mock_chat_client.ephemeral_message_update.assert_not_called()
     
-    def test_streaming_message_handle(self, stream_conversation, mock_chat_client):
+    async def test_streaming_message_handle(self, stream_conversation, mock_chat_client):
         """Test streaming message with handle API."""
         # Reset mocks
         mock_chat_client.send_message.reset_mock()
@@ -539,7 +504,7 @@ class TestStreamConversation:
         mock_chat_client.update_message_partial.reset_mock()
         
         # Start a streaming message
-        handle = stream_conversation.start_streaming_message(role="assistant", initial_content="Processing")
+        handle = await stream_conversation.start_streaming_message(role="assistant", initial_content="Processing")
         
         # Verify message was added and marked as generating
         assert len(stream_conversation.messages) == 2
@@ -548,9 +513,6 @@ class TestStreamConversation:
         assert isinstance(handle, StreamHandle)
         assert handle.user_id == "assistant"
         
-        # Wait for async operations
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
-        time.sleep(0.2)  # Give extra time for update operation
         
         # Verify send_message was called
         mock_chat_client.send_message.assert_called_once()
@@ -561,33 +523,24 @@ class TestStreamConversation:
         mock_chat_client.ephemeral_message_update.reset_mock()
         
         # Append to the message
-        stream_conversation.append_to_message(handle, "...")
+        await stream_conversation.append_to_message(handle, "...")
         assert stream_conversation.messages[-1].content == "Processing..."
-        
-        # Wait for append operation to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
         
         mock_chat_client.ephemeral_message_update.assert_called_once()
         
         # Replace the message
-        stream_conversation.replace_message(handle, "Complete response")
+        await stream_conversation.replace_message(handle, "Complete response")
         assert stream_conversation.messages[-1].content == "Complete response"
-        
-        # Wait for replace operation to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
         
         assert mock_chat_client.ephemeral_message_update.call_count == 2
         
         # Complete the message
         mock_chat_client.update_message_partial.reset_mock()
-        stream_conversation.complete_message(handle)
-        
-        # Wait for complete operation
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
+        await stream_conversation.complete_message(handle)
         
         mock_chat_client.update_message_partial.assert_called_once()
         
-    def test_multiple_streaming_handles(self, stream_conversation, mock_chat_client):
+    async def test_multiple_streaming_handles(self, stream_conversation, mock_chat_client):
         """Test multiple concurrent streaming messages with Stream API."""
         # Reset mocks
         mock_chat_client.send_message.reset_mock()
@@ -601,21 +554,15 @@ class TestStreamConversation:
         mock_chat_client.send_message.side_effect = [mock_response1, mock_response2]
         
         # Start two streaming messages with empty initial content
-        handle1 = stream_conversation.start_streaming_message(role="user", user_id="user123", initial_content="")
-        handle2 = stream_conversation.start_streaming_message(role="assistant", initial_content="")
+        handle1 = await stream_conversation.start_streaming_message(role="user", user_id="user123", initial_content="")
+        handle2 = await stream_conversation.start_streaming_message(role="assistant", initial_content="")
         
         assert len(stream_conversation.messages) == 3  # 1 initial + 2 new
         
-        # Wait for initial operations to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
-        time.sleep(0.3)  # Give extra time for update operations
         
         # Update them independently
-        stream_conversation.append_to_message(handle1, "Hello?")
-        stream_conversation.append_to_message(handle2, "Hi there!")
-        
-        # Wait for append operations to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
+        await stream_conversation.append_to_message(handle1, "Hello?")
+        await stream_conversation.append_to_message(handle2, "Hi there!")
         
         # Find messages by their handles to verify correct updates
         msg1 = next(msg for msg in stream_conversation.messages if msg.id == handle1.message_id)
@@ -628,17 +575,14 @@ class TestStreamConversation:
         assert mock_chat_client.ephemeral_message_update.call_count >= 4  # 2 initial + 2 appends
         
         # Complete both
-        stream_conversation.complete_message(handle1)
-        stream_conversation.complete_message(handle2)
-        
-        # Wait for completion operations
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
+        await stream_conversation.complete_message(handle1)
+        await stream_conversation.complete_message(handle2)
         
         # Verify update_message_partial was called for both completions
         assert mock_chat_client.update_message_partial.call_count == 2
     
-    def test_worker_thread_async_operations(self, stream_conversation, mock_chat_client):
-        """Test that operations are processed asynchronously by the worker thread."""
+    async def test_async_operations(self, stream_conversation, mock_chat_client):
+        """Test that operations are processed asynchronously."""
         # Reset mocks
         mock_chat_client.send_message.reset_mock()
         mock_chat_client.ephemeral_message_update.reset_mock()
@@ -653,16 +597,10 @@ class TestStreamConversation:
                 user_id=f"user{i}"
             )
             messages.append(msg)
-            stream_conversation.add_message(msg, completed=False)
+            await stream_conversation.add_message(msg, completed=False)
         
         # Verify messages were added locally immediately
         assert len(stream_conversation.messages) == 6  # 1 initial + 5 new
-        
-        # Wait for all operations to complete
-        assert stream_conversation.wait_for_pending_operations(timeout=3.0)
-        
-        # Give a bit more time for update operations
-        time.sleep(0.5)
         
         # Verify all send_message calls were made
         assert mock_chat_client.send_message.call_count == 5
@@ -670,54 +608,188 @@ class TestStreamConversation:
         # Verify all ephemeral_message_update calls were made
         assert mock_chat_client.ephemeral_message_update.call_count >= 5
     
-    def test_wait_for_pending_operations_timeout(self, stream_conversation, mock_chat_client):
-        """Test that wait_for_pending_operations returns False on timeout."""
-        # Make send_message block for a long time
-        import threading
-        block_event = threading.Event()
+    async def test_concurrent_streaming_handles(self, stream_conversation, mock_chat_client):
+        """Test concurrent streaming operations don't interfere with each other."""
+        import asyncio
         
-        def slow_send_message(*args, **kwargs):
-            block_event.wait(timeout=5.0)  # Block for 5 seconds
-            mock_response = Mock()
-            mock_response.data.message.id = "stream-message-slow"
-            return mock_response
+        # Reset mocks
+        mock_chat_client.send_message.reset_mock()
+        mock_chat_client.ephemeral_message_update.reset_mock()
+        mock_chat_client.update_message_partial.reset_mock()
         
-        mock_chat_client.send_message.side_effect = slow_send_message
+        # Mock unique message IDs for each send
+        message_ids = [f"stream-msg-{i}" for i in range(20)]
+        mock_responses = []
+        for msg_id in message_ids:
+            mock_resp = Mock()
+            mock_resp.data.message.id = msg_id
+            mock_responses.append(mock_resp)
         
-        # Add a message
-        msg = Message(original=None, content="Slow message", role="user", user_id="user1")
-        stream_conversation.add_message(msg)
+        mock_chat_client.send_message.side_effect = mock_responses
         
-        # Wait should timeout
-        assert not stream_conversation.wait_for_pending_operations(timeout=0.5)
+        # Test 1: Create multiple streaming messages concurrently
+        async def create_and_update_message(msg_num: int):
+            # Create a streaming message
+            handle = await stream_conversation.start_streaming_message(
+                role="user" if msg_num % 2 == 0 else "assistant",
+                user_id=f"user{msg_num}",
+                initial_content=f"Msg{msg_num}: "
+            )
+            
+            # Update it multiple times
+            for i in range(3):
+                await stream_conversation.append_to_message(handle, f"p{i} ")
+            
+            # Complete it
+            await stream_conversation.complete_message(handle)
+            
+            return handle
         
-        # Unblock the operation
-        block_event.set()
+        # Run concurrent operations
+        handles = await asyncio.gather(*[
+            create_and_update_message(i) for i in range(5)
+        ])
         
-        # Now wait should succeed
-        assert stream_conversation.wait_for_pending_operations(timeout=2.0)
+        # Verify all handles have unique message IDs
+        handle_ids = [h.message_id for h in handles]
+        assert len(set(handle_ids)) == 5
+        
+        # Verify messages have correct content
+        for i, handle in enumerate(handles):
+            msg = next(m for m in stream_conversation.messages if m.id == handle.message_id)
+            assert msg.content == f"Msg{i}: p0 p1 p2 "
+        
+        # Test 2: Concurrent replacements don't interfere
+        async def replace_message_content(handle: StreamHandle, new_content: str):
+            await stream_conversation.replace_message(handle, new_content)
+            return handle
+        
+        # Replace all messages concurrently with different content
+        await asyncio.gather(*[
+            replace_message_content(handle, f"Replaced{i}")
+            for i, handle in enumerate(handles)
+        ])
+        
+        # Verify each message has its own unique replaced content
+        for i, handle in enumerate(handles):
+            msg = next(m for m in stream_conversation.messages if m.id == handle.message_id)
+            assert msg.content == f"Replaced{i}"
+        
+        # Test 3: Rapid fire operations
+        rapid_handles = []
+        
+        async def rapid_operations():
+            local_handles = []
+            # Create 3 messages as fast as possible
+            for i in range(3):
+                h = await stream_conversation.start_streaming_message(
+                    role="assistant",
+                    initial_content=f"Rapid{i}: "
+                )
+                local_handles.append(h)
+            
+            # Update them all concurrently
+            update_tasks = []
+            for h in local_handles:
+                for j in range(5):
+                    update_tasks.append(
+                        stream_conversation.append_to_message(h, f"[{j}]")
+                    )
+            await asyncio.gather(*update_tasks)
+            
+            return local_handles
+        
+        # Run multiple rapid operations concurrently
+        rapid_results = await asyncio.gather(*[rapid_operations() for _ in range(2)])
+        
+        for handles_list in rapid_results:
+            rapid_handles.extend(handles_list)
+        
+        # Verify all rapid messages have unique IDs
+        rapid_ids = [h.message_id for h in rapid_handles]
+        assert len(set(rapid_ids)) == len(rapid_ids)
+        
+        # Each rapid message should have all its updates
+        for h in rapid_handles:
+            msg = next(m for m in stream_conversation.messages if m.id == h.message_id)
+            assert "[0][1][2][3][4]" in msg.content
+        
+        # Final verification: internal mapping integrity
+        assert len(stream_conversation.internal_ids_to_stream_ids) >= len(handles) + len(rapid_handles)
     
-    def test_shutdown_worker_thread(self, mock_chat_client, mock_channel):
-        """Test that shutdown properly stops the worker thread."""
-        # Create a fresh conversation without using the fixture to avoid double shutdown
-        conversation = StreamConversation(
-            instructions="Test",
-            messages=[],
-            channel=mock_channel,
-            chat_client=mock_chat_client
+    async def test_handle_isolation(self, stream_conversation, mock_chat_client):
+        """Test that handles remain isolated and don't cross-contaminate."""
+        import asyncio
+        
+        # Reset mocks
+        mock_chat_client.send_message.reset_mock()
+        mock_chat_client.ephemeral_message_update.reset_mock()
+        
+        # Mock unique message IDs
+        mock_responses = []
+        for i in range(10):
+            mock_resp = Mock()
+            mock_resp.data.message.id = f"isolated-msg-{i}"
+            mock_responses.append(mock_resp)
+        
+        mock_chat_client.send_message.side_effect = mock_responses
+        
+        # Create handles with specific patterns
+        handle1 = await stream_conversation.start_streaming_message(
+            role="user",
+            user_id="user1",
+            initial_content="HANDLE1:"
         )
         
-        # Verify thread is alive
-        assert conversation._worker_thread.is_alive()
+        handle2 = await stream_conversation.start_streaming_message(
+            role="assistant",
+            user_id="assistant1",
+            initial_content="HANDLE2:"
+        )
         
-        # Shutdown
-        conversation.shutdown()
+        # Concurrent updates with distinct patterns
+        async def update_handle1():
+            for i in range(5):
+                await stream_conversation.append_to_message(handle1, f"A{i}")
+                await asyncio.sleep(0.001)  # Small delay
         
-        # Verify thread stopped
-        assert not conversation._worker_thread.is_alive()
+        async def update_handle2():
+            for i in range(5):
+                await stream_conversation.append_to_message(handle2, f"B{i}")
+                await asyncio.sleep(0.001)  # Small delay
         
-        # Verify shutdown flag is set
-        assert conversation._shutdown is True
+        # Run updates concurrently
+        await asyncio.gather(update_handle1(), update_handle2())
+        
+        # Verify messages didn't cross-contaminate
+        msg1 = next(m for m in stream_conversation.messages if m.id == handle1.message_id)
+        msg2 = next(m for m in stream_conversation.messages if m.id == handle2.message_id)
+        
+        # Check handle1 only has A updates
+        assert "HANDLE1:" in msg1.content
+        assert all(f"A{i}" in msg1.content for i in range(5))
+        assert not any(f"B{i}" in msg1.content for i in range(5))
+        assert "HANDLE2:" not in msg1.content
+        
+        # Check handle2 only has B updates
+        assert "HANDLE2:" in msg2.content
+        assert all(f"B{i}" in msg2.content for i in range(5))
+        assert not any(f"A{i}" in msg2.content for i in range(5))
+        assert "HANDLE1:" not in msg2.content
+        
+        # Test concurrent replacements maintain isolation
+        await asyncio.gather(
+            stream_conversation.replace_message(handle1, "FINAL1"),
+            stream_conversation.replace_message(handle2, "FINAL2")
+        )
+        
+        # Re-fetch messages
+        msg1 = next(m for m in stream_conversation.messages if m.id == handle1.message_id)
+        msg2 = next(m for m in stream_conversation.messages if m.id == handle2.message_id)
+        
+        assert msg1.content == "FINAL1"
+        assert msg2.content == "FINAL2"
+    
 
 
 @pytest.fixture
@@ -742,20 +814,17 @@ def mock_stream_client():
 
 
 @pytest.mark.integration
-def test_stream_conversation_integration():
+async def test_stream_conversation_integration():
     """Integration test with real Stream client (requires credentials)."""
 
     load_dotenv()
 
-    if not os.getenv("STREAM_API_KEY"):
-        pytest.skip("Stream credentials not available")
-    
     # Create real client
-    client = Stream.from_env()
+    client = AsyncStream()
     
     # Create a test channel and user
-    user = client.create_user(id="test-user")
-    channel = client.chat.get_or_create_channel("messaging", str(uuid.uuid4()), data=ChannelInput(created_by_id=user.id)).data.channel
+    user = await client.create_user(id="test-user")
+    channel = (await client.chat.get_or_create_channel("messaging", str(uuid.uuid4()), data=ChannelInput(created_by_id=user.id))).data.channel
 
     # Create conversation
     conversation = StreamConversation(
@@ -772,30 +841,25 @@ def test_stream_conversation_integration():
         role="user",
         user_id=user.id
     )
-    conversation.add_message(message)
-
-    # Wait for async operations to complete
-    assert conversation.wait_for_pending_operations(timeout=5.0)
+    await conversation.add_message(message)
 
     # Verify message was sent
     assert len(conversation.messages) == 1
     assert message.id in conversation.internal_ids_to_stream_ids
 
     # update message with replace
-    conversation.update_message(message_id=message.id, input_text="Replaced content", user_id=user.id, replace_content=True, completed=True)
-    assert conversation.wait_for_pending_operations(timeout=5.0)
+    await conversation.update_message(message_id=message.id, input_text="Replaced content", user_id=user.id, replace_content=True, completed=True)
 
-    channel_data = client.chat.get_or_create_channel("messaging", channel.id, state=True).data
+    channel_data = (await client.chat.get_or_create_channel("messaging", channel.id, state=True)).data
     assert len(channel_data.messages) == 1
     assert channel_data.messages[0].text == "Replaced content"
     # Note: generating flag might not be in custom field depending on Stream API version
 
     # update message with delta
-    conversation.update_message(message_id=message.id, input_text=" more stuff", user_id=user.id,
+    await conversation.update_message(message_id=message.id, input_text=" more stuff", user_id=user.id,
                                 replace_content=False, completed=True)
-    assert conversation.wait_for_pending_operations(timeout=5.0)
 
-    channel_data = client.chat.get_or_create_channel("messaging", channel.id, state=True).data
+    channel_data = (await client.chat.get_or_create_channel("messaging", channel.id, state=True)).data
     assert len(channel_data.messages) == 1
     assert channel_data.messages[0].text == "Replaced content more stuff"
     # Note: generating flag might not be in custom field depending on Stream API version
@@ -807,33 +871,22 @@ def test_stream_conversation_integration():
         role="assistant",
         user_id="assistant"
     )
-    conversation.add_message(message2, completed=False)
-    assert conversation.wait_for_pending_operations(timeout=5.0)
-    time.sleep(0.2)  # Give extra time for update operation
+    await conversation.add_message(message2, completed=False)
     
-    channel_data = client.chat.get_or_create_channel("messaging", channel.id, state=True).data
+    channel_data = (await client.chat.get_or_create_channel("messaging", channel.id, state=True)).data
     assert len(channel_data.messages) == 2
     assert channel_data.messages[1].text == "Still generating..."
     # Note: generating flag might not be in custom field depending on Stream API version
     
     # Test streaming handle API
-    handle = conversation.start_streaming_message(role="assistant", initial_content="Thinking")
-    assert conversation.wait_for_pending_operations(timeout=5.0)
-    time.sleep(0.2)  # Give extra time for update operation
+    handle = await conversation.start_streaming_message(role="assistant", initial_content="Thinking")
     
-    conversation.append_to_message(handle, "...")
-    assert conversation.wait_for_pending_operations(timeout=5.0)
+    await conversation.append_to_message(handle, "...")
     
-    conversation.replace_message(handle, "The answer is 42")
-    assert conversation.wait_for_pending_operations(timeout=5.0)
+    await conversation.replace_message(handle, "The answer is 42")
     
-    conversation.complete_message(handle)
-    assert conversation.wait_for_pending_operations(timeout=5.0)
+    await conversation.complete_message(handle)
     
-    channel_data = client.chat.get_or_create_channel("messaging", channel.id, state=True).data
+    channel_data = (await client.chat.get_or_create_channel("messaging", channel.id, state=True)).data
     assert len(channel_data.messages) == 3
     assert channel_data.messages[2].text == "The answer is 42"
-    # Note: generating flag might not be in custom field depending on Stream API version
-    
-    # Cleanup
-    conversation.shutdown()

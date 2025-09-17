@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import traceback
 from typing import Optional, List, Any, Union
 from uuid import uuid4
 
@@ -15,11 +14,12 @@ from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEven
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport, StreamEdge
 from ..mcp import MCPBaseServer
-from getstream.chat.client import ChatClient
+from getstream.chat.async_client import ChatClient
 from getstream.models import User, ChannelInput, UserRequest
 from ..events import get_global_registry, EventType
 from getstream.video import rtc
 from getstream.video.call import Call
+from getstream.video.async_call import Call as AsyncCall
 from getstream.video.rtc import audio_track
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from getstream.video.rtc.track_util import PcmData
@@ -116,6 +116,8 @@ class Agent:
         self._user_conversation_handle: Optional[StreamHandle] = None
         self._agent_conversation_handle: Optional[StreamHandle] = None
 
+        self.conversation_lock = asyncio.Lock()
+
         if self.llm is not None:
             self.llm._attach_agent(self)
             self.llm.on("after_llm_response", self._handle_after_response)
@@ -139,6 +141,7 @@ class Agent:
         self._setup_turn_detection()
         self._setup_vad()
         self._setup_mcp_servers()
+        self.call: Optional[AsyncCall] = None
 
     async def close(self):
         """Clean up all connections and resources."""
@@ -197,8 +200,14 @@ class Agent:
             return func
         return decorator
 
-    async def join(self, call: Call) -> "AgentSessionContextManager":
-        self.call = call
+    async def join(self, call: Union[Call, AsyncCall]) -> "AgentSessionContextManager":
+        # small hack here to allow for both Call and AsyncCall to be passed to join()
+        if isinstance(call, AsyncCall):
+            self.call = call
+        else:
+            async_client = call.client.stream.as_async()
+            self.call = AsyncCall(async_client.video, call.call_type, call.id, call.custom_data)
+
         self.channel = None
         self.conversation = None
 
@@ -208,10 +217,10 @@ class Agent:
         # Only set up chat if we have LLM (for conversation capabilities)
         if self.llm:
             # TODO: I don't know the human user at this point in the code...
-            chat_client: ChatClient = call.client.stream.chat
-            self.channel = chat_client.get_or_create_channel(
+            chat_client: ChatClient = self.call.client.stream.chat
+            self.channel = await chat_client.get_or_create_channel(
                 "videocall",
-                call.id,
+                self.call.id,
                 data=ChannelInput(created_by_id=self.agent_user.id),
             )
             self.conversation = StreamConversation(
@@ -231,7 +240,7 @@ class Agent:
         if self._is_running:
             raise RuntimeError("Agent is already running")
 
-        self.logger.info(f"🤖 Agent joining call: {call.id}")
+        self.logger.info(f"🤖 Agent joining call: {self.call.id}")
 
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
@@ -239,7 +248,7 @@ class Agent:
             await self.llm.wait_until_ready()
 
 
-        connection_cm = await self.edge.join(self, call)
+        connection_cm = await self.edge.join(self, self.call)
 
         # TODO: remove me
         self._connection = self.edge._connection
@@ -299,40 +308,43 @@ class Agent:
         """
         await self.queue.say_text(text, self.agent_user.id)
 
-    def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
+    async def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
         """Handle partial LLM response text deltas."""
 
         if self.conversation is None:
             return
 
         self.logger.info(f"received standardized.output_text.delta {event}")
-        # Create a new streaming message if we don't have one
-        if self._agent_conversation_handle is None:
-            self._agent_conversation_handle = self.conversation.start_streaming_message(
-                role="assistant",
-                user_id=self.agent_user.id,
-                initial_content=event.delta,
-            )
-        else:
-            self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
+
+        async with self.conversation_lock:
+            if self._agent_conversation_handle is None:
+                self.logger.info(f"no conversation handle yet, creating one with initial content: {event.delta}")
+                self._agent_conversation_handle = await self.conversation.start_streaming_message(
+                    role="assistant",
+                    user_id=self.agent_user.id,
+                    initial_content=event.delta,
+                )
+            else:
+                self.logger.info(f"appending delta to conversation handle: {event.delta}")
+                await self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
 
     async def _handle_after_response(self, llm_response: LLMResponse):
         if self.conversation is None:
             return
 
-        if self._agent_conversation_handle is None:
-            message = Message(
-                content=llm_response.text,
-                role="assistant",
-                user_id=self.agent_user.id,
-            )
-            self.conversation.add_message(message)
-        else:
-            self.conversation.complete_message(self._agent_conversation_handle)
-            self._agent_conversation_handle = None
+        self.logger.info(f"received _handle_after_response llm_response {llm_response}")
 
-        # Resume the queue for TTS playback
-        await self.queue.resume(llm_response, user_id=self.agent_user.id)
+        async with self.conversation_lock:
+            if self._agent_conversation_handle is None:
+                message = Message(
+                    content=llm_response.text,
+                    role="assistant",
+                    user_id=self.agent_user.id,
+                )
+                await self.conversation.add_message(message)
+            else:
+                await self.conversation.replace_message(self._agent_conversation_handle, llm_response.text, True)
+                self._agent_conversation_handle = None
 
     def _setup_vad(self):
         if self.vad:
@@ -523,13 +535,13 @@ class Agent:
             # Check if we have an active handle for this user
             if self._user_conversation_handle is None:
                 # Start a new streaming message for this user
-                self._user_conversation_handle = self.conversation.start_streaming_message(
+                self._user_conversation_handle = await self.conversation.start_streaming_message(
                     role="user",
                     user_id=user_id
                 )
 
             # Append the partial transcript to the active message
-            self.conversation.append_to_message(self._user_conversation_handle, event.text)
+            await self.conversation.append_to_message(self._user_conversation_handle, event.text)
 
     async def _on_transcript(
         self, event: Union[STTTranscriptEvent|RealtimeTranscriptEvent]
@@ -556,11 +568,10 @@ class Agent:
                 role="user",
                 user_id=user_id,
             )
-            self.conversation.add_message(message)
+            await self.conversation.add_message(message)
         else:
             # Replace with final text and complete the message
-            self.conversation.replace_message(self._user_conversation_handle, event.text)
-            self.conversation.complete_message(self._user_conversation_handle)
+            await self.conversation.replace_message(self._user_conversation_handle, event.text, True)
             self._user_conversation_handle = None
 
     async def _on_stt_error(self, error):
@@ -738,4 +749,3 @@ class Agent:
             raise RuntimeError(f"MCP server {server_index} is not connected")
             
         return await server.call_tool(tool_name, arguments)
-
