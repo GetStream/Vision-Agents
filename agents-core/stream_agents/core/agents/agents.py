@@ -265,44 +265,8 @@ class Agent:
             # Set up event handlers for audio processing
             await self._listen_to_audio_and_video()
 
-            # Fallback poller: if edge events miss early video, poll subscriber PC receivers
-            async def _poll_for_video_and_start_sender():
-                try:
-                    base_pc = getattr(self._connection, "subscriber_pc", None)
-                    pc = None
-                    if base_pc is not None:
-                        pc = getattr(base_pc, "pc", None) or getattr(base_pc, "_pc", None) or base_pc
-                    if pc is None:
-                        return
-                    tries = 0
-                    while tries < 150:  # ~30s @ 200ms
-                        try:
-                            receivers = list(getattr(pc, "getReceivers", lambda: [])())
-                        except Exception:
-                            receivers = []
-                        for r in receivers:
-                            track = getattr(r, "track", None)
-                            if track is not None and getattr(track, "kind", None) == "video":
-                                from aiortc.contrib.media import MediaRelay
-                                relay = getattr(self, "_persistent_media_relay", None)
-                                if relay is None:
-                                    relay = MediaRelay()
-                                    self._persistent_media_relay = relay
-                                forward_branch = relay.subscribe(track)
-                                try:
-                                    print(f"🎥 Forwarding video frames to Realtime provider (poller) {forward_branch}")
-                                    if self.sts_mode and isinstance(self.llm, Realtime):
-                                        await self.llm.start_video_sender(forward_branch)
-                                        self.logger.info("🎥 Started OpenAI video sender via receiver poller")
-                                except Exception as e:
-                                    self.logger.error(f"Error starting video sender from poller: {e}")
-                                return
-                        tries += 1
-                        await asyncio.sleep(0.2)
-                except Exception:
-                    pass
-
-            asyncio.create_task(_poll_for_video_and_start_sender())
+            # Video track detection is handled by event-based _process_track method
+            # No need for polling since Stream Video events are reliable
 
             # Realtime providers manage their own event loops; nothing to do here
 
@@ -485,75 +449,77 @@ class Agent:
                     await self.stt.process_audio(pcm_data, participant)
 
     async def _process_track(self, track_id: str, track_type: str, participant):
-        """
-        - connect the track to video sender...
-        -
-        """
-
-        """Process video frames from a specific track."""
+        """Process video frames from a specific track and forward to OpenAI."""
         self.logger.info(
             f"🎥VDP: Processing track: {track_id} from user {getattr(participant, 'user_id', 'unknown')} (type: {track_type})"
         )
 
         # Only process video tracks - track_type might be string, enum or numeric (2 for video)
-        if track_type != TrackType.TRACK_TYPE_VIDEO:
-            self.logger.debug(f"Ignoring non-video track: {track_type}")
+        self.logger.info(f"🎥VDP: Checking track type: {track_type} vs {TrackType.TRACK_TYPE_VIDEO}")
+        if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
+            self.logger.warning(f"🎥VDP: EARLY EXIT - Ignoring non-video track: {track_type} (expected: video, {TrackType.TRACK_TYPE_VIDEO}, or 2)")
             return
 
-        track = self._connection.subscriber_pc.add_track_subscriber(track_id)
+        self.logger.info(f"🎥VDP: Track type check passed, subscribing to track: {track_id}")
+        track = self._connection._connection.subscriber_pc.add_track_subscriber(track_id)
         if not track:
-            self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
+            self.logger.error(f"🎥VDP: EARLY EXIT - Failed to subscribe to track: {track_id}")
             return
 
+        self.logger.info(f"🎥VDP: Track subscription successful, validating video track...")
+        
         # Determine if this is a video track using both reported kind and original type
         is_video_type = track_type in ("video", TrackType.TRACK_TYPE_VIDEO, 2)
         kind = getattr(track, "kind", None)
         is_video_kind = (kind == "video")
+        
+        self.logger.info(f"🎥VDP: Track validation - is_video_type={is_video_type}, kind='{kind}', is_video_kind={is_video_kind}")
+        
         if not (is_video_kind or is_video_type):
-            self.logger.debug(
-                f"Ignoring non-video track after subscribe: kind={kind} original_type={track_type}"
-            )
+            self.logger.warning(f"🎥VDP: EARLY EXIT - Ignoring non-video track after subscribe: kind={kind} original_type={track_type}")
             return
 
         try:
             self.logger.info(
-                f"✅ Subscribed to track: {track_id}, kind={getattr(track, 'kind', None)}, class={track.__class__.__name__}"
+                f"🎥VDP: ✅ Subscribed to track: {track_id}, kind={getattr(track, 'kind', None)}, class={track.__class__.__name__}"
             )
         except Exception:
-            self.logger.info(f"✅ Subscribed to track: {track_id}")
+            self.logger.info(f"🎥VDP: ✅ Subscribed to track: {track_id}")
 
         # Give the track a moment to be ready
+        self.logger.info(f"🎥VDP: Waiting for track to be ready...")
         await asyncio.sleep(0.5)
 
         # Use a MediaRelay to allow multiple consumers to read the same source track
         # Reuse a persistent relay to avoid GC and keep branches alive long-term
+        self.logger.info(f"🎥VDP: Setting up MediaRelay...")
         relay = getattr(self, "_persistent_media_relay", None)
         if relay is None:
             relay = MediaRelay()
             self._persistent_media_relay = relay
+            self.logger.info(f"🎥VDP: Created new MediaRelay")
+        else:
+            self.logger.info(f"🎥VDP: Reusing existing MediaRelay")
+            
         forward_branch = relay.subscribe(track)
         processing_branch = relay.subscribe(track)
-        try:
-            self.logger.info(
-                "🎥 Relay created: forward_branch kind=%s cls=%s, processing_branch kind=%s cls=%s",
-                getattr(forward_branch, "kind", None),
-                forward_branch.__class__.__name__,
-                getattr(processing_branch, "kind", None),
-                processing_branch.__class__.__name__,
-            )
-        except Exception:
-            pass
+        self.logger.info(f"🎥VDP: Created MediaRelay branches - forward_branch: {type(forward_branch).__name__}, processing_branch: {type(processing_branch).__name__}")
 
-        # If Realtime provider supports video, forward frames upstream once per track
-        if self.sts_mode:
+        # Forward to OpenAI if in STS mode
+        self.logger.info(f"🎥VDP: Checking STS mode and LLM type - sts_mode={self.sts_mode}, llm_type={type(self.llm).__name__}")
+        if self.sts_mode and isinstance(self.llm, Realtime):
+            self.logger.info("🎥VDP: ✅ STS mode check passed, calling llm.start_video_sender with Stream Video track...")
             try:
-                self.logger.info("🎥 Attempting start_video_sender for track %s", track_id)
                 await self.llm.start_video_sender(forward_branch)
-                self.logger.info("🎥 Forwarding video frames to Realtime provider (started)")
+                self.logger.info("🎥VDP: ✅ Started OpenAI video sender with Stream Video track")
             except Exception as e:
-                self.logger.error(
-                    f"Error starting video sender to Realtime provider: {e}"
-                )
+                self.logger.error(f"🎥VDP: ❌ Failed to start OpenAI video sender: {e}")
+                self.logger.error(f"🎥VDP: Exception type: {type(e).__name__}")
+                import traceback
+                self.logger.error(f"🎥VDP: Exception traceback: {traceback.format_exc()}")
+        else:
+            self.logger.warning(f"🎥VDP: STS mode check failed - sts_mode={self.sts_mode}, llm_type={type(self.llm).__name__}")
+            self.logger.warning(f"🎥VDP: isinstance(self.llm, Realtime) = {isinstance(self.llm, Realtime)}")
 
         hasImageProcessers = len(self.image_processors) > 0
         self.logger.info(

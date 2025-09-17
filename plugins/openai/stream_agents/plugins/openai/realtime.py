@@ -2,6 +2,7 @@ import asyncio
 from typing import Any, Optional
 from stream_agents.core.llm import realtime
 import logging
+import numpy as np
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
@@ -77,13 +78,29 @@ class Realtime(realtime.Realtime):
         if self.output_track is not None:
             await self.output_track.write(audio_bytes)
 
-    async def _handle_video_output(self, video_bytes) -> None:
-        logger.info(f"🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥 Forwarding video frames to Realtime provider (pc.on early track)")
-        has_listeners = bool(self.listeners("video_output")) if callable(self.listeners) else False
-        if has_listeners:
-            self._emit_video_output_event(video_data=video_bytes)
+    async def _handle_video_output(self, video_array: np.ndarray) -> None:
+        """Handle incoming video frames from OpenAI Realtime API.
+        
+        Args:
+            video_array: RGB video frame as numpy array from frame.to_ndarray()
+        """
+        logger.info(f"🎥 Forwarding video frame: shape={video_array.shape}, dtype={video_array.dtype}")
+        
+        # Forward video as event if there are listeners
+        if callable(self.listeners):
+            has_listeners = bool(self.listeners("video_output"))
+            if has_listeners:
+                self._emit_video_output_event(video_data=video_array)
+        
+        # Write to output track for remote participants to see
         if self.output_track is not None:
-            await self.output_track.write(video_bytes)
+            try:
+                await self.output_track.write(video_array)
+                logger.debug(f"✅ Video frame written to output track: {video_array.shape}")
+            except Exception as e:
+                logger.error(f"❌ Failed to write video frame to output track: {e}")
+        else:
+            logger.warning("No output_track set - video will not be visible to remote participants")
 
     async def start_video_sender(self, track, fps: int = 1) -> None:
         # Delegate to RTC manager to swap the negotiated sender's track

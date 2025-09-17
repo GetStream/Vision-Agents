@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from typing import Any, Optional, Callable
 from os import getenv
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
@@ -22,6 +23,85 @@ OPENAI_REALTIME_BASE = "https://api.openai.com/v1/realtime"
 OPENAI_SESSIONS_URL = f"{OPENAI_REALTIME_BASE}/sessions"
 
 
+class StreamVideoForwardingTrack(VideoStreamTrack):
+    """Track that forwards frames from Stream Video to OpenAI."""
+    
+    kind = "video"
+    
+    def __init__(self, source_track: MediaStreamTrack, fps: int = 1):
+        super().__init__()
+        self._source_track = source_track
+        self._fps = max(1, fps)
+        self._interval = 1.0 / self._fps
+        self._ts = 0
+        self._last_frame_time = 0
+        self._frame_count = 0
+        self._error_count = 0
+        
+        logger.info(f"🎥 StreamVideoForwardingTrack initialized: fps={fps}, interval={self._interval:.3f}s")
+    
+    async def recv(self):
+        """Read from Stream Video and forward to OpenAI."""
+        now = time.monotonic()
+        
+        # Frame rate limiting
+        if now - self._last_frame_time < self._interval:
+            await asyncio.sleep(self._interval - (now - self._last_frame_time))
+        
+        try:
+            # Read frame from Stream Video
+            frame = await asyncio.wait_for(self._source_track.recv(), timeout=0.1)
+            self._frame_count += 1
+            
+            # Convert format if needed
+            if frame.format.name != "rgb24":
+                try:
+                    frame = frame.reformat(format="rgb24")
+                    logger.debug(f"🎥 Converted frame format: {frame.format.name} → rgb24")
+                except Exception as e:
+                    logger.warning(f"🎥 Frame format conversion failed: {e}, using original")
+            
+            # Update timing for OpenAI
+            frame.pts = self._ts
+            frame.time_base = Fraction(1, self._fps)
+            self._ts += 1
+            self._last_frame_time = time.monotonic()
+            
+            if self._frame_count % 30 == 0:  # Log every 30 frames
+                logger.debug(f"🎥 Forwarded {self._frame_count} frames from Stream Video to OpenAI")
+            
+            return frame
+            
+        except asyncio.TimeoutError:
+            # Return black frame if no Stream Video frame available
+            logger.debug("🎥 No Stream Video frame available, using black frame")
+            return self._generate_black_frame()
+        except Exception as e:
+            self._error_count += 1
+            logger.error(f"❌ Error reading from Stream Video (error #{self._error_count}): {e}")
+            
+            # If too many errors, return black frame
+            if self._error_count > 10:
+                logger.error("❌ Too many errors reading from Stream Video, using black frames")
+                return self._generate_black_frame()
+            
+            return self._generate_black_frame()
+    
+    def _generate_black_frame(self) -> VideoFrame:
+        """Generate a black frame as fallback."""
+        black_array = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame = VideoFrame.from_ndarray(black_array, format="rgb24")
+        frame.pts = self._ts
+        frame.time_base = Fraction(1, self._fps)
+        self._ts += 1
+        return frame
+    
+    def stop(self):
+        """Stop the forwarding track."""
+        logger.info(f"🎥 StreamVideoForwardingTrack stopped after {self._frame_count} frames, {self._error_count} errors")
+        super().stop()
+
+
 class RTCManager:
     def __init__(self, model: str, voice: str, send_video: bool):
         self.api_key = getenv("OPENAI_API_KEY")
@@ -37,6 +117,7 @@ class RTCManager:
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
         self.send_video = send_video
         self._video_track: Optional[VideoStreamTrack] = None
+        self._video_sender_task: Optional[asyncio.Task] = None
 
     async def connect(self) -> None:
         self.token = await self._get_session_token()
@@ -260,38 +341,97 @@ class RTCManager:
         except Exception as e:
             logger.error(f"Failed to send event: {e}")
 
-    async def start_video_sender(self, source_track: MediaStreamTrack, fps: int = 1) -> None:
-        """Switch the negotiated video sender to forward frames from source_track.
-
-        This uses RTCRtpSender.replaceTrack and does not require renegotiation.
+    async def start_video_sender(self, stream_video_track: MediaStreamTrack, fps: int = 1) -> None:
+        """Replace OpenAI's dummy track with Stream Video forwarding track.
+        
+        This creates a forwarding track that reads frames from the Stream Video track
+        and forwards them through the OpenAI WebRTC connection.
         """
+        logger.info(f"🎥 start_video_sender called with Stream Video track: {type(stream_video_track).__name__}")
+        logger.info(f"🎥 Track kind: {getattr(stream_video_track, 'kind', 'unknown')}")
+        logger.info(f"🎥 Track state: {getattr(stream_video_track, 'readyState', 'unknown')}")
+        logger.info(f"🎥 FPS requested: {fps}")
+        
         try:
             if not self.send_video:
+                logger.error("❌ Video sending not enabled for this session")
                 raise RuntimeError("Video sending not enabled for this session")
             if self._video_sender is None:
+                logger.error("❌ Video sender not available; was video track negotiated?")
                 raise RuntimeError("Video sender not available; was video track negotiated?")
-            # Swap the sender's track to the provided source
-            self._video_sender.replaceTrack(source_track)
-            self._active_video_source = source_track
-            logger.info("Video sender switched to user source track (fps hint=%s)", fps)
+            
+            # Validate source track
+            if stream_video_track is None:
+                logger.error("❌ Stream Video track cannot be None")
+                raise ValueError("Stream Video track cannot be None")
+            
+            logger.info(f"🎥 Validating Stream Video track: {type(stream_video_track).__name__}")
+            
+            # Stop any existing video sender task
+            if hasattr(self, '_video_sender_task') and self._video_sender_task:
+                logger.info("🎥 Stopping existing video sender task...")
+                self._video_sender_task.cancel()
+                try:
+                    await self._video_sender_task
+                except asyncio.CancelledError:
+                    pass
+                logger.info("🎥 Existing video sender task stopped")
+            
+            # Create forwarding track
+            logger.info("🎥 Creating StreamVideoForwardingTrack...")
+            forwarding_track = StreamVideoForwardingTrack(stream_video_track, fps)
+            
+            # Replace the dummy track with the forwarding track
+            try:
+                logger.info(f"🎥 Replacing OpenAI dummy track with StreamVideoForwardingTrack")
+                self._video_sender.replaceTrack(forwarding_track)
+                self._active_video_source = stream_video_track
+                logger.info(f"✅ Successfully replaced OpenAI track with Stream Video forwarding (fps={fps})")
+                
+            except Exception as replace_error:
+                logger.error(f"❌ Failed to replace video track: {replace_error}")
+                logger.error(f"❌ Replace error type: {type(replace_error).__name__}")
+                raise RuntimeError(f"Track replacement failed: {replace_error}")
+                
         except Exception as e:
-            logger.error(f"Failed to start video sender: {e}")
+            logger.error(f"❌ Failed to start video sender: {e}")
+            logger.error(f"❌ Error type: {type(e).__name__}")
             raise
 
     async def stop_video_sender(self) -> None:
-        """Restore the dummy negotiated video track (blue/black frames)."""
+        """Stop video forwarding and restore the dummy negotiated video track (blue/black frames)."""
         try:
+            # Stop the video forwarding task
+            if hasattr(self, '_video_sender_task') and self._video_sender_task:
+                self._video_sender_task.cancel()
+                try:
+                    await self._video_sender_task
+                except asyncio.CancelledError:
+                    pass
+                logger.info("✅ Video forwarding task stopped")
+            
             if self._video_sender is None:
+                logger.warning("No video sender available to stop")
                 return
-            if self._video_track is None:
-                # If we have no base track, detach the current track
-                self._video_sender.replaceTrack(None)
-            else:
-                self._video_sender.replaceTrack(self._video_track)
-            self._active_video_source = None
-            logger.info("Video sender reverted to base track")
+            
+            # Replace track with proper error handling
+            try:
+                if self._video_track is None:
+                    # If we have no base track, detach the current track
+                    self._video_sender.replaceTrack(None)
+                    logger.info("✅ Video sender detached (no base track)")
+                else:
+                    self._video_sender.replaceTrack(self._video_track)
+                    logger.info(f"✅ Video sender reverted to dummy track: {type(self._video_track).__name__}")
+                
+                self._active_video_source = None
+            except Exception as replace_error:
+                logger.error(f"❌ Failed to revert video track: {replace_error}")
+                raise RuntimeError(f"Track reversion failed: {replace_error}")
+                
         except Exception as e:
-            logger.error(f"Failed to stop video sender: {e}")
+            logger.error(f"❌ Failed to stop video sender: {e}")
+            raise
 
     async def _setup_sdp_exchange(self) -> str:
         # Create local offer and exchange SDP
@@ -359,21 +499,26 @@ class RTCManager:
             logger.info("Remote video track attached; starting reader")
 
             async def _reader():
-                while True:
-                    try:
-                        frame = await asyncio.wait_for(track.recv(), timeout=1.0)
-                    except asyncio.TimeoutError:
-                        continue
-                    except Exception as e:
-                        logger.debug(f"Remote video track ended or error: {e}")
-                        break
-                    try:
-                        rgb = frame.to_ndarray()
-                        cb = self._video_callback
-                        if cb is not None:
-                            await cb(rgb)
-                    except Exception as e:
-                        logger.debug(f"Failed to process remote video frame: {e}")
+                try:
+                    while True:
+                        try:
+                            frame = await asyncio.wait_for(track.recv(), timeout=1.0)
+                        except asyncio.TimeoutError:
+                            continue
+                        except Exception as e:
+                            logger.debug(f"Remote video track ended or error: {e}")
+                            break
+                        try:
+                            rgb = frame.to_ndarray()
+                            cb = self._video_callback
+                            if cb is not None:
+                                await cb(rgb)
+                        except Exception as e:
+                            logger.debug(f"Failed to process remote video frame: {e}")
+                except Exception as e:
+                    logger.error(f"Video reader task failed: {e}")
+                finally:
+                    logger.info("Video reader task ended")
 
             asyncio.create_task(_reader())
 
@@ -396,8 +541,62 @@ class RTCManager:
     def set_event_callback(self, callback: Callable[[dict], Any]) -> None:
         self._event_callback = callback
 
+    async def _forward_video_frames(self, source_track: MediaStreamTrack, fps: int) -> None:
+        """Forward video frames from user's track to OpenAI via WebRTC.
+        
+        This method reads frames from the user's video track and forwards them
+        through the WebRTC connection to OpenAI for processing.
+        """
+        interval = max(0.01, 1.0 / max(1, fps))
+        frame_count = 0
+        
+        try:
+            logger.info(f"🎥 Starting video frame forwarding loop (fps={fps}, interval={interval:.3f}s)")
+            logger.info(f"🎥 Source track: {type(source_track).__name__}, kind={getattr(source_track, 'kind', 'unknown')}")
+            
+            while True:
+                try:
+                    # Read frame from user's video track
+                    logger.debug(f"🎥 Attempting to read frame #{frame_count + 1} from user track...")
+                    frame = await asyncio.wait_for(source_track.recv(), timeout=1.0)
+                    frame_count += 1
+                    
+                    # Log frame details
+                    logger.info(f"🎥 SUCCESS: Read frame #{frame_count} from user track!")
+                    logger.info(f"🎥 Frame details: {frame.width}x{frame.height}, format={frame.format}, pts={frame.pts}")
+                    
+                    # The frame is automatically forwarded through the WebRTC connection
+                    # since we replaced the track with replaceTrack()
+                    logger.debug(f"🎥 Frame #{frame_count} automatically forwarded via WebRTC")
+                    
+                    # Throttle frame rate
+                    await asyncio.sleep(interval)
+                    
+                except asyncio.TimeoutError:
+                    logger.warning(f"🎥 Timeout waiting for frame #{frame_count + 1} from user track")
+                    continue
+                except Exception as e:
+                    logger.error(f"❌ Error reading video frame #{frame_count + 1}: {e}")
+                    logger.error(f"❌ Exception type: {type(e).__name__}")
+                    break
+                    
+        except asyncio.CancelledError:
+            logger.info(f"🎥 Video forwarding task cancelled after {frame_count} frames")
+        except Exception as e:
+            logger.error(f"❌ Video forwarding task failed after {frame_count} frames: {e}")
+        finally:
+            logger.info(f"🎥 Video forwarding task ended. Total frames processed: {frame_count}")
+
     async def close(self) -> None:
         try:
+            # Clean up video sender task
+            if hasattr(self, '_video_sender_task') and self._video_sender_task:
+                self._video_sender_task.cancel()
+                try:
+                    await self._video_sender_task
+                except asyncio.CancelledError:
+                    pass
+            
             if self.data_channel is not None:
                 try:
                     self.data_channel.close()
