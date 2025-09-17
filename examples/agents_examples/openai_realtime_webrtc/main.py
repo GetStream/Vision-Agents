@@ -45,12 +45,7 @@ You are a voice assistant.
 """
         ),
         # Enable video input and set a conservative default frame rate for realtime responsiveness
-        llm=openai.Realtime(
-            enable_video_input=True,
-            video_fps=3,
-            video_width=854,
-            video_height=480,
-        ),
+        llm=openai.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

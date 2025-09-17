@@ -475,7 +475,7 @@ class Agent:
 
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.sts_mode and isinstance(self.llm, Realtime):
-                await self.llm.send_audio_pcm(pcm_data)
+                asyncio.create_task(self.llm.send_audio_pcm(pcm_data))
             else:
                 # Process audio through STT
                 if self.stt:

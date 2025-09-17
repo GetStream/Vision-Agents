@@ -1,16 +1,20 @@
 import asyncio
 import json
-from typing import Any, Optional
-
+from typing import Any, Optional, Callable
+from os import getenv
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
 from httpx import AsyncClient, HTTPStatusError
 from stream_agents.core.llm import realtime
 import logging
+from dotenv import load_dotenv
+from getstream.video.rtc.track_util import PcmData
 
 from aiortc.mediastreams import AudioStreamTrack
 from fractions import Fraction
 import numpy as np
 from av import AudioFrame
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +24,16 @@ OPENAI_SESSIONS_URL = f"{OPENAI_REALTIME_BASE}/sessions"
 
 
 class RTCManager:
-    def __init__(self, api_key: str, model: str, voice: str):
-        self.api_key = api_key
+    def __init__(self, model: str, voice: str):
+        self.api_key = getenv("OPENAI_API_KEY")
         self.model = model
         self.voice = voice
         self.token = None
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
         self._mic_track: AudioStreamTrack = None
+        self._audio_callback: Optional[Callable[[bytes], Any]] = None
+        self._event_callback: Optional[Callable[[dict], Any]] = None
 
     async def connect(self) -> None:
         self.token = await self._get_session_token()
@@ -43,6 +49,7 @@ class RTCManager:
         # Set the remote SDP we got from OpenAI
         answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
         await self.pc.setRemoteDescription(answer)
+        logger.info("Remote description set; WebRTC established")
 
               
     async def _get_session_token(self) -> str | None:
@@ -151,20 +158,78 @@ class RTCManager:
         self._mic_track = MicAudioTrack(48000)
         self.pc.addTrack(self._mic_track)
 
-    async def send_audio_pcm(self, pcm_data: bytes, sample_rate: int = 48000) -> None:
-        if self._mic_track:
-            try:
-                self._mic_track.set_input(pcm_data, sample_rate)
-            except Exception as e:
-                logger.error(f"Failed to push mic audio: {e}")
-
-    async def _setup_peer_connection_handlers(self) -> str:
-        # Set remote track handler
         @self.pc.on("track")
         async def on_track(track):
-            if track.kind == "audio":
-                logger.debug("Remote audio track attached")
+            if getattr(track, "kind", None) == "audio":
+                logger.info("Remote audio track attached; starting reader")
 
+                async def _reader():
+                    while True:
+                        try:
+                            frame = await asyncio.wait_for(track.recv(), timeout=1.0)
+                        except asyncio.TimeoutError:
+                            continue
+                        except Exception as e:
+                            logger.debug(f"Remote audio track ended or error: {e}")
+                            break
+
+                        try:
+                            samples = frame.to_ndarray()
+                            if samples.ndim == 2 and samples.shape[0] > 1:
+                                samples = samples.mean(axis=0)
+                            if samples.dtype != np.int16:
+                                samples = (samples * 32767).astype(np.int16)
+                            audio_bytes = samples.tobytes()
+                            cb = self._audio_callback
+                            if cb is not None:
+                                if asyncio.iscoroutinefunction(cb):
+                                    await cb(audio_bytes)
+                                else:
+                                    cb(audio_bytes)
+                        except Exception as e:
+                            logger.debug(f"Failed to process remote audio frame: {e}")
+
+                asyncio.create_task(_reader())
+
+    async def send_audio_pcm(self, pcm_data: PcmData) -> None:
+        if not self._mic_track:
+            return
+        try:
+            sr = pcm_data.sample_rate or 48000
+            arr = pcm_data.samples
+            if arr.size == 0:
+                return
+            if arr.ndim == 2 and arr.shape[0] > 1:
+                arr = arr.mean(axis=0)
+            if arr.dtype != np.int16:
+                if np.issubdtype(arr.dtype, np.floating):
+                    arr = (np.clip(arr, -1.0, 1.0) * 32767.0).astype(np.int16)
+                else:
+                    arr = arr.astype(np.int16)
+            self._mic_track.set_input(arr.tobytes(), sr)
+        except Exception as e:
+            logger.error(f"Failed to push mic audio: {e}")
+
+    async def send_text(self, text: str) -> None:
+        """Send a text turn via the data channel and request a response."""
+        if not self.data_channel:
+            logger.warning("Data channel not ready; cannot send text")
+            return
+        try:
+            evt_create = {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                },
+            }
+            self.data_channel.send(json.dumps(evt_create))
+            self.data_channel.send(json.dumps({"type": "response.create"}))
+        except Exception as e:
+            logger.error(f"Failed to send text over data channel: {e}")
+
+    async def _setup_peer_connection_handlers(self) -> str:
         # Create local offer and exchange SDP
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)
@@ -175,8 +240,10 @@ class RTCManager:
 
     async def _exchange_sdp(self, local_sdp: str) -> Optional[str]:
         """Exchange SDP with OpenAI."""
+        # IMPORTANT: Use the ephemeral client secret token from session.create
+        token = self.token or self.api_key
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/sdp",
             "OpenAI-Beta": "realtime=v1",
         }
@@ -198,21 +265,72 @@ class RTCManager:
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""
         logger.info(f"OpenAI event: {event}")
+        cb = self._event_callback
+        if cb is not None:
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    await cb(event)
+                else:
+                    cb(event)
+            except Exception as e:
+                logger.debug(f"Event callback error: {e}")
+
+    def set_audio_callback(self, callback: Callable[[bytes], Any]) -> None:
+        self._audio_callback = callback
+
+    def set_event_callback(self, callback: Callable[[dict], Any]) -> None:
+        self._event_callback = callback
+
+    async def close(self) -> None:
+        try:
+            if self.data_channel is not None:
+                try:
+                    self.data_channel.close()
+                except Exception:
+                    pass
+                self.data_channel = None
+            if self._mic_track is not None:
+                try:
+                    self._mic_track.stop()
+                except Exception:
+                    pass
+                self._mic_track = None
+            await self.pc.close()
+        except Exception as e:
+            logger.debug(f"RTCManager close error: {e}")
 
 
 class Realtime(realtime.Realtime):
-    def __init__(self, api_key: str, model: str, voice: str):
+    def __init__(self, model: str = "gpt-realtime", voice: str = "marin"):
         super().__init__()
-        self.rtc = RTCManager(api_key, model, voice)
+        self.rtc = RTCManager(model, voice)
+        self.model = model
+        self.voice = voice
+
+        # Auto-start connection in background so wait_until_ready() doesn't hang
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.connect())
+        except RuntimeError:
+            # Not in an event loop; caller will invoke connect() later
+            pass
 
     async def connect(self):
+        # Wire callbacks so we can emit audio/events upstream
+        self.rtc.set_event_callback(self._handle_openai_event)
+        self.rtc.set_audio_callback(self._handle_audio_output)
         await self.rtc.connect()
+        # Emit connected/ready
+        self._emit_connected_event(
+            session_config={"model": self.model, "voice": self.voice},
+            capabilities=["text", "audio"],
+        )
 
-    async def send_audio_pcm(self, audio: bytes, sample_rate: int = 48000):
-        await self.rtc.send_audio_pcm(audio, sample_rate)
+    async def send_audio_pcm(self, audio: PcmData):
+        await self.rtc.send_audio_pcm(audio)
 
     async def send_text(self, text):
-        pass
+        await self.rtc.send_text(str(text))
 
     async def native_send_realtime_input(
         self,
@@ -224,4 +342,29 @@ class Realtime(realtime.Realtime):
         ...
 
     async def _close_impl(self):
-        ...
+        await self.rtc.close()
+
+    async def _handle_openai_event(self, event: dict) -> None:
+        et = event.get("type")
+        if et == "response.audio_transcript.done":
+            transcript = event.get("transcript", "")
+            if transcript:
+                self._emit_transcript_event(text=transcript, user_metadata={"role": "assistant", "source": "openai"})
+                self._emit_response_event(text=transcript, response_id=event.get("response_id"), is_complete=True, conversation_item_id=event.get("item_id"))
+        elif et == "conversation.item.input_audio_transcription.completed":
+            transcript = event.get("transcript", "")
+            if transcript:
+                self._emit_transcript_event(text=transcript, user_metadata={"role": "user", "source": "openai"})
+
+    async def _handle_audio_output(self, audio_bytes: bytes) -> None:
+        # Forward audio as event and to output track if available
+        try:
+            listeners_fn = getattr(self, "listeners", None)
+            has_listeners = bool(listeners_fn("audio_output")) if callable(listeners_fn) else False
+            if has_listeners:
+                self._emit_audio_output_event(audio_data=audio_bytes, sample_rate=48000)
+            output_track = getattr(self, "output_track", None)
+            if output_track is not None:
+                await output_track.write(audio_bytes)
+        except Exception:
+            pass
