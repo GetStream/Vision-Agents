@@ -13,6 +13,7 @@ from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
 from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent, RealtimeTranscriptEvent
+from getstream.video.rtc import Call
 from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
@@ -222,7 +223,7 @@ class Agent:
 
         self._is_running = True
 
-        connection._coordinator_ws_client.on_wildcard("*", self._em.handle_from_pyee)
+        connection._connection._coordinator_ws_client.handlers.append(self._em.send)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 

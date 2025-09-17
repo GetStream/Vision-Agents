@@ -51,7 +51,7 @@ class EventManager:
         import_file.append("")
         return import_file
 
-    def subscribe(self, function):
+    def listen(self, function):
         subscribed = False
         for name, event_class in function.__annotations__.items():
             # check union of event classes (not neeeded for now)
@@ -64,14 +64,18 @@ class EventManager:
                 raise KeyError(f"Event {event_class} is not registered.")
         return function
 
-    async def handle_from_pyee(self, event_name, data):
-        await self.send(data)
-
     def _prepare_event(self, event):
         if isinstance(event, dict):
             event_type = event.get('type', '')
             if event_type in self._events:
-                event = self._events[event_type].from_dict(event)
+                event_class = self._events[event_type]
+                try:
+                    event = event_class.from_dict(event, infer_missing=True)
+                except Exception as exc:
+                    logger.exception(f"Can't convert {event_class} from {event}")
+                    return
+
+                logger.info(f"Received event {event}")
                 return event
             else:
                 logger.info(f"Event not registered {event}")
