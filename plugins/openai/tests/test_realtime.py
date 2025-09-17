@@ -15,5 +15,5 @@ class TestRealtime:
     async def test_realtime(self, realtime: Realtime):
         await realtime.connect()
         assert realtime.rtc.token is not None
-
-        assert False
+        assert realtime.rtc._mic_track is not None
+        assert 0
