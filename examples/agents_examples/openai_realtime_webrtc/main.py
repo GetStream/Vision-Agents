@@ -57,36 +57,16 @@ You are a voice assistant.
     # Open the demo UI
     agent.edge.open_demo(call)
 
-    logger.info("🤖 Starting OpenAI STS Agent...")
-
-    async def wait_for_human_participant(timeout: float = 60.0) -> None:
-        """Wait until a non-agent participant is in the call (WebRTC-side)."""
-        deadline = asyncio.get_event_loop().time() + timeout
-        while asyncio.get_event_loop().time() < deadline:
-            connection = getattr(agent, "_connection", None)
-            if connection is not None:
-                try:
-                    # poll participants from WebRTC state
-                    participants = list(
-                        connection.participants_state._participant_by_prefix.values()  # type: ignore[attr-defined]
-                    )
-                    for p in participants:
-                        user_id = getattr(p, "user_id", None)
-                        if user_id and user_id != agent.agent_user.id:
-                            return
-                except Exception:
-                    pass
-            await asyncio.sleep(0.2)
-        raise TimeoutError("No human participant detected in time")
+    logger.info("🤖 Starting OpenAI Realtime Agent...")
 
     # Have the agent join the call/room
     with await agent.join(call):
         print("Joining call")
         # Ensure the LLM realtime connection is ready (should already be awaited internally)
         await agent.llm.wait_until_ready(timeout=10.0)  # type: ignore[attr-defined]
-
+        print("LLM ready")
         # Wait for a human to join the call before greeting
-        await wait_for_human_participant(timeout=60.0)
+        print("Waiting for human to join the call")
         await agent.llm.simple_response(text="Please greet the user.")
         print("Greeted the user")
 
