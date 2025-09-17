@@ -7,10 +7,12 @@ requires-python = ">=3.10"
 dependencies = [
   "python-dotenv>=1.0",
   "stream-agents-plugins-gemini",
+  "stream-agents-plugins-getstream",
   "stream-agents",
   "google-genai>=1.33.0",
 ]
 
 [tool.uv.sources]
+"stream-agents-plugins-getstream" = {path = "../../../plugins/getstream", editable=true}
 "stream-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}
 "stream-agents" = {path = "../../../agents-core", editable=true}

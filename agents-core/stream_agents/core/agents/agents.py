@@ -204,7 +204,7 @@ class Agent:
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.sts_mode and isinstance(self.llm, Realtime):
-            await self.llm.wait_until_ready()
+            await self.llm.connect()
 
 
         connection = await self.edge.join(self, call)
@@ -374,7 +374,8 @@ class Agent:
 
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.sts_mode and isinstance(self.llm, Realtime):
-                asyncio.create_task(self.llm.send_audio_pcm(pcm_data))
+                task = asyncio.create_task(self.llm.send_audio_pcm(pcm_data))
+                task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
             else:
                 # Process audio through STT
                 if self.stt:

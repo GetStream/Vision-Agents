@@ -81,3 +81,5 @@ krisp-audio = [
     { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
     { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32'" }
 ]
+"getstream" = {path = "../../stream-py", editable=true}
+

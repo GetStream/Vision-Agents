@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import gemini
+from stream_agents.plugins import gemini, getstream
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
 from getstream import Stream
@@ -20,9 +20,10 @@ async def start_agent() -> None:
     agent_user = client.create_user(name="My happy AI friend")
 
     agent = Agent(
+        edge=getstream.Edge(),
         agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        llm=gemini.Realtime(),
+        llm=gemini.Realtime2(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
