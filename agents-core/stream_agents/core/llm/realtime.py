@@ -208,8 +208,8 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
     @abc.abstractmethod
     async def connect(self): ...
 
-    @abc.abstractmethod
-    async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
+    # @abc.abstractmethod
+    # async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
 
     @abc.abstractmethod
     async def send_text(self, text: str):

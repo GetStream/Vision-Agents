@@ -264,6 +264,44 @@ class Agent:
             # Set up event handlers for audio processing
             await self._listen_to_audio_and_video()
 
+            # Fallback poller: if edge events miss early video, poll subscriber PC receivers
+            async def _poll_for_video_and_start_sender():
+                try:
+                    base_pc = getattr(self._connection, "subscriber_pc", None)
+                    pc = None
+                    if base_pc is not None:
+                        pc = getattr(base_pc, "pc", None) or getattr(base_pc, "_pc", None) or base_pc
+                    if pc is None:
+                        return
+                    tries = 0
+                    while tries < 150:  # ~30s @ 200ms
+                        try:
+                            receivers = list(getattr(pc, "getReceivers", lambda: [])())
+                        except Exception:
+                            receivers = []
+                        for r in receivers:
+                            track = getattr(r, "track", None)
+                            if track is not None and getattr(track, "kind", None) == "video":
+                                from aiortc.contrib.media import MediaRelay
+                                relay = getattr(self, "_persistent_media_relay", None)
+                                if relay is None:
+                                    relay = MediaRelay()
+                                    self._persistent_media_relay = relay
+                                forward_branch = relay.subscribe(track)
+                                try:
+                                    if self.sts_mode and isinstance(self.llm, Realtime):
+                                        await self.llm.start_video_sender(forward_branch)
+                                        self.logger.info("🎥 Started OpenAI video sender via receiver poller")
+                                except Exception as e:
+                                    self.logger.error(f"Error starting video sender from poller: {e}")
+                                return
+                        tries += 1
+                        await asyncio.sleep(0.2)
+                except Exception:
+                    pass
+
+            asyncio.create_task(_poll_for_video_and_start_sender())
+
             # Realtime providers manage their own event loops; nothing to do here
 
             from .agent_session import AgentSessionContextManager
