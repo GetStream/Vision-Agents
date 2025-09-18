@@ -5,22 +5,20 @@ import uuid
 from typing import Optional, Dict, Any, Tuple, List
 import asyncio
 from asyncio import AbstractEventLoop
-from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.track_util import PcmData
 
-from ..events import (
-    STTTranscriptEvent,
-    STTPartialTranscriptEvent,
-    STTErrorEvent,
+from ..edge.types import Participant
+from stream_agents.core.events import (
     PluginInitializedEvent,
     PluginClosedEvent,
-    register_global_event,
 )
+from stream_agents.core.events.manager import EventManager
+from . import events
 
 logger = logging.getLogger(__name__)
 
 
-class STT(AsyncIOEventEmitter, abc.ABC):
+class STT(abc.ABC):
     """
     Abstract base class for Speech-to-Text implementations.
 
@@ -50,7 +48,6 @@ class STT(AsyncIOEventEmitter, abc.ABC):
         self,
         sample_rate: int = 16000,
         *,
-        loop: Optional[AbstractEventLoop] = None,
         provider_name: Optional[str] = None,
     ):
         """
@@ -58,62 +55,24 @@ class STT(AsyncIOEventEmitter, abc.ABC):
 
         Args:
             sample_rate: The sample rate of the audio to process, in Hz.
-            loop: The asyncio event loop that should be used by the underlying
-                  ``AsyncIOEventEmitter`` when scheduling coroutine callbacks.
             provider_name: Name of the STT provider (e.g., "deepgram", "moonshine")
+       """
 
-        Providing an explicit event loop is critical when callbacks may be
-        emitted from background threads (for example, SDK-managed listening
-        threads).  When the loop is not specified, ``pyee.AsyncIOEventEmitter``
-        falls back to ``asyncio.ensure_future`` without an explicit loop which
-        relies on ``asyncio.get_event_loop``.  In non-main threads this raises
-        ``RuntimeError: There is no current event loop``.  Capturing the running
-        loop at instantiation guarantees the callbacks are always scheduled on
-        the correct loop regardless of the calling thread.
-        """
-
-        if loop is None:
-            try:
-                # Prefer the currently running loop if in async context
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # We are likely being instantiated in a sync test before any loop
-                # exists.  Create a dedicated loop to schedule callbacks.
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-        _loop = loop
-
-        # Pass the resolved loop to the ``AsyncIOEventEmitter`` base class so
-        # that all callbacks are scheduled on this loop even when ``emit`` is
-        # invoked from worker threads.
-        super().__init__(loop=_loop)
         self._track = None
         self.sample_rate = sample_rate
         self._is_closed = False
         self.session_id = str(uuid.uuid4())
         self.provider_name = provider_name or self.__class__.__name__
+        self.events = EventManager()
+        self.events.register_events_from_module(events, ignore_not_compatible=True)
 
-        logger.debug(
-            "Initialized STT base class",
-            extra={
-                "sample_rate": sample_rate,
-                "loop": str(_loop),
-                "session_id": self.session_id,
-                "provider": self.provider_name,
-            },
-        )
-
-        # Emit initialization event
-        init_event = PluginInitializedEvent(
+        self.events.append(PluginInitializedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             plugin_type="STT",
             provider=self.provider_name,
             configuration={"sample_rate": sample_rate},
-        )
-        register_global_event(init_event)
-        self.emit("initialized", init_event)
+        ))
 
     def _validate_pcm_data(self, pcm_data: PcmData) -> bool:
         """
@@ -155,7 +114,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             user_metadata: User-specific metadata.
             metadata: Transcription metadata (processing time, confidence, etc.).
         """
-        event = STTTranscriptEvent(
+        self.events.append(events.STTTranscriptEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
@@ -166,22 +125,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             audio_duration_ms=metadata.get("audio_duration_ms"),
             model_name=metadata.get("model_name"),
             words=metadata.get("words"),
-        )
-
-        logger.info(
-            "Emitting final transcript",
-            extra={
-                "event_id": event.event_id,
-                "text_length": len(text),
-                "has_user_metadata": user_metadata is not None,
-                "processing_time_ms": event.processing_time_ms,
-                "confidence": event.confidence,
-            },
-        )
-
-        # Register in global registry and emit structured event
-        register_global_event(event)
-        self.emit("transcript", event)  # Structured event
+        ))
 
     def _emit_partial_transcript_event(
         self,
@@ -197,7 +141,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             user_metadata: User-specific metadata.
             metadata: Transcription metadata (processing time, confidence, etc.).
         """
-        event = STTPartialTranscriptEvent(
+        self.events.append(events.STTPartialTranscriptEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
@@ -208,21 +152,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             audio_duration_ms=metadata.get("audio_duration_ms"),
             model_name=metadata.get("model_name"),
             words=metadata.get("words"),
-        )
-
-        logger.debug(
-            "Emitting partial transcript",
-            extra={
-                "event_id": event.event_id,
-                "text_length": len(text),
-                "has_user_metadata": user_metadata is not None,
-                "confidence": event.confidence,
-            },
-        )
-
-        # Register in global registry and emit structured event
-        register_global_event(event)
-        self.emit("partial_transcript", event)  # Structured event
+        ))
 
     def _emit_error_event(
         self,
@@ -238,7 +168,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             context: Additional context about where the error occurred.
             user_metadata: User-specific metadata.
         """
-        event = STTErrorEvent(
+        self.events.append(events.STTErrorEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             error=error,
@@ -246,24 +176,10 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             user_metadata=user_metadata,
             error_code=getattr(error, "error_code", None),
             is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt)),
-        )
-
-        logger.error(
-            f"STT error{' in ' + context if context else ''}",
-            extra={
-                "event_id": event.event_id,
-                "error_code": event.error_code,
-                "is_recoverable": event.is_recoverable,
-            },
-            exc_info=error,
-        )
-
-        # Register in global registry and emit structured event
-        register_global_event(event)
-        self.emit("error", event)  # Structured event
+        ))
 
     async def process_audio(
-        self, pcm_data: PcmData, user_metadata: Optional[Dict[str, Any]] = None
+        self, pcm_data: PcmData, participant: Optional[Participant] = None
     ):
         """
         Process audio data for transcription and emit appropriate events.
@@ -290,12 +206,12 @@ class STT(AsyncIOEventEmitter, abc.ABC):
                 "Processing audio chunk",
                 extra={
                     "duration_ms": audio_duration_ms,
-                    "has_user_metadata": user_metadata is not None,
+                    "has_user_metadata": participant is not None,
                 },
             )
 
             start_time = time.time()
-            results = await self._process_audio_impl(pcm_data, user_metadata)
+            results = await self._process_audio_impl(pcm_data, participant)
             processing_time = time.time() - start_time
 
             # If no results were returned, just return
@@ -316,13 +232,13 @@ class STT(AsyncIOEventEmitter, abc.ABC):
                     metadata["processing_time_ms"] = processing_time * 1000
 
                 if is_final:
-                    self._emit_transcript_event(text, user_metadata, metadata)
+                    self._emit_transcript_event(text, participant, metadata)
                 else:
-                    self._emit_partial_transcript_event(text, user_metadata, metadata)
+                    self._emit_partial_transcript_event(text, participant, metadata)
 
         except Exception as e:
             # Emit any errors that occur during processing
-            self._emit_error_event(e, "audio processing", user_metadata)
+            self._emit_error_event(e, "audio processing", participant)
 
     @abc.abstractmethod
     async def _process_audio_impl(
@@ -366,14 +282,10 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             self._is_closed = True
 
             # Emit closure event
-            close_event = PluginClosedEvent(
+            self.events.append(PluginClosedEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 plugin_type="STT",
                 provider=self.provider_name,
                 cleanup_successful=True,
-            )
-            register_global_event(close_event)
-            self.emit("closed", close_event)
-
-        # Subclasses should call super().close() after their cleanup
+            ))

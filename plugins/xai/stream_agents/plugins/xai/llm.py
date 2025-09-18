@@ -3,7 +3,7 @@ from xai_sdk import AsyncClient
 from xai_sdk.chat import system, user, Response, Chunk
 from xai_sdk.proto import chat_pb2
 
-from stream_agents.core.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from stream_agents.core.processors import BaseProcessor
 
@@ -89,7 +89,7 @@ class XAILLM(LLM):
             instructions=instructions,
         )
 
-    async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponse[Response]:
+    async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponseEvent[Response]:
         """
         create_response gives you full support/access to the native xAI chat.sample() and chat.stream() methods
         this method wraps the xAI method and ensures we broadcast an event which the agent class hooks into
@@ -115,7 +115,7 @@ class XAILLM(LLM):
         # Get response based on streaming preference
         if stream:
             # Handle streaming response
-            llm_response: Optional[LLMResponse[Response]] = None
+            llm_response: Optional[LLMResponseEvent[Response]] = None
             assert self.xai_chat is not None
             async for response, chunk in self.xai_chat.stream():
                 llm_response_optional = self._standardize_and_emit_chunk(
@@ -132,7 +132,7 @@ class XAILLM(LLM):
             # Handle non-streaming response
             assert self.xai_chat is not None
             response = await self.xai_chat.sample()
-            llm_response = LLMResponse[Response](response, response.content)
+            llm_response = LLMResponseEvent[Response](response, response.content)
 
             # Add response to chat history
             assert self.xai_chat is not None
@@ -140,7 +140,7 @@ class XAILLM(LLM):
 
         self.emit("after_llm_response", llm_response)
 
-        return llm_response or LLMResponse[Response](
+        return llm_response or LLMResponseEvent[Response](
             Response(chat_pb2.GetChatCompletionResponse(), 0), ""
         )
 
@@ -161,7 +161,7 @@ class XAILLM(LLM):
 
     def _standardize_and_emit_chunk(
         self, chunk: Chunk, response: Response
-    ) -> Optional[LLMResponse[Response]]:
+    ) -> Optional[LLMResponseEvent[Response]]:
         """
         Forwards the chunk events and also send out a standardized version (the agent class hooks into that)
         """
@@ -183,7 +183,7 @@ class XAILLM(LLM):
         # Check if this is the final chunk (finish_reason indicates completion)
         if chunk.choices and chunk.choices[0].finish_reason:
             # This is the final chunk, return the complete response
-            llm_response = LLMResponse[Response](response, response.content)
+            llm_response = LLMResponseEvent[Response](response, response.content)
             self.emit("standardized.response.completed", llm_response)
             return llm_response
 

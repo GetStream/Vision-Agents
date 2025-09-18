@@ -1,6 +1,7 @@
 import logging
 import os
 import webbrowser
+from typing import Optional
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -41,7 +42,7 @@ class StreamEdge(EdgeTransport):
         self.client = Stream.from_env()
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def create_chat_channel(self, call: Call, user, instructions):
+    def create_conversation(self, call: Call, user, instructions):
         chat_client: ChatClient = call.client.stream.chat
         self.channel = chat_client.get_or_create_channel(
             "videocall",
@@ -51,7 +52,7 @@ class StreamEdge(EdgeTransport):
         self.conversation = StreamConversation(
             instructions, [], self.channel.data.channel, chat_client
         )
-        return self.channel, self.conversation
+        return self.conversation
 
     async def create_user(self, user: User):
         return self.client.create_user(name=user.name, id=user.id)
@@ -105,6 +106,9 @@ class StreamEdge(EdgeTransport):
 
     def create_video_track(self):
         return aiortc.VideoStreamTrack()
+
+    def add_track_subscriber(self, track_id: str) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
+        return self._connection.subscriber_pc.add_track_subscriber(track_id)
 
     async def publish_tracks(self, audio_track, video_track):
         """
