@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional, Callable
 from functools import partial
 from collections import defaultdict, deque
 
-from .events import BaseEvent, EventType, ConnectionBaseEvent, CallBaseEvent
+from .events import BaseEvent, EventType, ConnectionBaseEvent
 
 from getstream.video import rtc
 

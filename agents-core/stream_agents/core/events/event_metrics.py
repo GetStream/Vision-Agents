@@ -10,8 +10,6 @@ import math
 
 from .events import (
     BaseEvent,
-    STTTranscriptEvent,
-    STTPartialTranscriptEvent,
 )
 
 

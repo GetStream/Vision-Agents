@@ -12,7 +12,8 @@ from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, RealtimeTranscriptEvent
+from ..events import RealtimeTranscriptEvent
+from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
 from ..edge.edge_transport import EdgeTransport
@@ -206,8 +207,8 @@ class Agent:
             self.llm.on("transcript", self._on_transcript)
             self.llm.on("partial_transcript", self._on_partial_transcript)
         elif self.stt:
-            self.stt.on("transcript", self._on_transcript)
-            self.stt.on("partial_transcript", self._on_partial_transcript)
+            self.events.subscribe(self._on_transcript)
+            self.events.subscribe(self._on_partial_transcript)
 
         """Join a Stream video call."""
         if self._is_running:
@@ -343,10 +344,8 @@ class Agent:
     def _setup_stt(self):
         if self.stt:
             self.logger.info("🎙️ Setting up STT event listeners")
-            self.stt.on("error", self._on_stt_error)
-            self._stt_setup = True
-        else:
-            self._stt_setup = False
+            #self.stt.on("error", self._on_stt_error)
+            self.events.subscribe(self._on_stt_error)
 
     async def _listen_to_audio_and_video(self) -> None:
         # Handle audio data for STT or Realtime

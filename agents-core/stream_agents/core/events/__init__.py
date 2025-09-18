@@ -4,11 +4,6 @@ from .events import (
     AudioFormat,
     BaseEvent,
     PluginBaseEvent,
-    # STT Events
-    STTTranscriptEvent,
-    STTPartialTranscriptEvent,
-    STTErrorEvent,
-    STTConnectionEvent,
     # Realtime Events (formerly STS)
     RealtimeConnectedEvent,
     RealtimeDisconnectedEvent,
@@ -153,10 +148,6 @@ __all__ += [
     "AudioFormat",
     "BaseEvent",
     "PluginBaseEvent",
-    "STTTranscriptEvent",
-    "STTPartialTranscriptEvent",
-    "STTErrorEvent",
-    "STTConnectionEvent",
     "RealtimeConnectedEvent",
     "RealtimeDisconnectedEvent",
     "RealtimeAudioInputEvent",

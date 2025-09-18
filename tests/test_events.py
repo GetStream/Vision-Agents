@@ -47,6 +47,7 @@ async def test_register_events_from_module_raises_name_error():
         MyEvent=ValidEvent,
         Another=AnotherEvent,
     )
+    dummy_module.__name__ = "dummy_module"
     manager.register_events_from_module(dummy_module, prefix="custom.")
 
     @manager.subscribe
@@ -56,22 +57,38 @@ async def test_register_events_from_module_raises_name_error():
     await manager.send(ValidEvent(field=2))
     assert my_handler.value == 2
 
-
 @pytest.mark.asyncio
-async def test_subscribe_with_multiple_events_raises_value_error():
+async def test_subscribe_with_multiple_events_different():
     manager = EventManager()
     manager.register(ValidEvent)
     manager.register(AnotherEvent)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         @manager.subscribe
         async def multi_event_handler(event1: ValidEvent, event2: AnotherEvent):
-            pass
+            value += 1
+
+
+@pytest.mark.asyncio
+async def test_subscribe_with_multiple_events_as_one_processes():
+    manager = EventManager()
+    manager.register(ValidEvent)
+    manager.register(AnotherEvent)
+    value = 0
+    @manager.subscribe
+    async def multi_event_handler(event: ValidEvent | AnotherEvent):
+        nonlocal value
+        value += 1
+
+    await manager.send(ValidEvent(field=1))
+    await manager.send(AnotherEvent(value=2))
+
+    assert value == 2
 
 
 @pytest.mark.asyncio
 async def test_subscribe_unregistered_event_raises_key_error():
-    manager = EventManager()
+    manager = EventManager(ignore_unknown_events=False)
 
     with pytest.raises(KeyError):
         @manager.subscribe
@@ -82,7 +99,7 @@ async def test_subscribe_unregistered_event_raises_key_error():
 @pytest.mark.asyncio
 async def test_handler_exception_triggers_recursive_exception_event():
     manager = EventManager()
-    manager.register(ValidEvent)
+    manager.register(ValidEvent, ignore_not_compatible=False)
     manager.register(ExceptionEvent)
 
     # Counter to ensure recursive handler is invoked
@@ -109,7 +126,7 @@ async def test_handler_exception_triggers_recursive_exception_event():
 
 @pytest.mark.asyncio
 async def test_send_unknown_event_type_raises_key_error():
-    manager = EventManager()
+    manager = EventManager(ignore_unknown_events=False)
 
     # Define a dynamic event class that is not registered
     @dataclasses.dataclass

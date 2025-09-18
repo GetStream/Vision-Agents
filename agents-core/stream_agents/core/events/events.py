@@ -27,12 +27,6 @@ from getstream.video.rtc.track_util import PcmData
 class EventType(Enum):
     """Enumeration of all event types across plugin systems."""
 
-    # STT Events
-    STT_TRANSCRIPT = "stt_transcript"
-    STT_PARTIAL_TRANSCRIPT = "stt_partial_transcript"
-    STT_ERROR = "stt_error"
-    STT_CONNECTION = "stt_connection"
-
     # Realtime Events (formerly STS)
     REALTIME_CONNECTED = "realtime_connected"
     REALTIME_DISCONNECTED = "realtime_disconnected"
@@ -43,15 +37,6 @@ class EventType(Enum):
     REALTIME_RESPONSE = "realtime_response"
     REALTIME_ERROR = "realtime_error"
     REALTIME_CONVERSATION_ITEM = "realtime_conversation_item"
-
-    # Generic Plugin Events
-    PLUGIN_INITIALIZED = "plugin_initialized"
-    PLUGIN_CLOSED = "plugin_closed"
-    PLUGIN_ERROR = "plugin_error"
-
-    # call ws events (NOTE: we could process with call_ as similar but then we need to remamp it)
-    CALL_MEMBER_ADDED = 'call_member_added'
-    CALL_MEMBER_REMOVED = 'call_member_removed'
 
     # ... could be same call events
     # connection SFU events (should we have big event type class?)
@@ -82,8 +67,7 @@ class AudioFormat(Enum):
 
 @dataclass
 class BaseEvent(DataClassJsonMixin):
-    """Base class for all plugin events."""
-    # NOTE: potentially we could use event class name for event name
+    """Base class for all events."""
     type: str
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -100,82 +84,6 @@ class PluginBaseEvent(BaseEvent):
 @dataclass
 class ConnectionBaseEvent(BaseEvent):
     pass
-
-
-@dataclass
-class CallBaseEvent(BaseEvent):
-    pass
-
-
-# ============================================================================
-# STT (Speech-to-Text) Events
-# ============================================================================
-
-
-@dataclass
-class STTTranscriptEvent(PluginBaseEvent):
-    """Event emitted when a complete transcript is available."""
-
-    event_type: EventType = field(default=EventType.STT_TRANSCRIPT, init=False)
-    text: str = ""
-    confidence: Optional[float] = None
-    language: Optional[str] = None
-    processing_time_ms: Optional[float] = None
-    audio_duration_ms: Optional[float] = None
-    model_name: Optional[str] = None
-    words: Optional[List[Dict[str, Any]]] = None
-    is_final: bool = True
-
-    def __post_init__(self):
-        if not self.text:
-            raise ValueError("Transcript text cannot be empty")
-
-
-@dataclass
-class STTPartialTranscriptEvent(PluginBaseEvent):
-    """Event emitted when a partial transcript is available."""
-
-    event_type: EventType = field(default=EventType.STT_PARTIAL_TRANSCRIPT, init=False)
-    text: str = ""
-    confidence: Optional[float] = None
-    language: Optional[str] = None
-    processing_time_ms: Optional[float] = None
-    audio_duration_ms: Optional[float] = None
-    model_name: Optional[str] = None
-    words: Optional[List[Dict[str, Any]]] = None
-    is_final: bool = False
-
-
-@dataclass
-class STTErrorEvent(PluginBaseEvent):
-    """Event emitted when an STT error occurs."""
-
-    event_type: EventType = field(default=EventType.STT_ERROR, init=False)
-    error: Optional[Exception] = None
-    error_code: Optional[str] = None
-    context: Optional[str] = None
-    retry_count: int = 0
-    is_recoverable: bool = True
-
-    @property
-    def error_message(self) -> str:
-        return str(self.error) if self.error else "Unknown error"
-
-
-@dataclass
-class STTConnectionEvent(PluginBaseEvent):
-    """Event emitted for STT connection state changes."""
-
-    event_type: EventType = field(default=EventType.STT_CONNECTION, init=False)
-    connection_state: Optional[ConnectionState] = None
-    provider: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
-    reconnect_attempts: int = 0
-
-
-# ============================================================================
-# TTS (Text-to-Speech) Events
-# ============================================================================
 
 
 # ============================================================================
@@ -319,12 +227,4 @@ class PluginErrorEvent(PluginBaseEvent):
     @property
     def error_message(self) -> str:
         return str(self.error) if self.error else "Unknown error"
-
-# ==
-# Call events
-# ==
-
-@dataclass
-class CallMemberAddedEvent(CallBaseEvent):
-    event_type: EventType = field(default=EventType.CALL_MEMBER_ADDED, init=False)
 

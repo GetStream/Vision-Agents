@@ -2,6 +2,8 @@ import collections
 import dataclasses
 import types
 import logging
+from typing import get_origin, Union, get_args
+
 
 
 logger = logging.getLogger(__name__)
@@ -14,11 +16,12 @@ class ExceptionEvent:
 
 
 class EventManager:
-    def __init__(self):
+    def __init__(self, ignore_unknown_events: bool = True):
         self._queue = collections.deque([])
         self._events = {}
         self._handlers = {}
         self._modules = {}
+        self._ignore_unknown_events = ignore_unknown_events
 
         self.register(ExceptionEvent)
 
@@ -39,7 +42,7 @@ class EventManager:
         for name, class_ in module.__dict__.items():
             if name.endswith('Event') and (not prefix or getattr(class_, 'type', '').startswith(prefix)):
                 self.register(class_, ignore_not_compatible=ignore_not_compatible)
-                self._modules.setdefault(module, []).append(class_)
+                self._modules.setdefault(module.__name__, []).append(class_)
 
     def _generate_import_file(self):
         import_file = []
@@ -59,15 +62,32 @@ class EventManager:
 
     def subscribe(self, function):
         subscribed = False
+        is_union = False
         for name, event_class in function.__annotations__.items():
-            # check union of event classes (not neeeded for now)
-            if type(event_class) is types.UnionType or subscribed:
-                raise ValueError("Multiple events per handler don't supported")
-            if event_class.type in self._events:
-                subscribed = True
-                self._handlers.setdefault(event_class.type, []).append(function)
+            origin = get_origin(event_class)
+            events = []
+
+            if origin is Union or isinstance(event_class, types.UnionType):
+                logger.info(f"Parameter {name} is a Union: {event_class}")
+                events = get_args(event_class)
+                is_union = True
             else:
-                raise KeyError(f"Event {event_class} is not registered.")
+                events = [event_class]
+
+            for sub_event in events:
+                event_type = getattr(sub_event, "type", None)
+
+                if subscribed and not is_union:
+                    raise RuntimeError("Multiple seperated events per handler are not supported, use Union instead")
+
+                if event_type in self._events:
+                    subscribed = True
+                    self._handlers.setdefault(event_type, []).append(function)
+                    logger.warning(f"Handler {function.__name__} registered for event {event_type}")
+                elif not self._ignore_unknown_events:
+                    raise KeyError(f"Event {sub_event} is not registered.")
+                else:
+                    logger.warning(f"Event {sub_event} is not registered – skipping handler {function.__name__}")
         return function
 
     def _prepare_event(self, event):
@@ -83,10 +103,16 @@ class EventManager:
 
                 logger.info(f"Received event {event}")
                 return event
-            else:
+            elif self._ignore_unknown_events:
                 logger.info(f"Event not registered {event}")
+            else:
+                raise RuntimeError(f"Event not registered {event}")
         elif event.type not in self._events:
-            logger.info(f"Event not registered {event}")
+            if self._ignore_unknown_events:
+                logger.info(f"Event not registered {event}")
+            else:
+                raise RuntimeError(f"Event not registered {event}")
+        return event
 
     def append(self, *events):
         for event in events:
