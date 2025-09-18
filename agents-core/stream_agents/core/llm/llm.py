@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import abc
-from typing import Optional, TYPE_CHECKING
+import asyncio
+import json
+from typing import Optional, TYPE_CHECKING, Tuple, List, Dict, Any
 
 from pyee.asyncio import AsyncIOEventEmitter
 
@@ -315,3 +317,71 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
         # Default implementation returns None to use fallback formatting
         # Each LLM provider should override this method
         return None
+
+    def _tc_key(self, tc: Dict[str, Any]) -> Tuple[Optional[str], str, str]:
+        """Generate a unique key for tool call deduplication.
+        
+        Args:
+            tc: Tool call dictionary
+            
+        Returns:
+            Tuple of (id, name, arguments_json) for deduplication
+        """
+        return (
+            tc.get("id"), 
+            tc["name"], 
+            json.dumps(tc.get("arguments_json", tc.get("arguments", {})), sort_keys=True)
+        )
+
+    async def _maybe_await(self, x):
+        """Await if x is a coroutine, otherwise return x directly.
+        
+        Args:
+            x: Value that might be a coroutine
+            
+        Returns:
+            Awaited result if coroutine, otherwise x
+        """
+        if asyncio.iscoroutine(x):
+            return await x
+        return x
+
+    async def _run_one_tool(self, tc: Dict[str, Any], timeout_s: float):
+        """Run a single tool call with timeout.
+        
+        Args:
+            tc: Tool call dictionary
+            timeout_s: Timeout in seconds
+            
+        Returns:
+            Tuple of (tool_call, result, error)
+        """
+        async def _invoke():
+            args = tc.get("arguments_json", tc.get("arguments", {})) or {}
+            res = self.call_function(tc["name"], args)
+            return await self._maybe_await(res)
+        
+        try:
+            res = await asyncio.wait_for(_invoke(), timeout=timeout_s)
+            return tc, res, None
+        except Exception as e:
+            return tc, {"error": str(e)}, e
+
+    async def _execute_tools(self, calls: List[Dict[str, Any]], *, max_concurrency: int = 8, timeout_s: float = 30):
+        """Execute multiple tool calls concurrently with deduplication and timeout.
+        
+        Args:
+            calls: List of tool call dictionaries
+            max_concurrency: Maximum number of concurrent tool executions
+            timeout_s: Timeout per tool execution in seconds
+            
+        Returns:
+            List of tuples (tool_call, result, error)
+        """
+        sem = asyncio.Semaphore(max_concurrency)
+        
+        async def _guarded(tc):
+            async with sem:
+                return await self._run_one_tool(tc, timeout_s)
+        
+        return await asyncio.gather(*[_guarded(tc) for tc in calls])

@@ -1,6 +1,7 @@
 from typing import Optional, List, TYPE_CHECKING, Any, Dict
 
 from google import genai
+from google.genai import types
 from google.genai.types import GenerateContentResponse
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
@@ -115,28 +116,46 @@ class GeminiLLM(LLM):
 
         # Check if there were function calls in the response
         if pending_calls:
-            # Execute tools
-            function_results = []
-            for tc in pending_calls:
-                try:
-                    r = self.call_function(tc["name"], tc["arguments_json"])
-                except Exception as e:
-                    r = {"error": str(e)}
-                function_results.append(r)
-
-            # One message with multiple function_response parts
-            fr_parts = self._create_tool_result_parts(pending_calls, function_results)
-
-            # Send function responses (no extra prompt needed)
-            follow_up_iter = self.chat.send_message_stream(fr_parts)
-
-            follow_up_text_parts = []
-            follow_up_last = None
-            for chk in follow_up_iter:
-                follow_up_last = chk
-                llm_response_optional = self._standardize_and_emit_event(chk, follow_up_text_parts)
-                if llm_response_optional is not None:
-                    llm_response = llm_response_optional
+            # Multi-hop tool calling loop
+            MAX_ROUNDS = 3
+            rounds = 0
+            current_calls = pending_calls
+            cfg_with_tools = kwargs.get("config")
+            
+            while current_calls and rounds < MAX_ROUNDS:
+                # Execute tools concurrently
+                triples = await self._execute_tools(current_calls, max_concurrency=8, timeout_s=30)
+                executed = []
+                parts = []
+                for tc, res, err in triples:
+                    executed.append(tc)
+                    # Ensure response is a dictionary for Gemini
+                    if not isinstance(res, dict):
+                        res = {"result": res}
+                    parts.append(types.Part.from_function_response(name=tc["name"], response=res))
+                
+                # Send function responses with tools config
+                follow_up_iter = self.chat.send_message_stream(parts, config=cfg_with_tools)
+                
+                follow_up_text_parts = []
+                follow_up_last = None
+                next_calls = []
+                
+                for chk in follow_up_iter:
+                    follow_up_last = chk
+                    llm_response_optional = self._standardize_and_emit_event(chk, follow_up_text_parts)
+                    if llm_response_optional is not None:
+                        llm_response = llm_response_optional
+                    
+                    # Check for new function calls
+                    try:
+                        chunk_calls = self._extract_tool_calls_from_stream_chunk(chk)
+                        next_calls.extend(chunk_calls)
+                    except Exception:
+                        pass
+                
+                current_calls = next_calls
+                rounds += 1
 
             total_text = "".join(follow_up_text_parts) or "".join(text_parts)
             llm_response = LLMResponse(follow_up_last or final_chunk, total_text)

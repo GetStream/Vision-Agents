@@ -57,6 +57,7 @@ class ClaudeLLM(LLM):
         """
         super().__init__()
         self.model = model
+        self._pending_tool_uses_by_index = {}  # index -> {id, name, parts: []}
 
         if client is not None:
             self.client = client
@@ -350,7 +351,7 @@ class ClaudeLLM(LLM):
 
     def _extract_tool_calls_from_stream_chunk(self, chunk: Any, current_tool_call: Optional[NormalizedToolCallItem] = None) -> tuple[List[NormalizedToolCallItem], Optional[NormalizedToolCallItem]]:
         """
-        Extract tool calls from Anthropic streaming chunk.
+        Extract tool calls from Anthropic streaming chunk using index-keyed accumulation.
         
         Args:
             chunk: Anthropic streaming event
@@ -360,52 +361,39 @@ class ClaudeLLM(LLM):
             Tuple of (completed tool calls, current tool call being accumulated)
         """
         tool_calls = []
-        
-        if hasattr(chunk, 'type'):
-            if chunk.type == "content_block_start":
-                if hasattr(chunk, 'content_block') and hasattr(chunk.content_block, 'type'):
-                    if chunk.content_block.type == "tool_use":
-                        # Initialize pending tool use tracking
-                        if not hasattr(self, '_pending_tool_uses'):
-                            self._pending_tool_uses = {}
-                        
-                        cb = chunk.content_block
-                        self._pending_tool_uses[cb.id] = {
-                            "id": cb.id,
-                            "name": cb.name,
-                            "parts": []
-                        }
+        t = getattr(chunk, 'type', None)
 
-            elif chunk.type == "content_block_delta":
-                d = getattr(chunk, 'delta', None)
-                if getattr(d, 'type', None) == "input_json_delta":
-                    # Accumulate partial JSON strings
-                    pj = getattr(d, 'partial_json', None)
-                    if pj is not None and hasattr(self, '_pending_tool_uses') and self._pending_tool_uses:
-                        # Find the most recent tool_use (in practice, there should be only one active)
-                        last_tool = next(reversed(self._pending_tool_uses.values()))
-                        last_tool["parts"].append(pj)
+        if t == "content_block_start":
+            cb = getattr(chunk, 'content_block', None)
+            if getattr(cb, 'type', None) == "tool_use":
+                self._pending_tool_uses_by_index[chunk.index] = {
+                    "id": cb.id,
+                    "name": cb.name,
+                    "parts": []
+                }
 
-            elif chunk.type == "content_block_stop":
-                # Finalize the tool use with accumulated JSON
-                if hasattr(self, '_pending_tool_uses') and self._pending_tool_uses:
-                    last_tool = next(reversed(self._pending_tool_uses.values()))
-                    import json
-                    buf = "".join(last_tool["parts"]).strip() or "{}"
-                    try:
-                        args = json.loads(buf)
-                    except Exception as e:
-                        args = {}
-                    
-                    tool_calls.append({
-                        "type": "tool_call",
-                        "id": last_tool["id"],
-                        "name": last_tool["name"],
-                        "arguments": args
-                    })
-                    
-                    # Clean up
-                    self._pending_tool_uses.pop(last_tool["id"], None)
+        elif t == "content_block_delta":
+            d = getattr(chunk, 'delta', None)
+            if getattr(d, 'type', None) == "input_json_delta":
+                pj = getattr(d, 'partial_json', None)
+                if pj is not None and chunk.index in self._pending_tool_uses_by_index:
+                    self._pending_tool_uses_by_index[chunk.index]["parts"].append(pj)
+
+        elif t == "content_block_stop":
+            pending = self._pending_tool_uses_by_index.pop(chunk.index, None)
+            if pending:
+                import json
+                buf = "".join(pending["parts"]).strip() or "{}"
+                try:
+                    args = json.loads(buf)
+                except Exception:
+                    args = {}
+                tool_calls.append({
+                    "type": "tool_call",
+                    "id": pending["id"],
+                    "name": pending["name"],
+                    "arguments": args
+                })
         
         return tool_calls, None
 

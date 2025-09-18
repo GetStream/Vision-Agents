@@ -194,22 +194,36 @@ class OpenAILLM(LLM):
         for round_num in range(max_rounds):
             # Execute tools (with deduplication)
             executed_calls = []
-            results = []
+            to_run = []
             for tool_call in current_tool_calls:
-                key = (tool_call["id"], tool_call["name"], json.dumps(tool_call["arguments_json"], sort_keys=True))
+                key = self._tc_key(tool_call)
                 if key in seen:
                     continue
                 seen.add(key)
-                
-                try:
-                    result = self.call_function(tool_call["name"], tool_call["arguments_json"])
-                    results.append(result)
-                except Exception as e:
-                    results.append({"error": str(e)})
-                executed_calls.append(tool_call)
+                to_run.append(tool_call)
+
+            # Execute tools concurrently
+            triples = await self._execute_tools(to_run, max_concurrency=8, timeout_s=30)
+            outputs_by_id = {}
+            for tc, res, err in triples:
+                cid = tc.get("id")
+                if cid:
+                    outputs_by_id[cid] = res
+                    executed_calls.append(tc)
             
-            # Create tool result messages
-            tool_messages = self._create_tool_result_message(executed_calls, results)
+            # Create tool result messages - only for calls that were executed
+            tool_messages = []
+            for tc in executed_calls:
+                cid = tc.get("id")
+                if cid in outputs_by_id:
+                    output = outputs_by_id[cid]
+                    # Convert to string for OpenAI Responses API
+                    output_str = output if isinstance(output, str) else json.dumps(output)
+                    tool_messages.append({
+                        "type": "function_call_output",
+                        "call_id": cid,
+                        "output": output_str,
+                    })
             
             # Send follow-up request with tool results
             follow_up_kwargs = {
