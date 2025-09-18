@@ -133,6 +133,11 @@ class Agent:
             await self._sts_connection.__aexit__(None, None, None)
         self._sts_connection = None
 
+        # Clean up active tracks
+        self.logger.info(f"🎥VDP: Cleaning up {len(self._active_tracks)} active tracks")
+        for track_id in list(self._active_tracks.keys()):
+            self._remove_track(track_id)
+        
         # Close RTC connection
         if self._connection:
             await self._connection.close()
@@ -512,6 +517,15 @@ class Agent:
             try:
                 await self.llm.start_video_sender(forward_branch)
                 self.logger.info("🎥VDP: ✅ Started OpenAI video sender with Stream Video track")
+                
+                # Register track for lifecycle management
+                self._register_track(track_id, {
+                    "participant": participant,
+                    "forwarding_track": forward_branch,
+                    "processing_track": processing_branch,
+                    "source_track": track
+                })
+                
             except Exception as e:
                 self.logger.error(f"🎥VDP: ❌ Failed to start OpenAI video sender: {e}")
                 self.logger.error(f"🎥VDP: Exception type: {type(e).__name__}")
@@ -530,11 +544,38 @@ class Agent:
             f"📸 Starting video processing loop for track {track_id} {participant.user_id} {participant.name}"
         )
 
-        # Use the exact same pattern as the working example
+        # Enhanced video processing with timeout limits and error recovery
+        timeout_errors = 0
+        max_timeout_errors = 10  # Circuit breaker threshold
+        base_timeout = 5.0
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        
+        self.logger.info(f"🎥VDP: Starting robust video processing loop (max_timeouts={max_timeout_errors})")
+        
         while True:
+            # Periodic health check
+            self._check_track_health()
             try:
-                video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=5.0)
+                # Adaptive timeout based on error count
+                current_timeout = base_timeout * (1.5 ** min(timeout_errors, 3))
+                
+                # Track frame processing timing
+                frame_request_start = time.monotonic()
+                video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=current_timeout)
+                frame_request_end = time.monotonic()
+                frame_request_duration = frame_request_end - frame_request_start
+                
                 if video_frame:
+                    # Reset error counts on successful frame processing
+                    timeout_errors = 0
+                    consecutive_errors = 0
+                    
+                    # Log frame processing timing
+                    self.logger.info(f"🎥VDP: FRAME PROCESSING: track_id={track_id} "
+                                   f"request_duration={frame_request_duration:.3f}s "
+                                   f"frame_size={video_frame.width}x{video_frame.height}")
+                    
                     if hasImageProcessers:
                         img = video_frame.to_image()
 
@@ -554,13 +595,62 @@ class Agent:
                             self.logger.error(
                                 f"Error in video processor {type(processor).__name__}: {e}"
                             )
+                else:
+                    self.logger.warning("🎥VDP: Received empty frame")
+                    consecutive_errors += 1
 
-            except Exception as e:
-                # TODO: handle timouet differently, break on normal error
-                self.logger.error(
-                    f"📸 Error receiving track: {e} - {type(e)}, trying again"
+            except asyncio.TimeoutError:
+                timeout_errors += 1
+                consecutive_errors += 1
+                
+                self.logger.warning(
+                    f"🎥VDP: Timeout #{timeout_errors} (timeout={current_timeout:.1f}s, consecutive_errors={consecutive_errors})"
                 )
+                
+                # Circuit breaker: stop processing if too many timeouts
+                if timeout_errors >= max_timeout_errors:
+                    self.logger.error(f"🎥VDP: Circuit breaker triggered - too many timeouts ({timeout_errors}), stopping track processing")
+                    break
+                
+                # Circuit breaker: stop processing if too many consecutive errors
+                if consecutive_errors >= max_consecutive_errors:
+                    self.logger.error(f"🎥VDP: Circuit breaker triggered - too many consecutive errors ({consecutive_errors}), stopping track processing")
+                    break
+                
+                # Exponential backoff for timeout errors
+                backoff_delay = min(2.0 ** min(timeout_errors, 5), 30.0)
+                self.logger.debug(f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s")
+                await asyncio.sleep(backoff_delay)
+                
+            except Exception as e:
+                consecutive_errors += 1
+                self.logger.error(
+                    f"🎥VDP: Error receiving track: {e} - {type(e)} (consecutive_errors={consecutive_errors})"
+                )
+                
+                # Circuit breaker: stop processing on persistent errors
+                if consecutive_errors >= max_consecutive_errors:
+                    self.logger.error(f"🎥VDP: Circuit breaker triggered - too many consecutive errors ({consecutive_errors}), stopping track processing")
+                    break
+                
+                # Short delay for non-timeout errors
                 await asyncio.sleep(0.5)
+        
+        # Cleanup and logging
+        self.logger.info(f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}")
+        
+        # Clean up MediaRelay branches
+        try:
+            if hasattr(processing_branch, 'stop'):
+                processing_branch.stop()
+            if hasattr(forward_branch, 'stop'):
+                forward_branch.stop()
+            self.logger.info("🎥VDP: MediaRelay branches cleaned up")
+        except Exception as e:
+            self.logger.warning(f"🎥VDP: Error during cleanup: {e}")
+        
+        # Remove track from active tracking
+        self._remove_track(track_id)
 
     def _on_vad_audio(self, event:VADAudioEvent):
         # bytes_to_pcm = bytes_to_pcm_data(event.audio_data)
@@ -580,6 +670,86 @@ class Agent:
         self.logger.info(
             f"👉 Turn ended - participant {event_data.speaker_id} finished (duration: {event_data.confidence})"
         )
+    
+    def _register_track(self, track_id: str, track_info: Dict) -> None:
+        """Register a track for lifecycle management."""
+        self._active_tracks[track_id] = {
+            **track_info,
+            "registered_at": time.monotonic(),
+            "last_health_check": time.monotonic()
+        }
+        self.logger.info(f"🎥VDP: Registered track {track_id} for lifecycle management")
+    
+    def _remove_track(self, track_id: str) -> None:
+        """Remove a track from lifecycle management."""
+        if track_id in self._active_tracks:
+            track_info = self._active_tracks.pop(track_id)
+            duration = time.monotonic() - track_info["registered_at"]
+            self.logger.info(f"🎥VDP: Removed track {track_id} from lifecycle management (duration: {duration:.1f}s)")
+    
+    def _check_track_health(self) -> None:
+        """Check health of all active tracks."""
+        now = time.monotonic()
+        
+        # Only check health periodically
+        if now - self._last_health_check < self._track_health_check_interval:
+            return
+        
+        self._last_health_check = now
+        unhealthy_tracks = []
+        
+        for track_id, track_info in self._active_tracks.items():
+            try:
+                # Check if track has health status method
+                if hasattr(track_info.get("forwarding_track"), "get_health_status"):
+                    health_status = track_info["forwarding_track"].get_health_status()
+                    if not health_status["is_healthy"]:
+                        unhealthy_tracks.append(track_id)
+                        self.logger.warning(f"🎥VDP: Track {track_id} is unhealthy: {health_status}")
+                else:
+                    # Basic health check - if track has been active for too long without updates
+                    if now - track_info["last_health_check"] > 60.0:  # 1 minute
+                        unhealthy_tracks.append(track_id)
+                        self.logger.warning(f"🎥VDP: Track {track_id} has not been checked for 60+ seconds")
+                
+                # Update last health check time
+                track_info["last_health_check"] = now
+                
+            except Exception as e:
+                self.logger.error(f"🎥VDP: Error checking health of track {track_id}: {e}")
+                unhealthy_tracks.append(track_id)
+        
+        # Log summary
+        if unhealthy_tracks:
+            self.logger.warning(f"🎥VDP: Found {len(unhealthy_tracks)} unhealthy tracks: {unhealthy_tracks}")
+        else:
+            self.logger.debug(f"🎥VDP: All {len(self._active_tracks)} tracks are healthy")
+    
+    def get_track_health_summary(self) -> Dict[str, Any]:
+        """Get a summary of all track health status."""
+        summary = {
+            "total_tracks": len(self._active_tracks),
+            "healthy_tracks": 0,
+            "unhealthy_tracks": 0,
+            "track_details": {}
+        }
+        
+        for track_id, track_info in self._active_tracks.items():
+            try:
+                if hasattr(track_info.get("forwarding_track"), "get_health_status"):
+                    health_status = track_info["forwarding_track"].get_health_status()
+                    summary["track_details"][track_id] = health_status
+                    if health_status["is_healthy"]:
+                        summary["healthy_tracks"] += 1
+                    else:
+                        summary["unhealthy_tracks"] += 1
+                else:
+                    summary["track_details"][track_id] = {"status": "unknown"}
+            except Exception as e:
+                summary["track_details"][track_id] = {"error": str(e)}
+                summary["unhealthy_tracks"] += 1
+        
+        return summary
 
     async def _on_partial_transcript(
         self,

@@ -14,6 +14,21 @@ from fractions import Fraction
 import numpy as np
 from av import AudioFrame, VideoFrame
 
+# Import timing utilities
+try:
+    from stream_agents.core.utils.timing import timing_decorator, frame_timing_decorator
+except ImportError:
+    # Fallback if timing module not available
+    def timing_decorator(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    
+    def frame_timing_decorator(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -37,29 +52,60 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         self._last_frame_time = 0
         self._frame_count = 0
         self._error_count = 0
+        self._consecutive_errors = 0
+        self._max_consecutive_errors = 5
+        self._is_active = True
+        self._last_successful_frame_time = time.monotonic()
+        self._health_check_interval = 10.0  # Check health every 10 seconds
+        self._last_health_check = time.monotonic()
         
-        logger.info(f"🎥 StreamVideoForwardingTrack initialized: fps={fps}, interval={self._interval:.3f}s")
+        logger.info(f"🎥 StreamVideoForwardingTrack initialized: fps={fps}, interval={self._interval:.3f}s (frame limiting DISABLED for performance)")
     
+    @frame_timing_decorator(threshold=0.1)
     async def recv(self):
-        """Read from Stream Video and forward to OpenAI."""
+        """Read from Stream Video and forward to OpenAI with robust error handling."""
+        frame_start_time = time.monotonic()
+        
+        if not self._is_active:
+            logger.warning("🎥 StreamVideoForwardingTrack is no longer active, returning black frame")
+            return self._generate_black_frame()
+        
         now = time.monotonic()
         
-        # Frame rate limiting
-        if now - self._last_frame_time < self._interval:
-            await asyncio.sleep(self._interval - (now - self._last_frame_time))
+        # Health check: detect if track has been dead for too long
+        if now - self._last_health_check > self._health_check_interval:
+            self._last_health_check = now
+            if now - self._last_successful_frame_time > 30.0:  # No frames for 30 seconds
+                logger.error("🎥 StreamVideoForwardingTrack health check failed - no frames for 30+ seconds")
+                self._is_active = False
+                return self._generate_black_frame()
+        
+        # Frame rate limiting - DISABLED for better performance
+        # if now - self._last_frame_time < self._interval:
+        #     await asyncio.sleep(self._interval - (now - self._last_frame_time))
         
         try:
-            # Read frame from Stream Video
-            frame = await asyncio.wait_for(self._source_track.recv(), timeout=0.1)
+            # Read frame from Stream Video with shorter timeout for faster failure detection
+            source_recv_start = time.monotonic()
+            frame = await asyncio.wait_for(self._source_track.recv(), timeout=0.5)
+            source_recv_end = time.monotonic()
+            source_recv_duration = source_recv_end - source_recv_start
+            
+            # Reset error counts on successful frame
+            self._consecutive_errors = 0
             self._frame_count += 1
+            self._last_successful_frame_time = now
             
             # Convert format if needed
+            conversion_start = time.monotonic()
             if frame.format.name != "rgb24":
                 try:
                     frame = frame.reformat(format="rgb24")
                     logger.debug(f"🎥 Converted frame format: {frame.format.name} → rgb24")
                 except Exception as e:
                     logger.warning(f"🎥 Frame format conversion failed: {e}, using original")
+            conversion_end = time.monotonic()
+            conversion_duration = conversion_end - conversion_start
             
             # Update timing for OpenAI
             frame.pts = self._ts
@@ -67,22 +113,43 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
             self._ts += 1
             self._last_frame_time = time.monotonic()
             
+            # Log detailed timing for every frame
+            total_duration = time.monotonic() - frame_start_time
+            logger.info(f"🎥 FRAME TIMING: frame_id={self._frame_count} "
+                       f"source_recv={source_recv_duration:.3f}s "
+                       f"conversion={conversion_duration:.3f}s "
+                       f"total={total_duration:.3f}s")
+            
             if self._frame_count % 30 == 0:  # Log every 30 frames
                 logger.debug(f"🎥 Forwarded {self._frame_count} frames from Stream Video to OpenAI")
             
             return frame
             
         except asyncio.TimeoutError:
-            # Return black frame if no Stream Video frame available
-            logger.debug("🎥 No Stream Video frame available, using black frame")
-            return self._generate_black_frame()
-        except Exception as e:
-            self._error_count += 1
-            logger.error(f"❌ Error reading from Stream Video (error #{self._error_count}): {e}")
+            self._consecutive_errors += 1
+            timeout_duration = time.monotonic() - frame_start_time
+            logger.debug(f"🎥 TIMEOUT: frame_id={self._frame_count} timeout_duration={timeout_duration:.3f}s "
+                        f"(consecutive_errors={self._consecutive_errors})")
             
-            # If too many errors, return black frame
-            if self._error_count > 10:
-                logger.error("❌ Too many errors reading from Stream Video, using black frames")
+            # Circuit breaker: if too many consecutive timeouts, mark track as inactive
+            if self._consecutive_errors >= self._max_consecutive_errors:
+                logger.error(f"🎥 StreamVideoForwardingTrack circuit breaker triggered - {self._consecutive_errors} consecutive timeouts")
+                self._is_active = False
+                return self._generate_black_frame()
+            
+            return self._generate_black_frame()
+            
+        except Exception as e:
+            self._consecutive_errors += 1
+            self._error_count += 1
+            error_duration = time.monotonic() - frame_start_time
+            logger.error(f"❌ FRAME ERROR: frame_id={self._frame_count} error_duration={error_duration:.3f}s "
+                        f"(error #{self._error_count}, consecutive={self._consecutive_errors}): {e}")
+            
+            # Circuit breaker: if too many consecutive errors, mark track as inactive
+            if self._consecutive_errors >= self._max_consecutive_errors:
+                logger.error(f"🎥 StreamVideoForwardingTrack circuit breaker triggered - {self._consecutive_errors} consecutive errors")
+                self._is_active = False
                 return self._generate_black_frame()
             
             return self._generate_black_frame()
