@@ -12,9 +12,9 @@ from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent, RealtimeTranscriptEvent
+from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, RealtimeTranscriptEvent
+from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
-from .reply_queue import ReplyQueue
 from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
 from ..events import get_global_registry, EventType
@@ -80,8 +80,14 @@ class Agent:
 
         self.logger = logging.getLogger(f"Agent[{self.agent_user.id}]")
 
-        self._em = EventManager()
-        self._em.register_events_from_module(getstream.models, 'call.')
+        self.events = EventManager()
+        self.events.register_events_from_module(getstream.models, 'call.')
+        for plugin in [stt, tts, turn_detection, vad]:
+            if plugin and hasattr(plugin, 'events'):
+                self.logger.info(f"Registered plugin {plugin}")
+                self.events.merge(plugin.events)
+
+        self.events.subscribe(self._on_vad_audio)
 
         self.llm = llm
         self.stt = stt
@@ -90,7 +96,6 @@ class Agent:
         self.vad = vad
         self.processors = processors or []
         self.mcp_servers = mcp_servers or []
-        self.queue = ReplyQueue(self)
 
         # we sync the user talking and the agent responses to the conversation
         # because we want to support streaming responses and can have delta updates for both
@@ -120,7 +125,6 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
-        self._setup_vad()
         self._setup_mcp_servers()
 
     async def close(self):
@@ -182,7 +186,7 @@ class Agent:
 
     def subscribe(self, function):
         """Subscribe to event"""
-        return self._em.subscribe(function)
+        return self.events.subscribe(function)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
@@ -223,7 +227,7 @@ class Agent:
 
         self._is_running = True
 
-        connection._connection._coordinator_ws_client.handlers.append(self._em.send)
+        connection._connection._coordinator_ws_client.handlers.append(self.events.send)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -268,11 +272,15 @@ class Agent:
             logging.warning(f"⚠️ Error while waiting for call to end: {e}")
             # Don't raise the exception, just log it and continue cleanup
 
-    async def say(self, text):
-        """
-        Say exactly this
-        """
-        await self.queue.say_text(text, self.agent_user.id)
+    async def say(self, text: str, user_id: str):
+        self.conversation.add_message(Message(content=text, user_id=user_id))
+        if self.tts is not None:
+            await self.tts.send(text)
+
+    async def send_audio(self, pcm):
+        # TODO: stream & buffer
+        if self._audio_track is not None:
+            await self._audio_track.send_audio(pcm)
 
     async def create_user(self):
         response = await self.edge.create_user(self.agent_user)
@@ -313,11 +321,9 @@ class Agent:
         # Resume the queue for TTS playback
         await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
-    def _setup_vad(self):
-        if self.vad:
-            self.logger.info("🎙️ Setting up VAD listeners")
-            self.vad.on("audio", self._on_vad_audio)
-            
+    def _on_vad_audio(self, event: VADAudioEvent):
+        self.logger.info(f"Vad audio event {event}")
+
     def _setup_mcp_servers(self):
         """Set up MCP servers if any are configured."""
         if self.mcp_servers:
@@ -469,11 +475,6 @@ class Agent:
                     f"📸 Error receiving track: {e} - {type(e)}, trying again"
                 )
                 await asyncio.sleep(0.5)
-
-    def _on_vad_audio(self, event:VADAudioEvent):
-        # bytes_to_pcm = bytes_to_pcm_data(event.audio_data)
-        # asyncio.create_task(self.stt.process_audio(bytes_to_pcm, event.user_metadata))
-        pass
 
     def _on_turn_started(self, event_data: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
@@ -698,24 +699,20 @@ class Agent:
                     self.logger.error(f"Error getting tools from MCP server {server.__class__.__name__}: {e}")
                     
         return tools
-        
+
     async def call_mcp_tool(self, server_index: int, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """Call a tool on a specific MCP server.
-        
         Args:
             server_index: Index of the MCP server in the mcp_servers list
             tool_name: Name of the tool to call
             arguments: Arguments to pass to the tool
-            
         Returns:
             The result of the tool call
         """
         if server_index >= len(self.mcp_servers):
             raise ValueError(f"Invalid server index: {server_index}")
-            
         server = self.mcp_servers[server_index]
         if not server.is_connected:
             raise RuntimeError(f"MCP server {server_index} is not connected")
-            
         return await server.call_tool(tool_name, arguments)
 

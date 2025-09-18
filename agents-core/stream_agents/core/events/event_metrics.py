@@ -12,8 +12,6 @@ from .events import (
     BaseEvent,
     STTTranscriptEvent,
     STTPartialTranscriptEvent,
-    VADAudioEvent,
-    VADPartialEvent,
 )
 
 

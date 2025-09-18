@@ -49,8 +49,8 @@ class TTS(abc.ABC):
         self._track: Optional[AudioStreamTrack] = None
         self.session_id = str(uuid.uuid4())
         self.provider_name = provider_name or self.__class__.__name__
-        self._em = EventManager()
-        self._em.append(PluginInitializedEvent(
+        self.events = EventManager()
+        self.events.append(PluginInitializedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             plugin_type="TTS",
@@ -131,7 +131,7 @@ class TTS(abc.ABC):
                 "Starting text-to-speech synthesis", extra={"text_length": len(text)}
             )
 
-            self._em.append(TTSSynthesisStartEvent(
+            self.events.append(TTSSynthesisStartEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 text=text,
@@ -163,7 +163,7 @@ class TTS(abc.ABC):
                     user_metadata=user,
                     sample_rate=self._track.framerate if self._track else 16000,
                 )
-                self._em.append(audio_event)  # Structured event
+                self.events.append(audio_event)  # Structured event
             elif inspect.isasyncgen(audio_data):
                 async for chunk in audio_data:
                     if isinstance(chunk, bytes):
@@ -172,7 +172,7 @@ class TTS(abc.ABC):
                         await self._track.write(chunk)
 
                         # Emit structured audio event
-                        self._em.append(TTSAudioEvent(
+                        self.events.append(TTSAudioEvent(
                             session_id=self.session_id,
                             plugin_name=self.provider_name,
                             audio_data=chunk,
@@ -188,7 +188,7 @@ class TTS(abc.ABC):
                         audio_chunks += 1
                         await self._track.write(chunk.data)
 
-                        self._em.append(TTSAudioEvent(
+                        self.events.append(TTSAudioEvent(
                             session_id=self.session_id,
                             plugin_name=self.provider_name,
                             audio_data=chunk.data,
@@ -207,7 +207,7 @@ class TTS(abc.ABC):
                     audio_chunks += 1
                     await self._track.write(chunk)
 
-                    self._em.append(TTSAudioEvent(
+                    self.events.append(TTSAudioEvent(
                         session_id=self.session_id,
                         plugin_name=self.provider_name,
                         audio_data=chunk,
@@ -239,7 +239,7 @@ class TTS(abc.ABC):
                 else None
             )
 
-            self._em.append(TTSSynthesisCompleteEvent(
+            self.events.append(TTSSynthesisCompleteEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 synthesis_id=synthesis_id,
@@ -268,7 +268,7 @@ class TTS(abc.ABC):
             )
 
         except Exception as e:
-            self._em.append(TTSErrorEvent(
+            self.events.append(TTSErrorEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 error=e,
@@ -283,7 +283,7 @@ class TTS(abc.ABC):
 
     async def close(self):
         """Close the TTS service and release any resources."""
-        self._em.append(PluginClosedEvent(
+        self.events.append(PluginClosedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             plugin_type="TTS",

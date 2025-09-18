@@ -108,7 +108,7 @@ class ClaudeLLM(LLM):
         class BeforeLlmResponseEvent:
             pass
 
-        self._em.send(self._normalize_message(kwargs["messages"]))
+        self.events.send(self._normalize_message(kwargs["messages"]))
 
         original = await self.client.messages.create(*args, **kwargs)
         if isinstance(original, ClaudeMessage):

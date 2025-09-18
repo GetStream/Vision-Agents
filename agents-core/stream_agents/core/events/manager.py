@@ -22,11 +22,11 @@ class EventManager:
 
         self.register(ExceptionEvent)
 
-    def register(self, event_class):
+    def register(self, event_class, ignore_not_compatible=False):
         if event_class.__name__.endswith('Event') and hasattr(event_class, 'type'):
             self._events[event_class.type] = event_class
-        else:
-            raise ValueError("Provide valid class that ends on '*Event' and 'type' attribute")
+        elif not ignore_not_compatible:
+            raise ValueError(f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}")
 
     def merge(self, ev: 'EventManager'):
         self._events.update(ev._events)
@@ -35,10 +35,10 @@ class EventManager:
         for event in ev._queue:
             self._queue.append(event)
 
-    def register_events_from_module(self, module, prefix):
+    def register_events_from_module(self, module, prefix='', ignore_not_compatible=False):
         for name, class_ in module.__dict__.items():
-            if name.endswith('Event') and getattr(class_, 'type', '').startswith(prefix):
-                self.register(class_)
+            if name.endswith('Event') and (not prefix or getattr(class_, 'type', '').startswith(prefix)):
+                self.register(class_, ignore_not_compatible=ignore_not_compatible)
                 self._modules.setdefault(module, []).append(class_)
 
     def _generate_import_file(self):
