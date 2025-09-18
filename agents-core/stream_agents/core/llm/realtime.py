@@ -338,7 +338,7 @@ class Realtime(abc.ABC):
                             collected_parts, event.text
                         )
                         done_fut.set_result(RealtimeResponse(event, final_text))
-                    self.remove_listener("response", _on_response)
+                    #self.remove_listener("response", _on_response)
                 else:
                     if event.text:
                         collected_parts.append(event.text)
@@ -352,7 +352,7 @@ class Realtime(abc.ABC):
         try:
             result = await asyncio.wait_for(done_fut, timeout=timeout)
         except asyncio.TimeoutError as e:
-            self.remove_listener("response", _on_response)
+            #self.remove_listener("response", _on_response)
             raise e
 
         if hasattr(self, "after_response_listener"):

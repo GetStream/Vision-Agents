@@ -61,6 +61,7 @@ You are a voice assistant.
 
     # Have the agent join the call/room
     with await agent.join(call):
+        await agent.llm.connect()
         print("Joining call")
         # Ensure the LLM realtime connection is ready (should already be awaited internally)
         await agent.llm.wait_until_ready(timeout=10.0)  # type: ignore[attr-defined]
