@@ -327,37 +327,21 @@ class Realtime(abc.ABC):
                 pass
 
         collected_parts: List[str] = []
-        done_fut: asyncio.Future[RealtimeResponse[Any]] = (
-            asyncio.get_event_loop().create_future()
-        )
 
         async def _on_response(event: events.RealtimeResponseEvent):
-            try:
-                if event.is_complete:
-                    if not done_fut.done():
-                        final_text = self._merge_final_text(
-                            collected_parts, event.text
-                        )
-                        done_fut.set_result(RealtimeResponse(event, final_text))
-                    #self.remove_listener("response", _on_response)
-                else:
-                    if event.text:
-                        collected_parts.append(event.text)
-            except Exception as e:
-                if not done_fut.done():
-                    done_fut.set_exception(e)
+            if event.is_complete:
+                final_text = self._merge_final_text(
+                    collected_parts, event.text
+                )
+                collected_parts = []
+                if hasattr(self, "after_response_listener"):
+                    await self.after_response_listener(RealtimeResponse(event, final_text))
+            else:
+                if event.text:
+                    collected_parts.append(event.text)
 
         self.events.subscribe(_on_response)  # type: ignore[arg-type]
         await sender()
-
-        try:
-            result = await asyncio.wait_for(done_fut, timeout=timeout)
-        except asyncio.TimeoutError as e:
-            #self.remove_listener("response", _on_response)
-            raise e
-
-        if hasattr(self, "after_response_listener"):
-            await self.after_response_listener(result)
 
         return result
 
