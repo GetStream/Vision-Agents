@@ -35,17 +35,6 @@ def setup_logging(log_level: str) -> None:
     logging.getLogger("test123").setLevel(numeric_level)
 
 
-def setup_signal_handlers() -> None:
-    """Set up signal handlers for graceful shutdown."""
-
-    def signal_handler(signum, frame):
-        logging.info(f"📡 Received signal {signum}, initiating shutdown...")
-        shutdown_event.set()
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-
 async def start_dispatcher(
     agent_func: Callable[[], Coroutine[Any, Any, None]],
     *,
@@ -62,55 +51,14 @@ async def start_dispatcher(
     """
     # Setup logging and signal handlers
     setup_logging(log_level)
-    setup_signal_handlers()
 
     logger = logging.getLogger("stream-test123.dispatcher")
     logger.info("🚀 Starting Stream Agents dispatcher...")
 
     await agent_func()
 
-    agent_task: Optional[asyncio.Task] = None
 
-    try:
-        # Start the agent in a task
-        agent_task = asyncio.create_task(agent_func())
-        logger.info("🤖 Agent started successfully")
-
-        # Wait for either the agent to complete or shutdown signal
-        done, pending = await asyncio.wait(
-            [agent_task, asyncio.create_task(shutdown_event.wait())],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        # Check if shutdown was requested
-        if shutdown_event.is_set():
-            logger.info("👋 Shutdown requested, stopping agent...")
-
-            # Cancel the agent task if it's still running
-            if agent_task and not agent_task.done():
-                agent_task.cancel()
-                try:
-                    await asyncio.wait_for(agent_task, timeout=shutdown_timeout)
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        f"⚠️ Agent didn't stop within {shutdown_timeout}s, forcing shutdown"
-                    )
-                except asyncio.CancelledError:
-                    logger.info("✅ Agent stopped gracefully")
-
-        # Cancel any remaining pending tasks
-        for task in pending:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-
-    except Exception as e:
-        logger.error(f"❌ Unexpected error in dispatcher: {e}")
-        raise
-    finally:
-        logger.info("🔚 Stream Agents dispatcher stopped")
+    logger.info("🔚 Stream Agents dispatcher stopped")
 
 
 @click.group()
