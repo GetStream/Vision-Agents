@@ -27,8 +27,8 @@ class EventManager:
 
     def register(self, event_class, ignore_not_compatible=False):
         if event_class.__name__.endswith('Event') and hasattr(event_class, 'type'):
-            if event_class.type in self._events:
-                raise KeyError("{event_class.type} is already registered.")
+            #if event_class.type in self._events:
+            #    raise KeyError(f"{event_class.type} is already registered.")
             self._events[event_class.type] = event_class
             logger.info(f"Registered new event {event_class} - {event_class.type}")
         elif not ignore_not_compatible:
@@ -92,7 +92,7 @@ class EventManager:
                 elif not self._ignore_unknown_events:
                     raise KeyError(f"Event {sub_event} - {event_type} is not registered.")
                 else:
-                    logger.warning(f"Event {sub_event} - {event_type} - {type(sub_event)} {sub_event.__dict__} is not registered – skipping handler {function.__name__}. All events: {self._events.keys()}")
+                    logger.warning(f"Event {sub_event} - {event_type} - {type(sub_event)} {dir(sub_event)} is not registered – skipping handler {function.__name__}. All events: {self._events.keys()}")
         return function
 
     def _prepare_event(self, event):

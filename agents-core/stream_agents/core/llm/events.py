@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from stream_agents.core.events import PluginBaseEvent, AudioFormat
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 
 
 @dataclass
@@ -94,3 +94,23 @@ class RealtimeErrorEvent(PluginBaseEvent):
     @property
     def error_message(self) -> str:
         return str(self.error) if self.error else "Unknown error"
+
+@dataclass
+class StandardizedTextDeltaEvent(PluginBaseEvent):
+    type: str = field(default='response.output_text.delta', init=False)
+    content_index: int | None = None
+    """The index of the content part that the text delta was added to."""
+
+    delta: str | None = None
+    """The text delta that was added."""
+
+
+    item_id: Optional[str] = None
+    """The ID of the output item that the text delta was added to."""
+
+    output_index: Optional[int] = None
+    """The index of the output item that the text delta was added to."""
+
+    sequence_number: Optional[int] = None
+    """The sequence number for this event."""
+

@@ -110,7 +110,6 @@ class Agent:
                 self.events.merge(plugin.events)
 
         self.events.subscribe(self._on_vad_audio)
-
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
