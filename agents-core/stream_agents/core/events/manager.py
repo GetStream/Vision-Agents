@@ -38,7 +38,7 @@ class EventManager:
         for event in ev._queue:
             self._queue.append(event)
 
-    def register_events_from_module(self, module, prefix='', ignore_not_compatible=False):
+    def register_events_from_module(self, module, prefix='', ignore_not_compatible=True):
         for name, class_ in module.__dict__.items():
             if name.endswith('Event') and (not prefix or getattr(class_, 'type', '').startswith(prefix)):
                 self.register(class_, ignore_not_compatible=ignore_not_compatible)
