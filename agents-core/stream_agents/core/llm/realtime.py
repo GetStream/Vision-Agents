@@ -368,7 +368,7 @@ class Realtime(abc.ABC):
             self._ready_event.set()
         except Exception:
             pass
-        event = RealtimeConnectedEvent(
+        event = events.RealtimeConnectedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             session_config=session_config,
@@ -379,7 +379,7 @@ class Realtime(abc.ABC):
     def _emit_disconnected_event(self, reason=None, was_clean=True):
         """Emit a structured disconnected event."""
         self._is_connected = False
-        event = RealtimeDisconnectedEvent(
+        event = events.RealtimeDisconnectedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             reason=reason,
@@ -391,7 +391,7 @@ class Realtime(abc.ABC):
         self, audio_data, sample_rate=16000, user_metadata=None
     ):
         """Emit a structured audio input event."""
-        event = RealtimeAudioInputEvent(
+        event = events.RealtimeAudioInputEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             audio_data=audio_data,
@@ -404,7 +404,7 @@ class Realtime(abc.ABC):
         self, audio_data, sample_rate=16000, response_id=None, user_metadata=None
     ):
         """Emit a structured audio output event."""
-        event = RealtimeAudioOutputEvent(
+        event = events.RealtimeAudioOutputEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             audio_data=audio_data,
@@ -415,7 +415,7 @@ class Realtime(abc.ABC):
         self.events.append(event)
 
     def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
-        event = RealtimeTranscriptEvent(
+        event = events.RealtimeTranscriptEvent(
             text=text,
             user_metadata=user_metadata,
             original=original,
@@ -428,7 +428,7 @@ class Realtime(abc.ABC):
         user_metadata=None,
         original=None,
     ):
-        event = RealtimeTranscriptEvent(
+        event = events.RealtimeTranscriptEvent(
             text=text,
             user_metadata=user_metadata,
             original=original,
@@ -444,7 +444,7 @@ class Realtime(abc.ABC):
         user_metadata=None,
     ):
         """Emit a structured response event."""
-        event = RealtimeResponseEvent(
+        event = events.RealtimeResponseEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
@@ -459,7 +459,7 @@ class Realtime(abc.ABC):
         self, item_id, item_type, status, role, content=None, user_metadata=None
     ):
         """Emit a structured conversation item event."""
-        event = RealtimeConversationItemEvent(
+        event = events.RealtimeConversationItemEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             item_id=item_id,
@@ -473,7 +473,7 @@ class Realtime(abc.ABC):
 
     def _emit_error_event(self, error, context="", user_metadata=None):
         """Emit a structured error event."""
-        event = RealtimeErrorEvent(
+        event = events.RealtimeErrorEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             error=error,
