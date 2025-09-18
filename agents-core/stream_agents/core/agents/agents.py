@@ -385,7 +385,7 @@ class Agent:
 
     async def _listen_to_audio_and_video(self) -> None:
         # Handle audio data for STT or Realtime
-        @self.edge.on("audio")
+        @self.edge._connection.on("audio")
         async def on_audio_received(pcm: PcmData, participant: Participant):
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
@@ -393,9 +393,8 @@ class Agent:
             await self._reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
-        @self.edge.on("track_added")
+        @self.edge._connection.on("track_added")
         async def on_track(track_id, track_type, user):
-            logging.info("TRACK CALLED {track_id} {user}")
             await self._process_track(track_id, track_type, user)
 
         # Fallback: if the edge layer doesn't emit track_added reliably, listen on the
