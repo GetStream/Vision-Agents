@@ -4,7 +4,7 @@ Simple Gemini function calling example.
 
 import asyncio
 from dotenv import load_dotenv
-from stream_agents.core.llm.gemini_llm import GeminiLLM
+from stream_agents.plugins import gemini
 
 load_dotenv()
 
@@ -13,7 +13,7 @@ async def main():
     """Run a simple Gemini function calling example."""
     
     # Create the LLM
-    llm = GeminiLLM(model="gemini-2.0-flash")
+    llm = gemini.LLM("gemini-2.0-flash")
     
     # Register functions
     @llm.register_function(description="Get current weather for a location")

@@ -4,7 +4,7 @@ Simple OpenAI function calling example.
 
 import asyncio
 from dotenv import load_dotenv
-from stream_agents.core.llm.openai_llm import OpenAILLM
+from stream_agents.plugins import openai
 
 load_dotenv()
 
@@ -13,7 +13,7 @@ async def main():
     """Run a simple OpenAI function calling example."""
     
     # Create the LLM
-    llm = OpenAILLM(model="gpt-4o-mini")
+    llm = openai.LLM(model="gpt-4o-mini")
     
     # Register functions
     @llm.register_function(description="Get current weather for a location")
