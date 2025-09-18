@@ -67,6 +67,8 @@ async def start_dispatcher(
     logger = logging.getLogger("stream-test123.dispatcher")
     logger.info("🚀 Starting Stream Agents dispatcher...")
 
+    await agent_func()
+
     agent_task: Optional[asyncio.Task] = None
 
     try:

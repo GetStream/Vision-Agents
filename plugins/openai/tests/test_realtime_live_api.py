@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from stream_agents.core.llm.llm import LLMResponse
+from stream_agents.core.llm.llm import LLMResponseEvent
 from stream_agents.plugins.openai.realtime import Realtime
 from stream_agents.core.events import (
     RealtimeConnectedEvent,
@@ -182,7 +182,7 @@ class TestRealtime:
             input="Say hello in English.",
         )
 
-        assert isinstance(response, LLMResponse)
+        assert isinstance(response, LLMResponseEvent)
         assert response.text
         assert any(
             word in response.text.lower() for word in ["hello", "hi", "hey"]

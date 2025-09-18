@@ -3,36 +3,33 @@ from __future__ import annotations
 import abc
 from typing import Optional, TYPE_CHECKING
 
-from pyee.asyncio import AsyncIOEventEmitter
-
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
     from stream_agents.core.agents.conversation import Conversation
 
-
 from typing import List, TypeVar, Any, Callable, Generic, Dict, Optional as TypingOptional
-
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.processors import BaseProcessor
 from stream_agents.core.utils.utils import parse_instructions
+from stream_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
 from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolResultItem
 
 T = TypeVar("T")
 
 
-class LLMResponse(Generic[T]):
+class LLMResponseEvent(Generic[T]):
     def __init__(self, original: T, text: str):
         self.original = original
         self.text = text
 
 
 BeforeCb = Callable[[List[Any]], None]
-AfterCb = Callable[[LLMResponse], None]
+AfterCb = Callable[[LLMResponseEvent], None]
 
 
-class LLM(AsyncIOEventEmitter, abc.ABC):
+class LLM(abc.ABC):
     # if we want to use realtime/ sts behaviour
     sts: bool = False
 
@@ -45,6 +42,7 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
     def __init__(self):
         super().__init__()
         self.agent = None
+        self.events = EventManager()
         self.function_registry = FunctionRegistry()
 
     async def simple_response(
@@ -52,7 +50,7 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
         text: str,
         processors: TypingOptional[List[BaseProcessor]] = None,
         participant: TypingOptional[Participant] = None,
-    ) -> LLMResponse[Any]:
+    ) -> LLMResponseEvent[Any]:
         raise NotImplementedError
 
     def _attach_agent(self, agent: Agent):

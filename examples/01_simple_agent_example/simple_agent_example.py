@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from stream_agents.core.edge.types import User
 from stream_agents.plugins import elevenlabs, deepgram, openai, silero, getstream
 from stream_agents.core import agents, cli
-from stream_agents.core.events import EventType
+from stream_agents.core.events import CallSessionParticipantJoinedEvent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,13 +32,16 @@ async def start_agent() -> None:
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        vad=silero.VAD(),
+        #vad=silero.VAD(),
         # realtime version (vad, tts and stt not needed)
         # llm=openai.Realtime()
     )
 
-    # ensure the user is created (not needed if it already exists)
     await agent.create_user()
+
+    @agent.subscribe
+    async def my_handler(event: CallSessionParticipantJoinedEvent):
+        await agent.say(f"Hello, {event.participant.user.name}")
 
     # Create a call
     call = agent.edge.client.video.call("default", str(uuid4()))
@@ -51,15 +54,15 @@ async def start_agent() -> None:
         # Example 1: standardized simple response
         # await agent.llm.simple_response("chat with the user about the weather.")
         # Example 2: use native openAI create response
-        await llm.create_response(input=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": "Tell me a short poem about this image"},
-                    {"type": "input_image", "image_url": f"https://images.unsplash.com/photo-1757495361144-0c2bfba62b9e?q=80&w=2340&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"},
-                ],
-            }
-        ],)
+            # await llm.create_response(input=[
+            #     {
+            #         "role": "user",
+            #         "content": [
+            #             {"type": "input_text", "text": "Tell me a short poem about this image"},
+            #             {"type": "input_image", "image_url": f"https://images.unsplash.com/photo-1757495361144-0c2bfba62b9e?q=80&w=2340&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"},
+            #         ],
+            #     }
+            # ],)
 
         # run till the call ends
         await agent.finish()

@@ -9,7 +9,7 @@ from anthropic.types import (
     RawMessageStopEvent,
 )
 
-from stream_agents.core.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
@@ -84,7 +84,7 @@ class ClaudeLLM(LLM):
             messages=[{"role": "user", "content": text}], max_tokens=1000
         )
 
-    async def create_message(self, *args, **kwargs) -> LLMResponse:
+    async def create_message(self, *args, **kwargs) -> LLMResponseEvent:
         """
         create_message gives you full support/access to the native Claude message.create method
         this method wraps the Claude method and ensures we broadcast an event which the agent class hooks into
@@ -105,7 +105,10 @@ class ClaudeLLM(LLM):
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
 
-        self.emit("before_llm_response", self._normalize_message(kwargs["messages"]))
+        class BeforeLLMResponseEventEvent:
+            pass
+
+        self.events.send(self._normalize_message(kwargs["messages"]))
 
         original = await self.client.messages.create(*args, **kwargs)
         if isinstance(original, ClaudeMessage):
@@ -115,7 +118,7 @@ class ClaudeLLM(LLM):
                 content_block = original.content[0]
                 if hasattr(content_block, "text"):
                     text = content_block.text
-            llm_response = LLMResponse(original, text)
+            llm_response = LLMResponseEvent(original, text)
         elif isinstance(original, AsyncStream):
             stream: AsyncStream[RawMessageStreamEvent] = original
             text_parts: List[str] = []
@@ -126,13 +129,16 @@ class ClaudeLLM(LLM):
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
 
+        class AfterLLMResponseEventEvent:
+            pass
+
         self.emit("after_llm_response", llm_response)
 
         return llm_response
 
     def _standardize_and_emit_event(
         self, event: RawMessageStreamEvent, text_parts: List[str]
-    ) -> Optional[LLMResponse]:
+    ) -> Optional[LLMResponseEvent]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
@@ -157,7 +163,7 @@ class ClaudeLLM(LLM):
         elif event.type == "message_stop":
             stop_event: RawMessageStopEvent = event
             total_text = "".join(text_parts)
-            llm_response = LLMResponse(stop_event, total_text)
+            llm_response = LLMResponseEvent(stop_event, total_text)
             return llm_response
         return None
 

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import traceback
 from typing import Optional, List, Any, Union
 from uuid import uuid4
 
@@ -13,21 +12,26 @@ from ..llm.types import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent, RealtimeTranscriptEvent
-from .reply_queue import ReplyQueue
+from ..events import RealtimeTranscriptEvent
+from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
+from ..vad.events import VADAudioEvent
+from getstream.video.rtc import Call
 from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
-from ..events import get_global_registry, EventType
 
 
 from .conversation import StreamHandle, Message, Conversation
-from ..llm.llm import LLM, LLMResponse
+from ..events.manager import EventManager
+from ..llm.llm import LLM, LLMResponseEvent
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
 
+import getstream.models
+
 if TYPE_CHECKING:
+    from stream_agents.plugins.getstream.stream_edge_transport import StreamEdge
     from .agent_session import AgentSessionContextManager
 
 
@@ -51,7 +55,7 @@ class Agent:
     def __init__(
         self,
         # edge network for video & audio
-        edge: EdgeTransport,
+        edge: 'StreamEdge',
         # llm, optionally with sts/realtime capabilities
         llm: LLM | Realtime,
         # the agent's user info
@@ -77,6 +81,8 @@ class Agent:
 
         self.logger = logging.getLogger(f"Agent[{self.agent_user.id}]")
 
+        self.events = EventManager()
+        self.events.register_events_from_module(getstream.models, 'call.')
         self.llm = llm
         self.stt = stt
         self.tts = tts
@@ -84,7 +90,6 @@ class Agent:
         self.vad = vad
         self.processors = processors or []
         self.mcp_servers = mcp_servers or []
-        self.queue = ReplyQueue(self)
 
         # we sync the user talking and the agent responses to the conversation
         # because we want to support streaming responses and can have delta updates for both
@@ -95,8 +100,15 @@ class Agent:
 
         if self.llm is not None:
             self.llm._attach_agent(self)
-            self.llm.on("after_llm_response", self._handle_after_response)
-            self.llm.on('standardized.output_text.delta', self._handle_output_text_delta)
+            self.llm.events.subscribe(self._handle_after_response)
+            self.llm.events.subscribe(self._handle_output_text_delta)
+
+        for plugin in [stt, tts, turn_detection, vad, llm]:
+            if plugin and hasattr(plugin, 'events'):
+                self.logger.info(f"Registered plugin {plugin}")
+                self.events.merge(plugin.events)
+
+        self.events.subscribe(self._on_vad_audio)
 
         # Initialize state variables
         self._is_running: bool = False
@@ -114,7 +126,6 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
-        self._setup_vad()
         self._setup_mcp_servers()
 
     async def close(self):
@@ -166,15 +177,11 @@ class Agent:
         # Close edge transport
         self.edge.close()
 
-    def on(self, event_type: EventType):
-        #TODO: this approach is a bit ugly. also breaks with multiple agents.
-        def decorator(func):
-            registry = get_global_registry()
-            registry.add_listener(event_type, func)
-            return func
-        return decorator
+    def subscribe(self, function):
+        """Subscribe to event"""
+        return self.events.subscribe(function)
 
-    async def join(self, call: Any) -> "AgentSessionContextManager":
+    async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
         self.conversation = None
 
@@ -187,13 +194,12 @@ class Agent:
             self.conversation = self.edge.create_conversation(call, self.agent_user, self.instructions)
 
         # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
-        # TODO: maybe agent.on(transcript?)
         if self.sts_mode:
-            self.llm.on("transcript", self._on_transcript)
-            self.llm.on("partial_transcript", self._on_partial_transcript)
+            self.events.subscribe(self._on_transcript)
+            self.events.subscribe(self._on_partial_transcript)
         elif self.stt:
-            self.stt.on("transcript", self._on_transcript)
-            self.stt.on("partial_transcript", self._on_partial_transcript)
+            self.events.subscribe(self._on_transcript)
+            self.events.subscribe(self._on_partial_transcript)
 
         """Join a Stream video call."""
         if self._is_running:
@@ -201,20 +207,16 @@ class Agent:
 
         self.logger.info(f"🤖 Agent joining call: {call.id}")
 
-
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.sts_mode and isinstance(self.llm, Realtime):
             await self.llm.wait_until_ready()
 
-
         connection = await self.edge.join(self, call)
         self._connection = connection
 
-
         self._is_running = True
 
-        registry = get_global_registry()
-        #registry.add_connection_listeners(self._connection)
+        connection._connection._coordinator_ws_client.handlers.append(self.events.send)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -259,11 +261,16 @@ class Agent:
             logging.warning(f"⚠️ Error while waiting for call to end: {e}")
             # Don't raise the exception, just log it and continue cleanup
 
-    async def say(self, text):
-        """
-        Say exactly this
-        """
-        await self.queue.say_text(text, self.agent_user.id)
+    async def say(self, text: str):
+        user_id = self.agent_user.id
+        self.conversation.add_message(Message(content=text, user_id=user_id))
+        if self.tts is not None:
+            await self.tts.send(text, user_id)
+
+    async def send_audio(self, pcm):
+        # TODO: stream & buffer
+        if self._audio_track is not None:
+            await self._audio_track.send_audio(pcm)
 
     async def create_user(self):
         response = await self.edge.create_user(self.agent_user)
@@ -286,7 +293,7 @@ class Agent:
         else:
             self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
 
-    async def _handle_after_response(self, llm_response: LLMResponse):
+    async def _handle_after_response(self, llm_response: LLMResponseEvent):
         if self.conversation is None:
             return
 
@@ -304,11 +311,9 @@ class Agent:
         # Resume the queue for TTS playback
         await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
-    def _setup_vad(self):
-        if self.vad:
-            self.logger.info("🎙️ Setting up VAD listeners")
-            self.vad.on("audio", self._on_vad_audio)
-            
+    def _on_vad_audio(self, event: VADAudioEvent):
+        self.logger.info(f"Vad audio event {event}")
+
     def _setup_mcp_servers(self):
         """Set up MCP servers if any are configured."""
         if self.mcp_servers:
@@ -320,18 +325,18 @@ class Agent:
 
     def _setup_turn_detection(self):
         if self.turn_detection:
+            # TODO: this subscriptions should be in plugin and just merged when
+            # plugin is registered, each plugin should have access to agent
             self.logger.info("🎙️ Setting up turn detection listeners")
-            self.turn_detection.on(TurnEvent.TURN_STARTED.value, self._on_turn_started)
-            self.turn_detection.on(TurnEvent.TURN_ENDED.value, self._on_turn_ended)
+            self.events.subscribe(self._on_turn_started)
+            self.events.subscribe(self._on_turn_ended)
             self.turn_detection.start()
 
     def _setup_stt(self):
         if self.stt:
             self.logger.info("🎙️ Setting up STT event listeners")
-            self.stt.on("error", self._on_stt_error)
-            self._stt_setup = True
-        else:
-            self._stt_setup = False
+            #self.stt.on("error", self._on_stt_error)
+            self.events.subscribe(self._on_stt_error)
 
     async def _listen_to_audio_and_video(self) -> None:
         # Handle audio data for STT or Realtime
@@ -461,28 +466,23 @@ class Agent:
                 )
                 await asyncio.sleep(0.5)
 
-    def _on_vad_audio(self, event:VADAudioEvent):
-        # bytes_to_pcm = bytes_to_pcm_data(event.audio_data)
-        # asyncio.create_task(self.stt.process_audio(bytes_to_pcm, event.user_metadata))
-        pass
-
-    def _on_turn_started(self, event_data: TurnEventData) -> None:
+    def _on_turn_started(self, event: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
         self.queue.pause()
         # todo(nash): If the participant starts speaking while TTS is streaming, we need to cancel it
         self.logger.info(
-            f"👉 Turn started - participant speaking {event_data.speaker_id} : {event_data.confidence}"
+            f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
         )
 
-    def _on_turn_ended(self, event_data: TurnEventData) -> None:
+    def _on_turn_ended(self, event: TurnEventData) -> None:
         """Handle when a participant ends their turn."""
         self.logger.info(
-            f"👉 Turn ended - participant {event_data.speaker_id} finished (duration: {event_data.confidence})"
+            f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.confidence})"
         )
 
     async def _on_partial_transcript(
         self,
-        event: Union[STTPartialTranscriptEvent|RealtimePartialTranscriptEvent],
+        event: STTPartialTranscriptEvent | RealtimePartialTranscriptEvent
     ):
         self.logger.info(f"🎤 [Partial transcript]: {event.text}")
 
@@ -503,7 +503,7 @@ class Agent:
             self.conversation.append_to_message(self._user_conversation_handle, event.text)
 
     async def _on_transcript(
-        self, event: Union[STTTranscriptEvent|RealtimeTranscriptEvent]
+        self, event: STTTranscriptEvent | RealtimeTranscriptEvent
     ):
 
         self.logger.info(f"🎤 [STT transcript]: {event.text}")
@@ -689,24 +689,20 @@ class Agent:
                     self.logger.error(f"Error getting tools from MCP server {server.__class__.__name__}: {e}")
                     
         return tools
-        
+
     async def call_mcp_tool(self, server_index: int, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """Call a tool on a specific MCP server.
-        
         Args:
             server_index: Index of the MCP server in the mcp_servers list
             tool_name: Name of the tool to call
             arguments: Arguments to pass to the tool
-            
         Returns:
             The result of the tool call
         """
         if server_index >= len(self.mcp_servers):
             raise ValueError(f"Invalid server index: {server_index}")
-            
         server = self.mcp_servers[server_index]
         if not server.is_connected:
             raise RuntimeError(f"MCP server {server_index} is not connected")
-            
         return await server.call_tool(tool_name, arguments)
 

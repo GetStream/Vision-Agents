@@ -5,27 +5,23 @@ import uuid
 from typing import Optional, Dict, Any
 
 import numpy as np
-from pyee.asyncio import AsyncIOEventEmitter
 
 from getstream.video.rtc.track_util import PcmData
+from stream_agents.core.events.manager import EventManager
 from getstream.audio.pcm_utils import pcm_to_numpy_array, numpy_array_to_bytes
 
 from ..edge.types import Participant
-from ..events import (
-    VADSpeechStartEvent,
-    VADSpeechEndEvent,
-    VADAudioEvent,
-    VADPartialEvent,
-    VADErrorEvent,
+
+from . import events
+from stream_agents.core.events import (
     PluginInitializedEvent,
     PluginClosedEvent,
-    register_global_event,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class VAD(AsyncIOEventEmitter, abc.ABC):
+class VAD(abc.ABC):
     """
     Voice Activity Detection base class.
 
@@ -81,6 +77,8 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
         self.partial_frames = partial_frames
         self.session_id = str(uuid.uuid4())
         self.provider_name = provider_name or self.__class__.__name__
+        self.events = EventManager()
+        self.events.register_events_from_module(events, ignore_not_compatible=True)
 
         # State variables
         self.speech_buffer = (
@@ -93,33 +91,22 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
         self._leftover: np.ndarray = np.empty(0, np.int16)
         self._speech_start_time: Optional[float] = None
 
-        logger.debug(
-            "Initialized VAD base class",
-            extra={
-                "sample_rate": sample_rate,
-                "session_id": self.session_id,
-                "provider": self.provider_name,
-                "activation_th": activation_th,
-                "deactivation_th": deactivation_th,
-            },
-        )
-
         # Emit initialization event
-        init_event = PluginInitializedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            plugin_type="VAD",
-            provider=self.provider_name,
-            configuration={
-                "sample_rate": sample_rate,
-                "activation_threshold": activation_th,
-                "deactivation_threshold": deactivation_th,
-                "min_speech_ms": min_speech_ms,
-                "max_speech_ms": max_speech_ms,
-            },
+        self.events.append(
+            PluginInitializedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                plugin_type="VAD",
+                provider=self.provider_name,
+                configuration={
+                    "sample_rate": sample_rate,
+                    "activation_threshold": activation_th,
+                    "deactivation_threshold": deactivation_th,
+                    "min_speech_ms": min_speech_ms,
+                    "max_speech_ms": max_speech_ms,
+                },
+            )
         )
-        register_global_event(init_event)
-        self.emit("initialized", init_event)
 
     @abc.abstractmethod
     async def is_speech(self, frame: PcmData) -> float:
@@ -231,16 +218,16 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
                 current_duration_ms = (len(current_samples) / self.sample_rate) * 1000
 
                 # Emit structured partial event
-                partial_event = VADPartialEvent(
-                    session_id=self.session_id,
-                    plugin_name=self.provider_name,
-                    audio_data=current_bytes,
-                    duration_ms=current_duration_ms,
-                    frame_count=len(current_samples) // self.frame_size,
-                    user_metadata=participant,
+                self.events.append(
+                    VADPartialEvent(
+                        session_id=self.session_id,
+                        plugin_name=self.provider_name,
+                        audio_data=current_bytes,
+                        duration_ms=current_duration_ms,
+                        frame_count=len(current_samples) // self.frame_size,
+                        user_metadata=participant,
+                    )
                 )
-                register_global_event(partial_event)
-                self.emit("partial", partial_event)  # Structured event
 
                 logger.debug(
                     f"Emitted partial event with {len(current_samples)} samples"
@@ -281,16 +268,16 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
             self._speech_start_time = time.time()
 
             # Emit speech start event
-            speech_start_event = VADSpeechStartEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                speech_probability=speech_prob,
-                activation_threshold=self.activation_th,
-                frame_count=1,
-                user_metadata=user,
+            self.events.append(
+                VADSpeechStartEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    speech_probability=speech_prob,
+                    activation_threshold=self.activation_th,
+                    frame_count=1,
+                    user_metadata=participant,
+                )
             )
-            register_global_event(speech_start_event)
-            self.emit("speech_start", speech_start_event)
 
             # Add this frame to the buffer using shared utility
             frame_bytes = numpy_array_to_bytes(frame.samples)
@@ -317,33 +304,33 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
 
         if len(speech_data) >= min_speech_frames * self.frame_size:
             # Emit structured audio event
-            audio_event = VADAudioEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                audio_data=speech_bytes,
-                duration_ms=speech_duration_ms,
-                frame_count=len(speech_data) // self.frame_size,
-                user_metadata=user,
+            self.events.append(
+                VADAudioEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    audio_data=speech_bytes,
+                    duration_ms=speech_duration_ms,
+                    frame_count=len(speech_data) // self.frame_size,
+                    user_metadata=user,
+                )
             )
-            register_global_event(audio_event)
-            self.emit("audio", audio_event)  # Structured event
 
             logger.debug(f"Emitted audio event with {len(speech_data)} samples")
 
         # Emit speech end event if we were actively detecting speech
         if self.is_speech_active and self._speech_start_time:
             total_speech_duration = (time.time() - self._speech_start_time) * 1000
-            speech_end_event = VADSpeechEndEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                speech_probability=0.0,  # Speech has ended
-                deactivation_threshold=self.deactivation_th,
-                total_speech_duration_ms=total_speech_duration,
-                total_frames=self.total_speech_frames,
-                user_metadata=user,
+            self.events.append(
+                VADSpeechEndEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    speech_probability=0.0,  # Speech has ended
+                    deactivation_threshold=self.deactivation_th,
+                    total_speech_duration_ms=total_speech_duration,
+                    total_frames=self.total_speech_frames,
+                    user_metadata=user,
+                )
             )
-            register_global_event(speech_end_event)
-            self.emit("speech_end", speech_end_event)
 
         # Reset state variables
         self.speech_buffer = bytearray()
@@ -379,16 +366,16 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
         user_metadata: Optional[Dict[str, Any]] = None,
     ):
         """Emit a structured error event."""
-        error_event = VADErrorEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            error=error,
-            context=context,
-            user_metadata=user_metadata,
-            frame_data_available=len(self.speech_buffer) > 0,
+        self.events.append(
+            VADErrorEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                error=error,
+                context=context,
+                user_metadata=user_metadata,
+                frame_data_available=len(self.speech_buffer) > 0,
+            )
         )
-        register_global_event(error_event)
-        self.emit("error", error_event)  # Structured event
 
     async def close(self):
         """Close the VAD service and release any resources."""
@@ -397,12 +384,12 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
             await self.flush()
 
         # Emit closure event
-        close_event = PluginClosedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            plugin_type="VAD",
-            provider=self.provider_name,
-            cleanup_successful=True,
+        self.events.append(
+            PluginClosedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                plugin_type="VAD",
+                provider=self.provider_name,
+                cleanup_successful=True,
+            )
         )
-        register_global_event(close_event)
-        self.emit("closed", close_event)
