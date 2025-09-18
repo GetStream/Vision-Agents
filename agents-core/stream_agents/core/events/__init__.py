@@ -18,14 +18,6 @@ from .events import (
     PluginClosedEvent,
     PluginErrorEvent,
 )
-from .event_utils import (
-    EventFilter,
-    EventRegistry,
-    EventLogger,
-    get_global_registry,
-    get_global_logger,
-)
-from .event_serialization import serialize_event, serialize_events, deserialize_event
 from .event_metrics import (
     calculate_stt_metrics,
     calculate_tts_metrics,
@@ -162,8 +154,6 @@ __all__ += [
     "EventFilter",
     "EventRegistry",
     "EventLogger",
-    "get_global_registry",
-    "get_global_logger",
     "serialize_event",
     "serialize_events",
     "deserialize_event",

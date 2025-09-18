@@ -18,7 +18,6 @@ from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
 from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
-from ..events import get_global_registry, EventType
 
 
 from .conversation import StreamHandle, Message, Conversation
@@ -176,14 +175,6 @@ class Agent:
 
         # Close edge transport
         self.edge.close()
-
-    def on(self, event_type: EventType):
-        #TODO: this approach is a bit ugly. also breaks with multiple agents.
-        def decorator(func):
-            registry = get_global_registry()
-            registry.add_listener(event_type, func)
-            return func
-        return decorator
 
     def subscribe(self, function):
         """Subscribe to event"""
