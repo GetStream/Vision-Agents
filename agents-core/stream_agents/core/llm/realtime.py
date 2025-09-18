@@ -327,6 +327,7 @@ class Realtime(abc.ABC):
                 pass
 
         collected_parts: List[str] = []
+        result = None
 
         async def _on_response(event: events.RealtimeResponseEvent):
             if event.is_complete:
@@ -334,8 +335,9 @@ class Realtime(abc.ABC):
                     collected_parts, event.text
                 )
                 collected_parts = []
+                result = RealtimeResponse(event, final_text)
                 if hasattr(self, "after_response_listener"):
-                    await self.after_response_listener(RealtimeResponse(event, final_text))
+                    await self.after_response_listener(result)
             else:
                 if event.text:
                     collected_parts.append(event.text)
