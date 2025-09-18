@@ -8,7 +8,7 @@ from getstream.models import Response
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from openai.types.responses import ResponseCompletedEvent, ResponseTextDeltaEvent
 
-from stream_agents.core.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 
 from stream_agents.core.processors import BaseProcessor
@@ -96,7 +96,7 @@ class OpenAILLM(LLM):
             instructions=instructions,
         )
 
-    async def create_response(self, *args: P.args, **kwargs: P.kwargs) -> LLMResponse[Response]:
+    async def create_response(self, *args: P.args, **kwargs: P.kwargs) -> LLMResponseEvent[Response]:
         """
         create_response gives you full support/access to the native openAI responses.create method
         this method wraps the openAI method and ensures we broadcast an event which the agent class hooks into
@@ -124,10 +124,10 @@ class OpenAILLM(LLM):
             *args, **kwargs
         )
 
-        llm_response : Optional[LLMResponse[Response]] = None
+        llm_response : Optional[LLMResponseEvent[Response]] = None
 
         if isinstance(response, Response):
-            llm_response = LLMResponse[Response](response, response.output_text)
+            llm_response = LLMResponseEvent[Response](response, response.output_text)
         elif isinstance(response, Stream):
             stream_response: Stream[ResponseStreamEvent] = response
             # handle both streaming and non-streaming response types
@@ -139,7 +139,7 @@ class OpenAILLM(LLM):
         if llm_response is not None:
             self.emit("after_llm_response", llm_response)
 
-        return llm_response or LLMResponse[Response](Response(duration="0.0"), "")
+        return llm_response or LLMResponseEvent[Response](Response(duration="0.0"), "")
 
     @staticmethod
     def _normalize_message(openai_input) -> List["Message"]:
@@ -189,7 +189,7 @@ class OpenAILLM(LLM):
         
         return "\n".join(enhanced_instructions)
 
-    def _standardize_and_emit_event(self, event: ResponseStreamEvent) -> Optional[LLMResponse]:
+    def _standardize_and_emit_event(self, event: ResponseStreamEvent) -> Optional[LLMResponseEvent]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
@@ -211,7 +211,7 @@ class OpenAILLM(LLM):
         elif event.type == "response.completed":
             # standardize the response event and return the llm response
             completed_event: ResponseCompletedEvent = event
-            llm_response = LLMResponse[Response](completed_event.response, completed_event.response.output_text)
+            llm_response = LLMResponseEvent[Response](completed_event.response, completed_event.response.output_text)
             self.emit("standardized.response.completed", llm_response)
             return llm_response
         return None

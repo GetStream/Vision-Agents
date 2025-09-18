@@ -25,7 +25,7 @@ from getstream.video.call import Call
 import numpy as np
 from stream_agents.core.events import RealtimeConnectedEvent
 from stream_agents.core.llm import realtime
-from stream_agents.core.llm.llm import LLMResponse
+from stream_agents.core.llm.llm import LLMResponseEvent
 
  
 
@@ -951,8 +951,8 @@ class Realtime(realtime.Realtime):
         """Compatibility wrapper mapping to simple_response."""
         text = kwargs.get("input", args[0] if args else "")
         rt_resp = await self.simple_response(text=text)
-        # Wrap into legacy LLMResponse for compatibility with older tests
-        return LLMResponse(original=rt_resp.original, text=rt_resp.text)
+        # Wrap into legacy LLMResponseEvent for compatibility with older tests
+        return LLMResponseEvent(original=rt_resp.original, text=rt_resp.text)
 
     async def _close_impl(self):
         """Close the Realtime service and release resources."""

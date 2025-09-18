@@ -251,22 +251,6 @@ class TTS(abc.ABC):
                 chunk_count=audio_chunks,
                 real_time_factor=real_time_factor,
             ))
-
-            logger.info(
-                "Text-to-speech synthesis completed",
-                extra={
-                    "event_id": completion_event.event_id,
-                    "text_length": len(text),
-                    "synthesis_time_ms": synthesis_time * 1000,
-                    "total_time_ms": total_time * 1000,
-                    "audio_bytes": total_audio_bytes,
-                    "audio_chunks": audio_chunks,
-                    "estimated_audio_duration_ms": estimated_audio_duration_ms,
-                    "real_time_factor": real_time_factor,
-                    "sample_rate": sample_rate,
-                },
-            )
-
         except Exception as e:
             self.events.append(TTSErrorEvent(
                 session_id=self.session_id,

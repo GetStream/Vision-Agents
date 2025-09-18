@@ -22,7 +22,7 @@ from ..mcp import MCPBaseServer
 
 from .conversation import StreamHandle, Message, Conversation
 from ..events.manager import EventManager
-from ..llm.llm import LLM, LLMResponse
+from ..llm.llm import LLM, LLMResponseEvent
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Dict
 import getstream.models
 
 if TYPE_CHECKING:
+    from stream_agents.plugins.getstream.stream_edge_transport import StreamEdge
     from .agent_session import AgentSessionContextManager
 
 
@@ -54,7 +55,7 @@ class Agent:
     def __init__(
         self,
         # edge network for video & audio
-        edge: EdgeTransport,
+        edge: 'StreamEdge',
         # llm, optionally with sts/realtime capabilities
         llm: LLM | Realtime,
         # the agent's user info
@@ -82,13 +83,6 @@ class Agent:
 
         self.events = EventManager()
         self.events.register_events_from_module(getstream.models, 'call.')
-        for plugin in [stt, tts, turn_detection, vad]:
-            if plugin and hasattr(plugin, 'events'):
-                self.logger.info(f"Registered plugin {plugin}")
-                self.events.merge(plugin.events)
-
-        self.events.subscribe(self._on_vad_audio)
-
         self.llm = llm
         self.stt = stt
         self.tts = tts
@@ -106,8 +100,15 @@ class Agent:
 
         if self.llm is not None:
             self.llm._attach_agent(self)
-            self.llm.on("after_llm_response", self._handle_after_response)
-            self.llm.on('standardized.output_text.delta', self._handle_output_text_delta)
+            self.llm.events.subscribe(self._handle_after_response)
+            self.llm.events.subscribe(self._handle_output_text_delta)
+
+        for plugin in [stt, tts, turn_detection, vad, llm]:
+            if plugin and hasattr(plugin, 'events'):
+                self.logger.info(f"Registered plugin {plugin}")
+                self.events.merge(plugin.events)
+
+        self.events.subscribe(self._on_vad_audio)
 
         # Initialize state variables
         self._is_running: bool = False
@@ -193,10 +194,9 @@ class Agent:
             self.conversation = self.edge.create_conversation(call, self.agent_user, self.instructions)
 
         # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
-        # TODO: maybe agent.on(transcript?)
         if self.sts_mode:
-            self.llm.on("transcript", self._on_transcript)
-            self.llm.on("partial_transcript", self._on_partial_transcript)
+            self.events.subscribe(self._on_transcript)
+            self.events.subscribe(self._on_partial_transcript)
         elif self.stt:
             self.events.subscribe(self._on_transcript)
             self.events.subscribe(self._on_partial_transcript)
@@ -207,15 +207,12 @@ class Agent:
 
         self.logger.info(f"🤖 Agent joining call: {call.id}")
 
-
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.sts_mode and isinstance(self.llm, Realtime):
             await self.llm.wait_until_ready()
 
-
         connection = await self.edge.join(self, call)
         self._connection = connection
-
 
         self._is_running = True
 
@@ -296,7 +293,7 @@ class Agent:
         else:
             self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
 
-    async def _handle_after_response(self, llm_response: LLMResponse):
+    async def _handle_after_response(self, llm_response: LLMResponseEvent):
         if self.conversation is None:
             return
 
@@ -328,9 +325,11 @@ class Agent:
 
     def _setup_turn_detection(self):
         if self.turn_detection:
+            # TODO: this subscriptions should be in plugin and just merged when
+            # plugin is registered, each plugin should have access to agent
             self.logger.info("🎙️ Setting up turn detection listeners")
-            self.turn_detection.on(TurnEvent.TURN_STARTED.value, self._on_turn_started)
-            self.turn_detection.on(TurnEvent.TURN_ENDED.value, self._on_turn_ended)
+            self.events.subscribe(self._on_turn_started)
+            self.events.subscribe(self._on_turn_ended)
             self.turn_detection.start()
 
     def _setup_stt(self):
@@ -467,23 +466,23 @@ class Agent:
                 )
                 await asyncio.sleep(0.5)
 
-    def _on_turn_started(self, event_data: TurnEventData) -> None:
+    def _on_turn_started(self, event: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
         self.queue.pause()
         # todo(nash): If the participant starts speaking while TTS is streaming, we need to cancel it
         self.logger.info(
-            f"👉 Turn started - participant speaking {event_data.speaker_id} : {event_data.confidence}"
+            f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
         )
 
-    def _on_turn_ended(self, event_data: TurnEventData) -> None:
+    def _on_turn_ended(self, event: TurnEventData) -> None:
         """Handle when a participant ends their turn."""
         self.logger.info(
-            f"👉 Turn ended - participant {event_data.speaker_id} finished (duration: {event_data.confidence})"
+            f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.confidence})"
         )
 
     async def _on_partial_transcript(
         self,
-        event: Union[STTPartialTranscriptEvent|RealtimePartialTranscriptEvent],
+        event: STTPartialTranscriptEvent | RealtimePartialTranscriptEvent
     ):
         self.logger.info(f"🎤 [Partial transcript]: {event.text}")
 
@@ -504,7 +503,7 @@ class Agent:
             self.conversation.append_to_message(self._user_conversation_handle, event.text)
 
     async def _on_transcript(
-        self, event: Union[STTTranscriptEvent|RealtimeTranscriptEvent]
+        self, event: STTTranscriptEvent | RealtimeTranscriptEvent
     ):
 
         self.logger.info(f"🎤 [STT transcript]: {event.text}")
