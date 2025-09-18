@@ -330,6 +330,7 @@ class Realtime(abc.ABC):
         result = None
 
         async def _on_response(event: events.RealtimeResponseEvent):
+            nonlocal collected_parts
             if event.is_complete:
                 final_text = self._merge_final_text(
                     collected_parts, event.text
