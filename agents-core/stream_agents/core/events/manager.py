@@ -37,12 +37,19 @@ class EventManager:
         else:
             logger.warning(f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}")
 
-    def merge(self, ev: 'EventManager'):
-        self._events.update(ev._events)
-        self._modules.update(ev._modules)
-        self._handlers.update(ev._handlers)
-        for event in ev._queue:
+    def merge(self, em: 'EventManager'):
+        self._events.update(em._events)
+        self._modules.update(em._modules)
+        self._handlers.update(em._handlers)
+        for event in em._queue:
             self._queue.append(event)
+
+        # NOTE: we are merged into one manager and all children
+        # refrence main one
+        em._events = self._events
+        em._modules = self._modules
+        em._handlers = self._handlers
+        em._queue = self._queue
 
     def register_events_from_module(self, module, prefix='', ignore_not_compatible=True):
         for name, class_ in module.__dict__.items():
