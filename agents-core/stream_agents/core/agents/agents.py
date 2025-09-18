@@ -335,7 +335,6 @@ class Agent:
     def _setup_stt(self):
         if self.stt:
             self.logger.info("🎙️ Setting up STT event listeners")
-            #self.stt.on("error", self._on_stt_error)
             self.events.subscribe(self._on_stt_error)
 
     async def _listen_to_audio_and_video(self) -> None:
