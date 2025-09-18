@@ -355,7 +355,7 @@ class ImprovedRealtimeConnection:
             @self.pc.on("track")
             async def on_track(track):
                 if track.kind == "audio":
-                    logger.debug(f"Remote audio track attached")
+                    logger.info(f"Remote audio track attached {track}")
                     asyncio.create_task(self._process_audio_track(track))
 
             @self.pc.on("connectionstatechange")

@@ -536,7 +536,7 @@ class RTCManager:
     # When you get a remote track (OpenAI) we write the audio from the track on the call.
     async def _handle_added_track(self, track: MediaStreamTrack) -> None:
         if track.kind == "audio":
-            logger.info("Remote audio track attached; starting reader")
+            logger.info("Remote audio track attached; starting audio reader")
 
             async def _reader():
                 while True:
@@ -563,7 +563,7 @@ class RTCManager:
             asyncio.create_task(_reader())
             
         elif track.kind == "video":
-            logger.info("Remote video track attached; starting reader")
+            logger.info("Remote video track attached; starting video reader")
 
             async def _reader():
                 try:
