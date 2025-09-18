@@ -338,7 +338,7 @@ class Realtime(abc.ABC):
                         final_text = self._merge_final_text(
                             collected_parts, event.text
                         )
-                        done_fut.set_result(events.RealtimeResponseEvent(original=event, text=final_text))
+                        done_fut.set_result(RealtimeResponse(event, final_text))
                     #self.remove_listener("response", _on_response)
                 else:
                     if event.text:
