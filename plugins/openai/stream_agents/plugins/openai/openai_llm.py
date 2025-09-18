@@ -1,4 +1,4 @@
-from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Any
+from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Any, Dict
 
 from openai import OpenAI, Stream
 from openai.lib.streaming.responses import ResponseStreamEvent
@@ -9,6 +9,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 from openai.types.responses import ResponseCompletedEvent, ResponseTextDeltaEvent
 
 from stream_agents.core.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 
 from stream_agents.core.processors import BaseProcessor
@@ -110,6 +111,11 @@ class OpenAILLM(LLM):
             self.openai_conversation = self.client.conversations.create()
         kwargs["conversation"] = self.openai_conversation.id
 
+        # Add tools if available
+        tools = self._get_tools_for_provider()
+        if tools:
+            kwargs["tools"] = tools
+
         # Use parsed instructions if available (includes markdown file contents)
         if hasattr(self, 'parsed_instructions') and self.parsed_instructions:
 
@@ -188,6 +194,104 @@ class OpenAILLM(LLM):
                     enhanced_instructions.append("*(File not found or could not be read)*")
         
         return "\n".join(enhanced_instructions)
+
+    def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+        """
+        Convert ToolSchema objects to OpenAI format.
+        
+        Args:
+            tools: List of ToolSchema objects
+            
+        Returns:
+            List of tools in OpenAI format
+        """
+        openai_tools = []
+        for tool in tools:
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool["parameters_schema"]
+                }
+            }
+            openai_tools.append(openai_tool)
+        return openai_tools
+
+    def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToolCallItem]:
+        """
+        Extract tool calls from OpenAI response.
+        
+        Args:
+            response: OpenAI response object
+            
+        Returns:
+            List of normalized tool call items
+        """
+        tool_calls = []
+        
+        if hasattr(response, 'output') and response.output:
+            for item in response.output:
+                if hasattr(item, 'type') and item.type == "tool_call":
+                    tool_calls.append({
+                        "type": "tool_call",
+                        "name": item.name,
+                        "arguments_json": item.arguments_json
+                    })
+        
+        return tool_calls
+
+    def _extract_tool_calls_from_stream_chunk(self, chunk: Any) -> List[NormalizedToolCallItem]:
+        """
+        Extract tool calls from OpenAI streaming chunk.
+        
+        Args:
+            chunk: OpenAI streaming event
+            
+        Returns:
+            List of normalized tool call items
+        """
+        tool_calls = []
+        
+        if hasattr(chunk, 'type'):
+            if chunk.type == "response.tool_call.delta":
+                # This is a tool call delta - we need to accumulate these
+                # For now, we'll handle complete tool calls in the response
+                pass
+            elif chunk.type == "response.tool_call":
+                # This is a complete tool call
+                if hasattr(chunk, 'tool_call'):
+                    tool_call = chunk.tool_call
+                    tool_calls.append({
+                        "type": "tool_call",
+                        "name": tool_call.name,
+                        "arguments_json": tool_call.arguments_json
+                    })
+        
+        return tool_calls
+
+    def _create_tool_result_message(self, tool_calls: List[NormalizedToolCallItem], results: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Create tool result messages for OpenAI.
+        
+        Args:
+            tool_calls: List of tool calls that were executed
+            results: List of results from function execution
+            
+        Returns:
+            List of tool result messages in OpenAI format
+        """
+        messages = []
+        
+        for i, (tool_call, result) in enumerate(zip(tool_calls, results)):
+            message = {
+                "role": "tool",
+                "content": str(result) if not isinstance(result, (dict, list)) else str(result),
+                "tool_call_id": f"call_{i}_{tool_call['name']}"
+            }
+            messages.append(message)
+        
+        return messages
 
     def _standardize_and_emit_event(self, event: ResponseStreamEvent) -> Optional[LLMResponse]:
         """

@@ -17,7 +17,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 from stream_agents.core.processors import BaseProcessor
 from stream_agents.core.utils.utils import parse_instructions
 from .function_registry import FunctionRegistry
-from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolResultItem
+from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolResultItem, NormalizedToolCallItem
 
 T = TypeVar("T")
 
@@ -54,6 +54,74 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
         participant: TypingOptional[Participant] = None,
     ) -> LLMResponse[Any]:
         raise NotImplementedError
+
+    def _get_tools_for_provider(self) -> List[Dict[str, Any]]:
+        """
+        Get tools in provider-specific format.
+        This method should be overridden by each LLM implementation.
+        
+        Returns:
+            List of tools in the provider's expected format.
+        """
+        tools = self.get_available_functions()
+        return self._convert_tools_to_provider_format(tools)
+    
+    def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+        """
+        Convert ToolSchema objects to provider-specific format.
+        This method should be overridden by each LLM implementation.
+        
+        Args:
+            tools: List of ToolSchema objects
+            
+        Returns:
+            List of tools in provider-specific format
+        """
+        # Default implementation - should be overridden
+        return []
+    
+    def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToolCallItem]:
+        """
+        Extract tool calls from provider-specific response.
+        This method should be overridden by each LLM implementation.
+        
+        Args:
+            response: Provider-specific response object
+            
+        Returns:
+            List of normalized tool call items
+        """
+        # Default implementation - should be overridden
+        return []
+    
+    def _extract_tool_calls_from_stream_chunk(self, chunk: Any) -> List[NormalizedToolCallItem]:
+        """
+        Extract tool calls from a streaming chunk.
+        This method should be overridden by each LLM implementation.
+        
+        Args:
+            chunk: Provider-specific streaming chunk
+            
+        Returns:
+            List of normalized tool call items
+        """
+        # Default implementation - should be overridden
+        return []
+    
+    def _create_tool_result_message(self, tool_calls: List[NormalizedToolCallItem], results: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Create tool result messages for the provider.
+        This method should be overridden by each LLM implementation.
+        
+        Args:
+            tool_calls: List of tool calls that were executed
+            results: List of results from function execution
+            
+        Returns:
+            List of tool result messages in provider format
+        """
+        # Default implementation - should be overridden
+        return []
 
     def _attach_agent(self, agent: Agent):
         """
@@ -182,6 +250,54 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
                 response["output_text"] = "\n".join(response_text_parts)
         
         return response
+
+    async def process_streaming_tool_calls(self, chunk: Any, accumulated_tool_calls: List[NormalizedToolCallItem]) -> tuple[List[NormalizedToolCallItem], List[NormalizedToolResultItem]]:
+        """
+        Process tool calls from a streaming chunk.
+        
+        Args:
+            chunk: Provider-specific streaming chunk
+            accumulated_tool_calls: Previously accumulated tool calls
+            
+        Returns:
+            Tuple of (updated_tool_calls, tool_results)
+        """
+        # Extract tool calls from this chunk
+        new_tool_calls = self._extract_tool_calls_from_stream_chunk(chunk)
+        
+        # Add new tool calls to accumulated list
+        all_tool_calls = accumulated_tool_calls + new_tool_calls
+        
+        # Execute any new tool calls
+        tool_results = []
+        for tool_call in new_tool_calls:
+            function_name = tool_call["name"]
+            arguments = tool_call["arguments_json"]
+            
+            try:
+                # Call the function
+                result = self.call_function(function_name, arguments)
+                
+                # Add tool result
+                tool_result_item: NormalizedToolResultItem = {
+                    "type": "tool_result",
+                    "name": function_name,
+                    "result_json": result if isinstance(result, dict) else {"result": result},
+                    "is_error": False
+                }
+                tool_results.append(tool_result_item)
+                
+            except Exception as e:
+                # Add error result
+                error_result_item: NormalizedToolResultItem = {
+                    "type": "tool_result",
+                    "name": function_name,
+                    "result_json": {"error": str(e)},
+                    "is_error": True
+                }
+                tool_results.append(error_result_item)
+        
+        return all_tool_calls, tool_results
     
     async def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str | None:
         """Generate a conversational response based on tool results.
