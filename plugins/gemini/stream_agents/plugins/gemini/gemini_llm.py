@@ -109,7 +109,7 @@ class GeminiLLM(LLM):
             try:
                 chunk_calls = self._extract_tool_calls_from_stream_chunk(chunk)
                 pending_calls.extend(chunk_calls)
-            except Exception as e:
+            except Exception:
                 pass  # Ignore errors in chunk processing
             if llm_response_optional is not None:
                 llm_response = llm_response_optional
@@ -271,7 +271,7 @@ class GeminiLLM(LLM):
                                     "name": getattr(part.function_call, "name", "unknown"),
                                     "arguments_json": getattr(part.function_call, "args", {}),
                                 })
-        except Exception as e:
+        except Exception:
             pass  # Ignore extraction errors
         
         return calls
@@ -288,7 +288,7 @@ class GeminiLLM(LLM):
         """
         try:
             return self._extract_tool_calls_from_response(chunk)  # chunks use same shape
-        except Exception as e:
+        except Exception:
             return []  # Ignore extraction errors
 
     def _create_tool_result_parts(self, tool_calls: List[NormalizedToolCallItem], results: List[Any]):
@@ -302,7 +302,6 @@ class GeminiLLM(LLM):
         Returns:
             List of function_response parts
         """
-        from google.genai import types
         parts = []
         for tc, res in zip(tool_calls, results):
             try:
@@ -314,7 +313,7 @@ class GeminiLLM(LLM):
                 
                 # res may be dict/list/str; pass directly; SDK serializes
                 parts.append(types.Part.from_function_response(name=tc["name"], response=response_data))
-            except Exception as e:
+            except Exception:
                 # Fallback: create a simple text part
                 parts.append(types.Part.from_text(f"Function {tc['name']} returned: {res}"))
         return parts

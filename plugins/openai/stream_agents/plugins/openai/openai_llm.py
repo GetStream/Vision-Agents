@@ -1,4 +1,4 @@
-from typing import Optional, List, ParamSpec, TypeVar, Callable, TYPE_CHECKING, Any, Dict
+from typing import Optional, List, ParamSpec, TypeVar, TYPE_CHECKING, Any, Dict
 import json
 
 from openai import AsyncOpenAI
