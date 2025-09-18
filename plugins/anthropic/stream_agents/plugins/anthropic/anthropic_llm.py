@@ -101,7 +101,7 @@ class ClaudeLLM(LLM):
         tools = self.get_available_functions()
         if tools:
             kwargs["tools"] = self._convert_tools_to_provider_format(tools)
-            kwargs.setdefault("tool_choice", {"type": "any"})
+            kwargs.setdefault("tool_choice", {"type": "auto"})
 
         # ensure the AI remembers the past conversation
         new_messages = kwargs["messages"]
@@ -121,129 +121,175 @@ class ClaudeLLM(LLM):
             text = self._concat_text_blocks(original.content)
             llm_response = LLMResponse(original, text)
             
-            # Check if there were function calls in the response
+            # Multi-hop tool calling loop for non-streaming
             function_calls = self._extract_tool_calls_from_response(original)
             if function_calls:
-                # Execute the functions and get results
-                function_results = []
-                for tool_call in function_calls:
-                    try:
-                        result = self.call_function(tool_call['name'], tool_call['arguments_json'])
-                        function_results.append({
-                            'name': tool_call['name'],
-                            'result': result
-                        })
-                    except Exception as e:
-                        function_results.append({
-                            'name': tool_call['name'],
-                            'result': {'error': str(e)}
-                        })
+                messages = kwargs["messages"][:]
+                MAX_ROUNDS = 3
+                rounds = 0
+                seen = set()
+                current_calls = function_calls
                 
-                # Create function result messages for Claude
-                function_messages = self._create_tool_result_message(function_calls, [r['result'] for r in function_results])
+                while current_calls and rounds < MAX_ROUNDS:
+                    # Execute calls concurrently with dedup
+                    triples, seen = await self._dedup_and_execute(current_calls, seen=seen, max_concurrency=8, timeout_s=30)
+                    
+                    if not triples:
+                        break
+                    
+                    # Build tool_result user message
+                    assistant_content = []
+                    tool_result_blocks = []
+                    for tc, res, err in triples:
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": tc["name"],
+                            "input": tc["arguments_json"],
+                        })
+                        
+                        payload = self._sanitize_tool_output(res)
+                        tool_result_blocks.append({
+                            "type": "tool_result",
+                            "tool_use_id": tc["id"],
+                            "content": payload,
+                        })
+
+                    assistant_msg = {"role": "assistant", "content": assistant_content}
+                    user_tool_results_msg = {"role": "user", "content": tool_result_blocks}
+                    messages = messages + [assistant_msg, user_tool_results_msg]
+
+                    # Ask again WITH tools so Claude can do another hop
+                    tools_cfg = {
+                        "tools": self._convert_tools_to_provider_format(self.get_available_functions()),
+                        "tool_choice": {"type": "auto"},
+                        "stream": False,
+                        "model": self.model,
+                        "messages": messages,
+                        "max_tokens": 1000,
+                    }
+
+                    follow_up_response = await self.client.messages.create(**tools_cfg)
+                    
+                    # Extract new tool calls from follow-up response
+                    current_calls = self._extract_tool_calls_from_response(follow_up_response)
+                    llm_response = LLMResponse(follow_up_response, self._concat_text_blocks(follow_up_response.content))
+                    rounds += 1
                 
-                # Send the function results back to Claude for a coherent response
-                if function_messages:
-                    # Include the assistant message that contained the tool_use blocks
-                    assistant_msg = {"role": "assistant", "content": original.content}
-                    tool_result_user_msg = function_messages[0]  # Single user message with tool_result blocks
-                    
-                    follow_up_messages = kwargs["messages"] + [assistant_msg, tool_result_user_msg]
-                    
-                    # Get a follow-up response from Claude
-                    follow_up_response = await self.client.messages.create(
+                # Finalization pass: no tools so Claude must answer in text
+                if current_calls or rounds > 0:  # Only if we had tool calls
+                    final_response = await self.client.messages.create(
                         model=self.model,
-                        messages=follow_up_messages,
-                        max_tokens=1000,
-                        # Don't include tools for follow-up - we want text response, not more tool calls
-                        stream=False
+                        messages=messages,   # includes assistant tool_use + user tool_result blocks
+                        stream=False,
+                        max_tokens=1000
                     )
-                    
-                    # Extract text from the follow-up response
-                    follow_up_text = self._concat_text_blocks(follow_up_response.content)
-                    llm_response = LLMResponse(follow_up_response, follow_up_text)
+                    llm_response = LLMResponse(final_response, self._concat_text_blocks(final_response.content))
                             
         elif isinstance(original, AsyncStream):
             stream: AsyncStream[RawMessageStreamEvent] = original
             text_parts: List[str] = []
-            accumulated_tool_calls: List[NormalizedToolCallItem] = []
-            current_tool_call = None
-            
+            accumulated_calls: List[NormalizedToolCallItem] = []
+
+            # 1) First round: read stream, gather initial tool_use calls
             async for event in stream:
-                llm_response_optional = self._standardize_and_emit_event(
-                    event, text_parts
-                )
+                llm_response_optional = self._standardize_and_emit_event(event, text_parts)
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
-                
-                # Check for tool calls in streaming chunks
-                new_tool_calls, current_tool_call = self._extract_tool_calls_from_stream_chunk(event, current_tool_call)
-                if new_tool_calls:
-                    accumulated_tool_calls.extend(new_tool_calls)
-            
-            # If we have accumulated tool calls, execute them and get a follow-up response
-            if accumulated_tool_calls:
-                # Execute the functions and get results
-                function_results = []
-                for tool_call in accumulated_tool_calls:
-                    try:
-                        result = self.call_function(tool_call['name'], tool_call['arguments_json'])
-                        function_results.append({
-                            'name': tool_call['name'],
-                            'result': result
-                        })
-                    except Exception as e:
-                        function_results.append({
-                            'name': tool_call['name'],
-                            'result': {'error': str(e)}
-                        })
-                
-                # Create function result messages for Claude
-                function_messages = self._create_tool_result_message(accumulated_tool_calls, [r['result'] for r in function_results])
-                
-                # Send the function results back to Claude for a coherent response
-                if function_messages:
-                    # Include the assistant message that contained the tool_use blocks
-                    # We need to reconstruct the assistant message from the accumulated tool calls
-                    assistant_content = []
-                    for tool_call in accumulated_tool_calls:
-                        assistant_content.append({
-                            "type": "tool_use",
-                            "id": tool_call["id"],
-                            "name": tool_call["name"],
-                            "input": tool_call["arguments_json"]
-                        })
-                    
-                    assistant_msg = {"role": "assistant", "content": assistant_content}
-                    tool_result_user_msg = function_messages[0]  # Single user message with tool_result blocks
-                    
-                    follow_up_messages = kwargs["messages"] + [assistant_msg, tool_result_user_msg]
-                    
-                    # Get a follow-up response from Claude (streaming)
-                    follow_up_stream = await self.client.messages.create(
-                        model=self.model,
-                        messages=follow_up_messages,
-                        max_tokens=1000,
-                        # Don't include tools for follow-up - we want text response, not more tool calls
-                        stream=True
-                    )
-                    
-                    # Process the follow-up stream
-                    follow_up_text_parts = []
-                    follow_up_chunk = None
-                    
-                    async for event in follow_up_stream:
-                        follow_up_chunk = event
-                        llm_response_optional = self._standardize_and_emit_event(
-                            event, follow_up_text_parts
-                        )
-                        if llm_response_optional is not None:
-                            llm_response = llm_response_optional
-                    
-                    # Use the follow-up response if we got one
-                    if follow_up_text_parts:
-                        total_text = "".join(follow_up_text_parts)
-                        llm_response = LLMResponse(follow_up_chunk, total_text)
+                # Collect tool_use calls as they complete (your helper already reconstructs args)
+                new_calls, _ = self._extract_tool_calls_from_stream_chunk(event, None)
+                if new_calls:
+                    accumulated_calls.extend(new_calls)
+
+            # Track full message history to reuse across rounds
+            messages = kwargs["messages"][:]  # start from prior history
+            MAX_ROUNDS = 3
+            rounds = 0
+            seen = set()
+
+            # 2) While there are tool calls, execute -> return tool_result -> ask again (with tools)
+            last_followup_stream = None
+            while accumulated_calls and rounds < MAX_ROUNDS:
+                # Execute calls concurrently with dedup
+                triples, seen = await self._dedup_and_execute(accumulated_calls, seen=seen, max_concurrency=8, timeout_s=30)
+
+                # Build tool_result user message
+                # Also reconstruct the assistant tool_use message that triggered these calls
+                assistant_content = []
+                executed_calls: List[NormalizedToolCallItem] = []
+                for tc, res, err in triples:
+                    executed_calls.append(tc)
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "input": tc["arguments_json"],
+                    })
+
+                # tool_result blocks (sanitize to keep payloads safe)
+                tool_result_blocks = []
+                for tc, res, err in triples:
+                    payload = self._sanitize_tool_output(res)
+                    tool_result_blocks.append({
+                        "type": "tool_result",
+                        "tool_use_id": tc["id"],
+                        "content": payload,
+                    })
+
+                assistant_msg = {"role": "assistant", "content": assistant_content}
+                user_tool_results_msg = {"role": "user", "content": tool_result_blocks}
+                messages = messages + [assistant_msg, user_tool_results_msg]
+
+                # Ask again WITH tools so Claude can do another hop
+                tools_cfg = {
+                    "tools": self._convert_tools_to_provider_format(self.get_available_functions()),
+                    "tool_choice": {"type": "auto"},
+                    "stream": True,
+                    "model": self.model,
+                    "messages": messages,
+                    "max_tokens": 1000,
+                }
+
+                follow_up_stream = await self.client.messages.create(**tools_cfg)
+
+                # Read the follow-up stream; collect text deltas & any NEW tool_use calls
+                follow_up_text_parts: List[str] = []
+                accumulated_calls = []  # reset; we'll refill with new calls
+                async for ev in follow_up_stream:
+                    last_followup_stream = ev
+                    llm_response_optional = self._standardize_and_emit_event(ev, follow_up_text_parts)
+                    if llm_response_optional is not None:
+                        llm_response = llm_response_optional
+                    new_calls, _ = self._extract_tool_calls_from_stream_chunk(ev, None)
+                    if new_calls:
+                        accumulated_calls.extend(new_calls)
+
+                # append emergent text so far
+                if follow_up_text_parts:
+                    text_parts.append("".join(follow_up_text_parts))
+
+                rounds += 1
+
+            # 3) Finalization pass: no tools so Claude must answer in text
+            if accumulated_calls or rounds > 0:  # Only if we had tool calls
+                final_stream = await self.client.messages.create(
+                    model=self.model,
+                    messages=messages,   # includes assistant tool_use + user tool_result blocks
+                    stream=True,
+                    max_tokens=1000
+                )
+                final_text_parts = []
+                async for ev in final_stream:
+                    last_followup_stream = ev
+                    llm_response_optional = self._standardize_and_emit_event(ev, final_text_parts)
+                    if llm_response_optional is not None:
+                        llm_response = llm_response_optional
+                if final_text_parts:
+                    text_parts.append("".join(final_text_parts))
+
+            # 4) Done -> return all collected text
+            total_text = "".join(text_parts)
+            llm_response = LLMResponse(last_followup_stream or original, total_text)
 
         self.emit("after_llm_response", llm_response)
 
