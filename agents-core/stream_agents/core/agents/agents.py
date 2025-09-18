@@ -264,10 +264,11 @@ class Agent:
             logging.warning(f"⚠️ Error while waiting for call to end: {e}")
             # Don't raise the exception, just log it and continue cleanup
 
-    async def say(self, text: str, user_id: str):
+    async def say(self, text: str):
+        user_id = self.agent_user.id
         self.conversation.add_message(Message(content=text, user_id=user_id))
         if self.tts is not None:
-            await self.tts.send(text)
+            await self.tts.send(text, user_id)
 
     async def send_audio(self, pcm):
         # TODO: stream & buffer

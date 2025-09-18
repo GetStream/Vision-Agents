@@ -91,17 +91,6 @@ class VAD(abc.ABC):
         self._leftover: np.ndarray = np.empty(0, np.int16)
         self._speech_start_time: Optional[float] = None
 
-        logger.debug(
-            "Initialized VAD base class",
-            extra={
-                "sample_rate": sample_rate,
-                "session_id": self.session_id,
-                "provider": self.provider_name,
-                "activation_th": activation_th,
-                "deactivation_th": deactivation_th,
-            },
-        )
-
         # Emit initialization event
         self.events.append(
             PluginInitializedEvent(

@@ -32,7 +32,7 @@ async def start_agent() -> None:
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        vad=silero.VAD(),
+        #vad=silero.VAD(),
         # realtime version (vad, tts and stt not needed)
         # llm=openai.Realtime()
     )

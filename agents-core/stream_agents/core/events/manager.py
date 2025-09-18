@@ -126,8 +126,9 @@ class EventManager:
             event = self._queue.popleft()
             for handler in self._handlers.get(event.type, []):
                 try:
-                    logger.info(f"Called handler {handler.__name__} for event {event.__name__}")
+                    logger.info(f"Called handler {handler.__name__} for event {event.__class__.__name__}")
                     await handler(event)
                 except Exception as exc:
                     self._queue.appendleft(ExceptionEvent(exc, handler))
+                    logger.exception(f"Error calling handler {handler.__name__} for event {event.__class__.__name__}")
 
