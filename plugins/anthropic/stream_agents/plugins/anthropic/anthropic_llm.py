@@ -395,7 +395,6 @@ class ClaudeLLM(LLM):
                     try:
                         args = json.loads(buf)
                     except Exception as e:
-                        print(f"DEBUG: JSON parse error: {e}, buffer: {buf}")
                         args = {}
                     
                     tool_calls.append({
