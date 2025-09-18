@@ -1,6 +1,7 @@
 import collections
 import dataclasses
 import types
+import typing
 import logging
 from typing import get_origin, Union, get_args
 
@@ -68,7 +69,9 @@ class EventManager:
     def subscribe(self, function):
         subscribed = False
         is_union = False
-        for name, event_class in function.__annotations__.items():
+        annotations = typing.get_type_hints(function)
+
+        for name, event_class in annotations.items():
             origin = get_origin(event_class)
             events = []
 
