@@ -62,6 +62,7 @@ class RealtimePartialTranscriptEvent(PluginBaseEvent):
 class RealtimeResponseEvent(PluginBaseEvent):
     """Event emitted when realtime session provides a response."""
     type: str = field(default='plugin.realtime_response', init=False)
+    original: Optional[str] = None
     text: Optional[str] = None
     response_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     is_complete: bool = True

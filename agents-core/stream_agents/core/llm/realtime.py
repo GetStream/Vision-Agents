@@ -147,6 +147,7 @@ class Realtime(abc.ABC):
         # Ready event for providers to signal readiness
         self._ready_event: asyncio.Event = asyncio.Event()
         self.events = EventManager()
+        self.events.register_events_from_module(events)
         # Common, optional preferences (not all providers will use all of these)
         self.model = model
         self.instructions = instructions
@@ -330,14 +331,14 @@ class Realtime(abc.ABC):
             asyncio.get_event_loop().create_future()
         )
 
-        async def _on_response(event: RealtimeResponseEvent):
+        async def _on_response(event: events.RealtimeResponseEvent):
             try:
                 if event.is_complete:
                     if not done_fut.done():
                         final_text = self._merge_final_text(
                             collected_parts, event.text
                         )
-                        done_fut.set_result(RealtimeResponse(event, final_text))
+                        done_fut.set_result(events.RealtimeResponseEvent(original=event, text=final_text))
                     #self.remove_listener("response", _on_response)
                 else:
                     if event.text:
