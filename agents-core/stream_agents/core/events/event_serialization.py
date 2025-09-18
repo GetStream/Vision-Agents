@@ -9,7 +9,7 @@ import json
 from typing import Dict, Any, List
 from datetime import datetime
 
-from .events import BaseEvent, EventType, create_event
+from .events import BaseEvent, EventType
 
 
 def serialize_event(event: BaseEvent) -> Dict[str, Any]:

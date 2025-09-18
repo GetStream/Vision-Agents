@@ -5,23 +5,21 @@ import time
 import uuid
 from typing import Optional, Dict, Any, Union, Iterator, AsyncIterator
 
-from pyee.asyncio import AsyncIOEventEmitter
 from getstream.video.rtc.audio_track import AudioStreamTrack
+from stream_agents.core.events.manager import EventManager
 
-from ..events import (
+from .events import (
     TTSAudioEvent,
     TTSSynthesisStartEvent,
     TTSSynthesisCompleteEvent,
     TTSErrorEvent,
-    PluginInitializedEvent,
-    PluginClosedEvent,
-    register_global_event,
 )
+from stream_agents.core.events import PluginInitializedEvent, PluginClosedEvent
 
 logger = logging.getLogger(__name__)
 
 
-class TTS(AsyncIOEventEmitter, abc.ABC):
+class TTS(abc.ABC):
     """
     Text-to-Speech base class.
 
@@ -51,24 +49,13 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
         self._track: Optional[AudioStreamTrack] = None
         self.session_id = str(uuid.uuid4())
         self.provider_name = provider_name or self.__class__.__name__
-
-        logger.debug(
-            "Initialized TTS base class",
-            extra={
-                "session_id": self.session_id,
-                "provider": self.provider_name,
-            },
-        )
-
-        # Emit initialization event
-        init_event = PluginInitializedEvent(
+        self._em = EventManager()
+        self._em.append(PluginInitializedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             plugin_type="TTS",
             provider=self.provider_name,
-        )
-        register_global_event(init_event)
-        self.emit("initialized", init_event)
+        ))
 
     def set_output_track(self, track: AudioStreamTrack) -> None:
         """
@@ -144,16 +131,13 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                 "Starting text-to-speech synthesis", extra={"text_length": len(text)}
             )
 
-            # Emit synthesis start event
-            start_event = TTSSynthesisStartEvent(
+            self._em.append(TTSSynthesisStartEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 text=text,
                 synthesis_id=synthesis_id,
                 user_metadata=user,
-            )
-            register_global_event(start_event)
-            self.emit("synthesis_start", start_event)
+            ))
 
             # Synthesize audio
             audio_data = await self.stream_audio(text, *args, **kwargs)
@@ -170,8 +154,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                 audio_chunks = 1
                 await self._track.write(audio_data)
 
-                # Emit structured audio event
-                audio_event = TTSAudioEvent(
+                TTSAudioEvent(
                     session_id=self.session_id,
                     plugin_name=self.provider_name,
                     audio_data=audio_data,
@@ -180,8 +163,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                     user_metadata=user,
                     sample_rate=self._track.framerate if self._track else 16000,
                 )
-                register_global_event(audio_event)
-                self.emit("audio", audio_event)  # Structured event
+                self._em.append(audio_event)  # Structured event
             elif inspect.isasyncgen(audio_data):
                 async for chunk in audio_data:
                     if isinstance(chunk, bytes):
@@ -190,7 +172,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                         await self._track.write(chunk)
 
                         # Emit structured audio event
-                        audio_event = TTSAudioEvent(
+                        self._em.append(TTSAudioEvent(
                             session_id=self.session_id,
                             plugin_name=self.provider_name,
                             audio_data=chunk,
@@ -200,16 +182,13 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                             chunk_index=audio_chunks - 1,
                             is_final_chunk=False,  # We don't know if it's final yet
                             sample_rate=self._track.framerate if self._track else 16000,
-                        )
-                        register_global_event(audio_event)
-                        self.emit("audio", audio_event)  # Structured event
+                        ))
                     else:  # assume it's a Cartesia TTS chunk object
                         total_audio_bytes += len(chunk.data)
                         audio_chunks += 1
                         await self._track.write(chunk.data)
 
-                        # Emit structured audio event
-                        audio_event = TTSAudioEvent(
+                        self._em.append(TTSAudioEvent(
                             session_id=self.session_id,
                             plugin_name=self.provider_name,
                             audio_data=chunk.data,
@@ -219,9 +198,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                             chunk_index=audio_chunks - 1,
                             is_final_chunk=False,  # We don't know if it's final yet
                             sample_rate=self._track.framerate if self._track else 16000,
-                        )
-                        register_global_event(audio_event)
-                        self.emit("audio", audio_event)  # Structured event
+                        ))
             elif hasattr(audio_data, "__iter__") and not isinstance(
                 audio_data, (str, bytes, bytearray)
             ):
@@ -230,8 +207,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                     audio_chunks += 1
                     await self._track.write(chunk)
 
-                    # Emit structured audio event
-                    audio_event = TTSAudioEvent(
+                    self._em.append(TTSAudioEvent(
                         session_id=self.session_id,
                         plugin_name=self.provider_name,
                         audio_data=chunk,
@@ -241,9 +217,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                         chunk_index=audio_chunks - 1,
                         is_final_chunk=False,  # We don't know if it's final yet
                         sample_rate=self._track.framerate if self._track else 16000,
-                    )
-                    register_global_event(audio_event)
-                    self.emit("audio", audio_event)  # Structured event
+                    ))
             else:
                 raise TypeError(
                     f"Unsupported return type from synthesize: {type(audio_data)}"
@@ -265,8 +239,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                 else None
             )
 
-            # Emit synthesis completion event
-            completion_event = TTSSynthesisCompleteEvent(
+            self._em.append(TTSSynthesisCompleteEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 synthesis_id=synthesis_id,
@@ -277,9 +250,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                 audio_duration_ms=estimated_audio_duration_ms,
                 chunk_count=audio_chunks,
                 real_time_factor=real_time_factor,
-            )
-            register_global_event(completion_event)
-            self.emit("synthesis_complete", completion_event)
+            ))
 
             logger.info(
                 "Text-to-speech synthesis completed",
@@ -297,8 +268,7 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
             )
 
         except Exception as e:
-            # Emit structured error event
-            error_event = TTSErrorEvent(
+            self._em.append(TTSErrorEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 error=e,
@@ -306,22 +276,17 @@ class TTS(AsyncIOEventEmitter, abc.ABC):
                 text_source=text,
                 synthesis_id=synthesis_id,
                 user_metadata=user,
-            )
-            register_global_event(error_event)
-            self.emit("error", error_event)  # New structured event
-            self.emit("error_legacy", e)  # Backward compatibility
+            ))
+            # ASK: why ?
             # Re-raise to allow the caller to handle the error
             raise
 
     async def close(self):
         """Close the TTS service and release any resources."""
-        # Emit closure event
-        close_event = PluginClosedEvent(
+        self._em.append(PluginClosedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             plugin_type="TTS",
             provider=self.provider_name,
             cleanup_successful=True,
-        )
-        register_global_event(close_event)
-        self.emit("closed", close_event)
+        ))

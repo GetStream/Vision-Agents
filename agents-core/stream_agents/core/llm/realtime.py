@@ -90,7 +90,6 @@ from ..events.events import (
     PluginInitializedEvent,
     PluginClosedEvent,
 )
-from ..events.event_utils import register_global_event
 
 T = TypeVar("T")
 
@@ -174,7 +173,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             session_id=self.session_id,
             plugin_name=self.provider_name,
         )
-        register_global_event(init_event)
         self.emit("initialized", init_event)
 
         # Common, optional preferences (not all providers will use all of these)
@@ -398,7 +396,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             session_config=session_config,
             capabilities=capabilities,
         )
-        register_global_event(event)
         self.emit("connected", event)  # Structured event
 
     def _emit_disconnected_event(self, reason=None, was_clean=True):
@@ -410,7 +407,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             reason=reason,
             was_clean=was_clean,
         )
-        register_global_event(event)
         self.emit("disconnected", event)  # Structured event
 
     def _emit_audio_input_event(
@@ -424,7 +420,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             sample_rate=sample_rate,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
         self.emit("audio_input", event)
 
     def _emit_audio_output_event(
@@ -439,7 +434,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             response_id=response_id,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
         self.emit("audio_output", event)
 
     def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
@@ -448,7 +442,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             user_metadata=user_metadata,
             original=original,
         )
-        register_global_event(event)
         self.emit("partial_transcript", event)
 
     def _emit_transcript_event(
@@ -462,7 +455,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             user_metadata=user_metadata,
             original=original,
         )
-        register_global_event(event)
         self.emit("transcript", event)
 
     def _emit_response_event(
@@ -483,7 +475,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             conversation_item_id=conversation_item_id,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
         self.emit("response", event)
 
     def _emit_conversation_item_event(
@@ -500,7 +491,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             content=content,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
         self.emit("conversation_item", event)
 
     def _emit_error_event(self, error, context="", user_metadata=None):
@@ -512,7 +502,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             context=context,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
         try:
             self.emit("error", event)  # Structured event
         except PyeeError:
@@ -539,7 +528,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             plugin_name=self.provider_name,
             cleanup_successful=True,
         )
-        register_global_event(close_event)
         self.emit("closed", close_event)
 
     @abc.abstractmethod

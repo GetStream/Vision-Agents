@@ -3,17 +3,12 @@ from .events import (
     ConnectionState,
     AudioFormat,
     BaseEvent,
+    PluginBaseEvent,
     # STT Events
     STTTranscriptEvent,
     STTPartialTranscriptEvent,
     STTErrorEvent,
     STTConnectionEvent,
-    # TTS Events
-    TTSAudioEvent,
-    TTSSynthesisStartEvent,
-    TTSSynthesisCompleteEvent,
-    TTSErrorEvent,
-    TTSConnectionEvent,
     # Realtime Events (formerly STS)
     RealtimeConnectedEvent,
     RealtimeDisconnectedEvent,
@@ -39,7 +34,6 @@ from .event_utils import (
     EventFilter,
     EventRegistry,
     EventLogger,
-    register_global_event,
     get_global_registry,
     get_global_logger,
 )
@@ -49,7 +43,6 @@ from .event_metrics import (
     calculate_tts_metrics,
     calculate_vad_metrics,
 )
-from .events import create_event
 
 from getstream.models import (
     BlockedUserEvent,
@@ -166,6 +159,7 @@ __all__ += [
     "ConnectionState",
     "AudioFormat",
     "BaseEvent",
+    "PluginBaseEvent",
     "STTTranscriptEvent",
     "STTPartialTranscriptEvent",
     "STTErrorEvent",
@@ -195,7 +189,6 @@ __all__ += [
     "EventFilter",
     "EventRegistry",
     "EventLogger",
-    "register_global_event",
     "get_global_registry",
     "get_global_logger",
     "serialize_event",
@@ -204,6 +197,5 @@ __all__ += [
     "calculate_stt_metrics",
     "calculate_tts_metrics",
     "calculate_vad_metrics",
-    "create_event",
     "EVENT_CLASS_MAP",
 ]

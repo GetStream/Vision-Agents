@@ -309,12 +309,6 @@ global_event_registry = EventRegistry()
 global_event_logger = EventLogger("getstream.plugins.events")
 
 
-def register_global_event(event: BaseEvent):
-    """Register an event in the global registry."""
-    global_event_registry.register_event(event)
-    global_event_logger.log_event(event)
-
-
 def get_global_registry() -> EventRegistry:
     """Get the global event registry."""
     return global_event_registry
@@ -331,7 +325,6 @@ __all__ = [
     "EventLogger",
     "global_event_registry",
     "global_event_logger",
-    "register_global_event",
     "get_global_registry",
     "get_global_logger",
 ]

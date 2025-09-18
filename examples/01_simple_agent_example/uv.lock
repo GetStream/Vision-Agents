@@ -835,7 +835,8 @@ wheels = [
 
 [[package]]
 name = "getstream"
-source = { editable = "../../../stream-py" }
+version = "2.3.1"
+source = { git = "https://github.com/GetStream/stream-py.git?rev=5d22ac964838da4f38af543dcbafd68f89be276a#5d22ac964838da4f38af543dcbafd68f89be276a" }
 dependencies = [
     { name = "aiohttp" },
     { name = "aiortc" },
@@ -881,65 +882,6 @@ webrtc = [
     { name = "twirp" },
     { name = "websocket-client" },
     { name = "websockets" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.11.16" },
-    { name = "aiortc", specifier = ">=1.13.0" },
-    { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.13.0" },
-    { name = "cartesia", specifier = ">=2.0.5" },
-    { name = "dataclasses-json", specifier = ">=0.6.0,<0.7" },
-    { name = "deepgram-sdk", specifier = ">=4.7.0" },
-    { name = "elevenlabs", specifier = ">=2.8.0" },
-    { name = "fal-client", specifier = ">=0.7.0" },
-    { name = "google-genai", specifier = ">=1.30.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "marshmallow", specifier = ">=3.21.0,<4" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "numpy", marker = "extra == 'webrtc'", specifier = ">=2.2.6,<2.3" },
-    { name = "openai", extras = ["realtime"], marker = "extra == 'openai-realtime'", specifier = ">=1.93.0" },
-    { name = "ping3", specifier = ">=4.0.8" },
-    { name = "protobuf", specifier = ">=6.31.1" },
-    { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=4.25.1" },
-    { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "pydantic-settings", specifier = ">=2.9.1" },
-    { name = "pyee", marker = "extra == 'webrtc'", specifier = ">=13.0.0" },
-    { name = "pyjwt", specifier = ">=2.8.0,<3" },
-    { name = "pytest-timeout", specifier = ">=2.3.1" },
-    { name = "python-dateutil", specifier = ">=2.8.2" },
-    { name = "python-dateutil", marker = "extra == 'webrtc'", specifier = ">=2.8.2" },
-    { name = "scipy", specifier = ">=1.15.3" },
-    { name = "scipy", marker = "extra == 'webrtc'", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "soundfile", marker = "extra == 'webrtc'", specifier = ">=0.13.1" },
-    { name = "structlog", specifier = ">=23.3.0" },
-    { name = "structlog", marker = "extra == 'webrtc'", specifier = "<24" },
-    { name = "tenacity", specifier = ">=9.1.2" },
-    { name = "torch", specifier = ">=2.7.1" },
-    { name = "torch", marker = "extra == 'webrtc'", specifier = ">=2.7.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
-    { name = "torchaudio", marker = "extra == 'webrtc'", specifier = ">=2.7.1" },
-    { name = "twirp", specifier = ">=0.0.7" },
-    { name = "twirp", marker = "extra == 'webrtc'", specifier = ">=0.0.7" },
-    { name = "websocket-client", specifier = ">=1.8.0" },
-    { name = "websocket-client", marker = "extra == 'webrtc'", specifier = ">=1.8.0" },
-    { name = "websockets", specifier = ">=15.0.1" },
-    { name = "websockets", marker = "extra == 'webrtc'", specifier = ">=15.0.1,<16" },
-]
-provides-extras = ["openai-realtime", "webrtc"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "grpcio-tools", specifier = ">=1.73.1" },
-    { name = "mypy-protobuf", specifier = "==3.5.0" },
-    { name = "pre-commit", specifier = ">=4.2.0" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "python-dateutil", specifier = ">=2.8.2,<3" },
-    { name = "python-dotenv", specifier = ">=1.1.1,<2" },
-    { name = "ruff", specifier = ">=0.12.1" },
 ]
 
 [[package]]
@@ -2930,7 +2872,7 @@ dependencies = [
     { name = "aiortc" },
     { name = "click" },
     { name = "daily-python" },
-    { name = "getstream" },
+    { name = "getstream", extra = ["webrtc"] },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
@@ -2963,7 +2905,7 @@ requires-dist = [
     { name = "daily-python", specifier = ">=0.19.8" },
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
-    { name = "getstream", editable = "../../../stream-py" },
+    { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=5d22ac964838da4f38af543dcbafd68f89be276a" },
     { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },

@@ -16,6 +16,7 @@ Key Features:
 import uuid
 import dataclasses
 from dataclasses import dataclass, field
+from dataclasses_json import DataClassJsonMixin
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -95,31 +96,14 @@ class AudioFormat(Enum):
 
 
 @dataclass
-class BaseEvent:
+class BaseEvent(DataClassJsonMixin):
     """Base class for all plugin events."""
     # NOTE: potentially we could use event class name for event name
-    event_type: EventType
+    type: str
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     session_id: Optional[str] = None
     user_metadata: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert event to dictionary for serialization."""
-        result = {}
-
-
-        for field_info in dataclasses.fields(self):
-            field_value = getattr(self, field_info.name)
-            if isinstance(field_value, (datetime, Enum)):
-                result[field_info.name] = (
-                    field_value.value
-                    if isinstance(field_value, Enum)
-                    else str(field_value)
-                )
-            else:
-                result[field_info.name] = field_value
-        return result
 
 
 @dataclass
@@ -207,74 +191,6 @@ class STTConnectionEvent(PluginBaseEvent):
 # ============================================================================
 # TTS (Text-to-Speech) Events
 # ============================================================================
-
-
-@dataclass
-class TTSAudioEvent(PluginBaseEvent):
-    """Event emitted when TTS audio data is available."""
-
-    event_type: EventType = field(default=EventType.TTS_AUDIO, init=False)
-    audio_data: Optional[bytes] = None
-    audio_format: AudioFormat = AudioFormat.PCM_S16
-    sample_rate: int = 16000
-    channels: int = 1
-    chunk_index: int = 0
-    is_final_chunk: bool = True
-    text_source: Optional[str] = None
-    synthesis_id: Optional[str] = None
-
-
-@dataclass
-class TTSSynthesisStartEvent(PluginBaseEvent):
-    """Event emitted when TTS synthesis begins."""
-
-    event_type: EventType = field(default=EventType.TTS_SYNTHESIS_START, init=False)
-    text: Optional[str] = None
-    synthesis_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    model_name: Optional[str] = None
-    voice_id: Optional[str] = None
-    estimated_duration_ms: Optional[float] = None
-
-
-@dataclass
-class TTSSynthesisCompleteEvent(PluginBaseEvent):
-    """Event emitted when TTS synthesis completes."""
-
-    event_type: EventType = field(default=EventType.TTS_SYNTHESIS_COMPLETE, init=False)
-    synthesis_id: Optional[str] = None
-    text: Optional[str] = None
-    total_audio_bytes: int = 0
-    synthesis_time_ms: float = 0.0
-    audio_duration_ms: Optional[float] = None
-    chunk_count: int = 1
-    real_time_factor: Optional[float] = None
-
-
-@dataclass
-class TTSErrorEvent(PluginBaseEvent):
-    """Event emitted when a TTS error occurs."""
-
-    event_type: EventType = field(default=EventType.TTS_ERROR, init=False)
-    error: Optional[Exception] = None
-    error_code: Optional[str] = None
-    context: Optional[str] = None
-    text_source: Optional[str] = None
-    synthesis_id: Optional[str] = None
-    is_recoverable: bool = True
-
-    @property
-    def error_message(self) -> str:
-        return str(self.error) if self.error else "Unknown error"
-
-
-@dataclass
-class TTSConnectionEvent(PluginBaseEvent):
-    """Event emitted for TTS connection state changes."""
-
-    event_type: EventType = field(default=EventType.TTS_CONNECTION, init=False)
-    connection_state: Optional[ConnectionState] = None
-    provider: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
 
 
 # ============================================================================
@@ -471,7 +387,7 @@ class VADErrorEvent(PluginBaseEvent):
 class PluginInitializedEvent(PluginBaseEvent):
     """Event emitted when a plugin is successfully initialized."""
 
-    event_type: EventType = field(default=EventType.PLUGIN_INITIALIZED, init=False)
+    type: str = field(default="plugin.initialized", init=False)
     plugin_type: Optional[str] = None  # "STT", "TTS", "STS", "VAD"
     provider: Optional[str] = None
     configuration: Optional[Dict[str, Any]] = None
@@ -482,7 +398,7 @@ class PluginInitializedEvent(PluginBaseEvent):
 class PluginClosedEvent(PluginBaseEvent):
     """Event emitted when a plugin is closed."""
 
-    event_type: EventType = field(default=EventType.PLUGIN_CLOSED, init=False)
+    type: EventType = field(default="plugin.closed", init=False)
     plugin_type: Optional[str] = None  # "STT", "STS", "VAD"
     provider: Optional[str] = None
     reason: Optional[str] = None
@@ -493,7 +409,7 @@ class PluginClosedEvent(PluginBaseEvent):
 class PluginErrorEvent(PluginBaseEvent):
     """Event emitted when a generic plugin error occurs."""
 
-    event_type: EventType = field(default=EventType.PLUGIN_ERROR, init=False)
+    type: EventType = field(default="plugin.error", init=False)
     plugin_type: Optional[str] = None  # "STT", "TTS", "STS", "VAD"
     provider: Optional[str] = None
     error: Optional[Exception] = None
@@ -513,157 +429,3 @@ class PluginErrorEvent(PluginBaseEvent):
 class CallMemberAddedEvent(CallBaseEvent):
     event_type: EventType = field(default=EventType.CALL_MEMBER_ADDED, init=False)
 
-    @classmethod
-    def from_stream_event(cls, data):
-        print('data', data)
-        return cls()
-
-
-@dataclass
-class CallMemberRemovedEvent(CallBaseEvent):
-    event_type: EventType = field(default=EventType.CALL_MEMBER_ADDED, init=False)
-
-# ==
-# Sfu events
-# ==
-
-@dataclass
-class ParticipantJoinedEvent(ConnectionBaseEvent):
-    event_type: EventType = field(default=EventType.PARTICIPANT_JOINED, init=False)
-    user_id: str | None = None
-    session_id: str | None = None
-    joined_at: dict | None = None
-    track_lookup_prefix: str | None = None
-    name: str | None = None
-    roles: str | None = None
-
-    @classmethod
-    def from_stream_event(cls, data):
-        # TODO: this should be removed when we get rid of this event system
-        pt = data.participant
-        return cls(
-            user_id=pt.user_id, session_id=pt.session_id,
-            joined_at=pt.joined_at, track_lookup_prefix=pt.track_lookup_prefix,
-            name=pt.name, roles=pt.roles
-        )
-
-# example of event
-# participant {
-#   user_id: "user-4632517e-98d8-4400-adc3-2e8dfd4287b8"
-#   session_id: "877c1343-ac7c-4546-8373-73c2c5c8670d"
-#   joined_at {
-#     seconds: 1757342608
-#     nanos: 665457470
-#   }
-#   track_lookup_prefix: "04b40e5bc38c8eb5"
-#   connection_quality: CONNECTION_QUALITY_EXCELLENT
-#   name: "Human User"
-#   roles: "user"
-# }
-
-
-
-# ============================================================================
-# Event Type Mappings for Easy Access
-# ============================================================================
-
-# Map event types to their corresponding classes
-EVENT_CLASS_MAP = {
-    EventType.STT_TRANSCRIPT: STTTranscriptEvent,
-    EventType.STT_PARTIAL_TRANSCRIPT: STTPartialTranscriptEvent,
-    EventType.STT_ERROR: STTErrorEvent,
-    EventType.STT_CONNECTION: STTConnectionEvent,
-    EventType.TTS_AUDIO: TTSAudioEvent,
-    EventType.TTS_SYNTHESIS_START: TTSSynthesisStartEvent,
-    EventType.TTS_SYNTHESIS_COMPLETE: TTSSynthesisCompleteEvent,
-    EventType.TTS_ERROR: TTSErrorEvent,
-    EventType.TTS_CONNECTION: TTSConnectionEvent,
-    EventType.REALTIME_CONNECTED: RealtimeConnectedEvent,
-    EventType.REALTIME_DISCONNECTED: RealtimeDisconnectedEvent,
-    EventType.REALTIME_AUDIO_INPUT: RealtimeAudioInputEvent,
-    EventType.REALTIME_AUDIO_OUTPUT: RealtimeAudioOutputEvent,
-    EventType.REALTIME_TRANSCRIPT: RealtimeTranscriptEvent,
-    EventType.REALTIME_RESPONSE: RealtimeResponseEvent,
-    EventType.REALTIME_CONVERSATION_ITEM: RealtimeConversationItemEvent,
-    EventType.REALTIME_ERROR: RealtimeErrorEvent,
-    EventType.VAD_SPEECH_START: VADSpeechStartEvent,
-    EventType.VAD_SPEECH_END: VADSpeechEndEvent,
-    EventType.VAD_AUDIO: VADAudioEvent,
-    EventType.VAD_PARTIAL: VADPartialEvent,
-    EventType.VAD_INFERENCE: VADInferenceEvent,
-    EventType.VAD_ERROR: VADErrorEvent,
-    EventType.PLUGIN_INITIALIZED: PluginInitializedEvent,
-    EventType.PLUGIN_CLOSED: PluginClosedEvent,
-    EventType.PLUGIN_ERROR: PluginErrorEvent,
-    EventType.PARTICIPANT_JOINED: ParticipantJoinedEvent
-}
-
-
-def create_event(event_type: EventType, **kwargs) -> BaseEvent:
-    """
-    Create an event instance of the appropriate type.
-
-    Args:
-        event_type: The type of event to create
-        **kwargs: Event-specific parameters
-
-    Returns:
-        An instance of the appropriate event class
-
-    Raises:
-        ValueError: If the event type is not recognized
-    """
-    if event_type not in EVENT_CLASS_MAP:
-        raise ValueError(f"No event class defined for type: {event_type}")
-
-    event_class = EVENT_CLASS_MAP[event_type]
-    return event_class(**kwargs)
-
-
-__all__ = [
-    # Enums
-    "EventType",
-    "ConnectionState",
-    "AudioFormat",
-    # Base classes
-    "BaseEvent",
-    "PluginBaseEvent",
-    "CallBaseEvent",
-    # STT Events
-    "STTTranscriptEvent",
-    "STTPartialTranscriptEvent",
-    "STTErrorEvent",
-    "STTConnectionEvent",
-    # TTS Events
-    "TTSAudioEvent",
-    "TTSSynthesisStartEvent",
-    "TTSSynthesisCompleteEvent",
-    "TTSErrorEvent",
-    "TTSConnectionEvent",
-    # Realtime Events
-    "RealtimeConnectedEvent",
-    "RealtimeDisconnectedEvent",
-    "RealtimeAudioInputEvent",
-    "RealtimeAudioOutputEvent",
-    "RealtimeTranscriptEvent",
-    "RealtimeResponseEvent",
-    "RealtimeConversationItemEvent",
-    "RealtimeErrorEvent",
-    # VAD Events
-    "VADSpeechStartEvent",
-    "VADSpeechEndEvent",
-    "VADAudioEvent",
-    "VADPartialEvent",
-    "VADInferenceEvent",
-    "VADErrorEvent",
-    # Generic Events
-    "PluginInitializedEvent",
-    "PluginClosedEvent",
-    "PluginErrorEvent",
-    # Call Events
-    "CallMemberAddedEvent",
-    "CallMemberRemovedEvent",
-    # Utilities
-    "EVENT_CLASS_MAP",
-    "create_event",
-]

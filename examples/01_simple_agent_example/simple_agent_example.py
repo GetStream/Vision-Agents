@@ -39,7 +39,7 @@ async def start_agent() -> None:
 
     await agent.create_user()
 
-    @agent.listen
+    @agent.subscribe
     async def my_handler(event: CallSessionParticipantJoinedEvent):
         await agent.say(f"Hello, {event.participant.user.name}")
 

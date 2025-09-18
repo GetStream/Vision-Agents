@@ -17,7 +17,6 @@ from stream_agents.core.events import (
     VADInferenceEvent,
     AudioFormat,
 )
-from stream_agents.core.events.event_utils import register_global_event
 
 
 try:
@@ -420,7 +419,6 @@ class VAD(vad.VAD):
                         accumulated_silence_duration_ms=self._get_accumulated_silence_duration(),
                         user_metadata=None,  # Will be set by caller if needed
                     )
-                    register_global_event(inference_event)
                     self.emit("inference", inference_event)
 
                     # Log speech probability and RTF at DEBUG level
@@ -486,7 +484,6 @@ class VAD(vad.VAD):
                 frame_count=len(speech_data) // self.frame_size,
                 user_metadata=user,
             )
-            register_global_event(audio_event)
             self.emit("audio", audio_event)  # Structured event
 
         # Emit enhanced speech end event if we were actively detecting speech
@@ -501,7 +498,6 @@ class VAD(vad.VAD):
                 total_frames=self.total_speech_frames,
                 user_metadata=user,
             )
-            register_global_event(speech_end_event)
             self.emit("speech_end", speech_end_event)
 
         # Reset state variables
@@ -578,7 +574,6 @@ class VAD(vad.VAD):
                 user_metadata=user,
                 audio_data=frame
             )
-            register_global_event(speech_start_event)
             self.emit("speech_start", speech_start_event)
 
             # Add this frame to the buffer using shared utility
@@ -624,7 +619,6 @@ class VAD(vad.VAD):
                     is_speech_active=True,
                     user_metadata=user,
                 )
-                register_global_event(partial_event)
                 self.emit("partial", partial_event)
 
                 logger.debug(

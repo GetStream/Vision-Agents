@@ -23,7 +23,7 @@ from av import AudioFrame
 from getstream.audio.utils import resample_audio
 from getstream.video.call import Call
 import numpy as np
-from stream_agents.core.events import RealtimeConnectedEvent, register_global_event
+from stream_agents.core.events import RealtimeConnectedEvent
 from stream_agents.core.llm import realtime
 from stream_agents.core.llm.llm import LLMResponse
 
@@ -734,7 +734,6 @@ class Realtime(realtime.Realtime):
                 },
                 capabilities=["text", "audio"],
             )
-            register_global_event(event)
             self.emit("connected", event)
 
             # Prime publisher audio pipeline with brief silence to seed timestamps

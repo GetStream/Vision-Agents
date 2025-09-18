@@ -28,6 +28,12 @@ class EventManager:
         else:
             raise ValueError("Provide valid class that ends on '*Event' and 'type' attribute")
 
+    def merge(self, ev: 'EventManager'):
+        self._events.update(ev._events)
+        self._modules.update(ev._modules)
+        self._handlers.update(ev._handlers)
+        for event in ev._queue:
+            self._queue.append(event)
 
     def register_events_from_module(self, module, prefix):
         for name, class_ in module.__dict__.items():
@@ -51,7 +57,7 @@ class EventManager:
         import_file.append("")
         return import_file
 
-    def listen(self, function):
+    def subscribe(self, function):
         subscribed = False
         for name, event_class in function.__annotations__.items():
             # check union of event classes (not neeeded for now)
@@ -82,7 +88,7 @@ class EventManager:
         elif event.type not in self._events:
             logger.info(f"Event not registered {event}")
 
-    async def append(self, *events):
+    def append(self, *events):
         for event in events:
             event = self._prepare_event(event)
             if event:

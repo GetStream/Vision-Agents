@@ -19,7 +19,6 @@ from ..events import (
     VADErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
-    register_global_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,7 +117,6 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
                 "max_speech_ms": max_speech_ms,
             },
         )
-        register_global_event(init_event)
         self.emit("initialized", init_event)
 
     @abc.abstractmethod
@@ -239,7 +237,6 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
                     frame_count=len(current_samples) // self.frame_size,
                     user_metadata=participant,
                 )
-                register_global_event(partial_event)
                 self.emit("partial", partial_event)  # Structured event
 
                 logger.debug(
@@ -289,7 +286,6 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
                 frame_count=1,
                 user_metadata=user,
             )
-            register_global_event(speech_start_event)
             self.emit("speech_start", speech_start_event)
 
             # Add this frame to the buffer using shared utility
@@ -325,7 +321,6 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
                 frame_count=len(speech_data) // self.frame_size,
                 user_metadata=user,
             )
-            register_global_event(audio_event)
             self.emit("audio", audio_event)  # Structured event
 
             logger.debug(f"Emitted audio event with {len(speech_data)} samples")
@@ -342,7 +337,6 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
                 total_frames=self.total_speech_frames,
                 user_metadata=user,
             )
-            register_global_event(speech_end_event)
             self.emit("speech_end", speech_end_event)
 
         # Reset state variables
@@ -387,7 +381,6 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
             user_metadata=user_metadata,
             frame_data_available=len(self.speech_buffer) > 0,
         )
-        register_global_event(error_event)
         self.emit("error", error_event)  # Structured event
 
     async def close(self):
@@ -404,5 +397,4 @@ class VAD(AsyncIOEventEmitter, abc.ABC):
             provider=self.provider_name,
             cleanup_successful=True,
         )
-        register_global_event(close_event)
         self.emit("closed", close_event)

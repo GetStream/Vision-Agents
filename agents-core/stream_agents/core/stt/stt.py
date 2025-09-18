@@ -15,7 +15,6 @@ from ..events import (
     STTErrorEvent,
     PluginInitializedEvent,
     PluginClosedEvent,
-    register_global_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,7 +112,6 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             provider=self.provider_name,
             configuration={"sample_rate": sample_rate},
         )
-        register_global_event(init_event)
         self.emit("initialized", init_event)
 
     def _validate_pcm_data(self, pcm_data: PcmData) -> bool:
@@ -180,8 +178,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             },
         )
 
-        # Register in global registry and emit structured event
-        register_global_event(event)
+        # Emit structured event
         self.emit("transcript", event)  # Structured event
 
     def _emit_partial_transcript_event(
@@ -221,8 +218,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             },
         )
 
-        # Register in global registry and emit structured event
-        register_global_event(event)
+        # Emit structured event
         self.emit("partial_transcript", event)  # Structured event
 
     def _emit_error_event(
@@ -259,8 +255,7 @@ class STT(AsyncIOEventEmitter, abc.ABC):
             exc_info=error,
         )
 
-        # Register in global registry and emit structured event
-        register_global_event(event)
+        # Emit structured event
         self.emit("error", event)  # Structured event
 
     async def process_audio(
@@ -374,7 +369,6 @@ class STT(AsyncIOEventEmitter, abc.ABC):
                 provider=self.provider_name,
                 cleanup_successful=True,
             )
-            register_global_event(close_event)
             self.emit("closed", close_event)
 
         # Subclasses should call super().close() after their cleanup
