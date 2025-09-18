@@ -366,13 +366,13 @@ class RTCManager:
             logger.error(f"Failed to push mic audio: {e}")
 
 
-    async def send_text(self, text: str):
+    async def send_text(self, text: str, role: str = "user"):
         """Send a text message to OpenAI."""
         event = {
             "type": "conversation.item.create",
             "item": {
                 "type": "message",
-                "role": "user",
+                "role": role,
                 "content": [{"type": "input_text", "text": text}],
             },
         }

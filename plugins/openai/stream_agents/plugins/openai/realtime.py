@@ -43,8 +43,8 @@ class Realtime(realtime.Realtime):
     async def send_audio_pcm(self, audio: PcmData):
         await self.rtc.send_audio_pcm(audio)
 
-    async def send_text(self, text):
-        await self.rtc.send_text(str(text))
+    async def send_text(self, text: str, role="user"):
+        await self.rtc.send_text(text, role)
 
     async def native_send_realtime_input(
         self,

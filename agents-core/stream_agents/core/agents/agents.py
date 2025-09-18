@@ -213,6 +213,7 @@ class Agent:
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.sts_mode and isinstance(self.llm, Realtime):
             await self.llm.wait_until_ready()
+            await self.llm.send_text(text=self.instructions, role="system")
 
 
         connection = await self.edge.join(self, call)
