@@ -62,7 +62,7 @@ async def start_dispatcher(
     """
     # Setup logging and signal handlers
     setup_logging(log_level)
-    setup_signal_handlers()
+    #setup_signal_handlers()
 
     logger = logging.getLogger("stream-test123.dispatcher")
     logger.info("🚀 Starting Stream Agents dispatcher...")
@@ -70,6 +70,7 @@ async def start_dispatcher(
     await agent_func()
 
     agent_task: Optional[asyncio.Task] = None
+    return
 
     try:
         # Start the agent in a task
