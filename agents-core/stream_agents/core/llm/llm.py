@@ -3,16 +3,13 @@ from __future__ import annotations
 import abc
 import asyncio
 import json
-from typing import Optional, TYPE_CHECKING, Tuple, List, Dict, Any
+from typing import Optional, TYPE_CHECKING, Tuple, List, Dict, Any, TypeVar, Callable, Generic
 
 from pyee.asyncio import AsyncIOEventEmitter
 
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
     from stream_agents.core.agents.conversation import Conversation
-
-
-from typing import List, TypeVar, Any, Callable, Generic, Dict, Optional as TypingOptional
 
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
@@ -52,8 +49,8 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
     async def simple_response(
         self,
         text: str,
-        processors: TypingOptional[List[BaseProcessor]] = None,
-        participant: TypingOptional[Participant] = None,
+        processors: Optional[List[BaseProcessor]] = None,
+        participant: Optional[Participant] = None,
     ) -> LLMResponse[Any]:
         raise NotImplementedError
 
@@ -356,19 +353,40 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
         Returns:
             Tuple of (tool_call, result, error)
         """
+        import inspect
+        args = tc.get("arguments_json", tc.get("arguments", {})) or {}
+        
         async def _invoke():
-            args = tc.get("arguments_json", tc.get("arguments", {})) or {}
-            res = self.call_function(tc["name"], args)
-            return await self._maybe_await(res)
+            # Get the actual function to check if it's async
+            if hasattr(self.function_registry, 'get_callable'):
+                fn = self.function_registry.get_callable(tc["name"])
+                if inspect.iscoroutinefunction(fn):
+                    return await fn(**args)
+                else:
+                    # Run sync function in a worker thread to avoid blocking
+                    return await asyncio.to_thread(fn, **args)
+            else:
+                # Fallback to existing call_function method
+                res = self.call_function(tc["name"], args)
+                return await self._maybe_await(res)
         
         try:
+            # Emit tool start event
+            self.emit("tool.start", {"name": tc["name"], "args": args})
+            
             res = await asyncio.wait_for(_invoke(), timeout=timeout_s)
+            
+            # Emit tool end event
+            self.emit("tool.end", {"name": tc["name"], "ok": True})
+            
             return tc, res, None
         except Exception as e:
+            # Emit tool end event with error
+            self.emit("tool.end", {"name": tc["name"], "ok": False, "error": str(e)})
             return tc, {"error": str(e)}, e
 
     async def _execute_tools(self, calls: List[Dict[str, Any]], *, max_concurrency: int = 8, timeout_s: float = 30):
-        """Execute multiple tool calls concurrently with deduplication and timeout.
+        """Execute multiple tool calls concurrently with timeout.
         
         Args:
             calls: List of tool call dictionaries
@@ -385,3 +403,50 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
                 return await self._run_one_tool(tc, timeout_s)
         
         return await asyncio.gather(*[_guarded(tc) for tc in calls])
+
+    async def _dedup_and_execute(
+        self,
+        calls: List[Dict[str, Any]],
+        *,
+        max_concurrency: int = 8,
+        timeout_s: float = 30,
+        seen: Optional[set] = None,
+    ):
+        """De-duplicate (by id/name/args) then execute concurrently.
+        
+        Args:
+            calls: List of tool call dictionaries
+            max_concurrency: Maximum number of concurrent tool executions
+            timeout_s: Timeout per tool execution in seconds
+            seen: Set of seen tool call keys for deduplication
+            
+        Returns:
+            Tuple of (triples, updated_seen_set)
+        """
+        seen = seen or set()
+        to_run: List[Dict[str, Any]] = []
+        for tc in calls:
+            key = self._tc_key(tc)
+            if key in seen:
+                continue
+            seen.add(key)
+            to_run.append(tc)
+
+        if not to_run:
+            return [], seen  # nothing new
+
+        triples = await self._execute_tools(to_run, max_concurrency=max_concurrency, timeout_s=timeout_s)
+        return triples, seen
+
+    def _sanitize_tool_output(self, value: Any, max_chars: int = 60_000) -> str:
+        """Sanitize tool output to prevent oversized responses.
+        
+        Args:
+            value: Tool output value
+            max_chars: Maximum characters allowed
+            
+        Returns:
+            Sanitized string output
+        """
+        s = value if isinstance(value, str) else json.dumps(value)
+        return (s[:max_chars] + "…") if len(s) > max_chars else s

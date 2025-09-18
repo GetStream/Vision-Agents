@@ -128,7 +128,7 @@ class ClaudeLLM(LLM):
                 function_results = []
                 for tool_call in function_calls:
                     try:
-                        result = self.call_function(tool_call['name'], tool_call['arguments'])
+                        result = self.call_function(tool_call['name'], tool_call['arguments_json'])
                         function_results.append({
                             'name': tool_call['name'],
                             'result': result
@@ -187,7 +187,7 @@ class ClaudeLLM(LLM):
                 function_results = []
                 for tool_call in accumulated_tool_calls:
                     try:
-                        result = self.call_function(tool_call['name'], tool_call['arguments'])
+                        result = self.call_function(tool_call['name'], tool_call['arguments_json'])
                         function_results.append({
                             'name': tool_call['name'],
                             'result': result
@@ -211,7 +211,7 @@ class ClaudeLLM(LLM):
                             "type": "tool_use",
                             "id": tool_call["id"],
                             "name": tool_call["name"],
-                            "input": tool_call["arguments"]
+                            "input": tool_call["arguments_json"]
                         })
                     
                     assistant_msg = {"role": "assistant", "content": assistant_content}
@@ -344,7 +344,7 @@ class ClaudeLLM(LLM):
                         "type": "tool_call",
                         "id": content_block.id,  # Critical: capture the id for tool_result
                         "name": content_block.name,
-                        "arguments": content_block.input or {}  # dict, not arguments_json
+                        "arguments_json": content_block.input or {}  # normalize to arguments_json
                     })
         
         return tool_calls
@@ -392,7 +392,7 @@ class ClaudeLLM(LLM):
                     "type": "tool_call",
                     "id": pending["id"],
                     "name": pending["name"],
-                    "arguments": args
+                    "arguments_json": args
                 })
         
         return tool_calls, None

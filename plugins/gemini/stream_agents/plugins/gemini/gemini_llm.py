@@ -122,17 +122,23 @@ class GeminiLLM(LLM):
             current_calls = pending_calls
             cfg_with_tools = kwargs.get("config")
             
+            seen = set()
             while current_calls and rounds < MAX_ROUNDS:
-                # Execute tools concurrently
-                triples = await self._execute_tools(current_calls, max_concurrency=8, timeout_s=30)
+                # Execute tools concurrently with deduplication
+                triples, seen = await self._dedup_and_execute(current_calls, max_concurrency=8, timeout_s=30, seen=seen)
+                
                 executed = []
                 parts = []
                 for tc, res, err in triples:
                     executed.append(tc)
-                    # Ensure response is a dictionary for Gemini
+                    # Ensure response is a dictionary for Gemini and sanitize output
                     if not isinstance(res, dict):
                         res = {"result": res}
-                    parts.append(types.Part.from_function_response(name=tc["name"], response=res))
+                    # Sanitize large outputs
+                    sanitized_res = {}
+                    for k, v in res.items():
+                        sanitized_res[k] = self._sanitize_tool_output(v)
+                    parts.append(types.Part.from_function_response(name=tc["name"], response=sanitized_res))
                 
                 # Send function responses with tools config
                 follow_up_iter = self.chat.send_message_stream(parts, config=cfg_with_tools)
