@@ -27,9 +27,14 @@ class EventManager:
 
     def register(self, event_class, ignore_not_compatible=False):
         if event_class.__name__.endswith('Event') and hasattr(event_class, 'type'):
+            if event_class.type in self._events:
+                raise KeyError("{event_class.type} is already registered.")
             self._events[event_class.type] = event_class
+            logger.info(f"Registered new event {event_class} - {event_class.type}")
         elif not ignore_not_compatible:
             raise ValueError(f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}")
+        else:
+            logger.warning(f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}")
 
     def merge(self, ev: 'EventManager'):
         self._events.update(ev._events)
