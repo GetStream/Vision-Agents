@@ -92,7 +92,7 @@ class EventManager:
                 elif not self._ignore_unknown_events:
                     raise KeyError(f"Event {sub_event} - {event_type} is not registered.")
                 else:
-                    logger.warning(f"Event {sub_event} - {event_type} - {type(sub_event)} {sub_event.__dict__} is not registered – skipping handler {function.__name__}. All events: {self._events.keys()}, {}")
+                    logger.warning(f"Event {sub_event} - {event_type} - {type(sub_event)} {sub_event.__dict__} is not registered – skipping handler {function.__name__}. All events: {self._events.keys()}")
         return function
 
     def _prepare_event(self, event):
