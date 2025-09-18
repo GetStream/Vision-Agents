@@ -93,26 +93,20 @@ class EventManager:
     def _prepare_event(self, event):
         if isinstance(event, dict):
             event_type = event.get('type', '')
-            if event_type in self._events:
+            try:
                 event_class = self._events[event_type]
-                try:
-                    event = event_class.from_dict(event, infer_missing=True)
-                except Exception as exc:
-                    logger.exception(f"Can't convert {event_class} from {event}")
-                    return
+                event = event_class.from_dict(event, infer_missing=True)
+            except Exception as exc:
+                logger.exception(f"Can't convert dict {event} to event class, skipping")
+                return
 
-                logger.info(f"Received event {event}")
-                return event
-            elif self._ignore_unknown_events:
+        if event.type in self._events:
+            logger.info(f"Received event {event}")
+            return event
+        elif self._ignore_unknown_events:
                 logger.info(f"Event not registered {event}")
-            else:
-                raise RuntimeError(f"Event not registered {event}")
-        elif event.type not in self._events:
-            if self._ignore_unknown_events:
-                logger.info(f"Event not registered {event}")
-            else:
-                raise RuntimeError(f"Event not registered {event}")
-        return event
+        else:
+            raise RuntimeError(f"Event not registered {event}")
 
     def append(self, *events):
         for event in events:
@@ -132,6 +126,7 @@ class EventManager:
             event = self._queue.popleft()
             for handler in self._handlers.get(event.type, []):
                 try:
+                    logger.info(f"Called handler {handler.__name__} for event {event.__name__}")
                     await handler(event)
                 except Exception as exc:
                     self._queue.appendleft(ExceptionEvent(exc, handler))
