@@ -73,6 +73,14 @@ class EventManager:
         import_file.append("")
         return import_file
 
+    def unsubscribe(self, function):
+        # NOTE: not the efficient but will delete proper pointer to fucntion
+        for funcs in self._events.values():
+            try:
+                funcs.remove(function)
+            except ValueError:
+                pass
+
     def subscribe(self, function):
         subscribed = False
         is_union = False
