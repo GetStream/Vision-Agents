@@ -1,7 +1,7 @@
 import asyncio
 import io
 import logging
-from typing import Optional, List, Callable, Any
+from typing import Optional, List, Callable, Any, Protocol, Union
 
 import numpy as np
 from aiortc import MediaStreamTrack, VideoStreamTrack
@@ -27,6 +27,27 @@ try:
     from PIL import Image  # type: ignore
 except Exception:  # pragma: no cover
     Image = None  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+
+class VideoFrameProtocol(Protocol):
+    """Protocol for video frames that can be converted to PNG bytes."""
+    
+    def to_ndarray(self, format: str = "rgb24") -> np.ndarray:
+        """Convert frame to numpy array in specified format."""
+        ...
+
+
+class VideoFrameWithImageProtocol(Protocol):
+    """Protocol for video frames that have a direct to_image method."""
+    
+    def to_image(self) -> Any:  # PIL Image
+        """Convert frame directly to PIL Image."""
+        ...
+
+
+VideoFrame = Union[VideoFrameProtocol, VideoFrameWithImageProtocol]
 
 """
 TODO:
@@ -203,24 +224,25 @@ class Realtime2(realtime.Realtime):
             self._session_context = None
             self._session = None
 
-    def _frame_to_png_bytes(self, frame: Any) -> bytes:
+    @classmethod
+    def _frame_to_png_bytes(cls, frame: VideoFrame) -> bytes:
         """Convert a video frame to PNG bytes."""
         if Image is None:
-            self.logger.warning("PIL Image not available, cannot convert frame to PNG")
+            logger.warning("PIL Image not available, cannot convert frame to PNG")
             return b""
         
         try:
             if hasattr(frame, "to_image"):
-                img = frame.to_image()  # type: ignore[attr-defined]
+                img = frame.to_image()
             else:
-                arr = frame.to_ndarray(format="rgb24")  # type: ignore[attr-defined]
+                arr = frame.to_ndarray(format="rgb24")
                 img = Image.fromarray(arr)
             
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             return buf.getvalue()
         except Exception as e:
-            self.logger.error(f"Error converting frame to PNG: {e}")
+            logger.error(f"Error converting frame to PNG: {e}")
             return b""
 
     async def start_video_sender(self, input_track: MediaStreamTrack, fps: int = 1) -> None:
@@ -253,16 +275,17 @@ class Realtime2(realtime.Realtime):
 
     async def _send_video_frame(self, frame: av.VideoFrame) -> None:
         """Send a video frame to Gemini as a PNG blob."""
+        self.logger.info(f"Sending video frame to gemini: {frame}")
         if not hasattr(self, '_session') or self._session is None:
             self.logger.warning("No active session, cannot send video frame")
             return
         
         try:
-            png_bytes = self._frame_to_png_bytes(frame)
-            if png_bytes:
-                blob = Blob(data=png_bytes, mime_type="image/png")
-                await self._session.send_realtime_input(media=blob)
-                self.logger.debug(f"Sent video frame ({len(png_bytes)} bytes)")
+            png_bytes = self.__class__._frame_to_png_bytes(frame)
+            blob = Blob(data=png_bytes, mime_type="image/png")
+            self.logger.info(f"Sending video frame to gemini: {frame}")
+            await self._session.send_realtime_input(media=blob)
+            self.logger.info(f"Sent video frame ({len(png_bytes)} bytes)")
         except Exception as e:
             self.logger.error(f"Error sending video frame: {e}")
 

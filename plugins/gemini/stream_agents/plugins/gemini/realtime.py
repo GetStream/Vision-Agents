@@ -11,7 +11,10 @@ import io
 import logging
 import os
 import pprint
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .realtime2 import VideoFrame
 
 from aiortc.mediastreams import MediaStreamTrack
 
@@ -293,13 +296,13 @@ class Realtime(realtime.Realtime):
         await session.send_realtime_input(audio=blob)
 
     @staticmethod
-    def _frame_to_png_bytes(frame: Any) -> bytes:
+    def _frame_to_png_bytes(frame: "VideoFrame") -> bytes:
         if Image is None:
             return b""
         if hasattr(frame, "to_image"):
-            img = frame.to_image()  # type: ignore[attr-defined]
+            img = frame.to_image()
         else:
-            arr = frame.to_ndarray(format="rgb24")  # type: ignore[attr-defined]
+            arr = frame.to_ndarray(format="rgb24")
             img = Image.fromarray(arr)
         buf = io.BytesIO()
         img.save(buf, format="PNG")

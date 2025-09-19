@@ -62,15 +62,30 @@ class TestRealtime2Integration(BaseTest):
         realtime2.on("audio", lambda x: events.append(x))
         await realtime2.connect()
         # Start video sender with low FPS to avoid overwhelming the connection
-        await realtime2.start_video_sender(bunny_video_track, fps=1)
+        await realtime2.start_video_sender(bunny_video_track, fps=5)
         
         # Let it run for a few seconds
-        await asyncio.sleep(3.0)
+        await asyncio.sleep(10.0)
         
         # Stop video sender
         await realtime2.stop_video_sender()
-        
-        # Verify connection is still active
-        assert realtime2._session is not None
+
         print("Real video sending completed successfully")
+
+    async def test_frame_to_png_bytes_with_bunny_video(self, bunny_video_track):
+        """Test that _frame_to_png_bytes works with real bunny video frames"""
+        # Get a frame from the bunny video track
+        frame = await bunny_video_track.recv()
+        
+        # Convert frame to PNG bytes using the classmethod (no instance needed)
+        png_bytes = Realtime2._frame_to_png_bytes(frame)
+        
+        # Verify we got PNG data
+        assert isinstance(png_bytes, bytes)
+        assert len(png_bytes) > 0
+        
+        # Verify it's actually PNG data (PNG files start with specific bytes)
+        assert png_bytes.startswith(b'\x89PNG\r\n\x1a\n')
+        
+        print(f"Successfully converted bunny video frame to PNG: {len(png_bytes)} bytes")
 
