@@ -1096,7 +1096,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
@@ -1296,8 +1296,8 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.3.0a5"
-source = { git = "https://github.com/GetStream/stream-py.git?rev=webrtc#e57847e1d42b0f31aa6c5577c6aea0447ce3dfc8" }
+version = "2.3.1"
+source = { git = "https://github.com/GetStream/stream-py.git?rev=5d22ac964838da4f38af543dcbafd68f89be276a#5d22ac964838da4f38af543dcbafd68f89be276a" }
 dependencies = [
     { name = "aiohttp" },
     { name = "aiortc" },
@@ -1363,6 +1363,11 @@ source = { editable = "." }
 dependencies = [
     { name = "python-dotenv" },
     { name = "stream-agents" },
+    { name = "stream-agents-plugins-deepgram" },
+    { name = "stream-agents-plugins-elevenlabs" },
+    { name = "stream-agents-plugins-getstream" },
+    { name = "stream-agents-plugins-openai" },
+    { name = "stream-agents-plugins-silero" },
 ]
 
 [package.optional-dependencies]
@@ -1379,6 +1384,11 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "stream-agents", editable = "../../agents-core" },
+    { name = "stream-agents-plugins-deepgram", editable = "../../plugins/deepgram" },
+    { name = "stream-agents-plugins-elevenlabs", editable = "../../plugins/elevenlabs" },
+    { name = "stream-agents-plugins-getstream", editable = "../../plugins/getstream" },
+    { name = "stream-agents-plugins-openai", editable = "../../plugins/openai" },
+    { name = "stream-agents-plugins-silero", editable = "../../plugins/silero" },
 ]
 provides-extras = ["dev"]
 
@@ -4216,7 +4226,7 @@ requires-dist = [
     { name = "daily-python", specifier = ">=0.19.8" },
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
-    { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=webrtc" },
+    { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=5d22ac964838da4f38af543dcbafd68f89be276a" },
     { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },
@@ -4282,14 +4292,12 @@ version = "0.1.0"
 source = { editable = "../../plugins/cartesia" }
 dependencies = [
     { name = "cartesia" },
-    { name = "getstream", extra = ["webrtc"] },
     { name = "stream-agents" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "cartesia", specifier = ">=2.0.5" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "stream-agents", editable = "../../agents-core" },
 ]
 
@@ -4305,7 +4313,6 @@ version = "0.1.1"
 source = { editable = "../../plugins/deepgram" }
 dependencies = [
     { name = "deepgram-sdk" },
-    { name = "getstream", extra = ["webrtc"] },
     { name = "numpy" },
     { name = "stream-agents" },
 ]
@@ -4313,7 +4320,6 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "deepgram-sdk", specifier = ">=4.5.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "stream-agents", editable = "../../agents-core" },
 ]
@@ -4333,14 +4339,12 @@ version = "0.1.0"
 source = { editable = "../../plugins/elevenlabs" }
 dependencies = [
     { name = "elevenlabs" },
-    { name = "getstream", extra = ["webrtc"] },
     { name = "stream-agents" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "elevenlabs", specifier = ">=2.5.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "stream-agents", editable = "../../agents-core" },
 ]
 
@@ -4356,14 +4360,12 @@ version = "0.1.1"
 source = { editable = "../../plugins/fal" }
 dependencies = [
     { name = "fal-client" },
-    { name = "getstream", extra = ["webrtc"] },
     { name = "stream-agents" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fal-client", specifier = ">=0.7.0" },
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "stream-agents", editable = "../../agents-core" },
 ]
 
@@ -4379,7 +4381,6 @@ name = "stream-agents-plugins-gemini"
 version = "0.1.0"
 source = { editable = "../../plugins/gemini" }
 dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
     { name = "google-genai" },
     { name = "numpy" },
     { name = "stream-agents" },
@@ -4387,7 +4388,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "google-genai", specifier = ">=1.29.0" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "stream-agents", editable = "../../agents-core" },
@@ -4401,11 +4401,27 @@ dev = [
 ]
 
 [[package]]
+name = "stream-agents-plugins-getstream"
+version = "0.1.0"
+source = { editable = "../../plugins/getstream" }
+dependencies = [
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "stream-agents", editable = "../../agents-core" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
 name = "stream-agents-plugins-kokoro"
 version = "0.1.0"
 source = { editable = "../../plugins/kokoro" }
 dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
     { name = "kokoro" },
     { name = "misaki", extra = ["en"] },
     { name = "numpy" },
@@ -4414,7 +4430,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "kokoro", specifier = ">=0.9.4" },
     { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
@@ -4432,7 +4447,6 @@ name = "stream-agents-plugins-moonshine"
 version = "0.1.1"
 source = { editable = "../../plugins/moonshine" }
 dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
     { name = "numpy" },
     { name = "onnxruntime" },
     { name = "soundfile" },
@@ -4441,7 +4455,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.22.0" },
     { name = "soundfile", specifier = ">=0.13.1" },
@@ -4459,14 +4472,12 @@ name = "stream-agents-plugins-openai"
 version = "0.1.1"
 source = { editable = "../../plugins/openai" }
 dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
     { name = "getstream-plugins-common" },
     { name = "openai", extra = ["realtime"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "getstream-plugins-common" },
     { name = "openai", extras = ["realtime"], specifier = ">=1.97.1" },
 ]
@@ -4482,7 +4493,6 @@ name = "stream-agents-plugins-silero"
 version = "0.1.0"
 source = { editable = "../../plugins/silero" }
 dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
     { name = "numpy" },
     { name = "silero" },
     { name = "stream-agents" },
@@ -4491,7 +4501,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["webrtc"], specifier = "==2.3.0a5" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "silero", specifier = ">=0.4.1" },
     { name = "stream-agents", editable = "../../agents-core" },

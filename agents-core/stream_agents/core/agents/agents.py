@@ -18,6 +18,7 @@ from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
 from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
+from ..mcp.tool_converter import MCPToolConverter
 
 
 from .conversation import StreamHandle, Message, Conversation
@@ -644,7 +645,7 @@ class Agent:
             self.logger.info("🎥 Video track initialized from video publisher")
 
     async def _connect_mcp_servers(self):
-        """Connect to all configured MCP servers."""
+        """Connect to all configured MCP servers and register their tools."""
         if not self.mcp_servers:
             return
             
@@ -655,6 +656,10 @@ class Agent:
                 self.logger.info(f"  Connecting to MCP server {i+1}/{len(self.mcp_servers)}: {server.__class__.__name__}")
                 await server.connect()
                 self.logger.info(f"  ✅ Connected to MCP server {i+1}/{len(self.mcp_servers)}")
+                
+                # Register MCP tools with the LLM's function registry
+                await self._register_mcp_tools(i, server)
+                
             except Exception as e:
                 self.logger.error(f"  ❌ Failed to connect to MCP server {i+1}/{len(self.mcp_servers)}: {e}")
                 # Continue with other servers even if one fails
@@ -704,4 +709,39 @@ class Agent:
         if not server.is_connected:
             raise RuntimeError(f"MCP server {server_index} is not connected")
         return await server.call_tool(tool_name, arguments)
+
+    async def _register_mcp_tools(self, server_index: int, server: MCPBaseServer):
+        """Register tools from an MCP server with the LLM's function registry.
+        
+        Args:
+            server_index: Index of the MCP server in the mcp_servers list
+            server: The connected MCP server
+        """
+        try:
+            # Get tools from the MCP server
+            mcp_tools = await server.list_tools()
+            self.logger.info(f"  📋 Found {len(mcp_tools)} tools from MCP server {server_index + 1}")
+            
+            # Register each tool with the function registry
+            for tool in mcp_tools:
+                try:
+                    # Create a wrapper function for the MCP tool
+                    tool_wrapper = MCPToolConverter.create_mcp_tool_wrapper(
+                        server_index, tool.name, self
+                    )
+                    
+                    # Register the tool with the LLM's function registry
+                    self.llm.function_registry.register(
+                        name=f"mcp_{server_index}_{tool.name}",
+                        description=tool.description or f"MCP tool: {tool.name}"
+                    )(tool_wrapper)
+                    
+                    self.logger.info(f"    ✅ Registered tool: {tool.name}")
+                    
+                except Exception as e:
+                    self.logger.error(f"    ❌ Failed to register tool {tool.name}: {e}")
+                    # Continue with other tools even if one fails
+                    
+        except Exception as e:
+            self.logger.error(f"  ❌ Failed to get tools from MCP server {server_index + 1}: {e}")
 
