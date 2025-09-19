@@ -63,6 +63,8 @@ You are a voice assistant.
         # Ensure the LLM realtime connection is ready (should already be awaited internally)
         await agent.llm.wait_until_ready(timeout=10.0)  # type: ignore[attr-defined]
         print("LLM ready")
+        await agent.llm.request_session_info()
+        print("Requested session info")
         # Wait for a human to join the call before greeting
         print("Waiting for human to join the call")
         await agent.llm.simple_response(text="Please greet the user.")

@@ -55,6 +55,9 @@ class Realtime(realtime.Realtime):
     ) -> None:
         ...
 
+    async def request_session_info(self) -> None:
+        await self.rtc.request_session_info()
+
     async def _close_impl(self):
         await self.rtc.close()
 

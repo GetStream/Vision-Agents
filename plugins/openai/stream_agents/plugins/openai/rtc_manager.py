@@ -38,6 +38,69 @@ OPENAI_REALTIME_BASE = "https://api.openai.com/v1/realtime"
 OPENAI_SESSIONS_URL = f"{OPENAI_REALTIME_BASE}/sessions"
 
 
+class RealtimeAudioTrack(AudioStreamTrack):
+    """Minimal audio track without a queue.
+
+    - Generates 20 ms mono PCM16 silence by default
+    - Accepts optional push-based PCM via set_input(bytes, sample_rate)
+    - Drops old input if new input arrives (no buffering)
+    """
+
+    kind = "audio"
+
+    def __init__(self, sample_rate: int = 48000):
+        super().__init__()
+        self._sample_rate = int(sample_rate)
+        self._ts = 0
+        self._latest_chunk: Optional[bytes] = None
+        self._silence_cache: dict[int, np.ndarray] = {}
+
+    def set_input (self, pcm_data: bytes, sample_rate: Optional[int] = None) -> None:
+        if not pcm_data:
+            return
+        if sample_rate is not None:
+            self._sample_rate = int(sample_rate)
+        self._latest_chunk = bytes(pcm_data)
+
+    async def recv(self):
+        # Pace roughly at 20 ms per frame
+        await asyncio.sleep(0.02)
+
+        sr = int(self._sample_rate) if self._sample_rate else 48000
+        samples_per_frame = int(0.02 * sr)
+
+        chunk = self._latest_chunk
+        if chunk:
+            # Consume and clear the latest pushed chunk
+            self._latest_chunk = None
+            arr = np.frombuffer(chunk, dtype=np.int16)
+            if arr.ndim == 1:
+                samples = arr.reshape(1, -1)
+            else:
+                samples = arr[:1, :]
+            # Pad or truncate to exactly one 20 ms frame
+            needed = samples_per_frame
+            have = samples.shape[1]
+            if have < needed:
+                pad = np.zeros((1, needed - have), dtype=np.int16)
+                samples = np.concatenate([samples, pad], axis=1)
+            elif have > needed:
+                samples = samples[:, :needed]
+        else:
+            cached = self._silence_cache.get(sr)
+            if cached is None:
+                cached = np.zeros((1, samples_per_frame), dtype=np.int16)
+                self._silence_cache[sr] = cached
+            samples = cached
+
+        frame = AudioFrame.from_ndarray(samples, format="s16", layout="mono")
+        frame.sample_rate = sr
+        frame.pts = self._ts
+        frame.time_base = Fraction(1, sr)
+        self._ts += samples.shape[1]
+        return frame
+
+
 class StreamVideoForwardingTrack(VideoStreamTrack):
     """Track that forwards frames from Stream Video to OpenAI."""
     
@@ -206,7 +269,7 @@ class RTCManager:
         answer_sdp = await self._setup_sdp_exchange()
         logger.info("Set up peer connection handlers")
         logger.info(f"Answer SDP: {answer_sdp}")
-        # WE ARE HERE
+
         # Set the remote SDP we got from OpenAI
         answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
         await self.pc.setRemoteDescription(answer)
@@ -242,9 +305,24 @@ class RTCManager:
         self.data_channel = self.pc.createDataChannel("oai-events")
 
         @self.data_channel.on("open")
-        def on_open():
+        async def on_open():
             logger.info("Data channel opened")
             self._data_channel_open_event.set()
+
+            # Immediately switch to semantic VAD so it's active before the user speaks
+            await self._send_event(
+                    {
+                        "type": "session.update",
+                        "session": {
+                            "turn_detection": {
+                                "type": "semantic_vad"
+                            }
+                        },
+                    }
+                )
+            # Ask server to echo the current session so we can verify
+            await self._send_event({"type": "session.get"})
+            logger.info("Requested semantic_vad via session.update")
 
         @self.data_channel.on("message")
         def on_message(message):
@@ -255,68 +333,6 @@ class RTCManager:
                 logger.error(f"Failed to decode message: {e}")
 
     async def _set_audio_track(self) -> None:
-        class RealtimeAudioTrack(AudioStreamTrack):
-            """Minimal audio track without a queue.
-
-            - Generates 20 ms mono PCM16 silence by default
-            - Accepts optional push-based PCM via set_input(bytes, sample_rate)
-            - Drops old input if new input arrives (no buffering)
-            """
-
-            kind = "audio"
-
-            def __init__(self, sample_rate: int = 48000):
-                super().__init__()
-                self._sample_rate = int(sample_rate)
-                self._ts = 0
-                self._latest_chunk: Optional[bytes] = None
-                self._silence_cache: dict[int, np.ndarray] = {}
-
-            def set_input (self, pcm_data: bytes, sample_rate: Optional[int] = None) -> None:
-                if not pcm_data:
-                    return
-                if sample_rate is not None:
-                    self._sample_rate = int(sample_rate)
-                self._latest_chunk = bytes(pcm_data)
-
-            async def recv(self):
-                # Pace roughly at 20 ms per frame
-                await asyncio.sleep(0.02)
-
-                sr = int(self._sample_rate) if self._sample_rate else 48000
-                samples_per_frame = int(0.02 * sr)
-
-                chunk = self._latest_chunk
-                if chunk:
-                    # Consume and clear the latest pushed chunk
-                    self._latest_chunk = None
-                    arr = np.frombuffer(chunk, dtype=np.int16)
-                    if arr.ndim == 1:
-                        samples = arr.reshape(1, -1)
-                    else:
-                        samples = arr[:1, :]
-                    # Pad or truncate to exactly one 20 ms frame
-                    needed = samples_per_frame
-                    have = samples.shape[1]
-                    if have < needed:
-                        pad = np.zeros((1, needed - have), dtype=np.int16)
-                        samples = np.concatenate([samples, pad], axis=1)
-                    elif have > needed:
-                        samples = samples[:, :needed]
-                else:
-                    cached = self._silence_cache.get(sr)
-                    if cached is None:
-                        cached = np.zeros((1, samples_per_frame), dtype=np.int16)
-                        self._silence_cache[sr] = cached
-                    samples = cached
-
-                frame = AudioFrame.from_ndarray(samples, format="s16", layout="mono")
-                frame.sample_rate = sr
-                frame.pts = self._ts
-                frame.time_base = Fraction(1, sr)
-                self._ts += samples.shape[1]
-                return frame
-
         self._mic_track = RealtimeAudioTrack(48000)
         self.pc.addTrack(self._mic_track)
 
@@ -598,6 +614,9 @@ class RTCManager:
                 await cb(event)
             except Exception as e:
                 logger.debug(f"Event callback error: {e}")
+
+    async def request_session_info(self) -> None:
+        await self._send_event({"type": "session.get"})
 
     def set_audio_callback(self, callback: Callable[[bytes], Any]) -> None:
         self._audio_callback = callback
