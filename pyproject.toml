@@ -53,6 +53,7 @@ dev = [
     "python-dotenv",
     "pre-commit",
     "scalene>=1.5.54",
+    "fastmcp>=2.12.3",
 ]
 
 [tool.mypy]

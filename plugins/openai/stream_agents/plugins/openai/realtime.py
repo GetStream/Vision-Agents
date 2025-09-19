@@ -27,8 +27,6 @@ from stream_agents.core.events import RealtimeConnectedEvent
 from stream_agents.core.llm import realtime
 from stream_agents.core.llm.llm import LLMResponseEvent
 
- 
-
 
 logger = logging.getLogger(__name__)
 
