@@ -6,6 +6,7 @@ import numpy as np
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
+from openai.types.realtime import *
 
 load_dotenv()
 
@@ -64,18 +65,16 @@ class Realtime(realtime.Realtime):
     async def _handle_openai_event(self, event: dict) -> None:
         et = event.get("type")
         if et == "response.audio_transcript.done":
-            transcript = event.get("transcript", "")
-            if transcript:
-                self._emit_transcript_event(text=transcript, user_metadata={"role": "assistant", "source": "openai"})
-                self._emit_response_event(text=transcript, response_id=event.get("response_id"), is_complete=True, conversation_item_id=event.get("item_id"))
-        elif et == "conversation.item.input_audio_transcription.completed":
-            transcript = event.get("transcript", "")
-            if transcript:
-                self._emit_transcript_event(text=transcript, user_metadata={"role": "user", "source": "openai"})
+            event: ResponseAudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent.model_validate(event)
+            self._emit_transcript_event(text=event.transcript, user_metadata={"role": "assistant", "source": "openai"})
+            self._emit_response_event(text=event.transcript, response_id=event.response_id, is_complete=True, conversation_item_id=event.item_id)
+        if et == "input_audio_buffer.speech_started":
+            event: InputAudioBufferSpeechStartedEvent = InputAudioBufferSpeechStartedEvent.model_validate(event)
+            await self.output_track.flush()            
 
     async def _handle_audio_output(self, audio_bytes: bytes) -> None:
         # Forward audio as event and to output track if available
-        logger.info(f"🎵 Forwarding audio output: {len(audio_bytes)}")
+        logger.debug(f"🎵 Forwarding audio output: {len(audio_bytes)}")
         if self.output_track is not None:
             await self.output_track.write(audio_bytes)
         else:
@@ -87,7 +86,7 @@ class Realtime(realtime.Realtime):
         Args:
             video_array: RGB video frame as numpy array from frame.to_ndarray()
         """
-        logger.info(f"🎥 Forwarding video frame: shape={video_array.shape}, dtype={video_array.dtype}")
+        logger.debug(f"🎥 Forwarding video frame: shape={video_array.shape}, dtype={video_array.dtype}")
     
         # Write to output track for remote participants to see
         if self.output_track is not None:

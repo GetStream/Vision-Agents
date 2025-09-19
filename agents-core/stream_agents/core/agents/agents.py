@@ -234,7 +234,7 @@ class Agent:
                     # Create or reuse a persistent MediaRelay to keep branches alive
                     try:
                         self._persistent_media_relay = getattr(self, "_persistent_media_relay", None) or MediaRelay()
-                    except Exception:
+                    except Excepteion:
                         self._persistent_media_relay = None
                     @pc.on("track")
                     async def _on_pc_track_early(track):

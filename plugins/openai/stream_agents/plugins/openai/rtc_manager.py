@@ -99,7 +99,7 @@ class RealtimeAudioTrack(AudioStreamTrack):
         frame.time_base = Fraction(1, sr)
         self._ts += samples.shape[1]
         return frame
-
+        
 
 class StreamVideoForwardingTrack(VideoStreamTrack):
     """Track that forwards frames from Stream Video to OpenAI."""
@@ -240,7 +240,7 @@ class RTCManager:
         self.token = None
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
-        self._mic_track: AudioStreamTrack = None
+        self._mic_track: RealtimeAudioTrack = None
         self._audio_callback: Optional[Callable[[bytes], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._video_callback: Optional[Callable[[np.ndarray], Any]] = None
@@ -442,13 +442,6 @@ class RTCManager:
             if self._video_sender is None:
                 logger.error("❌ Video sender not available; was video track negotiated?")
                 raise RuntimeError("Video sender not available; was video track negotiated?")
-            
-            # Validate source track
-            if stream_video_track is None:
-                logger.error("❌ Stream Video track cannot be None")
-                raise ValueError("Stream Video track cannot be None")
-            
-            logger.info(f"🎥 Validating Stream Video track: {type(stream_video_track).__name__}")
             
             # Stop any existing video sender task
             if hasattr(self, '_video_sender_task') and self._video_sender_task:
