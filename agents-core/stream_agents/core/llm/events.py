@@ -114,3 +114,11 @@ class StandardizedTextDeltaEvent(PluginBaseEvent):
     sequence_number: Optional[int] = None
     """The sequence number for this event."""
 
+
+@dataclass
+class LLMResponseEvent(PluginBaseEvent):
+    """Event emitted after an LLM response is processed."""
+    type: str = field(default='llm.response', init=False)
+    original: Any = None
+    text: str = ""
+

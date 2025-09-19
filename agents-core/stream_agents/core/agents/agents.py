@@ -10,11 +10,11 @@ from aiortc.contrib.media import MediaRelay
 
 from ..edge.types import Participant, PcmData, Connection, TrackType, User
 from ..events.events import RealtimePartialTranscriptEvent
-from ..llm.types import StandardizedTextDeltaEvent
+from ..llm.events import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..llm.events import RealtimeTranscriptEvent
+from ..llm.events import RealtimeTranscriptEvent, LLMResponseEvent
 from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
@@ -24,7 +24,7 @@ from ..mcp import MCPBaseServer
 
 from .conversation import StreamHandle, Message, Conversation
 from ..events.manager import EventManager
-from ..llm.llm import LLM, LLMResponseEvent
+from ..llm.llm import LLM
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
@@ -125,6 +125,11 @@ class Agent:
         # validation time
         self._validate_configuration()
 
+        # Initialize track management attributes
+        self._active_tracks: Dict[str, Any] = {}  # Track active video/audio tracks
+        self._last_health_check: float = 0.0  # Last health check timestamp
+        self._track_health_check_interval: float = 1.0  # Health check interval in seconds
+
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
@@ -148,6 +153,20 @@ class Agent:
         self.logger.info(f"🎥VDP: Cleaning up {len(self._active_tracks)} active tracks")
         for track_id in list(self._active_tracks.keys()):
             self._remove_track(track_id)
+
+        # Clean up track processing tasks
+        if hasattr(self, '_track_tasks'):
+            self.logger.info(f"🎥VDP: Canceling {len(self._track_tasks)} track processing tasks")
+            for task in self._track_tasks:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass  # Expected when canceling
+                    except Exception as e:
+                        self.logger.debug(f"🎥VDP: Error during task cancellation: {e}")
+            self._track_tasks.clear()
         
         # Close RTC connection
         if self._connection:
@@ -234,7 +253,7 @@ class Agent:
                     # Create or reuse a persistent MediaRelay to keep branches alive
                     try:
                         self._persistent_media_relay = getattr(self, "_persistent_media_relay", None) or MediaRelay()
-                    except Excepteion:
+                    except Exception:
                         self._persistent_media_relay = None
                     @pc.on("track")
                     async def _on_pc_track_early(track):
@@ -248,7 +267,7 @@ class Agent:
                                 forward_branch = relay.subscribe(track)
                                 print(f"🎥 Forwarding video frames to Realtime provider (pc.on early track) {forward_branch}")
                                 if self.sts_mode and isinstance(self.llm, Realtime):
-                                    await self.llm.start_video_sender(forward_branch)
+                                    await self.llm.start_video_sender(forward_branch, fps=30)
                                     self.logger.info("🎥 Forwarding video frames to Realtime provider (pc.on early track)")
                         except Exception as e:
                             self.logger.error(f"Error handling pc.on('track') video (early): {e}")
@@ -396,34 +415,23 @@ class Agent:
         @self.edge.on("track_added")
         async def on_track(track_id, track_type, user):
             #await self._process_track(track_id, track_type, user)
-            asyncio.create_task(self._process_track(track_id, track_type, user))
+            task = asyncio.create_task(self._process_track(track_id, track_type, user))
+            # Store task reference to prevent "Task exception was never retrieved" errors
+            if not hasattr(self, '_track_tasks'):
+                self._track_tasks: List[asyncio.Task] = []
+            self._track_tasks.append(task)
 
-        # Fallback: if the edge layer doesn't emit track_added reliably, listen on the
-        # underlying subscriber peer connection for aiortc-style track events and forward.
-        try:
-            base_pc = getattr(self._connection, "subscriber_pc", None)
-            pc = None
-            if base_pc is not None:
-                # Try common attributes for underlying RTCPeerConnection
-                pc = getattr(base_pc, "pc", None) or getattr(base_pc, "_pc", None) or base_pc
-            if pc is not None and hasattr(pc, "on"):
-                self.logger.info("🔗 Attaching pc.on('track') handler to subscriber peer connection")
-                @pc.on("track")
-                async def _on_pc_track(track):
-                    try:
-                        kind = getattr(track, "kind", None)
-                        if kind == "video":
-                            # Relay the track and start forwarding to the Realtime provider
-                            from aiortc.contrib.media import MediaRelay
-                            relay = MediaRelay()
-                            forward_branch = relay.subscribe(track)
-                            if self.sts_mode and isinstance(self.llm, Realtime):
-                                await self.llm.start_video_sender(forward_branch)
-                                self.logger.info("🎥 Forwarding video frames to Realtime provider (pc.on track)")
-                    except Exception as e:
-                        self.logger.error(f"Error handling pc.on('track') video: {e}")
-        except Exception:
-            pass
+            # Add exception handling to the task
+            def handle_task_exception(task_result):
+                try:
+                    task_result.result()  # This will raise any exception that occurred
+                except Exception as e:
+                    self.logger.error(f"Unhandled exception in track processing task: {e}")
+                    # Clean up the task from our list
+                    if task in self._track_tasks:
+                        self._track_tasks.remove(task)
+
+            task.add_done_callback(handle_task_exception)
 
     async def _reply_to_audio(
         self, pcm_data: PcmData, participant: Participant
@@ -560,7 +568,16 @@ class Agent:
         
         while True:
             # Periodic health check
-            self._check_track_health()
+            try:
+                self._check_track_health()
+            except AttributeError as e:
+                # Handle case where attributes haven't been initialized yet
+                if "_last_health_check" in str(e) or "_track_health_check_interval" in str(e):
+                    self.logger.debug("🎥VDP: Health check attributes not initialized yet, skipping")
+                    break
+                else:
+                    raise
+
             try:
                 # Adaptive timeout based on error count
                 current_timeout = base_timeout * (1.5 ** min(timeout_errors, 3))

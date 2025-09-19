@@ -13,6 +13,7 @@ from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamT
 from fractions import Fraction
 import numpy as np
 from av import AudioFrame, VideoFrame
+from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 
 # Import timing utilities
 try:
@@ -99,7 +100,7 @@ class RealtimeAudioTrack(AudioStreamTrack):
         frame.time_base = Fraction(1, sr)
         self._ts += samples.shape[1]
         return frame
-        
+
 
 class StreamVideoForwardingTrack(VideoStreamTrack):
     """Track that forwards frames from Stream Video to OpenAI."""
@@ -121,20 +122,41 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         self._last_successful_frame_time = time.monotonic()
         self._health_check_interval = 10.0  # Check health every 10 seconds
         self._last_health_check = time.monotonic()
+        self._forwarder: Optional[VideoForwarder] = None
+        self._started: bool = False
+
+        # Rate limiting for inactive track warnings
+        self._last_inactive_warning = 0
+        self._inactive_warning_interval = 30.0  # Only warn every 30 seconds
         
         logger.info(f"🎥 StreamVideoForwardingTrack initialized: fps={fps}, interval={self._interval:.3f}s (frame limiting DISABLED for performance)")
     
+    async def start(self) -> None:
+        if self._started:
+            return
+        # Create VideoForwarder with the input source track and start it once
+        self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)
+        await self._forwarder.start()
+        self._started = True
+
     @frame_timing_decorator(threshold=0.1)
     async def recv(self):
-        """Read from Stream Video and forward to OpenAI with robust error handling."""
+        """Pull latest frame from forwarder's latest-N buffer and return it to WebRTC."""
+        if not self._started:
+            await self.start()
+
         frame_start_time = time.monotonic()
-        
+
         if not self._is_active:
-            logger.warning("🎥 StreamVideoForwardingTrack is no longer active, returning black frame")
+            # Rate limit warnings to avoid spam
+            now = time.monotonic()
+            if now - self._last_inactive_warning > self._inactive_warning_interval:
+                logger.warning("🎥 StreamVideoForwardingTrack is no longer active, returning black frame")
+                self._last_inactive_warning = now
             return self._generate_black_frame()
-        
+
         now = time.monotonic()
-        
+
         # Health check: detect if track has been dead for too long
         if now - self._last_health_check > self._health_check_interval:
             self._last_health_check = now
@@ -142,79 +164,52 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
                 logger.error("🎥 StreamVideoForwardingTrack health check failed - no frames for 30+ seconds")
                 self._is_active = False
                 return self._generate_black_frame()
-        
-        # Frame rate limiting - DISABLED for better performance
-        # if now - self._last_frame_time < self._interval:
-        #     await asyncio.sleep(self._interval - (now - self._last_frame_time))
-        
+
         try:
-            # Read frame from Stream Video with shorter timeout for faster failure detection
-            source_recv_start = time.monotonic()
-            frame = await asyncio.wait_for(self._source_track.recv(), timeout=0.5)
-            source_recv_end = time.monotonic()
-            source_recv_duration = source_recv_end - source_recv_start
-            
-            # Reset error counts on successful frame
+            # Pull the newest frame, coalescing backlog
+            timeout = max(0.01, self._interval * 2)
+            assert self._forwarder is not None
+            frame = await self._forwarder.next_frame(timeout=timeout)
+
+            # Reset error counters on success
             self._consecutive_errors = 0
             self._frame_count += 1
             self._last_successful_frame_time = now
-            
-            # Convert format if needed
-            conversion_start = time.monotonic()
+
+            # Convert to rgb24 if needed
             if frame.format.name != "rgb24":
                 try:
                     frame = frame.reformat(format="rgb24")
                     logger.debug(f"🎥 Converted frame format: {frame.format.name} → rgb24")
                 except Exception as e:
                     logger.warning(f"🎥 Frame format conversion failed: {e}, using original")
-            conversion_end = time.monotonic()
-            conversion_duration = conversion_end - conversion_start
-            
-            # Update timing for OpenAI
+
+            # Update timing for WebRTC
             frame.pts = self._ts
             frame.time_base = Fraction(1, self._fps)
             self._ts += 1
             self._last_frame_time = time.monotonic()
-            
-            # Log detailed timing for every frame
+
+            # Optional detailed timing log
             total_duration = time.monotonic() - frame_start_time
-            logger.info(f"🎥 FRAME TIMING: frame_id={self._frame_count} "
-                       f"source_recv={source_recv_duration:.3f}s "
-                       f"conversion={conversion_duration:.3f}s "
-                       f"total={total_duration:.3f}s")
-            
-            if self._frame_count % 30 == 0:  # Log every 30 frames
-                logger.debug(f"🎥 Forwarded {self._frame_count} frames from Stream Video to OpenAI")
-            
+            if self._frame_count % 30 == 0:
+                logger.info(f"🎥 FRAME TIMING: frame_id={self._frame_count} total={total_duration:.3f}s")
+
             return frame
-            
+
         except asyncio.TimeoutError:
             self._consecutive_errors += 1
-            timeout_duration = time.monotonic() - frame_start_time
-            logger.debug(f"🎥 TIMEOUT: frame_id={self._frame_count} timeout_duration={timeout_duration:.3f}s "
-                        f"(consecutive_errors={self._consecutive_errors})")
-            
-            # Circuit breaker: if too many consecutive timeouts, mark track as inactive
             if self._consecutive_errors >= self._max_consecutive_errors:
                 logger.error(f"🎥 StreamVideoForwardingTrack circuit breaker triggered - {self._consecutive_errors} consecutive timeouts")
                 self._is_active = False
-                return self._generate_black_frame()
-            
             return self._generate_black_frame()
-            
         except Exception as e:
             self._consecutive_errors += 1
             self._error_count += 1
-            error_duration = time.monotonic() - frame_start_time
-            logger.error(f"❌ FRAME ERROR: frame_id={self._frame_count} error_duration={error_duration:.3f}s "
-                        f"(error #{self._error_count}, consecutive={self._consecutive_errors}): {e}")
-            
-            # Circuit breaker: if too many consecutive errors, mark track as inactive
+            logger.error(f"❌ FRAME ERROR: frame_id={self._frame_count} (error #{self._error_count}, consecutive={self._consecutive_errors}): {e}")
             if self._consecutive_errors >= self._max_consecutive_errors:
                 logger.error(f"🎥 StreamVideoForwardingTrack circuit breaker triggered - {self._consecutive_errors} consecutive errors")
                 self._is_active = False
-                return self._generate_black_frame()
-            
             return self._generate_black_frame()
     
     def _generate_black_frame(self) -> VideoFrame:
@@ -227,8 +222,14 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         return frame
     
     def stop(self):
-        """Stop the forwarding track."""
+        """Stop the forwarding track and forwarder."""
         logger.info(f"🎥 StreamVideoForwardingTrack stopped after {self._frame_count} frames, {self._error_count} errors")
+        try:
+            if self._forwarder is not None:
+                asyncio.create_task(self._forwarder.stop())
+                self._forwarder = None
+        except Exception:
+            pass
         super().stop()
 
 
@@ -238,6 +239,7 @@ class RTCManager:
         self.model = model
         self.voice = voice
         self.token = None
+        self.session_info: Optional[dict] = None  # Store session information
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
         self._mic_track: RealtimeAudioTrack = None
@@ -248,6 +250,7 @@ class RTCManager:
         self.send_video = send_video
         self._video_track: Optional[VideoStreamTrack] = None
         self._video_sender_task: Optional[asyncio.Task] = None
+        self._forwarding_track: Optional[StreamVideoForwardingTrack] = None
 
     async def connect(self) -> None:
         self.token = await self._get_session_token()
@@ -320,8 +323,7 @@ class RTCManager:
                         },
                     }
                 )
-            # Ask server to echo the current session so we can verify
-            await self._send_event({"type": "session.get"})
+            # Session information will be automatically stored when session.created event is received
             logger.info("Requested semantic_vad via session.update")
 
         @self.data_channel.on("message")
@@ -444,7 +446,7 @@ class RTCManager:
                 raise RuntimeError("Video sender not available; was video track negotiated?")
             
             # Stop any existing video sender task
-            if hasattr(self, '_video_sender_task') and self._video_sender_task:
+            if self._video_sender_task is not None:
                 logger.info("🎥 Stopping existing video sender task...")
                 self._video_sender_task.cancel()
                 try:
@@ -453,17 +455,18 @@ class RTCManager:
                     pass
                 logger.info("🎥 Existing video sender task stopped")
             
-            # Create forwarding track
+            # Create forwarding track and start its forwarder
             logger.info("🎥 Creating StreamVideoForwardingTrack...")
             forwarding_track = StreamVideoForwardingTrack(stream_video_track, fps)
+            await forwarding_track.start()
             
             # Replace the dummy track with the forwarding track
             try:
                 logger.info(f"🎥 Replacing OpenAI dummy track with StreamVideoForwardingTrack")
                 self._video_sender.replaceTrack(forwarding_track)
+                self._forwarding_track = forwarding_track
                 self._active_video_source = stream_video_track
                 logger.info(f"✅ Successfully replaced OpenAI track with Stream Video forwarding (fps={fps})")
-                
             except Exception as replace_error:
                 logger.error(f"❌ Failed to replace video track: {replace_error}")
                 logger.error(f"❌ Replace error type: {type(replace_error).__name__}")
@@ -478,13 +481,20 @@ class RTCManager:
         """Stop video forwarding and restore the dummy negotiated video track (blue/black frames)."""
         try:
             # Stop the video forwarding task
-            if hasattr(self, '_video_sender_task') and self._video_sender_task:
+            if self._video_sender_task is not None:
                 self._video_sender_task.cancel()
                 try:
                     await self._video_sender_task
                 except asyncio.CancelledError:
                     pass
                 logger.info("✅ Video forwarding task stopped")
+            # Stop forwarding track/forwarder if present
+            if self._forwarding_track is not None:
+                try:
+                    self._forwarding_track.stop()
+                except Exception:
+                    pass
+                self._forwarding_track = None
             
             if self._video_sender is None:
                 logger.warning("No video sender available to stop")
@@ -608,8 +618,22 @@ class RTCManager:
             except Exception as e:
                 logger.debug(f"Event callback error: {e}")
 
+        # Store session information when we receive session.created event
+        # FIXME Typing 
+        if event.get("type") == "session.created" and "session" in event:
+            self.session_info = event["session"]
+            logger.debug(f"Stored session info: {self.session_info}")
+
     async def request_session_info(self) -> None:
-        await self._send_event({"type": "session.get"})
+        """Request and log current session information.
+
+        Note: session.get is not a valid OpenAI Realtime API event type.
+        Session information is automatically stored when session.created event is received.
+        """
+        if self.session_info:
+            logger.info(f"Current session info: {self.session_info}")
+        else:
+            logger.info("No session information available yet. Waiting for session.created event.")
 
     def set_audio_callback(self, callback: Callable[[bytes], Any]) -> None:
         self._audio_callback = callback
@@ -669,7 +693,7 @@ class RTCManager:
     async def close(self) -> None:
         try:
             # Clean up video sender task
-            if hasattr(self, '_video_sender_task') and self._video_sender_task:
+            if self._video_sender_task is not None:
                 self._video_sender_task.cancel()
                 try:
                     await self._video_sender_task

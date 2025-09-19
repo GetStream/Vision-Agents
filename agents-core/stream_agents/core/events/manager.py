@@ -16,6 +16,14 @@ class ExceptionEvent:
     type: str = 'event.exception'
 
 
+@dataclasses.dataclass
+class HealthCheckEvent:
+    connection_id: str
+    created_at: int
+    custom: dict
+    type: str = 'health.check'
+
+
 class EventManager:
     def __init__(self, ignore_unknown_events: bool = True):
         self._queue = collections.deque([])
@@ -25,6 +33,7 @@ class EventManager:
         self._ignore_unknown_events = ignore_unknown_events
 
         self.register(ExceptionEvent)
+        self.register(HealthCheckEvent)
 
     def register(self, event_class, ignore_not_compatible=False):
         if event_class.__name__.endswith('Event') and hasattr(event_class, 'type'):
