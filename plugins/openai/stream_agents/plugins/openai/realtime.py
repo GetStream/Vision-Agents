@@ -76,8 +76,9 @@ class Realtime(realtime.Realtime):
         if has_listeners:
             self._emit_audio_output_event(audio_data=audio_bytes, sample_rate=48000)
         if self.output_track is not None:
-            logger.info("Can't find output track to set bytes")
             await self.output_track.write(audio_bytes)
+        else:
+            logger.info("Can't find output track to set bytes")
 
     async def _handle_video_output(self, video_array: np.ndarray) -> None:
         """Handle incoming video frames from OpenAI Realtime API.
