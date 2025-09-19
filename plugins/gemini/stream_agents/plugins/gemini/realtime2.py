@@ -104,6 +104,11 @@ class Realtime2(realtime.Realtime):
         # Start the receive loop task
         self._receive_task = asyncio.create_task(self._receive_loop())
 
+    async def _reconnect(self):
+        # TODO: reconnect a broken connection with self.session_resumption_id
+        pass
+
+
     async def _receive_loop(self):
         self.logger.info("_receive_loop started")
         try:
@@ -116,6 +121,12 @@ class Realtime2(realtime.Realtime):
                 if empty:
                     self.logger.warning("Empty response received from gemini Realtime %s", response)
                     continue
+
+                # Store the resumption id so we can resume a broken connection
+                if response.session_resumption_update:
+                    update = response.session_resumption_update
+                    if update.resumable and update.new_handle:
+                        self.session_resumption_id = update.new_handle
 
                 parts = response.server_content.model_turn.parts
                 for part in parts:
@@ -132,6 +143,11 @@ class Realtime2(realtime.Realtime):
                         await self.output_track.write(data)
                     else:
                         print("text", response.text)
+
+                if response.server_content.generation_complete is True:
+                    # TODO: aggregate text here
+                    pass
+
         except asyncio.CancelledError:
             self.logger.info("_receive_loop cancelled")
             raise

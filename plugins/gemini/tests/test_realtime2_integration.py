@@ -1,9 +1,11 @@
 import asyncio
 import os
 import pytest
+import numpy as np
 from dotenv import load_dotenv
 
 from stream_agents.plugins.gemini.realtime2 import Realtime2
+from getstream.video.rtc.track_util import PcmData
 
 # Load environment variables
 load_dotenv()
