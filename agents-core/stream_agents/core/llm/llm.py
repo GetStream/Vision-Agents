@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import abc
-from typing import Optional, TYPE_CHECKING
+import asyncio
+import json
+from typing import Optional, TYPE_CHECKING, Tuple, List, Dict, Any, TypeVar, Callable, Generic
+
+from stream_agents.core.llm import events
 
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
     from stream_agents.core.agents.conversation import Conversation
-
-from typing import List, TypeVar, Any, Callable, Generic, Dict, Optional as TypingOptional
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from stream_agents.core.processors import BaseProcessor
 from stream_agents.core.utils.utils import parse_instructions
 from stream_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
-from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolResultItem
-from . import events
+from .llm_types import ToolSchema, NormalizedToolCallItem
 
 T = TypeVar("T")
 
@@ -50,10 +51,78 @@ class LLM(abc.ABC):
     async def simple_response(
         self,
         text: str,
-        processors: TypingOptional[List[BaseProcessor]] = None,
-        participant: TypingOptional[Participant] = None,
+        processors: Optional[List[BaseProcessor]] = None,
+        participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         raise NotImplementedError
+
+    def _get_tools_for_provider(self) -> List[Dict[str, Any]]:
+        """
+        Get tools in provider-specific format.
+        This method should be overridden by each LLM implementation.
+        
+        Returns:
+            List of tools in the provider's expected format.
+        """
+        tools = self.get_available_functions()
+        return self._convert_tools_to_provider_format(tools)
+    
+    def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+        """
+        Convert ToolSchema objects to provider-specific format.
+        This method should be overridden by each LLM implementation.
+        
+        Args:
+            tools: List of ToolSchema objects
+            
+        Returns:
+            List of tools in provider-specific format
+        """
+        # Default implementation - should be overridden
+        return []
+    
+    def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToolCallItem]:
+        """
+        Extract tool calls from provider-specific response.
+        This method should be overridden by each LLM implementation.
+        
+        Args:
+            response: Provider-specific response object
+            
+        Returns:
+            List of normalized tool call items
+        """
+        # Default implementation - should be overridden
+        return []
+    
+    def _extract_tool_calls_from_stream_chunk(self, chunk: Any) -> List[NormalizedToolCallItem]:
+        """
+        Extract tool calls from a streaming chunk.
+        This method should be overridden by each LLM implementation.
+        
+        Args:
+            chunk: Provider-specific streaming chunk
+            
+        Returns:
+            List of normalized tool call items
+        """
+        # Default implementation - should be overridden
+        return []
+    
+    def _create_tool_result_message(self, tool_calls: List[NormalizedToolCallItem], results: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Create tool result messages for the provider.
+        This method should be overridden by each LLM implementation.
+        
+        Args:
+            tool_calls: List of tool calls that were executed
+            results: List of results from function execution
+            
+        Returns:
+            List of tool result messages in provider format
+        """
+        # Default implementation - should be overridden
+        return []
 
     def _attach_agent(self, agent: Agent):
         """
@@ -98,104 +167,139 @@ class LLM(abc.ABC):
         """
         return self.function_registry.call_function(name, arguments)
     
-    async def process_tool_calls(self, response: NormalizedResponse) -> NormalizedResponse:
-        """
-        Process tool calls in a response by executing the functions and adding results.
+
+    def _tc_key(self, tc: Dict[str, Any]) -> Tuple[Optional[str], str, str]:
+        """Generate a unique key for tool call deduplication.
         
         Args:
-            response: The normalized response containing tool calls.
-        
-        Returns:
-            Updated response with tool results.
-        """
-        if not response.get("output"):
-            return response
-        
-        updated_output = []
-        
-        for item in response["output"]:
-            if item.get("type") == "tool_call":
-                # Type assertion: we know this is a tool call item
-                function_name = item["name"]  # type: ignore
-                arguments = item["arguments_json"]  # type: ignore
-                
-                # arguments_json is now a Dict[str, Any], no need to parse
-                
-                try:
-                    # Call the function
-                    result = self.call_function(function_name, arguments)
-                    
-                    # Add tool result to output
-                    tool_result_item: NormalizedToolResultItem = {
-                        "type": "tool_result",
-                        "name": function_name,
-                        "result_json": result if isinstance(result, dict) else {"result": result},
-                        "is_error": False
-                    }
-                    updated_output.append(tool_result_item)
-                    
-                except Exception as e:
-                    # Add error result to output
-                    error_result_item: NormalizedToolResultItem = {
-                        "type": "tool_result",
-                        "name": function_name,
-                        "result_json": {"error": str(e)},
-                        "is_error": True
-                    }
-                    updated_output.append(error_result_item)
-            else:
-                # Keep non-tool-call items as-is
-                updated_output.append(item)  # type: ignore
-        
-        # Update the response with processed output
-        response["output"] = updated_output  # type: ignore
-        
-        # Check if we have tool results that need a conversational response
-        tool_results = [item for item in updated_output if item.get("type") == "tool_result"]
-        if tool_results:
-            # Generate a conversational response based on the tool results
-            conversational_response = await self._generate_conversational_response(tool_results, response)
-            if conversational_response:
-                response["output_text"] = conversational_response
-                response["output"] = [{"type": "text", "text": conversational_response}]
-            else:
-                # Fallback: simple formatting
-                response_text_parts = []
-                for item in updated_output:
-                    if item.get("type") == "text":
-                        response_text_parts.append(item["text"])  # type: ignore
-                    elif item.get("type") == "tool_result":
-                        result = item["result_json"]  # type: ignore
-                        function_name = item["name"]  # type: ignore
-                        if item.get("is_error", False):
-                            response_text_parts.append(f"Error in {function_name}: {result.get('error', 'Unknown error')}")
-                        else:
-                            response_text_parts.append(f"{function_name} result: {result}")
-                response["output_text"] = "\n".join(response_text_parts)
-        else:
-            # No tool results, just use the text content
-            response_text_parts = []
-            for item in updated_output:
-                if item.get("type") == "text":
-                    response_text_parts.append(item["text"])  # type: ignore
-            if response_text_parts:
-                response["output_text"] = "\n".join(response_text_parts)
-        
-        return response
-    
-    async def _generate_conversational_response(self, tool_results: list, original_response: NormalizedResponse) -> str | None:
-        """Generate a conversational response based on tool results.
-        
-        This method should be implemented by each LLM provider to generate
-        natural language responses based on function call results.
-        
-        Args:
-            tool_results: List of tool result items
-            original_response: The original response containing the tool calls
+            tc: Tool call dictionary
             
         Returns:
-            A conversational response string, or None if not implemented
+            Tuple of (id, name, arguments_json) for deduplication
         """
-        # Default implementation returns None to use fallback formatting
-        # Each LLM provider should override this method
-        return None
+        return (
+            tc.get("id"), 
+            tc["name"], 
+            json.dumps(tc.get("arguments_json", tc.get("arguments", {})), sort_keys=True)
+        )
+
+    async def _maybe_await(self, x):
+        """Await if x is a coroutine, otherwise return x directly.
+        
+        Args:
+            x: Value that might be a coroutine
+            
+        Returns:
+            Awaited result if coroutine, otherwise x
+        """
+        if asyncio.iscoroutine(x):
+            return await x
+        return x
+
+    async def _run_one_tool(self, tc: Dict[str, Any], timeout_s: float):
+        """Run a single tool call with timeout.
+        
+        Args:
+            tc: Tool call dictionary
+            timeout_s: Timeout in seconds
+            
+        Returns:
+            Tuple of (tool_call, result, error)
+        """
+        import inspect
+        args = tc.get("arguments_json", tc.get("arguments", {})) or {}
+        
+        async def _invoke():
+            # Get the actual function to check if it's async
+            if hasattr(self.function_registry, 'get_callable'):
+                fn = self.function_registry.get_callable(tc["name"])
+                if inspect.iscoroutinefunction(fn):
+                    return await fn(**args)
+                else:
+                    # Run sync function in a worker thread to avoid blocking
+                    return await asyncio.to_thread(fn, **args)
+            else:
+                # Fallback to existing call_function method
+                res = self.call_function(tc["name"], args)
+                return await self._maybe_await(res)
+        
+        try:
+            # Emit tool start event
+            self.emit("tool.start", {"name": tc["name"], "args": args})
+            
+            res = await asyncio.wait_for(_invoke(), timeout=timeout_s)
+            
+            # Emit tool end event
+            self.emit("tool.end", {"name": tc["name"], "ok": True})
+            
+            return tc, res, None
+        except Exception as e:
+            # Emit tool end event with error
+            self.emit("tool.end", {"name": tc["name"], "ok": False, "error": str(e)})
+            return tc, {"error": str(e)}, e
+
+    async def _execute_tools(self, calls: List[Dict[str, Any]], *, max_concurrency: int = 8, timeout_s: float = 30):
+        """Execute multiple tool calls concurrently with timeout.
+        
+        Args:
+            calls: List of tool call dictionaries
+            max_concurrency: Maximum number of concurrent tool executions
+            timeout_s: Timeout per tool execution in seconds
+            
+        Returns:
+            List of tuples (tool_call, result, error)
+        """
+        sem = asyncio.Semaphore(max_concurrency)
+        
+        async def _guarded(tc):
+            async with sem:
+                return await self._run_one_tool(tc, timeout_s)
+        
+        return await asyncio.gather(*[_guarded(tc) for tc in calls])
+
+    async def _dedup_and_execute(
+        self,
+        calls: List[Dict[str, Any]],
+        *,
+        max_concurrency: int = 8,
+        timeout_s: float = 30,
+        seen: Optional[set] = None,
+    ):
+        """De-duplicate (by id/name/args) then execute concurrently.
+        
+        Args:
+            calls: List of tool call dictionaries
+            max_concurrency: Maximum number of concurrent tool executions
+            timeout_s: Timeout per tool execution in seconds
+            seen: Set of seen tool call keys for deduplication
+            
+        Returns:
+            Tuple of (triples, updated_seen_set)
+        """
+        seen = seen or set()
+        to_run: List[Dict[str, Any]] = []
+        for tc in calls:
+            key = self._tc_key(tc)
+            if key in seen:
+                continue
+            seen.add(key)
+            to_run.append(tc)
+
+        if not to_run:
+            return [], seen  # nothing new
+
+        triples = await self._execute_tools(to_run, max_concurrency=max_concurrency, timeout_s=timeout_s)
+        return triples, seen
+
+    def _sanitize_tool_output(self, value: Any, max_chars: int = 60_000) -> str:
+        """Sanitize tool output to prevent oversized responses.
+        
+        Args:
+            value: Tool output value
+            max_chars: Maximum characters allowed
+            
+        Returns:
+            Sanitized string output
+        """
+        s = value if isinstance(value, str) else json.dumps(value)
+        return (s[:max_chars] + "…") if len(s) > max_chars else s
