@@ -375,7 +375,7 @@ class Agent:
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.sts_mode and isinstance(self.llm, Realtime):
                 task = asyncio.create_task(self.llm.send_audio_pcm(pcm_data))
-                task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
+                #task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
             else:
                 # Process audio through STT
                 if self.stt:

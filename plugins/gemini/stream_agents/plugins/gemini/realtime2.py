@@ -15,7 +15,7 @@ from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict
     PrebuiltVoiceConfigDict, AudioTranscriptionConfigDict, RealtimeInputConfigDict, TurnCoverage, \
     ContextWindowCompressionConfigDict, SlidingWindowDict, HttpOptions, LiveServerMessage, Blob, Part
 
-from stream_agents.core.edge.types import Participant
+from stream_agents.core.edge.types import Participant, PcmData
 from stream_agents.core.llm import realtime
 from stream_agents.core.processors import BaseProcessor
 import av
@@ -51,7 +51,7 @@ VideoFrame = Union[VideoFrameProtocol, VideoFrameWithImageProtocol]
 
 """
 TODO:
-- few more event types to handle (see video test)
+- stop sending white space audio
 - code cleanup
 - at mention support (for docs)
 - session resumption should work
@@ -174,9 +174,13 @@ class Realtime2(realtime.Realtime):
                                     print("text", response.text)
                             elif part.inline_data:
                                 data = part.inline_data.data
-                                self.logger.info("Gemini generating audio %d %s", len(data), part.inline_data.mime_type)
-                                self.emit("audio", data)
-                                await self.output_track.write(data)
+                                # Convert bytes to PcmData at 24kHz (Gemini's output rate)
+                                pcm_data = PcmData.from_bytes(data, sample_rate=24000, format="s16")
+                                # Resample from 24kHz to 48kHz for WebRTC
+                                resampled_pcm = pcm_data.resample(target_sample_rate=48000)
+                                self.logger.info("Gemini generating audio %d %s, resampled to 48kHz", len(data), part.inline_data.mime_type)
+                                self.emit("audio", resampled_pcm.samples.tobytes())
+                                await self.output_track.write(resampled_pcm.samples.tobytes())
                             else:
                                 print("text", response.text)
                     elif is_turn_complete:
@@ -196,7 +200,7 @@ class Realtime2(realtime.Realtime):
             self.logger.info("_receive_loop ended")
 
     async def send_audio_pcm(self, pcm: PcmData):
-        self.logger.info(f"Sending audio to gemini: {pcm.duration}")
+        self.logger.debug(f"Sending audio to gemini: {pcm.duration}")
 
         try:
             # Build blob and send directly

@@ -3,7 +3,6 @@ import re
 import os
 from dataclasses import dataclass
 from typing import Dict, Optional
-from getstream.video.rtc.track_util import PcmData
 
 
 # Type alias for markdown file contents: maps filename to file content
@@ -33,14 +32,6 @@ def to_mono(samples: np.ndarray, num_channels: int) -> np.ndarray:
     return np.asarray(mono_samples, dtype=np.int16)
 
 
-def bytes_to_pcm_data(
-        audio_bytes: bytes,
-        sample_rate: int = 16000,
-        format: str = "s16"
-) -> PcmData:
-    """Convert raw bytes to PcmData object."""
-    audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
-    return PcmData(samples=audio_array, sample_rate=sample_rate, format=format)
 
 
 def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instructions:
