@@ -139,6 +139,7 @@ class Realtime2(realtime.Realtime):
         try:
             while True:
                 async for response in self._session.receive():
+                    self.logger.info("Received response: %s", response)
 
                     response: LiveServerMessage = response
 
@@ -274,6 +275,8 @@ class Realtime2(realtime.Realtime):
             self.logger.info("Stopped video sender")
 
     async def _send_video_frame(self, frame: av.VideoFrame) -> None:
+        if not frame:
+            return
         """Send a video frame to Gemini as a PNG blob."""
         self.logger.info(f"Sending video frame to gemini: {frame}")
         if not hasattr(self, '_session') or self._session is None:

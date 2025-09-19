@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Optional, Callable, Any
 
 import av
@@ -6,6 +7,7 @@ from aiortc import VideoStreamTrack
 
 from stream_agents.plugins.gemini.queue import LatestNQueue
 
+logger = logging.getLogger(__name__)
 
 class VideoForwarder:
     """
@@ -84,6 +86,7 @@ class VideoForwarder:
         If fps is None, it forwards as fast as frames arrive (still coalescing).
         """
         async def _consumer():
+            logger.info("consumer loop")
             loop = asyncio.get_running_loop()
             min_interval = (1.0 / self.fps) if (self.fps and self.fps > 0) else 0.0
             last_ts = 0.0
@@ -91,13 +94,16 @@ class VideoForwarder:
             try:
                 while not self._stopped.is_set():
                     # Wait for at least one frame
+                    logger.info("waiting on next frame")
                     frame = await self.next_frame()
+                    logger.info("next frame found")
                     # Throttle to fps (if set)
                     if min_interval > 0.0:
                         now = loop.time()
                         elapsed = now - last_ts
                         if elapsed < min_interval:
                             # coalesce: keep draining to newest until it's time
+                            logger.info("sleeping for %f seconds", min_interval - elapsed)
                             await asyncio.sleep(min_interval - elapsed)
                         last_ts = loop.time()
                     # Call handler
@@ -106,8 +112,10 @@ class VideoForwarder:
                     else:
                         on_frame(frame)
             except asyncio.CancelledError:
+                logger.info("cancelled consumer")
                 raise
-            except Exception:
+            except Exception as e:
+                logger.info("unexpected error", e)
                 # optional: log
                 pass
 
