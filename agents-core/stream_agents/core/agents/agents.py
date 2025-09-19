@@ -395,7 +395,8 @@ class Agent:
         # Always listen to remote video tracks so we can forward frames to Realtime providers
         @self.edge.on("track_added")
         async def on_track(track_id, track_type, user):
-            await self._process_track(track_id, track_type, user)
+            #await self._process_track(track_id, track_type, user)
+            asyncio.create_task(self._process_track(track_id, track_type, user))
 
         # Fallback: if the edge layer doesn't emit track_added reliably, listen on the
         # underlying subscriber peer connection for aiortc-style track events and forward.

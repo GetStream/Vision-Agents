@@ -15,6 +15,7 @@ from stream_agents.core.utils.utils import parse_instructions
 from stream_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
 from .llm_types import ToolSchema, NormalizedResponse, NormalizedToolResultItem
+from . import events
 
 T = TypeVar("T")
 
@@ -43,6 +44,7 @@ class LLM(abc.ABC):
         super().__init__()
         self.agent = None
         self.events = EventManager()
+        self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
 
     async def simple_response(

@@ -72,9 +72,7 @@ class Realtime(realtime.Realtime):
 
     async def _handle_audio_output(self, audio_bytes: bytes) -> None:
         # Forward audio as event and to output track if available
-        has_listeners = bool(self.listeners("audio_output")) if callable(self.listeners) else False
-        if has_listeners:
-            self._emit_audio_output_event(audio_data=audio_bytes, sample_rate=48000)
+        logger.info(f"🎵 Forwarding audio output: {len(audio_bytes)}")
         if self.output_track is not None:
             await self.output_track.write(audio_bytes)
         else:
@@ -87,13 +85,7 @@ class Realtime(realtime.Realtime):
             video_array: RGB video frame as numpy array from frame.to_ndarray()
         """
         logger.info(f"🎥 Forwarding video frame: shape={video_array.shape}, dtype={video_array.dtype}")
-        
-        # Forward video as event if there are listeners
-        if callable(self.listeners):
-            has_listeners = bool(self.listeners("video_output"))
-            if has_listeners:
-                self._emit_video_output_event(video_data=video_array)
-        
+    
         # Write to output track for remote participants to see
         if self.output_track is not None:
             try:
