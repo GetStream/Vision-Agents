@@ -116,10 +116,24 @@ class Realtime2(realtime.Realtime):
                 self.logger.info("_receive_loop received response")
 
                 response: LiveServerMessage = response
+
+                is_input_transcript = response and response.server_content and response.server_content.input_transcription
+                is_output_transcript = response and response.server_content and response.server_content.output_transcription
+                is_response = response and response.server_content and response.server_content.model_turn
+
+                if is_input_transcript:
+                    # TODO: what to do with this?
+                    self.logger.info("input: %s", response.server_content.input_transcription.text)
+                    continue
+
+                if is_output_transcript:
+                    # TODO: what to do with this?
+                    self.logger.info("output: %s", response.server_content.output_transcription.text)
+                    continue
+
                 # skip empty response
-                empty = not response or not response.server_content or not response.server_content.model_turn
-                if empty:
-                    self.logger.warning("Empty response received from gemini Realtime %s", response)
+                if not is_response and not is_output_transcript and not is_input_transcript:
+                    self.logger.warning("Unrecognized event structure for gemini %s", response)
                     continue
 
                 # Store the resumption id so we can resume a broken connection
@@ -129,6 +143,8 @@ class Realtime2(realtime.Realtime):
                         self.session_resumption_id = update.new_handle
 
                 parts = response.server_content.model_turn.parts
+
+
                 for part in parts:
                     part: Part = part
                     if part.text:
@@ -157,33 +173,13 @@ class Realtime2(realtime.Realtime):
         finally:
             self.logger.info("_receive_loop ended")
 
-    async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 24000):
+    async def send_audio_pcm(self, pcm: PcmData):
+        self.logger.info(f"Sending audio pcm: {pcm.duration}")
+
         try:
-            #self.logger.info(f"Sending audio pcm: {pcm}")
-            # TODO: do we need to send over empty audio? seems like we maybe don't?
-            # TODO: why is target rate specified here...
-            # Convert to numpy int16 array
-            if isinstance(pcm.samples, (bytes, bytearray)):
-                # Interpret as int16 little-endian
-                audio_array = np.frombuffer(pcm.samples, dtype=np.int16)
-            else:
-                audio_array = np.asarray(pcm.samples)
-                if audio_array.dtype != np.int16:
-                    audio_array = audio_array.astype(np.int16)
-
-            # Resample if needed
-            if pcm.sample_rate != target_rate:
-                audio_array = resample_audio(
-                    audio_array, pcm.sample_rate, target_rate
-                ).astype(np.int16)
-
-            # Activity detection with a small hysteresis to avoid flapping
-            energy = float(np.mean(np.abs(audio_array)))
-            is_active = energy > float(1000)
-
             # Build blob and send directly
-            audio_bytes = audio_array.tobytes()
-            mime = f"audio/pcm;rate={target_rate}"
+            audio_bytes = pcm.samples.tobytes()
+            mime = f"audio/pcm;rate={pcm.sample_rate}"
             blob = Blob(data=audio_bytes, mime_type=mime)
 
             await self._session.send_realtime_input(audio=blob)

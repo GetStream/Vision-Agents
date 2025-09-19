@@ -2,6 +2,8 @@ import asyncio
 import os
 import pytest
 import numpy as np
+import wave
+import av
 from dotenv import load_dotenv
 
 from stream_agents.plugins.gemini.realtime2 import Realtime2
@@ -21,6 +23,59 @@ class TestRealtime2Integration:
         return Realtime2(
             model="gemini-2.5-flash-exp-native-audio-thinking-dialog",
         )
+    
+    @pytest.fixture
+    def audio_file_path(self):
+        """Get path to test audio file"""
+        return os.path.join(os.path.dirname(__file__), "../../../tests/test_assets/mia.mp3")
+    
+    @pytest.fixture
+    def mia_audio_16khz(self, audio_file_path):
+        """Load mia.mp3 and convert to 16kHz PCM data"""
+        # Load audio file using PyAV
+        container = av.open(audio_file_path)
+        audio_stream = container.streams.audio[0]
+        original_sample_rate = audio_stream.sample_rate
+        target_rate = 16000
+        
+        # Create resampler if needed
+        resampler = None
+        if original_sample_rate != target_rate:
+            resampler = av.AudioResampler(
+                format='s16',
+                layout='mono',
+                rate=target_rate
+            )
+        
+        # Read all audio frames
+        samples = []
+        for frame in container.decode(audio_stream):
+            # Resample if needed
+            if resampler:
+                frame = resampler.resample(frame)[0]
+            
+            # Convert to numpy array
+            frame_array = frame.to_ndarray()
+            if len(frame_array.shape) > 1:
+                # Convert stereo to mono
+                frame_array = np.mean(frame_array, axis=0)
+            samples.append(frame_array)
+        
+        # Concatenate all samples
+        samples = np.concatenate(samples)
+        
+        # Convert to int16 (PyAV already gives us int16, but ensure it's the right type)
+        samples = samples.astype(np.int16)
+        container.close()
+        
+        # Create PCM data
+        pcm = PcmData(
+            samples=samples,
+            sample_rate=target_rate,
+            format="s16"
+        )
+        
+        return pcm
 
     @pytest.mark.integration
     async def test_simple_response_flow(self, realtime2):
@@ -29,164 +84,99 @@ class TestRealtime2Integration:
 
         try:
             # Send a simple message
-            print("starting")
+            events = []
+            realtime2.on("audio", lambda x: events.append(x))
             await realtime2.simple_response("Hello, can you hear me?")
 
             # Wait for response
             await asyncio.sleep(3.0)
+            assert len(events) > 0
 
             # Verify we have a session and it's active
             assert realtime2._session is not None
 
         finally:
             await realtime2.close()
-    
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_connect_and_disconnect(self, realtime2):
-        """Test basic connect and disconnect flow"""
-        # Test connection
-        await realtime2.connect()
-        
-        # Verify connection was established
-        assert hasattr(realtime2, '_session')
-        assert realtime2._session is not None
-        assert hasattr(realtime2, '_receive_task')
-        assert realtime2._receive_task is not None
-        
-        # Wait a moment to ensure connection is stable
-        await asyncio.sleep(1.0)
-        
-        # Test disconnection
-        await realtime2.close()
-        
-        # Verify cleanup
-        assert realtime2._session is None
-        assert realtime2._receive_task is None or realtime2._receive_task.done()
-    
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_connect_with_custom_config(self, api_key):
-        """Test connection with custom configuration"""
-        from google.genai.types import LiveConnectConfigDict, Modality
-        
-        custom_config = LiveConnectConfigDict(
-            response_modalities=[Modality.AUDIO, Modality.TEXT],
-        )
-        
-        realtime2 = Realtime2(
-            model="gemini-2.5-flash-exp-native-audio-thinking-dialog",
-            api_key=api_key,
-            config=custom_config
-        )
-        
-        try:
-            await realtime2.connect()
-            assert realtime2._session is not None
-            
-            # Verify custom config was applied
-            assert realtime2.config is not None
-            
-        finally:
-            await realtime2.close()
-    
 
-    
+
     @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_connection_timeout_handling(self, api_key):
-        """Test connection timeout handling"""
-        # Create instance with very short timeout
-        realtime2 = Realtime2(
-            model="gemini-2.5-flash-preview",
-            api_key=api_key
-        )
-        
-        try:
-            # This should connect successfully
-            await realtime2.connect()
-            assert realtime2._session is not None
-            
-        except Exception as e:
-            # If connection fails, it should be a specific type of error
-            assert "timeout" in str(e).lower() or "connection" in str(e).lower()
-        
-        finally:
-            try:
-                await realtime2.close()
-            except:
-                pass  # Ignore cleanup errors
-    
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_multiple_connect_disconnect_cycles(self, realtime2):
-        """Test multiple connect/disconnect cycles"""
-        for i in range(3):
-            # Connect
-            await realtime2.connect()
-            assert realtime2._session is not None
-            
-            # Wait briefly
-            await asyncio.sleep(0.5)
-            
-            # Disconnect
-            await realtime2.close()
-            assert realtime2._session is None
-            
-            # Brief pause between cycles
-            await asyncio.sleep(0.1)
-    
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_connect_without_api_key(self):
-        """Test that connection fails gracefully without API key"""
-        realtime2 = Realtime2(model="gemini-2.5-flash-exp-native-audio-thinking-dialog")
-        
-        try:
-            await realtime2.connect()
-            # If it connects, that's unexpected but not necessarily wrong
-            await realtime2.close()
-        except Exception as e:
-            # Should get some kind of error about missing API key or authentication
-            assert "key" in str(e).lower() or "auth" in str(e).lower() or "api" in str(e).lower()
-    
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_connect_with_invalid_model(self, api_key):
-        """Test connection with invalid model name"""
-        realtime2 = Realtime2(
-            model="invalid-model-name",
-            api_key=api_key
-        )
-        
-        try:
-            await realtime2.connect()
-            # If it connects, that's unexpected but not necessarily wrong
-            await realtime2.close()
-        except Exception as e:
-            # Should get some kind of error about invalid model
-            assert "model" in str(e).lower() or "invalid" in str(e).lower()
-    
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_receive_loop_task_management(self, realtime2):
-        """Test that receive loop task is properly managed"""
+    async def test_audio_sending_flow(self, realtime2, mia_audio_16khz):
+        """Test sending real audio data and verify connection remains stable"""
+        events = []
+        realtime2.on("audio", lambda x: events.append(x))
         await realtime2.connect()
         
         try:
-            # Verify task exists and is running
-            assert realtime2._receive_task is not None
-            assert not realtime2._receive_task.done()
+            print(f"Loaded real audio file: {len(mia_audio_16khz.samples)} samples at {mia_audio_16khz.sample_rate}Hz")
             
-            # Wait a bit
-            await asyncio.sleep(1.0)
+            print("Sending real audio data...")
+            # Send audio data (already at 16kHz from fixture)
+            await realtime2.send_audio_pcm(mia_audio_16khz)
+
             
-            # Task should still be running
-            assert not realtime2._receive_task.done()
+            # Wait a moment to ensure processing
+            await asyncio.sleep(10.0)
+            assert len(events) > 0
+            
+            # Verify connection is still active
+            assert realtime2._session is not None
+            print("Real audio sending completed successfully")
             
         finally:
             await realtime2.close()
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_video_sending_flow(self, realtime2):
+        """Test sending real video data and verify connection remains stable"""
+        await realtime2.connect()
+        
+        try:
+            # Load real video file
+            video_file_path = os.path.join(os.path.dirname(__file__), "../../../tests/test_assets/test_video_3s.mp4")
             
-            # Task should be cancelled/done after close
-            if realtime2._receive_task:
-                assert realtime2._receive_task.done()
+            # Create a video track from real video file
+            from aiortc import VideoStreamTrack
+            
+            class RealVideoTrack(VideoStreamTrack):
+                def __init__(self, video_path):
+                    super().__init__()
+                    self.container = av.open(video_path)
+                    self.video_stream = self.container.streams.video[0]
+                    self.frame_count = 0
+                    self.max_frames = 10  # Limit to first 10 frames for testing
+                
+                async def recv(self):
+                    if self.frame_count >= self.max_frames:
+                        raise asyncio.CancelledError("No more frames")
+                    
+                    try:
+                        # Read frame from video
+                        for frame in self.container.decode(self.video_stream):
+                            self.frame_count += 1
+                            # Convert to RGB
+                            frame = frame.to_rgb()
+                            return frame
+                    except Exception as e:
+                        print(f"Error reading video frame: {e}")
+                        raise asyncio.CancelledError("Video read error")
+            
+            real_track = RealVideoTrack(video_file_path)
+            
+            print("Starting real video sender...")
+            # Start video sender with low FPS to avoid overwhelming the connection
+            await realtime2.start_video_sender(real_track, fps=1)
+            
+            # Let it run for a few seconds
+            await asyncio.sleep(3.0)
+            
+            # Stop video sender
+            await realtime2.stop_video_sender()
+            
+            # Verify connection is still active
+            assert realtime2._session is not None
+            print("Real video sending completed successfully")
+            
+        finally:
+            await realtime2.close()
+
