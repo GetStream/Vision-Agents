@@ -31,24 +31,6 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
-class VideoFrameProtocol(Protocol):
-    """Protocol for video frames that can be converted to PNG bytes."""
-    
-    def to_ndarray(self, format: str = "rgb24") -> np.ndarray:
-        """Convert frame to numpy array in specified format."""
-        ...
-
-
-class VideoFrameWithImageProtocol(Protocol):
-    """Protocol for video frames that have a direct to_image method."""
-    
-    def to_image(self) -> Any:  # PIL Image
-        """Convert frame directly to PIL Image."""
-        ...
-
-
-VideoFrame = Union[VideoFrameProtocol, VideoFrameWithImageProtocol]
-
 """
 TODO:
 - stop sending white space audio
@@ -83,8 +65,9 @@ class Realtime2(realtime.Realtime):
         self.client = client
         self.config = self._create_config(config)
         self.logger = logging.getLogger(__name__)
+        # Gemini generates at 24k. webrtc automatically translates it to 48khz
         self.output_track = AudioStreamTrack(
-            framerate=16000, stereo=False, format="s16"
+            framerate=24000, stereo=False, format="s16"
         )
         self._video_forwarder: Optional[VideoForwarder] = None
         self._session_context = None
@@ -180,7 +163,7 @@ class Realtime2(realtime.Realtime):
                                 resampled_pcm = pcm_data.resample(target_sample_rate=48000)
                                 self.logger.info("Gemini generating audio %d %s, resampled to 48kHz", len(data), part.inline_data.mime_type)
                                 self.emit("audio", resampled_pcm.samples.tobytes())
-                                await self.output_track.write(resampled_pcm.samples.tobytes())
+                                await self.output_track.write(data) # original 24khz here
                             else:
                                 print("text", response.text)
                     elif is_turn_complete:
@@ -231,7 +214,7 @@ class Realtime2(realtime.Realtime):
             self._session = None
 
     @classmethod
-    def _frame_to_png_bytes(cls, frame: VideoFrame) -> bytes:
+    def _frame_to_png_bytes(cls, frame) -> bytes:
         """Convert a video frame to PNG bytes."""
         if Image is None:
             logger.warning("PIL Image not available, cannot convert frame to PNG")

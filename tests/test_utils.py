@@ -363,8 +363,8 @@ class TestPcmDataMethods:
     
     def test_pcm_data_resample_handles_2d_array(self):
         """Test that resampling handles 2D arrays correctly."""
-        # Create test audio data (1 second of 24kHz audio) - 2D array (samples, channels)
-        test_samples = np.random.randint(-32768, 32767, (24000, 1), dtype=np.int16)
+        # Create test audio data (1 second of 24kHz audio) - 2D array (channels, samples)
+        test_samples = np.random.randint(-32768, 32767, (1, 24000), dtype=np.int16)
         pcm_data = PcmData(samples=test_samples, sample_rate=24000, format="s16")
         
         # This should work with 2D arrays too
@@ -396,6 +396,22 @@ class TestPcmDataMethods:
         assert abs(len(resampled_pcm.samples) - 48000) < 100  # Allow some tolerance
         # Duration should be approximately the same
         assert abs(resampled_pcm.duration - 1.0) < 0.1
+    
+    def test_pcm_data_resample_av_array_shape_fix(self):
+        """Test that fixes the AV library array shape error (channels, samples)."""
+        # Create test audio data that would cause the "Expected packed array.shape[0] to equal 1" error
+        test_samples = np.random.randint(-32768, 32767, 1920, dtype=np.int16)  # Small chunk like in the error
+        pcm_data = PcmData(samples=test_samples, sample_rate=24000, format="s16")
+        
+        # This should work without the array shape error
+        resampled = pcm_data.resample(target_sample_rate=48000)
+        
+        assert resampled.sample_rate == 48000
+        assert resampled.format == "s16"
+        # Should have approximately double the samples (1920 -> ~3840)
+        assert abs(len(resampled.samples) - 3840) < 100  # Allow some tolerance
+        # Output should be 1D array
+        assert resampled.samples.ndim == 1
 
 
 # Shared fixtures for integration tests

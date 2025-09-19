@@ -153,11 +153,11 @@ class PcmData(NamedTuple):
         if self.sample_rate == target_sample_rate:
             return self
         
-        # Ensure samples are 2D for AV library (samples, channels)
+        # Ensure samples are 2D for AV library (channels, samples)
         samples = self.samples
         if samples.ndim == 1:
-            # Reshape 1D array to 2D (samples, 1 channel)
-            samples = samples.reshape(-1, 1)
+            # Reshape 1D array to 2D (1 channel, samples)
+            samples = samples.reshape(1, -1)
         
         # Create AV audio frame from the samples
         frame = av.AudioFrame.from_ndarray(samples, format='s16', layout='mono')
@@ -176,9 +176,10 @@ class PcmData(NamedTuple):
             resampled_frame = resampled_frames[0]
             resampled_samples = resampled_frame.to_ndarray()
             
-            # Ensure mono output (flatten to 1D)
+            # AV returns (channels, samples), so for mono we want the first (and only) channel
             if len(resampled_samples.shape) > 1:
-                resampled_samples = resampled_samples.flatten()
+                # Take the first channel (mono)
+                resampled_samples = resampled_samples[0]
             
             # Convert to int16
             resampled_samples = resampled_samples.astype(np.int16)

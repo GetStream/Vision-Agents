@@ -632,7 +632,6 @@ class Agent:
         if self.publish_audio:
             if self.sts_mode and isinstance(self.llm, Realtime):
                 self._audio_track = self.llm.output_track
-                # TODO: why is this different...? (48k framerate vs 16k below)
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
                 self._audio_track = self.edge.create_audio_track()
