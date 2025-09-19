@@ -9,7 +9,7 @@ from anthropic.types import (
     RawMessageStopEvent,
 )
 
-from stream_agents.core.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
@@ -86,7 +86,7 @@ class ClaudeLLM(LLM):
             messages=[{"role": "user", "content": text}], max_tokens=1000
         )
 
-    async def create_message(self, *args, **kwargs) -> LLMResponse:
+    async def create_message(self, *args, **kwargs) -> LLMResponseEvent:
         """
         create_message gives you full support/access to the native Claude message.create method
         this method wraps the Claude method and ensures we broadcast an event which the agent class hooks into
@@ -113,13 +113,13 @@ class ClaudeLLM(LLM):
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
 
-        self.emit("before_llm_response", self._normalize_message(kwargs["messages"]))
+        self.events.send(self._normalize_message(kwargs["messages"]))
 
         original = await self.client.messages.create(*args, **kwargs)
         if isinstance(original, ClaudeMessage):
             # Extract text from Claude's response format - safely handle all text blocks
             text = self._concat_text_blocks(original.content)
-            llm_response = LLMResponse(original, text)
+            llm_response = LLMResponseEvent(original, text)
             
             # Multi-hop tool calling loop for non-streaming
             function_calls = self._extract_tool_calls_from_response(original)
@@ -173,7 +173,7 @@ class ClaudeLLM(LLM):
                     
                     # Extract new tool calls from follow-up response
                     current_calls = self._extract_tool_calls_from_response(follow_up_response)
-                    llm_response = LLMResponse(follow_up_response, self._concat_text_blocks(follow_up_response.content))
+                    llm_response = LLMResponseEvent(follow_up_response, self._concat_text_blocks(follow_up_response.content))
                     rounds += 1
                 
                 # Finalization pass: no tools so Claude must answer in text
@@ -184,7 +184,7 @@ class ClaudeLLM(LLM):
                         stream=False,
                         max_tokens=1000
                     )
-                    llm_response = LLMResponse(final_response, self._concat_text_blocks(final_response.content))
+                    llm_response = LLMResponseEvent(final_response, self._concat_text_blocks(final_response.content))
                             
         elif isinstance(original, AsyncStream):
             stream: AsyncStream[RawMessageStreamEvent] = original
@@ -291,13 +291,16 @@ class ClaudeLLM(LLM):
             total_text = "".join(text_parts)
             llm_response = LLMResponse(last_followup_stream or original, total_text)
 
+        class AfterLLMResponseEventEvent:
+            pass
+
         self.emit("after_llm_response", llm_response)
 
         return llm_response
 
     def _standardize_and_emit_event(
         self, event: RawMessageStreamEvent, text_parts: List[str]
-    ) -> Optional[LLMResponse]:
+    ) -> Optional[LLMResponseEvent]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
@@ -322,7 +325,7 @@ class ClaudeLLM(LLM):
         elif event.type == "message_stop":
             stop_event: RawMessageStopEvent = event
             total_text = "".join(text_parts)
-            llm_response = LLMResponse(stop_event, total_text)
+            llm_response = LLMResponseEvent(stop_event, total_text)
             return llm_response
         return None
 

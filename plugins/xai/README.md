@@ -121,7 +121,7 @@ Generate a simple response to text input.
 - `processors`: Optional list of processors for video/voice AI context
 - `participant`: Optional participant object
 
-**Returns:** `LLMResponse[Response]` with the generated text
+**Returns:** `LLMResponseEvent[Response]` with the generated text
 
 ##### `async create_response(input: str, instructions: str = "", model: str = None, stream: bool = True)`
 
@@ -133,7 +133,7 @@ Create a response with full control over parameters.
 - `model`: Override the default model
 - `stream`: Whether to stream the response (default: True)
 
-**Returns:** `LLMResponse[Response]` with the generated text
+**Returns:** `LLMResponseEvent[Response]` with the generated text
 
 
 ## Configuration

@@ -4,7 +4,7 @@ from google import genai
 from google.genai import types
 from google.genai.types import GenerateContentResponse
 
-from stream_agents.core.llm.llm import LLM, LLMResponse
+from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 
@@ -51,7 +51,7 @@ class GeminiLLM(LLM):
         else:
             self.client = genai.Client(api_key=api_key)
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, participant: Optional[Any] = None) -> LLMResponse[Any]:
+    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, participant: Optional[Any] = None) -> LLMResponseEvent[Any]:
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
 
@@ -164,10 +164,10 @@ class GeminiLLM(LLM):
                 rounds += 1
 
             total_text = "".join(follow_up_text_parts) or "".join(text_parts)
-            llm_response = LLMResponse(follow_up_last or final_chunk, total_text)
+            llm_response = LLMResponseEvent(follow_up_last or final_chunk, total_text)
         else:
             total_text = "".join(text_parts)
-            llm_response = LLMResponse(final_chunk, total_text)
+            llm_response = LLMResponseEvent(final_chunk, total_text)
 
         self.emit("after_llm_response", llm_response)
 
@@ -194,7 +194,7 @@ class GeminiLLM(LLM):
 
         return messages
 
-    def _standardize_and_emit_event(self, chunk: GenerateContentResponse, text_parts: List[str]) -> Optional[LLMResponse[Any]]:
+    def _standardize_and_emit_event(self, chunk: GenerateContentResponse, text_parts: List[str]) -> Optional[LLMResponseEvent[Any]]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
