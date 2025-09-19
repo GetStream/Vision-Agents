@@ -57,7 +57,6 @@ class TestRealtime2Integration(BaseTest):
     @pytest.mark.integration
     async def test_video_sending_flow(self, realtime2, bunny_video_track):
         """Test sending real video data and verify connection remains stable"""
-        print("Starting real video sender...")
         events = []
         realtime2.on("audio", lambda x: events.append(x))
         await realtime2.connect()
@@ -70,14 +69,10 @@ class TestRealtime2Integration(BaseTest):
         # Stop video sender
         await realtime2.stop_video_sender()
 
-        print("Real video sending completed successfully")
-
     async def test_frame_to_png_bytes_with_bunny_video(self, bunny_video_track):
         """Test that _frame_to_png_bytes works with real bunny video frames"""
         # Get a frame from the bunny video track
         frame = await bunny_video_track.recv()
-        
-        # Convert frame to PNG bytes using the classmethod (no instance needed)
         png_bytes = Realtime2._frame_to_png_bytes(frame)
         
         # Verify we got PNG data

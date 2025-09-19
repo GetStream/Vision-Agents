@@ -9,6 +9,7 @@ from aiortc import VideoStreamTrack
 
 from stream_agents.plugins.gemini.queue import LatestNQueue
 from stream_agents.plugins.gemini.realtime2 import VideoForwarder
+from tests.base_test import BaseTest
 
 
 class MockVideoFrame:
@@ -152,34 +153,24 @@ class TestLatestNQueue:
         assert obj3.value == 3
 
 
-class TestVideoForwarder:
-    """Test suite for VideoForwarder"""
-    
-    @pytest.fixture
-    def mock_frames(self):
-        """Create mock video frames for testing"""
-        return [MockVideoFrame(i) for i in range(10)]
-    
-    @pytest.fixture
-    def mock_track(self, mock_frames):
-        """Create mock video track"""
-        return MockVideoTrack(frames=mock_frames, delay=0.001)
+class TestVideoForwarder(BaseTest):
+    """Test suite for VideoForwarder using real video data"""
     
     @pytest.mark.asyncio
-    async def test_video_forwarder_initialization(self, mock_track):
+    async def test_video_forwarder_initialization(self, bunny_video_track):
         """Test VideoForwarder initialization"""
-        forwarder = VideoForwarder(mock_track, max_buffer=5, fps=30.0)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=5, fps=30.0)
         
-        assert forwarder.input_track == mock_track
+        assert forwarder.input_track == bunny_video_track
         assert forwarder.queue.maxsize == 5
         assert forwarder.fps == 30.0
         assert len(forwarder._tasks) == 0
         assert not forwarder._stopped.is_set()
     
     @pytest.mark.asyncio
-    async def test_start_stop_lifecycle(self, mock_track):
+    async def test_start_stop_lifecycle(self, bunny_video_track):
         """Test start and stop lifecycle"""
-        forwarder = VideoForwarder(mock_track, max_buffer=3)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
         
         # Start forwarder
         await forwarder.start()
@@ -195,27 +186,27 @@ class TestVideoForwarder:
         assert forwarder._stopped.is_set()
     
     @pytest.mark.asyncio
-    async def test_next_frame_pull_model(self, mock_track, mock_frames):
+    async def test_next_frame_pull_model(self, bunny_video_track):
         """Test next_frame pull model"""
-        forwarder = VideoForwarder(mock_track, max_buffer=3)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
         
         await forwarder.start()
         
         try:
             # Get first frame
             frame = await forwarder.next_frame(timeout=1.0)
-            assert isinstance(frame, MockVideoFrame)
+            assert hasattr(frame, 'to_ndarray')  # Real video frame
             
             # Get a few more frames
             for _ in range(3):
                 frame = await forwarder.next_frame(timeout=1.0)
-                assert isinstance(frame, MockVideoFrame)
+                assert hasattr(frame, 'to_ndarray')  # Real video frame
                 
         finally:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_next_frame_timeout(self, mock_track):
+    async def test_next_frame_timeout(self):
         """Test next_frame timeout behavior"""
         # Create track with no frames
         empty_track = MockVideoTrack(frames=[])
@@ -230,9 +221,9 @@ class TestVideoForwarder:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_next_frame_coalesces_to_newest(self, mock_track):
+    async def test_next_frame_coalesces_to_newest(self, bunny_video_track):
         """Test that next_frame coalesces backlog to newest frame"""
-        forwarder = VideoForwarder(mock_track, max_buffer=5)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=5)
         
         await forwarder.start()
         
@@ -242,15 +233,15 @@ class TestVideoForwarder:
             
             # Get frame - should be the newest available
             frame = await forwarder.next_frame(timeout=1.0)
-            assert isinstance(frame, MockVideoFrame)
+            assert hasattr(frame, 'to_ndarray')  # Real video frame
             
         finally:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_callback_push_model(self, mock_track):
+    async def test_callback_push_model(self, bunny_video_track):
         """Test callback-based push model"""
-        forwarder = VideoForwarder(mock_track, max_buffer=3, fps=10.0)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
         
         received_frames = []
         
@@ -269,15 +260,15 @@ class TestVideoForwarder:
             # Should have received some frames
             assert len(received_frames) > 0
             for frame in received_frames:
-                assert isinstance(frame, MockVideoFrame)
+                assert hasattr(frame, 'to_ndarray')  # Real video frame
                 
         finally:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_async_callback_push_model(self, mock_track):
+    async def test_async_callback_push_model(self, bunny_video_track):
         """Test async callback-based push model"""
-        forwarder = VideoForwarder(mock_track, max_buffer=3, fps=10.0)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
         
         received_frames = []
         
@@ -297,15 +288,15 @@ class TestVideoForwarder:
             # Should have received some frames
             assert len(received_frames) > 0
             for frame in received_frames:
-                assert isinstance(frame, MockVideoFrame)
+                assert hasattr(frame, 'to_ndarray')  # Real video frame
                 
         finally:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_fps_throttling(self, mock_track):
+    async def test_fps_throttling(self, bunny_video_track):
         """Test FPS throttling in callback mode"""
-        forwarder = VideoForwarder(mock_track, max_buffer=3, fps=5.0)  # 5 FPS
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=5.0)  # 5 FPS
         
         received_frames = []
         timestamps = []
@@ -336,9 +327,9 @@ class TestVideoForwarder:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_multiple_consumers(self, mock_track):
+    async def test_multiple_consumers(self, bunny_video_track):
         """Test multiple callback consumers"""
-        forwarder = VideoForwarder(mock_track, max_buffer=3)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
         
         received_frames_1 = []
         received_frames_2 = []
@@ -367,11 +358,11 @@ class TestVideoForwarder:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_producer_handles_track_errors(self, mock_track):
+    async def test_producer_handles_track_errors(self, bunny_video_track):
         """Test that producer handles track errors gracefully"""
         # Mock track to raise exception after a few frames
         call_count = 0
-        original_recv = mock_track.recv
+        original_recv = bunny_video_track.recv
         
         async def failing_recv():
             nonlocal call_count
@@ -380,16 +371,16 @@ class TestVideoForwarder:
                 raise Exception("Track error")
             return await original_recv()
         
-        mock_track.recv = failing_recv
+        bunny_video_track.recv = failing_recv
         
-        forwarder = VideoForwarder(mock_track, max_buffer=3)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
         
         await forwarder.start()
         
         try:
             # Should still be able to get some frames before error
             frame = await forwarder.next_frame(timeout=1.0)
-            assert isinstance(frame, MockVideoFrame)
+            assert hasattr(frame, 'to_ndarray')  # Real video frame
             
             # Let it run a bit more to trigger error
             await asyncio.sleep(0.1)
@@ -398,9 +389,9 @@ class TestVideoForwarder:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_stop_drains_queue(self, mock_track):
+    async def test_stop_drains_queue(self, bunny_video_track):
         """Test that stop drains the queue"""
-        forwarder = VideoForwarder(mock_track, max_buffer=5)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=5)
         
         await forwarder.start()
         
@@ -418,9 +409,9 @@ class TestVideoForwarder:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_no_fps_limit(self, mock_track):
+    async def test_no_fps_limit(self, bunny_video_track):
         """Test behavior when fps is None (no limit)"""
-        forwarder = VideoForwarder(mock_track, max_buffer=3, fps=None)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=None)
         
         received_frames = []
         timestamps = []
@@ -445,22 +436,57 @@ class TestVideoForwarder:
             
         finally:
             await forwarder.stop()
+    
+    async def test_frame_count_at_10fps(self, bunny_video_track):
+        """Test that VideoForwarder generates ~30 frames at 10fps from 3-second video"""
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=10, fps=10.0)
+        
+        received_frames = []
+        timestamps = []
+        
+        def on_frame(frame):
+            received_frames.append(frame)
+            timestamps.append(asyncio.get_event_loop().time())
+        
+        await forwarder.start()
+        
+        try:
+            await forwarder.start_event_consumer(on_frame)
+            
+            # Let it run for the full 3-second video duration
+            await asyncio.sleep(3.5)  # Slightly longer to ensure we get all frames
+            
+            # Should have received approximately 30 frames (3 seconds * 10 fps)
+            # Allow some tolerance for timing variations
+            assert 25 <= len(received_frames) <= 35, f"Expected ~30 frames, got {len(received_frames)}"
+            
+            # Verify all frames are real video frames
+            for frame in received_frames:
+                assert hasattr(frame, 'to_ndarray')
+            
+            # Check that frames are roughly at 10fps intervals
+            if len(timestamps) > 1:
+                intervals = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps)-1)]
+                avg_interval = sum(intervals) / len(intervals)
+                # Should be roughly 1/10 = 0.1 seconds between frames
+                assert 0.08 <= avg_interval <= 0.12, f"Expected ~0.1s intervals, got {avg_interval:.3f}s"
+            
+            print(f"Received {len(received_frames)} frames at 10fps from 3-second video")
+            
+        finally:
+            await forwarder.stop()
 
 
-class TestVideoForwarderIntegration:
-    """Integration tests for VideoForwarder with real-like scenarios"""
+class TestVideoForwarderIntegration(BaseTest):
+    """Integration tests for VideoForwarder with real video data"""
     
     @pytest.mark.asyncio
-    async def test_video_forwarder_with_output_track(self):
+    async def test_video_forwarder_with_output_track(self, bunny_video_track):
         """Test VideoForwarder with an output track scenario"""
-        # Create mock frames
-        frames = [MockVideoFrame(i) for i in range(5)]
-        input_track = MockVideoTrack(frames=frames, delay=0.01)
-        
         # Mock output track
         output_track = AsyncMock()
         
-        forwarder = VideoForwarder(input_track, max_buffer=3, fps=10.0)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
         
         # Simulate writing to output track
         async def write_to_output(frame):
@@ -482,23 +508,19 @@ class TestVideoForwarderIntegration:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_video_forwarder_with_callback_processing(self):
+    async def test_video_forwarder_with_callback_processing(self, bunny_video_track):
         """Test VideoForwarder with callback-based processing"""
-        frames = [MockVideoFrame(i) for i in range(8)]
-        input_track = MockVideoTrack(frames=frames, delay=0.005)
-        
         processed_frames = []
         
         async def process_frame(frame):
             # Simulate frame processing
             processed_data = frame.to_ndarray()
             processed_frames.append({
-                'frame_id': frame.frame_id,
                 'data_shape': processed_data.shape,
-                'timestamp': frame.timestamp
+                'has_to_ndarray': hasattr(frame, 'to_ndarray')
             })
         
-        forwarder = VideoForwarder(input_track, max_buffer=4, fps=20.0)
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=4, fps=20.0)
         
         await forwarder.start()
         
@@ -513,10 +535,11 @@ class TestVideoForwarderIntegration:
             
             # Verify processing data
             for processed in processed_frames:
-                assert 'frame_id' in processed
                 assert 'data_shape' in processed
-                assert 'timestamp' in processed
-                assert processed['data_shape'] == (480, 640, 3)
+                assert 'has_to_ndarray' in processed
+                assert processed['has_to_ndarray'] is True
+                # Real video frames will have varying shapes
+                assert len(processed['data_shape']) == 3  # height, width, channels
                 
         finally:
             await forwarder.stop()
