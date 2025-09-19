@@ -10,6 +10,7 @@ from getstream.audio import resample_audio
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
+from google.genai.live import AsyncSession
 from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict, VoiceConfigDict, \
     PrebuiltVoiceConfigDict, AudioTranscriptionConfigDict, RealtimeInputConfigDict, TurnCoverage, \
     ContextWindowCompressionConfigDict, SlidingWindowDict, HttpOptions, LiveServerMessage, Blob, Part
@@ -64,11 +65,11 @@ class Realtime2(realtime.Realtime):
         self.config = self._create_config(config)
         self.logger = logging.getLogger(__name__)
         self.output_track = AudioStreamTrack(
-            framerate=24000, stereo=False, format="s16"
+            framerate=16000, stereo=False, format="s16"
         )
         self._video_forwarder: Optional[VideoForwarder] = None
         self._session_context = None
-        self._session = None
+        self._session: Optional[AsyncSession] = None
         self._receive_task = None
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
@@ -77,9 +78,12 @@ class Realtime2(realtime.Realtime):
         Simplify and send the text to send client content
         """
         self.logger.info("Simple response")
-        await self.send_client_content(
-            turns={"role": "user", "parts": [{"text": text}]}, turn_complete=True
-        )
+        #await self.send_client_content(
+        #    turns={"role": "user", "parts": [{"text": text}]}, turn_complete=True
+        #)
+        await self._session.send_realtime_input(text=text)
+        self.logger.info("Simple response completed")
+
 
 
     async def send_client_content(self, *args, **kwargs):
@@ -112,57 +116,52 @@ class Realtime2(realtime.Realtime):
     async def _receive_loop(self):
         self.logger.info("_receive_loop started")
         try:
-            async for response in self._session.receive():
-                self.logger.info("_receive_loop received response")
+            while True:
+                async for response in self._session.receive():
 
-                response: LiveServerMessage = response
+                    response: LiveServerMessage = response
 
-                is_input_transcript = response and response.server_content and response.server_content.input_transcription
-                is_output_transcript = response and response.server_content and response.server_content.output_transcription
-                is_response = response and response.server_content and response.server_content.model_turn
+                    is_input_transcript = response and response.server_content and response.server_content.input_transcription
+                    is_output_transcript = response and response.server_content and response.server_content.output_transcription
+                    is_response = response and response.server_content and response.server_content.model_turn
+                    is_interrupt = response and response.server_content and response.server_content.interrupted
+                    is_completion = response and response.server_content and response.server_content.turn_complete
 
-                if is_input_transcript:
-                    # TODO: what to do with this?
-                    self.logger.info("input: %s", response.server_content.input_transcription.text)
-                    continue
+                    if is_input_transcript:
+                        # TODO: what to do with this?
+                        self.logger.info("input: %s", response.server_content.input_transcription.text)
+                    elif is_output_transcript:
+                        # TODO: what to do with this?
+                        self.logger.info("output: %s", response.server_content.output_transcription.text)
+                    elif is_interrupt:
+                        self.logger.info("interrupted: %s", response.server_content.interrupted)
+                    elif is_response:
+                        # Store the resumption id so we can resume a broken connection
+                        if response.session_resumption_update:
+                            update = response.session_resumption_update
+                            if update.resumable and update.new_handle:
+                                self.session_resumption_id = update.new_handle
 
-                if is_output_transcript:
-                    # TODO: what to do with this?
-                    self.logger.info("output: %s", response.server_content.output_transcription.text)
-                    continue
+                        parts = response.server_content.model_turn.parts
 
-                # skip empty response
-                if not is_response and not is_output_transcript and not is_input_transcript:
-                    self.logger.warning("Unrecognized event structure for gemini %s", response)
-                    continue
-
-                # Store the resumption id so we can resume a broken connection
-                if response.session_resumption_update:
-                    update = response.session_resumption_update
-                    if update.resumable and update.new_handle:
-                        self.session_resumption_id = update.new_handle
-
-                parts = response.server_content.model_turn.parts
-
-
-                for part in parts:
-                    part: Part = part
-                    if part.text:
-                        if part.thought:
-                            self.logger.info("Got thought %s", part.text)
-                        else:
-                            print("text", response.text)
-                    elif part.inline_data:
-                        data = part.inline_data.data
-                        self.logger.info("Sending out audio %d %s", len(data), part.inline_data.mime_type)
-                        self.emit("audio", data)
-                        await self.output_track.write(data)
+                        for part in parts:
+                            part: Part = part
+                            if part.text:
+                                if part.thought:
+                                    self.logger.info("Gemini thought %s", part.text)
+                                else:
+                                    print("text", response.text)
+                            elif part.inline_data:
+                                data = part.inline_data.data
+                                self.logger.info("Gemini generating audio %d %s", len(data), part.inline_data.mime_type)
+                                self.emit("audio", data)
+                                await self.output_track.write(data)
+                            else:
+                                print("text", response.text)
+                    elif is_completion:
+                        self.logger.info("Generation complete")
                     else:
-                        print("text", response.text)
-
-                if response.server_content.generation_complete is True:
-                    # TODO: aggregate text here
-                    pass
+                        self.logger.warning("Unrecognized event structure for gemini %s", response)
 
         except asyncio.CancelledError:
             self.logger.info("_receive_loop cancelled")
@@ -174,7 +173,7 @@ class Realtime2(realtime.Realtime):
             self.logger.info("_receive_loop ended")
 
     async def send_audio_pcm(self, pcm: PcmData):
-        self.logger.info(f"Sending audio pcm: {pcm.duration}")
+        self.logger.info(f"Sending audio to gemini: {pcm.duration}")
 
         try:
             # Build blob and send directly

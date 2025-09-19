@@ -1,7 +1,11 @@
 import pytest
 import os
 import tempfile
+import numpy as np
+import av
+import asyncio
 from stream_agents.core.utils.utils import parse_instructions, Instructions
+from getstream.video.rtc.track_util import PcmData
 
 
 class TestParseInstructions:
@@ -259,3 +263,7 @@ class TestParseInstructionsFileReading:
         # Content will not be empty since readme.md exists in current directory
         assert "readme.md" in result.markdown_contents
         assert len(result.markdown_contents["readme.md"]) > 0
+
+
+# Shared fixtures for integration tests
+
