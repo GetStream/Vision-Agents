@@ -54,14 +54,12 @@ You are a voice assistant.
     # Ensure the call exists server-side before joining
     call.get_or_create(data={"created_by_id": agent.agent_user.id})
 
-    # Open the demo UI
-    agent.edge.open_demo(call)
-
     logger.info("🤖 Starting OpenAI Realtime Agent...")
 
     # Have the agent join the call/room
     with await agent.join(call):
         print("Joining call")
+        agent.edge.open_demo(call)
         # Ensure the LLM realtime connection is ready (should already be awaited internally)
         await agent.llm.wait_until_ready(timeout=10.0)  # type: ignore[attr-defined]
         print("LLM ready")
