@@ -51,13 +51,11 @@ VideoFrame = Union[VideoFrameProtocol, VideoFrameWithImageProtocol]
 
 """
 TODO:
-- Study how to run tasks/ when to run tasks etc (fix it for audio next)
-- How to forward video to it (testing)
-
+- few more event types to handle (see video test)
+- code cleanup
 - at mention support (for docs)
 - session resumption should work
 - mcp & functions
-- evaluate if we need a task group (maybe)
 """
 
 DEFAULT_MODEL = "gemini-2.5-flash-exp-native-audio-thinking-dialog"
@@ -147,7 +145,8 @@ class Realtime2(realtime.Realtime):
                     is_output_transcript = response and response.server_content and response.server_content.output_transcription
                     is_response = response and response.server_content and response.server_content.model_turn
                     is_interrupt = response and response.server_content and response.server_content.interrupted
-                    is_completion = response and response.server_content and response.server_content.turn_complete
+                    is_turn_complete = response and response.server_content and response.server_content.turn_complete
+                    is_generation_complete = response and response.server_content and response.server_content.generation_complete
 
                     if is_input_transcript:
                         # TODO: what to do with this?
@@ -180,8 +179,10 @@ class Realtime2(realtime.Realtime):
                                 await self.output_track.write(data)
                             else:
                                 print("text", response.text)
-                    elif is_completion:
-                        self.logger.info("Generation complete")
+                    elif is_turn_complete:
+                        self.logger.info("is_turn_complete complete")
+                    elif is_generation_complete:
+                        self.logger.info("is_generation_complete complete")
                     else:
                         self.logger.warning("Unrecognized event structure for gemini %s", response)
 
