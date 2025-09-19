@@ -414,6 +414,7 @@ class Agent:
         if self.sts_mode:
 
             try:
+                # TODO: you don't always want this on :)
                 await self.llm.start_video_sender(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
             except Exception as e:

@@ -39,7 +39,6 @@ TODO:
 """
 
 DEFAULT_MODEL = "gemini-2.5-flash-exp-native-audio-thinking-dialog"
-DEFAULT_MODEL = "gemini-live-2.5-flash-preview"
 
 
 class Realtime2(realtime.Realtime):
@@ -68,6 +67,9 @@ class Realtime2(realtime.Realtime):
             framerate=24000, stereo=False, format="s16"
         )
         self._video_forwarder: Optional[VideoForwarder] = None
+        self._session_context = None
+        self._session = None
+        self._receive_task = None
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
                               participant: Participant = None):
@@ -94,42 +96,42 @@ class Realtime2(realtime.Realtime):
         """
         self.logger.info("Connecting to Realtime, config set to %s", self.config)
 
-        print("started")
+        # Create the context manager and enter it
+        self._session_context = self.client.aio.live.connect(model=self.model, config=self.config)
+        self._session = await self._session_context.__aenter__()
+        self.logger.info("Connected to session %s", self._session)
 
+        # Start the receive loop task
         self._receive_task = asyncio.create_task(self._receive_loop())
 
     async def _receive_loop(self):
         self.logger.info("_receive_loop started")
         try:
-            async with self.client.aio.live.connect(model=self.model, config=self.config) as session:
-                self._session = session
-                self.logger.info("_receive_loop connected to session %s", self._session)
+            async for response in self._session.receive():
+                self.logger.info("_receive_loop received response")
 
-                async for response in session.receive():
-                    self.logger.info("_receive_loop received response")
+                response: LiveServerMessage = response
+                # skip empty response
+                empty = not response or not response.server_content or not response.server_content.model_turn
+                if empty:
+                    self.logger.warning("Empty response received from gemini Realtime %s", response)
+                    continue
 
-                    response: LiveServerMessage = response
-                    # skip empty response
-                    empty = not response or not response.server_content or not response.server_content.model_turn
-                    if empty:
-                        self.logger.warning("Empty response received from gemini Realtime %s", response)
-                        continue
-
-                    parts = response.server_content.model_turn.parts
-                    for part in parts:
-                        part: Part = part
-                        if part.text:
-                            if part.thought:
-                                self.logger.info("Got thought %s", part.text)
-                            else:
-                                print("text", response.text)
-                        elif part.inline_data:
-                            data = part.inline_data.data
-                            self.logger.info("Sending out audio %d %s", len(data), part.inline_data.mime_type)
-                            self.emit("audio", data)
-                            await self.output_track.write(data)
+                parts = response.server_content.model_turn.parts
+                for part in parts:
+                    part: Part = part
+                    if part.text:
+                        if part.thought:
+                            self.logger.info("Got thought %s", part.text)
                         else:
                             print("text", response.text)
+                    elif part.inline_data:
+                        data = part.inline_data.data
+                        self.logger.info("Sending out audio %d %s", len(data), part.inline_data.mime_type)
+                        self.emit("audio", data)
+                        await self.output_track.write(data)
+                    else:
+                        print("text", response.text)
         except asyncio.CancelledError:
             self.logger.info("_receive_loop cancelled")
             raise
@@ -137,10 +139,7 @@ class Realtime2(realtime.Realtime):
             self.logger.error(f"_receive_loop error: {e}")
             raise
         finally:
-            self._session = None
             self.logger.info("_receive_loop ended")
-
-
 
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 24000):
         try:
@@ -183,13 +182,15 @@ class Realtime2(realtime.Realtime):
                 await self._receive_task
             except asyncio.CancelledError:
                 pass
-        if hasattr(self, '_session') and self._session:
-            self._session.close()
-        self._session = None
-
-
-
-
+        
+        if hasattr(self, '_session_context') and self._session_context:
+            # Properly close the session using the context manager's __aexit__
+            try:
+                await self._session_context.__aexit__(None, None, None)
+            except Exception as e:
+                self.logger.warning(f"Error closing session: {e}")
+            self._session_context = None
+            self._session = None
 
     def _frame_to_png_bytes(self, frame: Any) -> bytes:
         """Convert a video frame to PNG bytes."""
@@ -257,21 +258,21 @@ class Realtime2(realtime.Realtime):
     def _create_config(self, config: Optional[LiveConnectConfigDict]=None) -> LiveConnectConfigDict:
         default_config = LiveConnectConfigDict(
             response_modalities=[Modality.AUDIO],
-            #input_audio_transcription=AudioTranscriptionConfigDict(),
-            #output_audio_transcription=AudioTranscriptionConfigDict(),
+            input_audio_transcription=AudioTranscriptionConfigDict(),
+            output_audio_transcription=AudioTranscriptionConfigDict(),
             speech_config=SpeechConfigDict(
                 voice_config=VoiceConfigDict(
                     prebuilt_voice_config=PrebuiltVoiceConfigDict(voice_name="Puck")
                 ),
                 language_code="en-US",
             ),
-            # realtime_input_config=RealtimeInputConfigDict(
-            #     turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
-            # ),
-            # context_window_compression=ContextWindowCompressionConfigDict(
-            #     trigger_tokens=25600,
-            #     sliding_window=SlidingWindowDict(target_tokens=12800),
-            # ),
+            realtime_input_config=RealtimeInputConfigDict(
+                turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
+            ),
+            context_window_compression=ContextWindowCompressionConfigDict(
+                trigger_tokens=25600,
+                sliding_window=SlidingWindowDict(target_tokens=12800),
+            ),
         )
         if config is not None:
             for k, v in config.items():

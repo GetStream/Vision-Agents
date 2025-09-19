@@ -17,7 +17,7 @@ class TestRealtime2Integration:
     def realtime2(self):
         """Create Realtime2 instance with API key"""
         return Realtime2(
-            model="gemini-2.5-flash-preview",
+            model="gemini-2.5-flash-exp-native-audio-thinking-dialog",
         )
 
     @pytest.mark.integration
@@ -27,6 +27,7 @@ class TestRealtime2Integration:
 
         try:
             # Send a simple message
+            print("starting")
             await realtime2.simple_response("Hello, can you hear me?")
 
             # Wait for response
@@ -72,7 +73,7 @@ class TestRealtime2Integration:
         )
         
         realtime2 = Realtime2(
-            model="gemini-2.5-flash-preview",
+            model="gemini-2.5-flash-exp-native-audio-thinking-dialog",
             api_key=api_key,
             config=custom_config
         )
@@ -137,7 +138,7 @@ class TestRealtime2Integration:
     @pytest.mark.asyncio
     async def test_connect_without_api_key(self):
         """Test that connection fails gracefully without API key"""
-        realtime2 = Realtime2(model="gemini-2.5-flash-preview")
+        realtime2 = Realtime2(model="gemini-2.5-flash-exp-native-audio-thinking-dialog")
         
         try:
             await realtime2.connect()
