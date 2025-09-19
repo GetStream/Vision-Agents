@@ -246,10 +246,10 @@ class Agent:
                                     relay = MediaRelay()
                                     self._persistent_media_relay = relay
                                 forward_branch = relay.subscribe(track)
-                                print(f"🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥 Forwarding video frames to Realtime provider (pc.on early track) {forward_branch}")
+                                print(f"🎥 Forwarding video frames to Realtime provider (pc.on early track) {forward_branch}")
                                 if self.sts_mode and isinstance(self.llm, Realtime):
                                     await self.llm.start_video_sender(forward_branch)
-                                    self.logger.info("🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥🎥 Forwarding video frames to Realtime provider (pc.on early track)")
+                                    self.logger.info("🎥 Forwarding video frames to Realtime provider (pc.on early track)")
                         except Exception as e:
                             self.logger.error(f"Error handling pc.on('track') video (early): {e}")
                     self._pc_track_handler_attached = True
