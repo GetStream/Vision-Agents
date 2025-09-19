@@ -289,7 +289,7 @@ class ClaudeLLM(LLM):
 
             # 4) Done -> return all collected text
             total_text = "".join(text_parts)
-            llm_response = LLMResponse(last_followup_stream or original, total_text)
+            llm_response = LLMResponseEvent(last_followup_stream or original, total_text)
 
         class AfterLLMResponseEventEvent:
             pass
