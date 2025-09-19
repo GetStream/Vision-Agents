@@ -20,6 +20,7 @@ from stream_agents.core.processors import BaseProcessor
 import av
 
 from stream_agents.plugins.gemini.queue import LatestNQueue
+from stream_agents.plugins.gemini.video_forwarder import VideoForwarder
 
 try:
     from PIL import Image  # type: ignore
@@ -28,141 +29,107 @@ except Exception:  # pragma: no cover
 
 """
 TODO:
-- Study how to run tasks/ when to run tasks etc
-- How to forward video to it
+- Study how to run tasks/ when to run tasks etc (fix it for audio next)
+- How to forward video to it (testing)
 
-- fix init to have all features
+- at mention support (for docs)
 - session resumption should work
 - mcp & functions
-- audio conversion to a utility
-- evaluate if we need a task group
-- at mention support
-
-
-
-
-
+- evaluate if we need a task group (maybe)
 """
-
-
-class VideoForwarder:
-    """
-    Pulls frames from `input_track` into a latest-N buffer.
-    Consumers can:
-      - call `await next_frame()` (pull model), OR
-      - run `start_event_consumer(on_frame)` (push model via callback).
-    `fps` limits how often frames are forwarded to consumers (coalescing to newest).
-    """
-    def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = None):
-        self.input_track = input_track
-        self.queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=max_buffer)
-        self.fps = fps  # None = unlimited, else forward at ~fps
-        self._tasks: set[asyncio.Task] = set()
-        self._stopped = asyncio.Event()
-
-    # ---------- lifecycle ----------
-    async def start(self) -> None:
-        self._stopped.clear()
-        self._tasks.add(asyncio.create_task(self._producer()))
-
-    async def stop(self) -> None:
-        self._stopped.set()
-        for t in list(self._tasks):
-            t.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
-        # drain queue
-        try:
-            while True:
-                self.queue.get_nowait()
-        except asyncio.QueueEmpty:
-            pass
-
-    # ---------- producer (fills latest-N buffer) ----------
-    async def _producer(self):
-        try:
-            while not self._stopped.is_set():
-                frame = await self.input_track.recv()
-                await self.queue.put_latest(frame)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            # optional: log
-            pass
-
-    # ---------- consumer API (pull one frame; coalesce backlog to newest) ----------
-    async def next_frame(self, *, timeout: Optional[float] = None) -> av.VideoFrame:
-        """
-        Returns the newest available frame. If there's backlog, older frames
-        are drained so you get the latest (low latency).
-        """
-        if timeout is None:
-            frame = await self.queue.get()
-        else:
-            async with asyncio.timeout(timeout):
-                frame = await self.queue.get()
-
-        # drain to newest
-        while True:
-            try:
-                newer = self.queue.get_nowait()
-                frame = newer
-            except asyncio.QueueEmpty:
-                break
-        return frame
-
-    # ---------- push model (broadcast via callback) ----------
-    async def start_event_consumer(
-        self,
-        on_frame: Callable[[av.VideoFrame], Any],  # async or sync
-    ) -> None:
-        """
-        Starts a task that calls `on_frame(latest_frame)` at ~fps.
-        If fps is None, it forwards as fast as frames arrive (still coalescing).
-        """
-        async def _consumer():
-            loop = asyncio.get_running_loop()
-            min_interval = (1.0 / self.fps) if (self.fps and self.fps > 0) else 0.0
-            last_ts = 0.0
-            is_coro = asyncio.iscoroutinefunction(on_frame)
-            try:
-                while not self._stopped.is_set():
-                    # Wait for at least one frame
-                    frame = await self.next_frame()
-                    # Throttle to fps (if set)
-                    if min_interval > 0.0:
-                        now = loop.time()
-                        elapsed = now - last_ts
-                        if elapsed < min_interval:
-                            # coalesce: keep draining to newest until it's time
-                            await asyncio.sleep(min_interval - elapsed)
-                        last_ts = loop.time()
-                    # Call handler
-                    if is_coro:
-                        await on_frame(frame)  # type: ignore[arg-type]
-                    else:
-                        on_frame(frame)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # optional: log
-                pass
-
-        self._tasks.add(asyncio.create_task(_consumer()))
-
 
 DEFAULT_MODEL = "gemini-2.5-flash-exp-native-audio-thinking-dialog"
 DEFAULT_MODEL = "gemini-live-2.5-flash-preview"
 
+
 class Realtime2(realtime.Realtime):
     """
 
-    Audio data in the Live API is always raw, little-endian, 16-bit PCM. Audio output always uses a sample rate of 24kHz. Input audio is natively 16kHz, but the Live API will resample if needed
+    Audio data in the Live API is always raw, little-endian, 16-bit PCM. Audio output always uses a sample rate of 24kHz.
+    Input audio is natively 16kHz, but the Live API will resample if needed
     """
-    
+
+    def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None ) -> None:
+        super().__init__()
+        self.model = model
+        if http_options is None:
+            http_options = HttpOptions(api_version="v1alpha")
+
+        if client is None:
+            client = genai.Client(http_options=http_options)
+
+        self.config = self._create_config(config)
+        self.logger = logging.getLogger(__name__)
+        self.output_track = AudioStreamTrack(
+            framerate=24000, stereo=False, format="s16"
+        )
+        self._video_forwarder: Optional[VideoForwarder] = None
+
+    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
+                              participant: Participant = None):
+        """
+        Simplify and send the text to send client content
+        """
+        self.logger.info("Simple response")
+        await self.send_client_content(
+            turns={"role": "user", "parts": [{"text": text}]}, turn_complete=True
+        )
+
+
+    async def send_client_content(self, *args, **kwargs):
+        """
+        Wrap the native send client content
+        """
+        await self._session.send_client_content(
+            *args, **kwargs
+        )
+
+    async def connect(self):
+        """
+        Connect to Gemini's websocket
+        """
+        self.logger.info("Connecting to Realtime, config set to %s", self.config)
+
+        print("started")
+
+        self._receive_task = asyncio.create_task(self._receive_loop())
+
+    async def _receive_loop(self):
+        self.logger.info("_receive_loop started")
+        async with self.client.aio.live.connect(model=self.model, config=self.config) as session:
+            self._session = session
+            self.logger.info("_receive_loop connected to session %s", self._session)
+
+            while True:
+                async for response in session.receive():
+                    self.logger.info("_receive_loop received response")
+
+                    response: LiveServerMessage = response
+                    # skip empty response
+                    empty = not response or not response.server_content or not response.server_content.model_turn
+                    if empty:
+                        self.logger.warning("Empty response received from gemini Realtime %s", response)
+                        continue
+
+                    parts = response.server_content.model_turn.parts
+                    for part in parts:
+                        part: Part = part
+                        if part.text:
+                            if part.thought:
+                                self.logger.info("Got thought %s", part.text)
+                            else:
+                                print("text", response.text)
+                        elif part.inline_data:
+                            data = part.inline_data.data
+                            self.logger.info("Sending out audio %d %s", len(data), part.inline_data.mime_type)
+                            self.emit("audio", data)
+                            await self.output_track.write(data)
+                        else:
+                            print("text", response.text)
+
+
+
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 24000):
-        return
         try:
             #self.logger.info(f"Sending audio pcm: {pcm}")
             # TODO: do we need to send over empty audio? seems like we maybe don't?
@@ -195,33 +162,13 @@ class Realtime2(realtime.Realtime):
         except Exception as e:
             logging.error(e)
 
-    async def send_text(self, text: str):
-        pass
 
     async def _close_impl(self):
-        return
         self._session.close()
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
-                              participant: Participant = None):
 
-        self.logger.info("Simple response")
-        await self._session.send_client_content(
-            turns={"role": "user", "parts": [{"text": text}]}, turn_complete=True
-        )
 
-    def __init__(self, model: str =DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, **kwargs):
-        super().__init__(**kwargs)
-        self.model = model
-        #http_options=HttpOptions(api_version="v1alpha")
-        self.client = genai.Client()
-        self.config = self._create_config(config)
-        self.logger = logging.getLogger(__name__)
-        # TODO: this is wrong since we need 48khz for webrtc
-        self.output_track = AudioStreamTrack(
-            framerate=24000, stereo=False, format="s16"
-        )
-        self._video_forwarder: Optional[VideoForwarder] = None
+
 
     def _frame_to_png_bytes(self, frame: Any) -> bytes:
         """Convert a video frame to PNG bytes."""
@@ -312,42 +259,4 @@ class Realtime2(realtime.Realtime):
 
 
 
-    async def connect(self):
-        self.logger.info("Connecting to Realtime, config set to %s", self.config)
-        
-        print("started")
-        
-        async def _receive_loop():
-            self.logger.info("_receive_loop started")
-            async with self.client.aio.live.connect(model=self.model, config=self.config) as session:
-                self._session = session
-                self.logger.info("_receive_loop connected to session %s", self._session)
 
-                async for response in session.receive():
-                    self.logger.info("_receive_loop received response")
-
-                    response: LiveServerMessage = response
-                    # skip empty response
-                    empty = not response or not response.server_content or not response.server_content.model_turn
-                    if empty:
-                        self.logger.warning("Empty response received from gemini Realtime %s", response)
-                        continue
-
-                    parts = response.server_content.model_turn.parts
-                    for part in parts:
-                        part : Part = part
-                        if part.text:
-                            if part.thought:
-                                self.logger.info("Got thought %s", part.text)
-                            else:
-                                print("text", response.text)
-                        elif part.inline_data:
-                            data = part.inline_data.data
-                            self.logger.info("Sending out audio %d %s", len(data), part.inline_data.mime_type)
-                            self.emit("audio", data)
-                            await self.output_track.write(data)
-                        else:
-                            print("text", response.text)
-
-        self._audio_receiver_task = asyncio.create_task(_receive_loop())
-        self._audio_receiver_task.add_done_callback(lambda t: print(f"Task (_receive_loop) error: {t.exception()}"))

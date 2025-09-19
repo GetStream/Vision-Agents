@@ -217,14 +217,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
     @abc.abstractmethod
     async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
 
-    @abc.abstractmethod
-    async def send_text(self, text: str):
-        """Send a text message from the human side to the conversation.
-
-        Providers should override to forward text upstream.
-        """
-        ...
-
     async def wait_until_ready(self, timeout: Optional[float] = None) -> bool:
         """Wait until the realtime session is ready. Returns True if ready."""
         if self._ready_event.is_set():
