@@ -49,15 +49,19 @@ class Realtime2(realtime.Realtime):
     Input audio is natively 16kHz, but the Live API will resample if needed
     """
 
-    def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None ) -> None:
+    def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None, api_key: Optional[str] = None ) -> None:
         super().__init__()
         self.model = model
         if http_options is None:
             http_options = HttpOptions(api_version="v1alpha")
 
-        if client is None:
-            client = genai.Client(http_options=http_options)
+        if client is None:  
+            if api_key:
+                client = genai.Client(api_key=api_key, http_options=http_options)
+            else:
+                client = genai.Client(http_options=http_options)
 
+        self.client = client
         self.config = self._create_config(config)
         self.logger = logging.getLogger(__name__)
         self.output_track = AudioStreamTrack(
@@ -96,11 +100,11 @@ class Realtime2(realtime.Realtime):
 
     async def _receive_loop(self):
         self.logger.info("_receive_loop started")
-        async with self.client.aio.live.connect(model=self.model, config=self.config) as session:
-            self._session = session
-            self.logger.info("_receive_loop connected to session %s", self._session)
+        try:
+            async with self.client.aio.live.connect(model=self.model, config=self.config) as session:
+                self._session = session
+                self.logger.info("_receive_loop connected to session %s", self._session)
 
-            while True:
                 async for response in session.receive():
                     self.logger.info("_receive_loop received response")
 
@@ -126,6 +130,15 @@ class Realtime2(realtime.Realtime):
                             await self.output_track.write(data)
                         else:
                             print("text", response.text)
+        except asyncio.CancelledError:
+            self.logger.info("_receive_loop cancelled")
+            raise
+        except Exception as e:
+            self.logger.error(f"_receive_loop error: {e}")
+            raise
+        finally:
+            self._session = None
+            self.logger.info("_receive_loop ended")
 
 
 
@@ -164,7 +177,15 @@ class Realtime2(realtime.Realtime):
 
 
     async def _close_impl(self):
-        self._session.close()
+        if hasattr(self, '_receive_task') and self._receive_task:
+            self._receive_task.cancel()
+            try:
+                await self._receive_task
+            except asyncio.CancelledError:
+                pass
+        if hasattr(self, '_session') and self._session:
+            self._session.close()
+        self._session = None
 
 
 
