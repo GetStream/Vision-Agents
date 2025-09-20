@@ -48,7 +48,7 @@ Source = "https://github.com/getstream/agents"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff"]
-openai = ["getstream-plugins-openai>=0.1.0", "openai==1.101.0"]
+openai = ["getstream-plugins-openai>=0.1.0", "openai==1.108.1"]
 deepgram = ["getstream-plugins-deepgram>=0.1.0"]
 elevenlabs = ["getstream-plugins-elevenlabs>=0.1.0"]
 fal = ["fal-client>=0.6.1"]

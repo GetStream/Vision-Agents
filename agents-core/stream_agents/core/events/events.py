@@ -66,7 +66,7 @@ class AudioFormat(Enum):
 
 
 @dataclass
-class BaseEvent(DataClassJsonMixin):
+class BaseEvent:
     """Base class for all events."""
     type: str
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))

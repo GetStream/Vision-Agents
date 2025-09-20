@@ -1,6 +1,7 @@
 import collections
 import dataclasses
 import types
+import typing
 import logging
 from typing import get_origin, Union, get_args
 
@@ -15,6 +16,14 @@ class ExceptionEvent:
     type: str = 'event.exception'
 
 
+@dataclasses.dataclass
+class HealthCheckEvent:
+    connection_id: str
+    created_at: int
+    custom: dict
+    type: str = 'health.check'
+
+
 class EventManager:
     def __init__(self, ignore_unknown_events: bool = True):
         self._queue = collections.deque([])
@@ -24,21 +33,34 @@ class EventManager:
         self._ignore_unknown_events = ignore_unknown_events
 
         self.register(ExceptionEvent)
+        self.register(HealthCheckEvent)
 
     def register(self, event_class, ignore_not_compatible=False):
         if event_class.__name__.endswith('Event') and hasattr(event_class, 'type'):
+            #if event_class.type in self._events:
+            #    raise KeyError(f"{event_class.type} is already registered.")
             self._events[event_class.type] = event_class
+            logger.info(f"Registered new event {event_class} - {event_class.type}")
         elif not ignore_not_compatible:
             raise ValueError(f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}")
+        else:
+            logger.warning(f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}")
 
-    def merge(self, ev: 'EventManager'):
-        self._events.update(ev._events)
-        self._modules.update(ev._modules)
-        self._handlers.update(ev._handlers)
-        for event in ev._queue:
+    def merge(self, em: 'EventManager'):
+        self._events.update(em._events)
+        self._modules.update(em._modules)
+        self._handlers.update(em._handlers)
+        for event in em._queue:
             self._queue.append(event)
 
-    def register_events_from_module(self, module, prefix='', ignore_not_compatible=False):
+        # NOTE: we are merged into one manager and all children
+        # refrence main one
+        em._events = self._events
+        em._modules = self._modules
+        em._handlers = self._handlers
+        em._queue = self._queue
+
+    def register_events_from_module(self, module, prefix='', ignore_not_compatible=True):
         for name, class_ in module.__dict__.items():
             if name.endswith('Event') and (not prefix or getattr(class_, 'type', '').startswith(prefix)):
                 self.register(class_, ignore_not_compatible=ignore_not_compatible)
@@ -60,10 +82,20 @@ class EventManager:
         import_file.append("")
         return import_file
 
+    def unsubscribe(self, function):
+        # NOTE: not the efficient but will delete proper pointer to fucntion
+        for funcs in self._events.values():
+            try:
+                funcs.remove(function)
+            except ValueError:
+                pass
+
     def subscribe(self, function):
         subscribed = False
         is_union = False
-        for name, event_class in function.__annotations__.items():
+        annotations = typing.get_type_hints(function)
+
+        for name, event_class in annotations.items():
             origin = get_origin(event_class)
             events = []
 
@@ -85,9 +117,9 @@ class EventManager:
                     self._handlers.setdefault(event_type, []).append(function)
                     logger.warning(f"Handler {function.__name__} registered for event {event_type}")
                 elif not self._ignore_unknown_events:
-                    raise KeyError(f"Event {sub_event} is not registered.")
+                    raise KeyError(f"Event {sub_event} - {event_type} is not registered.")
                 else:
-                    logger.warning(f"Event {sub_event} is not registered – skipping handler {function.__name__}")
+                    logger.warning(f"Event {sub_event} - {event_type} - {type(sub_event)} {dir(sub_event)} is not registered – skipping handler {function.__name__}. All events: {self._events.keys()}")
         return function
 
     def _prepare_event(self, event):
