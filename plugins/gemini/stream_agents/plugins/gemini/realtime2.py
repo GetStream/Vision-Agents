@@ -1,12 +1,8 @@
 import asyncio
 import io
 import logging
-from typing import Optional, List, Callable, Any, Protocol, Union
-
-import numpy as np
-from aiortc import MediaStreamTrack, VideoStreamTrack
-from dotenv import load_dotenv
-from getstream.audio import resample_audio
+from typing import Optional, List
+from aiortc import MediaStreamTrack
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
@@ -20,13 +16,9 @@ from stream_agents.core.llm import realtime
 from stream_agents.core.processors import BaseProcessor
 import av
 
-from stream_agents.plugins.gemini.queue import LatestNQueue
 from stream_agents.plugins.gemini.video_forwarder import VideoForwarder
 
-try:
-    from PIL import Image  # type: ignore
-except Exception:  # pragma: no cover
-    Image = None  # type: ignore
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +28,7 @@ TODO:
 - stop sending white space audio
 - code cleanup
 - at mention support (for docs)
-- session resumption should work
+- session resumption should work (which error?)
 - mcp & functions
 """
 
@@ -80,13 +72,16 @@ class Realtime2(realtime.Realtime):
         Simplify and send the text to send client content
         """
         self.logger.info("Simple response")
-        #await self.send_client_content(
-        #    turns={"role": "user", "parts": [{"text": text}]}, turn_complete=True
-        #)
-        await self._session.send_realtime_input(text=text)
+        await self.send_realtime_input(text=text)
         self.logger.info("Simple response completed")
 
-
+    async def send_realtime_input(self, *args, **kwargs):
+        """
+        Wrap the native send_realtime_input
+        """
+        await self._session.send_realtime_input(
+            *args, **kwargs
+        )
 
     async def send_client_content(self, *args, **kwargs):
         """
@@ -103,6 +98,7 @@ class Realtime2(realtime.Realtime):
         self.logger.info("Connecting to Realtime, config set to %s", self.config)
 
         # Create the context manager and enter it
+        # TODO: use resumption id here
         self._session_context = self.client.aio.live.connect(model=self.model, config=self.config)
         self._session = await self._session_context.__aenter__()
         self.logger.info("Connected to session %s", self._session)
@@ -112,7 +108,7 @@ class Realtime2(realtime.Realtime):
 
     async def _reconnect(self):
         # TODO: reconnect a broken connection with self.session_resumption_id
-        pass
+        await self.connect()
 
 
     async def _receive_loop(self):
