@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
 from openai.types.realtime import *
-from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 
 load_dotenv()
 
