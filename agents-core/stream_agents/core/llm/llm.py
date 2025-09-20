@@ -5,8 +5,6 @@ import asyncio
 import json
 from typing import Optional, TYPE_CHECKING, Tuple, List, Dict, Any, TypeVar, Callable, Generic
 
-from stream_agents.core.llm import events
-
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
     from stream_agents.core.agents.conversation import Conversation
@@ -45,7 +43,6 @@ class LLM(abc.ABC):
         super().__init__()
         self.agent = None
         self.events = EventManager()
-        self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
 
     async def simple_response(
@@ -53,7 +50,7 @@ class LLM(abc.ABC):
         text: str,
         processors: Optional[List[BaseProcessor]] = None,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]:
+    ) -> LLMResponse[Any]:
         raise NotImplementedError
 
     def _get_tools_for_provider(self) -> List[Dict[str, Any]]:
