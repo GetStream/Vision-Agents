@@ -2,7 +2,6 @@ import asyncio
 from typing import Any, Optional
 from stream_agents.core.llm import realtime
 import logging
-import numpy as np
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager

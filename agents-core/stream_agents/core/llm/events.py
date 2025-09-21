@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from stream_agents.core.events import PluginBaseEvent, AudioFormat
-from typing import Optional, Any, Literal
+from typing import Optional, Any
 
 
 @dataclass

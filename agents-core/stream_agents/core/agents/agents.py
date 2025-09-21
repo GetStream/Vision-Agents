@@ -1,8 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Optional, List, Any, Union
-from uuid import uuid4
+from typing import Optional, List, Any
 
 import aiortc
 from aiortc import VideoStreamTrack
@@ -18,7 +17,6 @@ from ..llm.events import RealtimeTranscriptEvent, LLMResponseEvent
 from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
-from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
 
 
@@ -27,7 +25,7 @@ from ..events.manager import EventManager
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
-from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
+from ..turn_detection import TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
 
 import getstream.models
@@ -572,7 +570,7 @@ class Agent:
             self.logger.error(f"🎥VDP: EARLY EXIT - Failed to subscribe to track: {track_id}")
             return
 
-        self.logger.info(f"🎥VDP: Track subscription successful, validating video track...")
+        self.logger.info("🎥VDP: Track subscription successful, validating video track...")
         
         # Determine if this is a video track using both reported kind and original type
         is_video_type = track_type in ("video", TrackType.TRACK_TYPE_VIDEO, 2)
@@ -593,19 +591,19 @@ class Agent:
             self.logger.info(f"🎥VDP: ✅ Subscribed to track: {track_id}")
 
         # Give the track a moment to be ready
-        self.logger.info(f"🎥VDP: Waiting for track to be ready...")
+        self.logger.info("🎥VDP: Waiting for track to be ready...")
         await asyncio.sleep(0.5)
 
         # Use a MediaRelay to allow multiple consumers to read the same source track
         # Reuse a persistent relay to avoid GC and keep branches alive long-term
-        self.logger.info(f"🎥VDP: Setting up MediaRelay...")
+        self.logger.info("🎥VDP: Setting up MediaRelay...")
         relay = getattr(self, "_persistent_media_relay", None)
         if relay is None:
             relay = MediaRelay()
             self._persistent_media_relay = relay
-            self.logger.info(f"🎥VDP: Created new MediaRelay")
+            self.logger.info("🎥VDP: Created new MediaRelay")
         else:
-            self.logger.info(f"🎥VDP: Reusing existing MediaRelay")
+            self.logger.info("🎥VDP: Reusing existing MediaRelay")
             
         forward_branch = relay.subscribe(track)
         processing_branch = relay.subscribe(track)

@@ -10,7 +10,6 @@ import contextlib
 import io
 import logging
 import os
-import pprint
 from typing import Any, Dict, List, Optional, cast
 
 from aiortc.mediastreams import MediaStreamTrack

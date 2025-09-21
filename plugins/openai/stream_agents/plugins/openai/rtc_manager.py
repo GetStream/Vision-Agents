@@ -493,7 +493,7 @@ class RTCManager:
             
             # Replace the dummy track with the forwarding track
             try:
-                logger.info(f"🎥 Replacing OpenAI dummy track with StreamVideoForwardingTrack")
+                logger.info("🎥 Replacing OpenAI dummy track with StreamVideoForwardingTrack")
                 self._video_sender.replaceTrack(forwarding_track)
                 self._forwarding_track = forwarding_track
                 self._active_video_source = stream_video_track

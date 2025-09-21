@@ -12,7 +12,7 @@ from stream_agents.core.edge.types import User
 
 if TYPE_CHECKING:
 
-    from stream_agents.core.agents import Agent
+    pass
 
 
 class EdgeTransport(AsyncIOEventEmitter, abc.ABC):

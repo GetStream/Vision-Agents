@@ -48,7 +48,6 @@ Notes
 
 from __future__ import annotations
 
-import pprint
 from typing import (
     Any,
     Callable,
@@ -61,7 +60,6 @@ from typing import (
     Awaitable,
 )
 
-from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.audio_track import AudioStreamTrack
 import asyncio
 

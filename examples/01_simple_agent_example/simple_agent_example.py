@@ -5,7 +5,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from stream_agents.core.edge.types import User
-from stream_agents.plugins import elevenlabs, deepgram, openai, silero, getstream
+from stream_agents.plugins import elevenlabs, deepgram, openai, getstream
 from stream_agents.core import agents, cli
 from stream_agents.core.events import CallSessionParticipantJoinedEvent
 

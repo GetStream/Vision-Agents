@@ -3,7 +3,7 @@ from stream_agents.core.events import (
     PluginBaseEvent, AudioFormat, ConnectionState
 )
 from dataclasses import dataclass, field
-from typing import Optional, Literal, Any
+from typing import Optional, Any
 
 
 @dataclass

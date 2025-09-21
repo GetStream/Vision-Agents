@@ -14,14 +14,11 @@ Key Features:
 """
 
 import uuid
-import dataclasses
 from dataclasses import dataclass, field
-from dataclasses_json import DataClassJsonMixin
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from getstream.video.rtc.track_util import PcmData
 
 
 class EventType(Enum):

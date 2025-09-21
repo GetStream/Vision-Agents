@@ -1,5 +1,4 @@
 import logging
-from dataclasses import dataclass
 
 import torch
 import numpy as np
