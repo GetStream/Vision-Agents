@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from types import FunctionType
 
 from getstream.video.rtc.track_util import PcmData
 
@@ -59,7 +60,7 @@ class PluginInitializedEvent(PluginBaseEvent):
 class PluginClosedEvent(PluginBaseEvent):
     """Event emitted when a plugin is closed."""
 
-    type: EventType = field(default="plugin.closed", init=False)
+    type: str = field(default="plugin.closed", init=False)
     plugin_type: Optional[str] = None  # "STT", "STS", "VAD"
     provider: Optional[str] = None
     reason: Optional[str] = None
@@ -70,7 +71,7 @@ class PluginClosedEvent(PluginBaseEvent):
 class PluginErrorEvent(PluginBaseEvent):
     """Event emitted when a generic plugin error occurs."""
 
-    type: EventType = field(default="plugin.error", init=False)
+    type: str = field(default="plugin.error", init=False)
     plugin_type: Optional[str] = None  # "STT", "TTS", "STS", "VAD"
     provider: Optional[str] = None
     error: Optional[Exception] = None
@@ -82,3 +83,16 @@ class PluginErrorEvent(PluginBaseEvent):
     def error_message(self) -> str:
         return str(self.error) if self.error else "Unknown error"
 
+@dataclasses.dataclass
+class ExceptionEvent:
+    exc: Exception
+    handler: FunctionType
+    type: str = 'base.exception'
+
+
+@dataclasses.dataclass
+class HealthCheckEvent:
+    connection_id: str
+    created_at: int
+    custom: dict
+    type: str = 'health.check'
