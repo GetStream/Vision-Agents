@@ -79,10 +79,10 @@ async def test_start_video_sender_sends_media_blob(fake_image):
     g._is_connected = True  # type: ignore[attr-defined]
 
     track = _FakeVideoTrack(frames=2)
-    await g.start_video_sender(track, fps=100)  # type: ignore[reportArgumentType]
+    await g._watch_video_track(track, fps=100)  # type: ignore[reportArgumentType]
     # Allow the loop to run at least once
     await asyncio.sleep(0.05)
-    await g.stop_video_sender()
+    await g._stop_watching_video_track()
 
     # We should have at least one media send
     assert any(call.get("media") is not None for call in fake.calls)
@@ -110,9 +110,9 @@ async def test_stop_video_sender_cancels_task(fake_image):
     g._is_connected = True  # type: ignore[attr-defined]
 
     track = _FakeVideoTrack(frames=1)
-    await g.start_video_sender(track, fps=100)  # type: ignore[reportArgumentType]
+    await g._watch_video_track(track, fps=100)  # type: ignore[reportArgumentType]
     await asyncio.sleep(0)
-    await g.stop_video_sender()
+    await g._stop_watching_video_track()
 
     # Task should be cleared
     assert g._video_sender_task is None  # type: ignore[attr-defined]

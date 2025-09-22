@@ -195,8 +195,8 @@ async def test_close_emits_disconnected_event():
 async def test_noop_video_and_playback_methods_do_not_error():
     rt = FakeRealtime()
     # Default base implementations should be safe no-ops
-    await rt.start_video_sender(track=None)
-    await rt.stop_video_sender()
+    await rt._watch_video_track(track=None)
+    await rt._stop_watching_video_track()
     await rt.interrupt_playback()
     rt.resume_playback()
 

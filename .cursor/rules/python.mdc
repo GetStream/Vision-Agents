@@ -1,0 +1,14 @@
+---
+description: when writing python
+globs:
+alwaysApply: true
+---
+
+never mock. 
+tests use pytest. 
+never adjust sys.path.
+
+integration tests use
+@pytest.mark.integration
+
+@pytest.mark.asyncio is not needed (its automatic)

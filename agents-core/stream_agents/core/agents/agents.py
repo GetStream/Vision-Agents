@@ -2,13 +2,15 @@ import asyncio
 import logging
 import time
 from typing import Optional, List, Any
+from uuid import uuid4
 
 import aiortc
 from aiortc import VideoStreamTrack
 from aiortc.contrib.media import MediaRelay
 
 from ..edge.types import Participant, PcmData, Connection, TrackType, User
-from ..events.events import RealtimePartialTranscriptEvent
+from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
+from ..llm.events import RealtimePartialTranscriptEvent
 from ..llm.events import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
@@ -25,7 +27,8 @@ from ..events.manager import EventManager
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
-from ..turn_detection import TurnEventData, BaseTurnDetector
+from . import events
+from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
 
 import getstream.models
@@ -34,6 +37,13 @@ if TYPE_CHECKING:
     from stream_agents.plugins.getstream.stream_edge_transport import StreamEdge
     from .agent_session import AgentSessionContextManager
 
+logger = logging.getLogger(__name__)
+
+def _log_task_exception(task: asyncio.Task):
+    try:
+        task.result()
+    except Exception as e:
+        logger.exception("Error in background task")
 
 class Agent:
     """
@@ -113,6 +123,8 @@ class Agent:
 
         self.events = EventManager()
         self.events.register_events_from_module(getstream.models, 'call.')
+        self.events.register_events_from_module(events)
+        
         self.llm = llm
         self.stt = stt
         self.tts = tts
@@ -128,17 +140,19 @@ class Agent:
         self._user_conversation_handle: Optional[StreamHandle] = None
         self._agent_conversation_handle: Optional[StreamHandle] = None
 
-        if self.llm is not None:
-            self.llm._attach_agent(self)
-            self.llm.events.subscribe(self._handle_after_response)
-            self.llm.events.subscribe(self._handle_output_text_delta)
-
+        # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, vad, llm]:
             if plugin and hasattr(plugin, 'events'):
                 self.logger.info(f"Registered plugin {plugin}")
                 self.events.merge(plugin.events)
 
+        if self.llm is not None:
+            self.llm._attach_agent(self)
+            self.llm.events.subscribe(self._handle_after_response)
+            self.llm.events.subscribe(self._handle_output_text_delta)
+
         self.events.subscribe(self._on_vad_audio)
+        self.events.subscribe(self._on_agent_say)
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
@@ -161,6 +175,14 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
+
+    def _truncate_for_logging(self, obj, max_length=200):
+        """Truncate object string representation for logging to prevent spam."""
+        obj_str = str(obj)
+        if len(obj_str) > max_length:
+            obj_str = obj_str[:max_length] + "... (truncated)"
+        return obj_str
+
         self._setup_mcp_servers()
 
     async def close(self):
@@ -299,8 +321,8 @@ class Agent:
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.realtime_mode and isinstance(self.llm, Realtime):
-            await self.llm.wait_until_ready()
-            await self.llm.send_text(text=self.instructions, role="system")
+            await self.llm.connect()
+
 
         connection = await self.edge.join(self, call)
         self._connection = connection
@@ -342,7 +364,7 @@ class Agent:
 
         self._is_running = True
 
-        connection._connection._coordinator_ws_client.handlers.append(self.events.send)
+        connection._connection._coordinator_ws_client.on_wildcard('*', lambda event_name, event: self.events.send(event))
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -384,8 +406,8 @@ class Agent:
         try:
             fut = asyncio.get_event_loop().create_future()
 
-            @self.edge.on("call_ended")
-            def on_ended():
+            @self.edge.events.subscribe
+            async def on_ended(event: CallEndedEvent):
                 if not fut.done():
                     fut.set_result(None)
 
@@ -394,19 +416,39 @@ class Agent:
             logging.warning(f"⚠️ Error while waiting for call to end: {e}")
             # Don't raise the exception, just log it and continue cleanup
 
-    async def say(self, text: str):
-        """Speak a message as the agent.
+    def send(self, event):
+        """
+        Send an event through the agent's event system.
+        
+        This is a convenience method that calls agent.events.send().
+        Use this for consistency with agent.events.subscribe().
+        
+        Args:
+            event: The event to send
+        """
+        self.events.send(event)
+
+    async def say(self, text: str, metadata: Optional[Dict[str, Any]] = None):
+        """
+        Speak a message as the agent.
 
         Adds the message to the conversation and, if TTS is configured, streams
         synthesized audio to the call via the agent's output track.
 
         Args:
             text: The message to say.
+            metadata: Optional metadata to include with the event
         """
         user_id = self.agent_user.id
         self.conversation.add_message(Message(content=text, user_id=user_id))
-        if self.tts is not None:
-            await self.tts.send(text, user_id)
+        
+        # Emit agent say event using the send method
+        self.send(events.AgentSayEvent(
+            plugin_name="agent",
+            text=text,
+            user_id=user_id,
+            metadata=metadata or {}
+        ))
 
     async def send_audio(self, pcm):
         """Send raw PCM audio on the agent's outbound audio track.
@@ -433,7 +475,7 @@ class Agent:
         if self.conversation is None:
             return
 
-        self.logger.info(f"received standardized.output_text.delta {event}")
+        self.logger.info(f"received standardized.output_text.delta {self._truncate_for_logging(event)}")
         # Create a new streaming message if we don't have one
         if self._agent_conversation_handle is None:
             self._agent_conversation_handle = self.conversation.start_streaming_message(
@@ -463,7 +505,56 @@ class Agent:
         await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
     def _on_vad_audio(self, event: VADAudioEvent):
-        self.logger.info(f"Vad audio event {event}")
+        self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
+
+    async def _on_agent_say(self, event: events.AgentSayEvent):
+        """Handle agent say events by calling TTS if available."""
+        try:
+            # Emit say started event
+            synthesis_id = str(uuid4())
+            self.events.send(events.AgentSayStartedEvent(
+                plugin_name="agent",
+                text=event.text,
+                user_id=event.user_id,
+                synthesis_id=synthesis_id
+            ))
+            
+            start_time = time.time()
+            
+            if self.tts is not None:
+                # Call TTS with user metadata
+                user_metadata = {"user_id": event.user_id}
+                if event.metadata:
+                    user_metadata.update(event.metadata)
+                
+                await self.tts.send(event.text, user_metadata)
+                
+                # Calculate duration
+                duration_ms = (time.time() - start_time) * 1000
+                
+                # Emit say completed event
+                self.events.send(events.AgentSayCompletedEvent(
+                    plugin_name="agent",
+                    text=event.text,
+                    user_id=event.user_id,
+                    synthesis_id=synthesis_id,
+                    duration_ms=duration_ms
+                ))
+                
+                self.logger.info(f"Agent said: {event.text}")
+            else:
+                self.logger.warning("No TTS available, cannot synthesize speech")
+                
+        except Exception as e:
+            # Emit say error event
+            self.events.send(events.AgentSayErrorEvent(
+                plugin_name="agent",
+                text=event.text,
+                user_id=event.user_id,
+                error_message=str(e),
+                error=e
+            ))
+            self.logger.error(f"Error in agent say: {e}")
 
     def _setup_mcp_servers(self):
         """Set up MCP servers if any are configured."""
@@ -490,34 +581,24 @@ class Agent:
 
     async def _listen_to_audio_and_video(self) -> None:
         # Handle audio data for STT or Realtime
-        @self.edge.on("audio")
-        async def on_audio_received(pcm: PcmData, participant: Participant):
+        @self.edge.events.subscribe
+        async def on_audio_received(event: AudioReceivedEvent):
+            pcm = event.pcm_data
+            participant = event.participant
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
             await self._reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
-        @self.edge.on("track_added")
-        async def on_track(track_id, track_type, user):
-            #await self._process_track(track_id, track_type, user)
+
+        @self.edge.events.subscribe
+        async def on_track(event: TrackAddedEvent):
+            track_id = event.track_id
+            track_type = event.track_type
+            user = event.user
             task = asyncio.create_task(self._process_track(track_id, track_type, user))
-            # Store task reference to prevent "Task exception was never retrieved" errors
-            if not hasattr(self, '_track_tasks'):
-                self._track_tasks: List[asyncio.Task] = []
-            self._track_tasks.append(task)
-
-            # Add exception handling to the task
-            def handle_task_exception(task_result):
-                try:
-                    task_result.result()  # This will raise any exception that occurred
-                except Exception as e:
-                    self.logger.error(f"Unhandled exception in track processing task: {e}")
-                    # Clean up the task from our list
-                    if task in self._track_tasks:
-                        self._track_tasks.remove(task)
-
-            task.add_done_callback(handle_task_exception)
+            task.add_done_callback(_log_task_exception)
 
     async def _reply_to_audio(
         self, pcm_data: PcmData, participant: Participant
@@ -546,7 +627,9 @@ class Agent:
 
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.realtime_mode and isinstance(self.llm, Realtime):
-                asyncio.create_task(self.llm.send_audio_pcm(pcm_data))
+                # TODO: this behaviour should be easy to change in the agent class
+                task = asyncio.create_task(self.llm.simple_audio_response(pcm_data))
+                #task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
             else:
                 # Process audio through STT
                 if self.stt:
@@ -554,11 +637,6 @@ class Agent:
                     await self.stt.process_audio(pcm_data, participant)
 
     async def _process_track(self, track_id: str, track_type: str, participant):
-        """Process video frames from a specific track and forward to OpenAI."""
-        self.logger.info(
-            f"🎥VDP: Processing track: {track_id} from user {getattr(participant, 'user_id', 'unknown')} (type: {track_type})"
-        )
-
         # Only process video tracks - track_type might be string, enum or numeric (2 for video)
         self.logger.info(f"🎥VDP: Checking track type: {track_type} vs {TrackType.TRACK_TYPE_VIDEO}")
         if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
@@ -594,37 +672,12 @@ class Agent:
         self.logger.info("🎥VDP: Waiting for track to be ready...")
         await asyncio.sleep(0.5)
 
-        # Use a MediaRelay to allow multiple consumers to read the same source track
-        # Reuse a persistent relay to avoid GC and keep branches alive long-term
-        self.logger.info("🎥VDP: Setting up MediaRelay...")
-        relay = getattr(self, "_persistent_media_relay", None)
-        if relay is None:
-            relay = MediaRelay()
-            self._persistent_media_relay = relay
-            self.logger.info("🎥VDP: Created new MediaRelay")
-        else:
-            self.logger.info("🎥VDP: Reusing existing MediaRelay")
-            
-        forward_branch = relay.subscribe(track)
-        processing_branch = relay.subscribe(track)
-        self.logger.info(f"🎥VDP: Created MediaRelay branches - forward_branch: {type(forward_branch).__name__}, processing_branch: {type(processing_branch).__name__}")
-
-        # Forward to OpenAI if in realtime mode
-        self.logger.info(f"🎥VDP: Checking Realtime mode and LLM type - realtime_mode={self.realtime_mode}, llm_type={type(self.llm).__name__}")
-        if self.realtime_mode and isinstance(self.llm, Realtime):
-            self.logger.info("🎥VDP: ✅ Realtime mode check passed, calling llm.start_video_sender with Stream Video track...")
+        # If Realtime provider supports video, forward frames upstream once per track
+        if self.realtime_mode:
             try:
-                await self.llm.start_video_sender(forward_branch)
-                self.logger.info("🎥VDP: ✅ Started OpenAI video sender with Stream Video track")
-                
-                # Register track for lifecycle management
-                self._register_track(track_id, {
-                    "participant": participant,
-                    "forwarding_track": forward_branch,
-                    "processing_track": processing_branch,
-                    "source_track": track
-                })
-                
+                await self.llm._watch_video_track(track)
+                self.logger.info("🎥 Forwarding video frames to Realtime provider")
+
             except Exception as e:
                 self.logger.error(f"🎥VDP: ❌ Failed to start OpenAI video sender: {e}")
                 self.logger.error(f"🎥VDP: Exception type: {type(e).__name__}")
@@ -670,7 +723,9 @@ class Agent:
                 
                 # Track frame processing timing
                 frame_request_start = time.monotonic()
-                video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=current_timeout)
+                # TODO: evaluate if this makes sense or not...
+                #video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=current_timeout)
+                video_frame = await track.recv()
                 frame_request_end = time.monotonic()
                 frame_request_duration = frame_request_end - frame_request_start
                 
@@ -678,11 +733,6 @@ class Agent:
                     # Reset error counts on successful frame processing
                     timeout_errors = 0
                     consecutive_errors = 0
-                    
-                    # Log frame processing timing
-                    self.logger.info(f"🎥VDP: FRAME PROCESSING: track_id={track_id} "
-                                   f"request_duration={frame_request_duration:.3f}s "
-                                   f"frame_size={video_frame.width}x{video_frame.height}")
                     
                     if hasImageProcessers:
                         img = video_frame.to_image()
@@ -746,17 +796,7 @@ class Agent:
         
         # Cleanup and logging
         self.logger.info(f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}")
-        
-        # Clean up MediaRelay branches
-        try:
-            if hasattr(processing_branch, 'stop'):
-                processing_branch.stop()
-            if hasattr(forward_branch, 'stop'):
-                forward_branch.stop()
-            self.logger.info("🎥VDP: MediaRelay branches cleaned up")
-        except Exception as e:
-            self.logger.warning(f"🎥VDP: Error during cleanup: {e}")
-        
+
         # Remove track from active tracking
         self._remove_track(track_id)
 
@@ -1035,7 +1075,6 @@ class Agent:
         if self.publish_audio:
             if self.realtime_mode and isinstance(self.llm, Realtime):
                 self._audio_track = self.llm.output_track
-                # TODO: why is this different...? (48k framerate vs 16k below)
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
                 self._audio_track = self.edge.create_audio_track()

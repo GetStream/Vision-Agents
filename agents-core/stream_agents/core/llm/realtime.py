@@ -75,7 +75,7 @@ import uuid
 from stream_agents.core.events import PluginInitializedEvent, PluginClosedEvent
 from stream_agents.core.events.manager import EventManager
 
-from . import events
+from . import events, LLM
 
 T = TypeVar("T")
 
@@ -92,7 +92,7 @@ AfterCb = Callable[[RealtimeResponse[Any]], Any]
 logger = logging.getLogger(__name__)
 
 
-class Realtime(abc.ABC):
+class Realtime(LLM, abc.ABC):
     """Base class for Realtime implementations.
 
     This abstract base class provides the foundation for implementing real-time
@@ -168,7 +168,7 @@ class Realtime(abc.ABC):
             session_id=self.session_id,
             plugin_name=self.provider_name,
         )
-        self.events.append(init_event)
+        self.events.send(init_event)
 
 
     @property
@@ -176,45 +176,17 @@ class Realtime(abc.ABC):
         """Return True if the realtime session is currently active."""
         return self._is_connected
 
-    def _attach_agent(self, agent: Agent):
-        """
-        Attach agent to the llm
-        """
-        self.agent = agent
-        self._conversation = agent.conversation
-        self.instructions = agent.instructions
-
-        # Parse instructions to extract @ mentioned markdown files
-        self.parsed_instructions = parse_instructions(agent.instructions)
-
     @abc.abstractmethod
     async def connect(self): ...
 
-    # @abc.abstractmethod
-    # async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
-
     @abc.abstractmethod
-    async def send_text(self, text: str):
-        """Send a text message from the human side to the conversation.
+    async def simple_audio_response(self, pcm: PcmData): ...
 
-        Providers should override to forward text upstream.
-        """
-        ...
-
-    async def wait_until_ready(self, timeout: Optional[float] = None) -> bool:
-        """Wait until the realtime session is ready. Returns True if ready."""
-        if self._ready_event.is_set():
-            return True
-        try:
-            return await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return False
-
-    async def start_video_sender(self, track: Any, fps: int = 1) -> None:
+    async def _watch_video_track(self, track: Any, fps: int = 1) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 
-    async def stop_video_sender(self) -> None:
+    async def _stop_watching_video_track(self) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 
@@ -234,60 +206,6 @@ class Realtime(abc.ABC):
         Default returns None.
         """
         return None
-
-    async def native_send_realtime_input(
-        self,
-        *,
-        text: Optional[str] = None,
-        audio: Optional[Any] = None,
-        media: Optional[Any] = None,
-    ) -> None:
-        """Advanced: provider-native realtime input (text/audio/media).
-
-        Providers that support a native realtime input API should override this.
-        Default implementation raises NotImplementedError.
-        """
-        raise NotImplementedError(
-            "native_send_realtime_input is not implemented for this provider"
-        )
-
-    async def native_response(
-        self,
-        *,
-        text: Optional[str] = None,
-        audio: Optional[Any] = None,
-        media: Optional[Any] = None,
-        timeout: Optional[float] = 30.0,
-    ) -> RealtimeResponse[Any]:
-        """Provider-native request that returns a standardized RealtimeResponse.
-
-        Delegates to the shared aggregation helper using native_send_realtime_input.
-        """
-
-        async def _sender():
-            await self.native_send_realtime_input(text=text, audio=audio, media=media)
-
-        return await self._aggregate_turn(
-            sender=_sender, before_text=text, timeout=timeout
-        )
-
-    async def simple_response(
-        self,
-        *,
-        text: str,
-        timeout: Optional[float] = 30.0,
-    ) -> RealtimeResponse[Any]:
-        """Send text and resolve when the assistant finishes the turn.
-
-        Aggregates streaming deltas with a hybrid strategy to build final text.
-        """
-
-        async def _sender():
-            await self.send_text(text)
-
-        return await self._aggregate_turn(
-            sender=_sender, before_text=text, timeout=timeout
-        )
 
     # ---- Shared aggregation helpers ----
     @staticmethod
@@ -360,7 +278,7 @@ class Realtime(abc.ABC):
             session_config=session_config,
             capabilities=capabilities,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_disconnected_event(self, reason=None, was_clean=True):
         """Emit a structured disconnected event."""
@@ -371,7 +289,7 @@ class Realtime(abc.ABC):
             reason=reason,
             was_clean=was_clean,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_audio_input_event(
         self, audio_data, sample_rate=16000, user_metadata=None
@@ -384,7 +302,7 @@ class Realtime(abc.ABC):
             sample_rate=sample_rate,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_audio_output_event(
         self, audio_data, sample_rate=16000, response_id=None, user_metadata=None
@@ -398,7 +316,7 @@ class Realtime(abc.ABC):
             response_id=response_id,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
         event = events.RealtimeTranscriptEvent(
@@ -406,7 +324,7 @@ class Realtime(abc.ABC):
             user_metadata=user_metadata,
             original=original,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_transcript_event(
         self,
@@ -419,7 +337,7 @@ class Realtime(abc.ABC):
             user_metadata=user_metadata,
             original=original,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_response_event(
         self,
@@ -439,7 +357,7 @@ class Realtime(abc.ABC):
             conversation_item_id=conversation_item_id,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_conversation_item_event(
         self, item_id, item_type, status, role, content=None, user_metadata=None
@@ -455,7 +373,7 @@ class Realtime(abc.ABC):
             content=content,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_error_event(self, error, context="", user_metadata=None):
         """Emit a structured error event."""
@@ -466,7 +384,7 @@ class Realtime(abc.ABC):
             context=context,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     async def close(self):
         """Close the Realtime service and release any resources."""
@@ -479,7 +397,7 @@ class Realtime(abc.ABC):
             plugin_name=self.provider_name,
             cleanup_successful=True,
         )
-        self.events.append(close_event)
+        self.events.send(close_event)
 
     @abc.abstractmethod
     async def _close_impl(self): ...

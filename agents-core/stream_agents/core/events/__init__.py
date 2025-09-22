@@ -1,19 +1,13 @@
-from .events import (
-    EventType,
+from .base import (
     ConnectionState,
     AudioFormat,
     BaseEvent,
     PluginBaseEvent,
-    # Generic Events
     PluginInitializedEvent,
     PluginClosedEvent,
     PluginErrorEvent,
 )
-from .event_metrics import (
-    calculate_stt_metrics,
-    calculate_tts_metrics,
-    calculate_vad_metrics,
-)
+from .manager import EventManager
 
 from getstream.models import (
     BlockedUserEvent,
@@ -126,7 +120,6 @@ __all__ = [
 ]
 
 __all__ += [
-    "EventType",
     "ConnectionState",
     "AudioFormat",
     "BaseEvent",
@@ -134,14 +127,5 @@ __all__ += [
     "PluginInitializedEvent",
     "PluginClosedEvent",
     "PluginErrorEvent",
-    "EventFilter",
-    "EventRegistry",
-    "EventLogger",
-    "serialize_event",
-    "serialize_events",
-    "deserialize_event",
-    "calculate_stt_metrics",
-    "calculate_tts_metrics",
-    "calculate_vad_metrics",
-    "EVENT_CLASS_MAP",
+    "EventManager"
 ]
