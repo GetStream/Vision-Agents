@@ -89,12 +89,6 @@ class Agent:
         self.events.register_events_from_module(getstream.models, 'call.')
         self.events.register_events_from_module(events)
         
-        # Register connection events
-        from ..events.base import ConnectionOkEvent, ConnectionErrorEvent, ConnectionClosedEvent
-        self.events.register(ConnectionOkEvent)
-        self.events.register(ConnectionErrorEvent)
-        self.events.register(ConnectionClosedEvent)
-        
         self.llm = llm
         self.stt = stt
         self.tts = tts

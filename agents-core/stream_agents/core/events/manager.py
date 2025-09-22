@@ -4,7 +4,7 @@ import types
 import typing
 import logging
 from typing import get_origin, Union, get_args
-from .base import ExceptionEvent, HealthCheckEvent
+from .base import ExceptionEvent, HealthCheckEvent, ConnectionOkEvent, ConnectionErrorEvent, ConnectionClosedEvent
 
 
 logger = logging.getLogger(__name__)
@@ -135,6 +135,9 @@ class EventManager:
 
         self.register(ExceptionEvent)
         self.register(HealthCheckEvent)
+        self.register(ConnectionOkEvent)
+        self.register(ConnectionErrorEvent)
+        self.register(ConnectionClosedEvent)
         
         # Start background processing task
         self._start_processing_task()
@@ -313,7 +316,6 @@ class EventManager:
             events = []
 
             if origin is Union or isinstance(event_class, types.UnionType):
-                logger.info(f"Parameter {name} is a Union: {event_class}")
                 events = get_args(event_class)
                 is_union = True
             else:
@@ -328,11 +330,13 @@ class EventManager:
                 if event_type in self._events:
                     subscribed = True
                     self._handlers.setdefault(event_type, []).append(function)
-                    logger.warning(f"Handler {function.__name__} registered for event {event_type}")
+                    module_name = getattr(function, '__module__', 'unknown')
+                    logger.info(f"Handler {function.__name__} from {module_name} registered for event {event_type}")
                 elif not self._ignore_unknown_events:
                     raise KeyError(f"Event {sub_event} - {event_type} is not registered.")
                 else:
-                    logger.warning(f"Event {sub_event} - {event_type} - {type(sub_event)} {dir(sub_event)} is not registered – skipping handler {function.__name__}. All events: {self._events.keys()}")
+                    module_name = getattr(function, '__module__', 'unknown')
+                    logger.info(f"Event {sub_event} - {event_type} is not registered – skipping handler {function.__name__} from {module_name}.")
         return function
 
     def _prepare_event(self, event):
