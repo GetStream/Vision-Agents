@@ -308,7 +308,7 @@ class Realtime(realtime.Realtime):
         img.save(buf, format="PNG")
         return buf.getvalue()
 
-    async def start_video_sender(self, track: MediaStreamTrack, fps: int = 1) -> None:
+    async def _watch_video_track(self, track: MediaStreamTrack, fps: int = 1) -> None:
         """Start a background task that forwards video frames to Gemini Live.
 
         Args:
@@ -338,7 +338,7 @@ class Realtime(realtime.Realtime):
 
         self._video_sender_task = asyncio.create_task(_loop())
 
-    async def stop_video_sender(self) -> None:
+    async def _stop_watching_video_track(self) -> None:
         """Stop the background video sender task, if running."""
         if self._video_sender_task and not self._video_sender_task.done():
             self._video_sender_task.cancel()
@@ -488,7 +488,7 @@ class Realtime(realtime.Realtime):
     async def _close_impl(self) -> None:
         """Provider-specific cleanup without emitting base events."""
         self._stop_event.set()
-        await self.stop_video_sender()
+        await self._stop_watching_video_track()
         await self.stop_response_listener()
         if self._connect_task and not self._connect_task.done():
             self._connect_task.cancel()

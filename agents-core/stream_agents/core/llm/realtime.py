@@ -226,11 +226,11 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         except asyncio.TimeoutError:
             return False
 
-    async def start_video_sender(self, track: Any, fps: int = 1) -> None:
+    async def _watch_video_track(self, track: Any, fps: int = 1) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 
-    async def stop_video_sender(self) -> None:
+    async def _stop_watching_video_track(self) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 

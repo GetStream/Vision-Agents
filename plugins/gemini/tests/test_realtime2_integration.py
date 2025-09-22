@@ -63,13 +63,13 @@ class TestRealtime2Integration(BaseTest):
         await realtime2.simple_response("Describe what you see in this video please")
         await asyncio.sleep(10.0)
         # Start video sender with low FPS to avoid overwhelming the connection
-        await realtime2.start_video_sender(bunny_video_track, fps=5)
+        await realtime2._watch_video_track(bunny_video_track, fps=5)
         
         # Let it run for a few seconds
         await asyncio.sleep(10.0)
         
         # Stop video sender
-        await realtime2.stop_video_sender()
+        await realtime2._stop_watching_video_track()
         assert len(events) > 0
 
     async def test_frame_to_png_bytes_with_bunny_video(self, bunny_video_track):

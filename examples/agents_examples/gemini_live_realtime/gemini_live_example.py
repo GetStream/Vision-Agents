@@ -33,8 +33,7 @@ async def start_agent() -> None:
 
     with await agent.join(call):
         await asyncio.sleep(5)
-        logger.info("time to say hi")
-        await agent.llm.simple_response(text="Please greet the user.")
+        await agent.llm.simple_response(text="Describe what you see and say hi")
         await agent.finish()  # run till the call ends
 
 

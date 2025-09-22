@@ -68,7 +68,7 @@ async def _on_track_added(track_id, kind, user):
     if kind == "video" and connection.subscriber_pc:
         track = connection.subscriber_pc.add_track_subscriber(track_id)
         if track:
-            await gemini.start_video_sender(track, fps=1)
+            await gemini._watch_video_track(track, fps=1)
 ```
 
 For a full runnable example, see `examples/gemini_live/main.py`.

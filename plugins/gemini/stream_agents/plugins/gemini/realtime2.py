@@ -9,7 +9,8 @@ from google import genai
 from google.genai.live import AsyncSession
 from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict, VoiceConfigDict, \
     PrebuiltVoiceConfigDict, AudioTranscriptionConfigDict, RealtimeInputConfigDict, TurnCoverage, \
-    ContextWindowCompressionConfigDict, SlidingWindowDict, HttpOptions, LiveServerMessage, Blob, Part
+    ContextWindowCompressionConfigDict, SlidingWindowDict, HttpOptions, LiveServerMessage, Blob, Part, \
+    SessionResumptionConfig
 
 from stream_agents.core.edge.types import Participant, PcmData
 from stream_agents.core.llm import realtime
@@ -24,11 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 """
-TODO:
-- stop sending white space audio
-- code cleanup
+- chat/transcription integration
 - at mention support (for docs)
-- session resumption should work (which error?)
 - mcp & functions
 """
 
@@ -41,6 +39,8 @@ class Realtime2(realtime.Realtime):
     Audio data in the Live API is always raw, little-endian, 16-bit PCM. Audio output always uses a sample rate of 24kHz.
     Input audio is natively 16kHz, but the Live API will resample if needed
     """
+    model : str
+    session_resumption_id: Optional[str] = None
 
     def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None, api_key: Optional[str] = None ) -> None:
         super().__init__()
@@ -75,6 +75,20 @@ class Realtime2(realtime.Realtime):
         await self.send_realtime_input(text=text)
         self.logger.info("Simple response completed")
 
+    async def simple_audio_response(self, pcm: PcmData):
+        self.logger.debug(f"Sending audio to gemini: {pcm.duration}")
+
+        try:
+            # Build blob and send directly
+            audio_bytes = pcm.samples.tobytes()
+            mime = f"audio/pcm;rate={pcm.sample_rate}"
+            blob = Blob(data=audio_bytes, mime_type=mime)
+
+            await self._session.send_realtime_input(audio=blob)
+        except Exception as e:
+            logging.error(e)
+
+
     async def send_realtime_input(self, *args, **kwargs):
         """
         Wrap the native send_realtime_input
@@ -87,9 +101,18 @@ class Realtime2(realtime.Realtime):
         """
         Wrap the native send client content
         """
-        await self._session.send_client_content(
-            *args, **kwargs
-        )
+        try:
+            await self._session.send_client_content(
+                *args, **kwargs
+            )
+        except Exception as e:
+            # reconnect here in some cases
+            self.logger.error(e)
+            is_temp = self._is_temporary_error(e)
+            if is_temp:
+                await self._reconnect()
+            else:
+                raise
 
     async def connect(self):
         """
@@ -97,8 +120,10 @@ class Realtime2(realtime.Realtime):
         """
         self.logger.info("Connecting to Realtime, config set to %s", self.config)
 
-        # Create the context manager and enter it
-        # TODO: use resumption id here
+        # use resumption id here
+        config = self.config.copy()
+        if self.session_resumption_id:
+            config["session_resumption"] = SessionResumptionConfig(handle=self.session_resumption_id)
         self._session_context = self.client.aio.live.connect(model=self.model, config=self.config)
         self._session = await self._session_context.__aenter__()
         self.logger.info("Connected to session %s", self._session)
@@ -107,9 +132,7 @@ class Realtime2(realtime.Realtime):
         self._receive_task = asyncio.create_task(self._receive_loop())
 
     async def _reconnect(self):
-        # TODO: reconnect a broken connection with self.session_resumption_id
         await self.connect()
-
 
     async def _receive_loop(self):
         self.logger.info("_receive_loop started")
@@ -128,10 +151,12 @@ class Realtime2(realtime.Realtime):
                     is_generation_complete = response and response.server_content and response.server_content.generation_complete
 
                     if is_input_transcript:
-                        # TODO: what to do with this?
+                        # TODO: what to do with this? check with Tommaso
+
                         self.logger.info("input: %s", response.server_content.input_transcription.text)
                     elif is_output_transcript:
                         # TODO: what to do with this?
+
                         self.logger.info("output: %s", response.server_content.output_transcription.text)
                     elif is_interrupt:
                         self.logger.info("interrupted: %s", response.server_content.interrupted)
@@ -173,24 +198,19 @@ class Realtime2(realtime.Realtime):
             self.logger.info("_receive_loop cancelled")
             raise
         except Exception as e:
+            # reconnect here for some errors
             self.logger.error(f"_receive_loop error: {e}")
-            raise
+            is_temp = self._is_temporary_error(e)
+            if is_temp:
+                await self._reconnect()
+            else:
+                raise
         finally:
             self.logger.info("_receive_loop ended")
 
-    async def send_audio_pcm(self, pcm: PcmData):
-        self.logger.debug(f"Sending audio to gemini: {pcm.duration}")
-
-        try:
-            # Build blob and send directly
-            audio_bytes = pcm.samples.tobytes()
-            mime = f"audio/pcm;rate={pcm.sample_rate}"
-            blob = Blob(data=audio_bytes, mime_type=mime)
-
-            await self._session.send_realtime_input(audio=blob)
-        except Exception as e:
-            logging.error(e)
-
+    def _is_temporary_error(self, e: Exception):
+        should_reconnect = False
+        return should_reconnect
 
     async def _close_impl(self):
         if hasattr(self, '_receive_task') and self._receive_task:
@@ -230,11 +250,11 @@ class Realtime2(realtime.Realtime):
             logger.error(f"Error converting frame to PNG: {e}")
             return b""
 
-    async def start_video_sender(self, input_track: MediaStreamTrack, fps: int = 1) -> None:
+    async def _watch_video_track(self, input_track: MediaStreamTrack, fps: int = 1) -> None:
         """Start sending video frames to Gemini using VideoForwarder."""
         if self._video_forwarder is not None:
             self.logger.warning("Video sender already running, stopping previous one")
-            await self.stop_video_sender()
+            await self._stop_watching_video_track()
         
         # Create VideoForwarder with the input track
         self._video_forwarder = VideoForwarder(
@@ -251,7 +271,7 @@ class Realtime2(realtime.Realtime):
         
         self.logger.info(f"Started video sender with {fps} FPS")
 
-    async def stop_video_sender(self) -> None:
+    async def _stop_watching_video_track(self) -> None:
         """Stop the video sender."""
         if self._video_forwarder is not None:
             await self._video_forwarder.stop()

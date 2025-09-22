@@ -121,7 +121,7 @@ async def main():
                     if kind == "video" and connection.subscriber_pc:
                         track = connection.subscriber_pc.add_track_subscriber(track_id)
                     if track:
-                        await gemini_live.start_video_sender(track, fps=1)
+                        await gemini_live._watch_video_track(track, fps=1)
                         logging.info("🎥 Started forwarding video for user %s", user)
                 except Exception as e:
                     logging.error("❌ Failed to start video sender: %s", e)
@@ -149,7 +149,7 @@ async def main():
     finally:
         logging.info("Cleaning up...")
         client.delete_users([user_id, bot_user_id])
-        await gemini_live.stop_video_sender()
+        await gemini_live._stop_watching_video_track()
         await gemini_live.close()
         logging.info("Cleanup complete")
 

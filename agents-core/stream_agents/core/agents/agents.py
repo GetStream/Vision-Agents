@@ -374,7 +374,7 @@ class Agent:
 
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.sts_mode and isinstance(self.llm, Realtime):
-                task = asyncio.create_task(self.llm.send_audio_pcm(pcm_data))
+                task = asyncio.create_task(self.llm.simple_audio_response(pcm_data))
                 #task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
             else:
                 # Process audio through STT
@@ -414,8 +414,7 @@ class Agent:
         if self.sts_mode:
 
             try:
-                # TODO: you don't always want this on :)
-                await self.llm.start_video_sender(track)
+                await self.llm._watch_video_track(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
             except Exception as e:
                 self.logger.error(
