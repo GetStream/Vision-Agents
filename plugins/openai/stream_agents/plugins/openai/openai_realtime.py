@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 TODO
 - MCP support
 - instructions with @mentions
-
+- event handling is not using either pyee or internal system in self.rtc
 
 
 """
@@ -31,13 +31,6 @@ class Realtime(realtime.Realtime):
         self.voice = voice
         # TODO: send video should depend on if the RTC connection with stream is sending video.
         self.rtc = RTCManager(self.model, self.voice, True)
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.connect())
-        except RuntimeError:
-            # Not in an event loop; caller will invoke connect() later
-            pass
 
     async def connect(self):
         # Wire callbacks so we can emit audio/events upstream
