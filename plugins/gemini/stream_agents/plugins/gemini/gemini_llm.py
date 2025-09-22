@@ -7,6 +7,7 @@ from google.genai.types import GenerateContentResponse
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from . import events
 
 from stream_agents.core.processors import BaseProcessor
 
@@ -93,7 +94,10 @@ class GeminiLLM(LLM):
 
         # Get the message content for the event
         message_content = kwargs.get("message", kwargs.get("content", ""))
-        self.emit("before_llm_response", self._normalize_message(message_content))
+        self.events.send(events.BeforeLLMResponseEvent(
+            plugin_name="gemini",
+            input_message=self._normalize_message(message_content)
+        ))
 
         # Generate content using the client
         iterator = self.chat.send_message_stream(*args, **kwargs)
@@ -169,7 +173,10 @@ class GeminiLLM(LLM):
             total_text = "".join(text_parts)
             llm_response = LLMResponseEvent(final_chunk, total_text)
 
-        self.emit("after_llm_response", llm_response)
+        self.events.send(events.AfterLLMResponseEvent(
+            plugin_name="gemini",
+            llm_response=llm_response
+        ))
 
         # Return the LLM response
         return llm_response
@@ -199,7 +206,10 @@ class GeminiLLM(LLM):
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
         # forward the native event
-        self.emit("gemini_response", chunk)
+        self.events.send(events.GeminiResponseEvent(
+            plugin_name="gemini",
+            response_chunk=chunk
+        ))
         
         # Check if response has text content
         if hasattr(chunk, 'text') and chunk.text:
@@ -211,7 +221,10 @@ class GeminiLLM(LLM):
                 type="response.output_text.delta",
                 delta=chunk.text,
             )
-            self.emit("standardized.output_text.delta", standardized_event)
+            self.events.send(events.StandardizedTextDeltaEvent(
+                plugin_name="gemini",
+                standardized_event=standardized_event
+            ))
 
             text_parts.append(chunk.text)
 

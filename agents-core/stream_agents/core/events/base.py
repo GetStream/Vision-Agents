@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from types import FunctionType
+from dataclasses_json import DataClassJsonMixin
 
 from getstream.video.rtc.track_util import PcmData
 
@@ -29,7 +31,7 @@ class AudioFormat(Enum):
 
 
 @dataclass
-class BaseEvent:
+class BaseEvent(DataClassJsonMixin):
     """Base class for all events."""
     type: str
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -59,7 +61,7 @@ class PluginInitializedEvent(PluginBaseEvent):
 class PluginClosedEvent(PluginBaseEvent):
     """Event emitted when a plugin is closed."""
 
-    type: EventType = field(default="plugin.closed", init=False)
+    type: str = field(default="plugin.closed", init=False)
     plugin_type: Optional[str] = None  # "STT", "STS", "VAD"
     provider: Optional[str] = None
     reason: Optional[str] = None
@@ -70,7 +72,7 @@ class PluginClosedEvent(PluginBaseEvent):
 class PluginErrorEvent(PluginBaseEvent):
     """Event emitted when a generic plugin error occurs."""
 
-    type: EventType = field(default="plugin.error", init=False)
+    type: str = field(default="plugin.error", init=False)
     plugin_type: Optional[str] = None  # "STT", "TTS", "STS", "VAD"
     provider: Optional[str] = None
     error: Optional[Exception] = None
@@ -82,3 +84,47 @@ class PluginErrorEvent(PluginBaseEvent):
     def error_message(self) -> str:
         return str(self.error) if self.error else "Unknown error"
 
+@dataclasses.dataclass
+class ExceptionEvent:
+    exc: Exception
+    handler: FunctionType
+    type: str = 'base.exception'
+
+
+@dataclasses.dataclass
+class HealthCheckEvent(DataClassJsonMixin):
+    connection_id: str
+    created_at: int
+    custom: dict
+    type: str = 'health.check'
+
+
+@dataclass
+class ConnectionOkEvent(BaseEvent):
+    """Event emitted when WebSocket connection is established."""
+    
+    type: str = field(default="connection.ok", init=False)
+    connection_id: Optional[str] = None
+    server_time: Optional[str] = None
+    api_key: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+@dataclass
+class ConnectionErrorEvent(BaseEvent):
+    """Event emitted when WebSocket connection encounters an error."""
+    
+    type: str = field(default="connection.error", init=False)
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    reconnect_attempt: Optional[int] = None
+
+
+@dataclass
+class ConnectionClosedEvent(BaseEvent):
+    """Event emitted when WebSocket connection is closed."""
+    
+    type: str = field(default="connection.closed", init=False)
+    code: Optional[int] = None
+    reason: Optional[str] = None
+    was_clean: bool = False
