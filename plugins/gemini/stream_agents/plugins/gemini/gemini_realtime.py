@@ -35,7 +35,7 @@ TODO:
 DEFAULT_MODEL = "gemini-2.5-flash-exp-native-audio-thinking-dialog"
 
 
-class Realtime2(realtime.Realtime):
+class Realtime(realtime.Realtime):
     """
 
     Audio data in the Live API is always raw, little-endian, 16-bit PCM. Audio output always uses a sample rate of 24kHz.

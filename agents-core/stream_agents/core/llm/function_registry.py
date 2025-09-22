@@ -140,6 +140,24 @@ class FunctionRegistry:
         
         # Call the function with the provided arguments
         return func_def.function(**arguments)
+
+    def get_callable(self, name: str) -> Callable:
+        """
+        Get the callable function by name.
+        
+        Args:
+            name: Name of the function
+            
+        Returns:
+            The callable function
+            
+        Raises:
+            KeyError: If the function is not registered
+        """
+        if name not in self._functions:
+            raise KeyError(f"Function '{name}' is not registered")
+        
+        return self._functions[name].function
     
     def _function_to_tool_schema(self, func_def: FunctionDefinition) -> ToolSchema:
         """Convert a function definition to a tool schema."""

@@ -9,6 +9,7 @@ dependencies = [
   "stream-agents-plugins-deepgram",
   "stream-agents-plugins-elevenlabs",
   "stream-agents-plugins-anthropic",
+  "stream-agents-plugins-getstream",
   "getstream-plugins-common",
   "stream-agents",
   "openai>=1.101.0",
@@ -30,5 +31,6 @@ krisp-audio = [
 "stream-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
 "stream-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
 "stream-agents-plugins-anthropic" = {path = "../../plugins/anthropic", editable=true}
+"stream-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
 
 "stream-agents" = {path = "../../agents-core", editable=true}

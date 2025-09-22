@@ -4,8 +4,7 @@ Simple Claude function calling example.
 
 import asyncio
 from dotenv import load_dotenv
-from stream_agents.core.llm.claude_llm import ClaudeLLM
-from stream_agents.core.agents.conversation import Conversation
+from stream_agents.plugins import anthropic
 
 load_dotenv()
 
@@ -14,10 +13,7 @@ async def main():
     """Run a simple Claude function calling example."""
     
     # Create the LLM
-    llm = ClaudeLLM(model="claude-3-5-sonnet-20241022")
-    
-    # Initialize conversation for standalone use
-    llm._conversation = Conversation()
+    llm = anthropic.LLM(model="claude-3-5-sonnet-20241022")
     
     # Register functions
     @llm.register_function(description="Get current weather for a location")
@@ -50,8 +46,8 @@ async def main():
         print("-" * 30)
         
         response = await llm.create_message(
-            model="claude-3-5-sonnet-20241022",
-            messages=[{"role": "user", "content": query}]
+            messages=[{"role": "user", "content": query}],
+            max_tokens=1000
         )
         
         print(f"Response: {response.text}")

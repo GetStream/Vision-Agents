@@ -12,7 +12,7 @@ dynamic = ["version"]
 requires-python = ">=3.10"
 dependencies = [
     # getstream[webrtc] currently comes from the latest commit on the webrtc branch in git
-    "getstream[webrtc] @ git+https://github.com/GetStream/stream-py.git@cebdd54#egg=getstream",
+    "getstream[webrtc] @ git+https://github.com/GetStream/stream-py.git@5d22ac964838da4f38af543dcbafd68f89be276a#egg=getstream",
     "python-dotenv>=1.1.1",
     "pillow>=11.3.0",
     "aiortc>=1.13.0",
@@ -48,7 +48,7 @@ Source = "https://github.com/getstream/agents"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff"]
-openai = ["getstream-plugins-openai>=0.1.0", "openai==1.101.0"]
+openai = ["getstream-plugins-openai>=0.1.0", "openai==1.108.1"]
 deepgram = ["getstream-plugins-deepgram>=0.1.0"]
 elevenlabs = ["getstream-plugins-elevenlabs>=0.1.0"]
 fal = ["fal-client>=0.6.1"]
@@ -81,5 +81,5 @@ krisp-audio = [
     { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
     { path = "./stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32'" }
 ]
-"getstream" = {path = "../../stream-py", editable=true}
-
+# for local development
+# getstream = { path = "../../stream-py/", editable = true }

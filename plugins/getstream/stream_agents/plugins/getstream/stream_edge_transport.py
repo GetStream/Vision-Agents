@@ -1,7 +1,7 @@
 import logging
 import os
 import webbrowser
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -18,6 +18,9 @@ from getstream.video.rtc.tracks import TrackSubscriptionConfig, SubscriptionConf
 from stream_agents.plugins.getstream.stream_conversation import StreamConversation
 from stream_agents.core.edge import EdgeTransport
 from stream_agents.core.edge.types import Connection, User
+
+if TYPE_CHECKING:
+    from stream_agents.core.agents.agents import Agent
 
 
 class StreamConnection(Connection):

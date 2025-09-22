@@ -6,12 +6,13 @@ authors = [
     {name = "Stream", email = "dev@getstream.io"},
 ]
 dependencies = [
-    "stream-agents-core",
-    "openai",
-    "anthropic",
-    "google-generativeai",
+    "python-dotenv",
+    "stream-agents-plugins-openai",
+    "stream-agents-plugins-anthropic", 
+    "stream-agents-plugins-gemini",
+    "stream-agents",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 
 [build-system]
 requires = ["hatchling"]
@@ -19,3 +20,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
+
+[tool.uv.sources]
+"stream-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"stream-agents-plugins-anthropic" = {path = "../../plugins/anthropic", editable=true}
+"stream-agents-plugins-gemini" = {path = "../../plugins/gemini", editable=true}
+"stream-agents" = {path = "../../agents-core", editable=true}

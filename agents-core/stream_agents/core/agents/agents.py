@@ -1,33 +1,39 @@
 import asyncio
 import logging
-import traceback
+import time
 from typing import Optional, List, Any, Union
 from uuid import uuid4
 
 import aiortc
 from aiortc import VideoStreamTrack
+from aiortc.contrib.media import MediaRelay
 
 from ..edge.types import Participant, PcmData, Connection, TrackType, User
 from ..events.events import RealtimePartialTranscriptEvent
-from ..llm.types import StandardizedTextDeltaEvent
+from ..llm.events import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..events import STTTranscriptEvent, STTPartialTranscriptEvent, VADAudioEvent, RealtimeTranscriptEvent
-from .reply_queue import ReplyQueue
+from ..llm.events import RealtimeTranscriptEvent, LLMResponseEvent
+from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
+from ..vad.events import VADAudioEvent
+from getstream.video.rtc import Call
 from ..edge.edge_transport import EdgeTransport
 from ..mcp import MCPBaseServer
-from ..events import get_global_registry, EventType
 
 
 from .conversation import StreamHandle, Message, Conversation
-from ..llm.llm import LLM, LLMResponse
+from ..events.manager import EventManager
+from ..llm.llm import LLM
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
 
+import getstream.models
+
 if TYPE_CHECKING:
+    from stream_agents.plugins.getstream.stream_edge_transport import StreamEdge
     from .agent_session import AgentSessionContextManager
 
 logger = logging.getLogger(__name__)
@@ -56,7 +62,7 @@ class Agent:
     def __init__(
         self,
         # edge network for video & audio
-        edge: EdgeTransport,
+        edge: 'StreamEdge',
         # llm, optionally with sts/realtime capabilities
         llm: LLM | Realtime,
         # the agent's user info
@@ -82,6 +88,8 @@ class Agent:
 
         self.logger = logging.getLogger(f"Agent[{self.agent_user.id}]")
 
+        self.events = EventManager()
+        self.events.register_events_from_module(getstream.models, 'call.')
         self.llm = llm
         self.stt = stt
         self.tts = tts
@@ -89,7 +97,6 @@ class Agent:
         self.vad = vad
         self.processors = processors or []
         self.mcp_servers = mcp_servers or []
-        self.queue = ReplyQueue(self)
 
         # we sync the user talking and the agent responses to the conversation
         # because we want to support streaming responses and can have delta updates for both
@@ -100,9 +107,15 @@ class Agent:
 
         if self.llm is not None:
             self.llm._attach_agent(self)
-            self.llm.on("after_llm_response", self._handle_after_response)
-            self.llm.on('standardized.output_text.delta', self._handle_output_text_delta)
+            self.llm.events.subscribe(self._handle_after_response)
+            self.llm.events.subscribe(self._handle_output_text_delta)
 
+        for plugin in [stt, tts, turn_detection, vad, llm]:
+            if plugin and hasattr(plugin, 'events'):
+                self.logger.info(f"Registered plugin {plugin}")
+                self.events.merge(plugin.events)
+
+        self.events.subscribe(self._on_vad_audio)
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
@@ -112,14 +125,19 @@ class Agent:
         self._audio_track: Optional[aiortc.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
         self._sts_connection = None
+        self._pc_track_handler_attached: bool = False
 
         # validation time
         self._validate_configuration()
 
+        # Initialize track management attributes
+        self._active_tracks: Dict[str, Any] = {}  # Track active video/audio tracks
+        self._last_health_check: float = 0.0  # Last health check timestamp
+        self._track_health_check_interval: float = 1.0  # Health check interval in seconds
+
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
-        self._setup_vad()
         self._setup_mcp_servers()
 
     async def close(self):
@@ -136,6 +154,25 @@ class Agent:
             await self._sts_connection.__aexit__(None, None, None)
         self._sts_connection = None
 
+        # Clean up active tracks
+        self.logger.info(f"🎥VDP: Cleaning up {len(self._active_tracks)} active tracks")
+        for track_id in list(self._active_tracks.keys()):
+            self._remove_track(track_id)
+
+        # Clean up track processing tasks
+        if hasattr(self, '_track_tasks'):
+            self.logger.info(f"🎥VDP: Canceling {len(self._track_tasks)} track processing tasks")
+            for task in self._track_tasks:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass  # Expected when canceling
+                    except Exception as e:
+                        self.logger.debug(f"🎥VDP: Error during task cancellation: {e}")
+            self._track_tasks.clear()
+        
         # Close RTC connection
         if self._connection:
             await self._connection.close()
@@ -171,15 +208,11 @@ class Agent:
         # Close edge transport
         self.edge.close()
 
-    def on(self, event_type: EventType):
-        #TODO: this approach is a bit ugly. also breaks with multiple agents.
-        def decorator(func):
-            registry = get_global_registry()
-            registry.add_listener(event_type, func)
-            return func
-        return decorator
+    def subscribe(self, function):
+        """Subscribe to event"""
+        return self.events.subscribe(function)
 
-    async def join(self, call: Any) -> "AgentSessionContextManager":
+    async def join(self, call: Call) -> "AgentSessionContextManager":
         self.call = call
         self.conversation = None
 
@@ -192,20 +225,18 @@ class Agent:
             self.conversation = self.edge.create_conversation(call, self.agent_user, self.instructions)
 
         # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
-        # TODO: maybe agent.on(transcript?)
         if self.sts_mode:
-            self.llm.on("transcript", self._on_transcript)
-            self.llm.on("partial_transcript", self._on_partial_transcript)
+            self.events.subscribe(self._on_transcript)
+            self.events.subscribe(self._on_partial_transcript)
         elif self.stt:
-            self.stt.on("transcript", self._on_transcript)
-            self.stt.on("partial_transcript", self._on_partial_transcript)
+            self.events.subscribe(self._on_transcript)
+            self.events.subscribe(self._on_partial_transcript)
 
         """Join a Stream video call."""
         if self._is_running:
             raise RuntimeError("Agent is already running")
 
         self.logger.info(f"🤖 Agent joining call: {call.id}")
-
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
         if self.sts_mode and isinstance(self.llm, Realtime):
@@ -215,11 +246,44 @@ class Agent:
         connection = await self.edge.join(self, call)
         self._connection = connection
 
+        # Attach fallback pc.on('track') handler ASAP to avoid missing early remote video tracks
+        try:
+            if not self._pc_track_handler_attached:
+                base_pc = getattr(self._connection, "subscriber_pc", None)
+                pc = None
+                if base_pc is not None:
+                    pc = getattr(base_pc, "pc", None) or getattr(base_pc, "_pc", None) or base_pc
+                if pc is not None and hasattr(pc, "on"):
+                    self.logger.info("🔗 Attaching pc.on('track') handler to subscriber peer connection (early)")
+                    # Create or reuse a persistent MediaRelay to keep branches alive
+                    try:
+                        self._persistent_media_relay = getattr(self, "_persistent_media_relay", None) or MediaRelay()
+                    except Exception:
+                        self._persistent_media_relay = None
+                    @pc.on("track")
+                    async def _on_pc_track_early(track):
+                        try:
+                            kind = getattr(track, "kind", None)
+                            if kind == "video":
+                                relay = self._persistent_media_relay
+                                if relay is None:
+                                    relay = MediaRelay()
+                                    self._persistent_media_relay = relay
+                                forward_branch = relay.subscribe(track)
+                                print(f"🎥 Forwarding video frames to Realtime provider (pc.on early track) {forward_branch}")
+                                if self.sts_mode and isinstance(self.llm, Realtime):
+                                    await self.llm.start_video_sender(forward_branch, fps=30)
+                                    self.logger.info("🎥 Forwarding video frames to Realtime provider (pc.on early track)")
+                        except Exception as e:
+                            self.logger.error(f"Error handling pc.on('track') video (early): {e}")
+                    self._pc_track_handler_attached = True
+        except Exception:
+            pass
+
 
         self._is_running = True
 
-        registry = get_global_registry()
-        #registry.add_connection_listeners(self._connection)
+        connection._connection._coordinator_ws_client.handlers.append(self.events.send)
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -232,6 +296,9 @@ class Agent:
 
             # Set up event handlers for audio processing
             await self._listen_to_audio_and_video()
+
+            # Video track detection is handled by event-based _process_track method
+            # No need for polling since Stream Video events are reliable
 
             # Realtime providers manage their own event loops; nothing to do here
 
@@ -264,11 +331,16 @@ class Agent:
             logging.warning(f"⚠️ Error while waiting for call to end: {e}")
             # Don't raise the exception, just log it and continue cleanup
 
-    async def say(self, text):
-        """
-        Say exactly this
-        """
-        await self.queue.say_text(text, self.agent_user.id)
+    async def say(self, text: str):
+        user_id = self.agent_user.id
+        self.conversation.add_message(Message(content=text, user_id=user_id))
+        if self.tts is not None:
+            await self.tts.send(text, user_id)
+
+    async def send_audio(self, pcm):
+        # TODO: stream & buffer
+        if self._audio_track is not None:
+            await self._audio_track.send_audio(pcm)
 
     async def create_user(self):
         response = await self.edge.create_user(self.agent_user)
@@ -291,7 +363,7 @@ class Agent:
         else:
             self.conversation.append_to_message(self._agent_conversation_handle, event.delta)
 
-    async def _handle_after_response(self, llm_response: LLMResponse):
+    async def _handle_after_response(self, llm_response: LLMResponseEvent):
         if self.conversation is None:
             return
 
@@ -309,11 +381,9 @@ class Agent:
         # Resume the queue for TTS playback
         await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
-    def _setup_vad(self):
-        if self.vad:
-            self.logger.info("🎙️ Setting up VAD listeners")
-            self.vad.on("audio", self._on_vad_audio)
-            
+    def _on_vad_audio(self, event: VADAudioEvent):
+        self.logger.info(f"Vad audio event {event}")
+
     def _setup_mcp_servers(self):
         """Set up MCP servers if any are configured."""
         if self.mcp_servers:
@@ -325,18 +395,17 @@ class Agent:
 
     def _setup_turn_detection(self):
         if self.turn_detection:
+            # TODO: this subscriptions should be in plugin and just merged when
+            # plugin is registered, each plugin should have access to agent
             self.logger.info("🎙️ Setting up turn detection listeners")
-            self.turn_detection.on(TurnEvent.TURN_STARTED.value, self._on_turn_started)
-            self.turn_detection.on(TurnEvent.TURN_ENDED.value, self._on_turn_ended)
+            self.events.subscribe(self._on_turn_started)
+            self.events.subscribe(self._on_turn_ended)
             self.turn_detection.start()
 
     def _setup_stt(self):
         if self.stt:
             self.logger.info("🎙️ Setting up STT event listeners")
-            self.stt.on("error", self._on_stt_error)
-            self._stt_setup = True
-        else:
-            self._stt_setup = False
+            self.events.subscribe(self._on_stt_error)
 
     async def _listen_to_audio_and_video(self) -> None:
         # Handle audio data for STT or Realtime
@@ -350,10 +419,8 @@ class Agent:
         # Always listen to remote video tracks so we can forward frames to Realtime providers
         @self.edge.on("track_added")
         async def on_track(track_id, track_type, user):
-
             task = asyncio.create_task(self._process_track(track_id, track_type, user))
             task.add_done_callback(_log_task_exception)
-
 
     async def _reply_to_audio(
         self, pcm_data: PcmData, participant: Participant
@@ -392,25 +459,39 @@ class Agent:
                     await self.stt.process_audio(pcm_data, participant)
 
     async def _process_track(self, track_id: str, track_type: str, participant):
-        """
-        - connect the track to video sender...
-        -
-        """
         # Only process video tracks - track_type might be string, enum or numeric (2 for video)
-        if track_type != TrackType.TRACK_TYPE_VIDEO:
-            self.logger.debug(f"Ignoring non-video track: {track_type}")
+        self.logger.info(f"🎥VDP: Checking track type: {track_type} vs {TrackType.TRACK_TYPE_VIDEO}")
+        if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
+            self.logger.warning(f"🎥VDP: EARLY EXIT - Ignoring non-video track: {track_type} (expected: video, {TrackType.TRACK_TYPE_VIDEO}, or 2)")
             return
 
         track = self.edge.add_track_subscriber(track_id)
         if not track:
-            self.logger.error(f"❌ Failed to subscribe to track: {track_id}")
+            self.logger.error(f"🎥VDP: EARLY EXIT - Failed to subscribe to track: {track_id}")
             return
 
-        self.logger.info(
-            f"✅ Successfully subscribed to video track: {track_id}, track object: {track}"
-        )
+        self.logger.info(f"🎥VDP: Track subscription successful, validating video track...")
+        
+        # Determine if this is a video track using both reported kind and original type
+        is_video_type = track_type in ("video", TrackType.TRACK_TYPE_VIDEO, 2)
+        kind = getattr(track, "kind", None)
+        is_video_kind = (kind == "video")
+        
+        self.logger.info(f"🎥VDP: Track validation - is_video_type={is_video_type}, kind='{kind}', is_video_kind={is_video_kind}")
+        
+        if not (is_video_kind or is_video_type):
+            self.logger.warning(f"🎥VDP: EARLY EXIT - Ignoring non-video track after subscribe: kind={kind} original_type={track_type}")
+            return
+
+        try:
+            self.logger.info(
+                f"🎥VDP: ✅ Subscribed to track: {track_id}, kind={getattr(track, 'kind', None)}, class={track.__class__.__name__}"
+            )
+        except Exception:
+            self.logger.info(f"🎥VDP: ✅ Subscribed to track: {track_id}")
 
         # Give the track a moment to be ready
+        self.logger.info(f"🎥VDP: Waiting for track to be ready...")
         await asyncio.sleep(0.5)
 
         # If Realtime provider supports video, forward frames upstream once per track
@@ -418,10 +499,15 @@ class Agent:
             try:
                 await self.llm._watch_video_track(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
+
             except Exception as e:
-                self.logger.error(
-                    f"Error starting video sender to Realtime provider: {e}"
-                )
+                self.logger.error(f"🎥VDP: ❌ Failed to start OpenAI video sender: {e}")
+                self.logger.error(f"🎥VDP: Exception type: {type(e).__name__}")
+                import traceback
+                self.logger.error(f"🎥VDP: Exception traceback: {traceback.format_exc()}")
+        else:
+            self.logger.warning(f"🎥VDP: STS mode check failed - sts_mode={self.sts_mode}, llm_type={type(self.llm).__name__}")
+            self.logger.warning(f"🎥VDP: isinstance(self.llm, Realtime) = {isinstance(self.llm, Realtime)}")
 
         hasImageProcessers = len(self.image_processors) > 0
         self.logger.info(
@@ -432,11 +518,49 @@ class Agent:
             f"📸 Starting video processing loop for track {track_id} {participant.user_id} {participant.name}"
         )
 
-        # Use the exact same pattern as the working example
+        # Enhanced video processing with timeout limits and error recovery
+        timeout_errors = 0
+        max_timeout_errors = 10  # Circuit breaker threshold
+        base_timeout = 5.0
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        
+        self.logger.info(f"🎥VDP: Starting robust video processing loop (max_timeouts={max_timeout_errors})")
+        
         while True:
+            # Periodic health check
             try:
-                video_frame = await asyncio.wait_for(track.recv(), timeout=5.0)
+                self._check_track_health()
+            except AttributeError as e:
+                # Handle case where attributes haven't been initialized yet
+                if "_last_health_check" in str(e) or "_track_health_check_interval" in str(e):
+                    self.logger.debug("🎥VDP: Health check attributes not initialized yet, skipping")
+                    break
+                else:
+                    raise
+
+            try:
+                # Adaptive timeout based on error count
+                current_timeout = base_timeout * (1.5 ** min(timeout_errors, 3))
+                
+                # Track frame processing timing
+                frame_request_start = time.monotonic()
+                # TODO: evaluate if this makes sense or not...
+                #video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=current_timeout)
+                video_frame = track.recv()
+                frame_request_end = time.monotonic()
+                frame_request_duration = frame_request_end - frame_request_start
+                
                 if video_frame:
+                    # Reset error counts on successful frame processing
+                    timeout_errors = 0
+                    consecutive_errors = 0
+                    
+                    # Log frame processing timing
+                    self.logger.info(f"🎥VDP: FRAME PROCESSING: track_id={track_id} "
+                                   f"request_duration={frame_request_duration:.3f}s "
+                                   f"frame_size={video_frame.width}x{video_frame.height}")
+                    
                     if hasImageProcessers:
                         img = video_frame.to_image()
 
@@ -456,36 +580,150 @@ class Agent:
                             self.logger.error(
                                 f"Error in video processor {type(processor).__name__}: {e}"
                             )
+                else:
+                    self.logger.warning("🎥VDP: Received empty frame")
+                    consecutive_errors += 1
 
-            except Exception as e:
-                # TODO: handle timouet differently, break on normal error
-                self.logger.error(
-                    f"📸 Error receiving track: {e} - {type(e)}, trying again"
+            except asyncio.TimeoutError:
+                timeout_errors += 1
+                consecutive_errors += 1
+                
+                self.logger.warning(
+                    f"🎥VDP: Timeout #{timeout_errors} (timeout={current_timeout:.1f}s, consecutive_errors={consecutive_errors})"
                 )
+                
+                # Circuit breaker: stop processing if too many timeouts
+                if timeout_errors >= max_timeout_errors:
+                    self.logger.error(f"🎥VDP: Circuit breaker triggered - too many timeouts ({timeout_errors}), stopping track processing")
+                    break
+                
+                # Circuit breaker: stop processing if too many consecutive errors
+                if consecutive_errors >= max_consecutive_errors:
+                    self.logger.error(f"🎥VDP: Circuit breaker triggered - too many consecutive errors ({consecutive_errors}), stopping track processing")
+                    break
+                
+                # Exponential backoff for timeout errors
+                backoff_delay = min(2.0 ** min(timeout_errors, 5), 30.0)
+                self.logger.debug(f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s")
+                await asyncio.sleep(backoff_delay)
+                
+            except Exception as e:
+                consecutive_errors += 1
+                self.logger.error(
+                    f"🎥VDP: Error receiving track: {e} - {type(e)} (consecutive_errors={consecutive_errors})"
+                )
+                
+                # Circuit breaker: stop processing on persistent errors
+                if consecutive_errors >= max_consecutive_errors:
+                    self.logger.error(f"🎥VDP: Circuit breaker triggered - too many consecutive errors ({consecutive_errors}), stopping track processing")
+                    break
+                
+                # Short delay for non-timeout errors
                 await asyncio.sleep(0.5)
+        
+        # Cleanup and logging
+        self.logger.info(f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}")
 
-    def _on_vad_audio(self, event:VADAudioEvent):
-        # bytes_to_pcm = bytes_to_pcm_data(event.audio_data)
-        # asyncio.create_task(self.stt.process_audio(bytes_to_pcm, event.user_metadata))
-        pass
+        # Remove track from active tracking
+        self._remove_track(track_id)
 
-    def _on_turn_started(self, event_data: TurnEventData) -> None:
+    def _on_turn_started(self, event: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
         self.queue.pause()
         # todo(nash): If the participant starts speaking while TTS is streaming, we need to cancel it
         self.logger.info(
-            f"👉 Turn started - participant speaking {event_data.speaker_id} : {event_data.confidence}"
+            f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
         )
 
-    def _on_turn_ended(self, event_data: TurnEventData) -> None:
+    def _on_turn_ended(self, event: TurnEventData) -> None:
         """Handle when a participant ends their turn."""
         self.logger.info(
-            f"👉 Turn ended - participant {event_data.speaker_id} finished (duration: {event_data.confidence})"
+            f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.confidence})"
         )
+    
+    def _register_track(self, track_id: str, track_info: Dict) -> None:
+        """Register a track for lifecycle management."""
+        self._active_tracks[track_id] = {
+            **track_info,
+            "registered_at": time.monotonic(),
+            "last_health_check": time.monotonic()
+        }
+        self.logger.info(f"🎥VDP: Registered track {track_id} for lifecycle management")
+    
+    def _remove_track(self, track_id: str) -> None:
+        """Remove a track from lifecycle management."""
+        if track_id in self._active_tracks:
+            track_info = self._active_tracks.pop(track_id)
+            duration = time.monotonic() - track_info["registered_at"]
+            self.logger.info(f"🎥VDP: Removed track {track_id} from lifecycle management (duration: {duration:.1f}s)")
+    
+    def _check_track_health(self) -> None:
+        """Check health of all active tracks."""
+        now = time.monotonic()
+        
+        # Only check health periodically
+        if now - self._last_health_check < self._track_health_check_interval:
+            return
+        
+        self._last_health_check = now
+        unhealthy_tracks = []
+        
+        for track_id, track_info in self._active_tracks.items():
+            try:
+                # Check if track has health status method
+                if hasattr(track_info.get("forwarding_track"), "get_health_status"):
+                    health_status = track_info["forwarding_track"].get_health_status()
+                    if not health_status["is_healthy"]:
+                        unhealthy_tracks.append(track_id)
+                        self.logger.warning(f"🎥VDP: Track {track_id} is unhealthy: {health_status}")
+                else:
+                    # Basic health check - if track has been active for too long without updates
+                    if now - track_info["last_health_check"] > 60.0:  # 1 minute
+                        unhealthy_tracks.append(track_id)
+                        self.logger.warning(f"🎥VDP: Track {track_id} has not been checked for 60+ seconds")
+                
+                # Update last health check time
+                track_info["last_health_check"] = now
+                
+            except Exception as e:
+                self.logger.error(f"🎥VDP: Error checking health of track {track_id}: {e}")
+                unhealthy_tracks.append(track_id)
+        
+        # Log summary
+        if unhealthy_tracks:
+            self.logger.warning(f"🎥VDP: Found {len(unhealthy_tracks)} unhealthy tracks: {unhealthy_tracks}")
+        else:
+            self.logger.debug(f"🎥VDP: All {len(self._active_tracks)} tracks are healthy")
+    
+    def get_track_health_summary(self) -> Dict[str, Any]:
+        """Get a summary of all track health status."""
+        summary = {
+            "total_tracks": len(self._active_tracks),
+            "healthy_tracks": 0,
+            "unhealthy_tracks": 0,
+            "track_details": {}
+        }
+        
+        for track_id, track_info in self._active_tracks.items():
+            try:
+                if hasattr(track_info.get("forwarding_track"), "get_health_status"):
+                    health_status = track_info["forwarding_track"].get_health_status()
+                    summary["track_details"][track_id] = health_status
+                    if health_status["is_healthy"]:
+                        summary["healthy_tracks"] += 1
+                    else:
+                        summary["unhealthy_tracks"] += 1
+                else:
+                    summary["track_details"][track_id] = {"status": "unknown"}
+            except Exception as e:
+                summary["track_details"][track_id] = {"error": str(e)}
+                summary["unhealthy_tracks"] += 1
+        
+        return summary
 
     async def _on_partial_transcript(
         self,
-        event: Union[STTPartialTranscriptEvent|RealtimePartialTranscriptEvent],
+        event: STTPartialTranscriptEvent | RealtimePartialTranscriptEvent
     ):
         self.logger.info(f"🎤 [Partial transcript]: {event.text}")
 
@@ -506,7 +744,7 @@ class Agent:
             self.conversation.append_to_message(self._user_conversation_handle, event.text)
 
     async def _on_transcript(
-        self, event: Union[STTTranscriptEvent|RealtimeTranscriptEvent]
+        self, event: STTTranscriptEvent | RealtimeTranscriptEvent
     ):
 
         self.logger.info(f"🎤 [STT transcript]: {event.text}")
@@ -691,24 +929,20 @@ class Agent:
                     self.logger.error(f"Error getting tools from MCP server {server.__class__.__name__}: {e}")
                     
         return tools
-        
+
     async def call_mcp_tool(self, server_index: int, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """Call a tool on a specific MCP server.
-        
         Args:
             server_index: Index of the MCP server in the mcp_servers list
             tool_name: Name of the tool to call
             arguments: Arguments to pass to the tool
-            
         Returns:
             The result of the tool call
         """
         if server_index >= len(self.mcp_servers):
             raise ValueError(f"Invalid server index: {server_index}")
-            
         server = self.mcp_servers[server_index]
         if not server.is_connected:
             raise RuntimeError(f"MCP server {server_index} is not connected")
-            
         return await server.call_tool(tool_name, arguments)
 

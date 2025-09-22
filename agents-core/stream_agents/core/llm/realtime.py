@@ -74,23 +74,10 @@ import abc
 import logging
 import uuid
 
-from pyee.asyncio import AsyncIOEventEmitter
-from pyee.base import PyeeError
+from stream_agents.core.events import PluginInitializedEvent, PluginClosedEvent
+from stream_agents.core.events.manager import EventManager
 
-
-from ..events.events import (
-    RealtimeConnectedEvent,
-    RealtimeDisconnectedEvent,
-    RealtimeAudioInputEvent,
-    RealtimeAudioOutputEvent,
-    RealtimeTranscriptEvent,
-    RealtimeResponseEvent,
-    RealtimeConversationItemEvent,
-    RealtimeErrorEvent,
-    PluginInitializedEvent,
-    PluginClosedEvent,
-)
-from ..events.event_utils import register_global_event
+from . import events
 
 T = TypeVar("T")
 
@@ -107,7 +94,7 @@ AfterCb = Callable[[RealtimeResponse[Any]], Any]
 logger = logging.getLogger(__name__)
 
 
-class Realtime(AsyncIOEventEmitter, abc.ABC):
+class Realtime(abc.ABC):
     """Base class for Realtime implementations.
 
     This abstract base class provides the foundation for implementing real-time
@@ -115,7 +102,6 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
     and connection state management.
 
     Key Features:
-    - Event-driven architecture using AsyncIOEventEmitter
     - Connection state tracking
     - Standardized event interface
 
@@ -160,23 +146,8 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         self.provider_name = provider_name or self.__class__.__name__
         # Ready event for providers to signal readiness
         self._ready_event: asyncio.Event = asyncio.Event()
-
-        logger.debug(
-            "Initialized Realtime base class",
-            extra={
-                "session_id": self.session_id,
-                "provider": self.provider_name,
-            },
-        )
-
-        # Emit initialization event
-        init_event = PluginInitializedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-        )
-        register_global_event(init_event)
-        self.emit("initialized", init_event)
-
+        self.events = EventManager()
+        self.events.register_events_from_module(events)
         # Common, optional preferences (not all providers will use all of these)
         self.model = model
         self.instructions = instructions
@@ -194,6 +165,13 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             )
         except Exception:  # pragma: no cover - allow providers to set later
             self.output_track = None  # type: ignore[assignment]
+
+        init_event = PluginInitializedEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+        )
+        self.events.append(init_event)
+
 
     @property
     def is_connected(self) -> bool:
@@ -367,38 +345,24 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
                 pass
 
         collected_parts: List[str] = []
-        done_fut: asyncio.Future[RealtimeResponse[Any]] = (
-            asyncio.get_event_loop().create_future()
-        )
+        result = None
 
-        async def _on_response(event: Any):
-            try:
-                if isinstance(event, RealtimeResponseEvent):
-                    if event.is_complete:
-                        if not done_fut.done():
-                            final_text = self._merge_final_text(
-                                collected_parts, event.text
-                            )
-                            done_fut.set_result(RealtimeResponse(event, final_text))
-                        self.remove_listener("response", _on_response)
-                    else:
-                        if event.text:
-                            collected_parts.append(event.text)
-            except Exception as e:
-                if not done_fut.done():
-                    done_fut.set_exception(e)
+        async def _on_response(event: events.RealtimeResponseEvent):
+            nonlocal collected_parts
+            if event.is_complete:
+                final_text = self._merge_final_text(
+                    collected_parts, event.text
+                )
+                collected_parts = []
+                result = RealtimeResponse(event, final_text)
+                if hasattr(self, "after_response_listener"):
+                    await self.after_response_listener(result)
+            else:
+                if event.text:
+                    collected_parts.append(event.text)
 
-        self.on("response", _on_response)  # type: ignore[arg-type]
+        self.events.subscribe(_on_response)  # type: ignore[arg-type]
         await sender()
-
-        try:
-            result = await asyncio.wait_for(done_fut, timeout=timeout)
-        except asyncio.TimeoutError as e:
-            self.remove_listener("response", _on_response)
-            raise e
-
-        if hasattr(self, "after_response_listener"):
-            await self.after_response_listener(result)
 
         return result
 
@@ -410,46 +374,43 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             self._ready_event.set()
         except Exception:
             pass
-        event = RealtimeConnectedEvent(
+        event = events.RealtimeConnectedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             session_config=session_config,
             capabilities=capabilities,
         )
-        register_global_event(event)
-        self.emit("connected", event)  # Structured event
+        self.events.append(event)
 
     def _emit_disconnected_event(self, reason=None, was_clean=True):
         """Emit a structured disconnected event."""
         self._is_connected = False
-        event = RealtimeDisconnectedEvent(
+        event = events.RealtimeDisconnectedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             reason=reason,
             was_clean=was_clean,
         )
-        register_global_event(event)
-        self.emit("disconnected", event)  # Structured event
+        self.events.append(event)
 
     def _emit_audio_input_event(
         self, audio_data, sample_rate=16000, user_metadata=None
     ):
         """Emit a structured audio input event."""
-        event = RealtimeAudioInputEvent(
+        event = events.RealtimeAudioInputEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             audio_data=audio_data,
             sample_rate=sample_rate,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
-        self.emit("audio_input", event)
+        self.events.append(event)
 
     def _emit_audio_output_event(
         self, audio_data, sample_rate=16000, response_id=None, user_metadata=None
     ):
         """Emit a structured audio output event."""
-        event = RealtimeAudioOutputEvent(
+        event = events.RealtimeAudioOutputEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             audio_data=audio_data,
@@ -457,17 +418,15 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             response_id=response_id,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
-        self.emit("audio_output", event)
+        self.events.append(event)
 
     def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
-        event = RealtimeTranscriptEvent(
+        event = events.RealtimeTranscriptEvent(
             text=text,
             user_metadata=user_metadata,
             original=original,
         )
-        register_global_event(event)
-        self.emit("partial_transcript", event)
+        self.events.append(event)
 
     def _emit_transcript_event(
         self,
@@ -475,13 +434,12 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         user_metadata=None,
         original=None,
     ):
-        event = RealtimeTranscriptEvent(
+        event = events.RealtimeTranscriptEvent(
             text=text,
             user_metadata=user_metadata,
             original=original,
         )
-        register_global_event(event)
-        self.emit("transcript", event)
+        self.events.append(event)
 
     def _emit_response_event(
         self,
@@ -492,7 +450,7 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
         user_metadata=None,
     ):
         """Emit a structured response event."""
-        event = RealtimeResponseEvent(
+        event = events.RealtimeResponseEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
@@ -501,14 +459,13 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             conversation_item_id=conversation_item_id,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
-        self.emit("response", event)
+        self.events.append(event)
 
     def _emit_conversation_item_event(
         self, item_id, item_type, status, role, content=None, user_metadata=None
     ):
         """Emit a structured conversation item event."""
-        event = RealtimeConversationItemEvent(
+        event = events.RealtimeConversationItemEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             item_id=item_id,
@@ -518,32 +475,18 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             content=content,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
-        self.emit("conversation_item", event)
+        self.events.append(event)
 
     def _emit_error_event(self, error, context="", user_metadata=None):
         """Emit a structured error event."""
-        event = RealtimeErrorEvent(
+        event = events.RealtimeErrorEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             error=error,
             context=context,
             user_metadata=user_metadata,
         )
-        register_global_event(event)
-        try:
-            self.emit("error", event)  # Structured event
-        except PyeeError:
-            # No error listeners registered; log instead of crashing
-            logger.error(
-                "Uncaught error event (no listeners)",
-                extra={
-                    "session_id": self.session_id,
-                    "provider": self.provider_name,
-                    "context": context,
-                    "error": str(error),
-                },
-            )
+        self.events.append(event)
 
     async def close(self):
         """Close the Realtime service and release any resources."""
@@ -551,18 +494,13 @@ class Realtime(AsyncIOEventEmitter, abc.ABC):
             await self._close_impl()
             self._emit_disconnected_event("service_closed", True)
 
-        # Emit closure event
         close_event = PluginClosedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             cleanup_successful=True,
         )
-        register_global_event(close_event)
-        self.emit("closed", close_event)
+        self.events.append(close_event)
 
     @abc.abstractmethod
     async def _close_impl(self): ...
 
-
-# Public re-export
-__all__ = ["Realtime"]

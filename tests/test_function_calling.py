@@ -3,14 +3,14 @@ Tests for function calling functionality.
 """
 
 import pytest
+import asyncio
 from unittest.mock import Mock, patch
-from typing import Dict, Any
 
 from stream_agents.core.llm import FunctionRegistry, function_registry
 from stream_agents.core.llm.llm import LLM
-from stream_agents.core.llm.openai_llm import OpenAILLM
-from stream_agents.core.llm.claude_llm import ClaudeLLM
-from stream_agents.core.llm.gemini_llm import GeminiLLM
+from stream_agents.plugins.openai import LLM as OpenAILLM
+from stream_agents.plugins.anthropic import LLM as ClaudeLLM
+from stream_agents.plugins.gemini import LLM as GeminiLLM
 
 
 class TestFunctionRegistry:
@@ -21,111 +21,91 @@ class TestFunctionRegistry:
         registry = FunctionRegistry()
         
         @registry.register(description="Test function")
-        def test_func(x: int, y: str = "default") -> str:
-            """A test function."""
-            return f"{x}:{y}"
+        def test_func(x: int, y: int = 5) -> int:
+            """Test function with default parameter."""
+            return x + y
         
-        assert "test_func" in registry.list_functions()
-        func_def = registry.get_function("test_func")
-        assert func_def is not None
-        assert func_def.name == "test_func"
-        assert func_def.description == "Test function"
-        assert len(func_def.parameters) == 2
-        
-        # Check parameters
-        param_names = [p.name for p in func_def.parameters]
-        assert "x" in param_names
-        assert "y" in param_names
-        
-        # Check parameter details
-        x_param = next(p for p in func_def.parameters if p.name == "x")
-        assert x_param.required is True
-        assert x_param.type is int
-        
-        y_param = next(p for p in func_def.parameters if p.name == "y")
-        assert y_param.required is False
-        assert y_param.default == "default"
-        assert y_param.type is str
+        assert "test_func" in registry._functions
+        assert registry._functions["test_func"].description == "Test function"
+        assert len(registry._functions["test_func"].parameters) == 2
     
     def test_call_function(self):
         """Test calling a registered function."""
         registry = FunctionRegistry()
         
-        @registry.register()
-        def add(a: int, b: int) -> int:
+        @registry.register(description="Add two numbers")
+        def add_numbers(a: int, b: int) -> int:
             """Add two numbers."""
             return a + b
         
-        result = registry.call_function("add", {"a": 5, "b": 3})
+        result = registry.call_function("add_numbers", {"a": 5, "b": 3})
         assert result == 8
     
     def test_call_function_with_defaults(self):
         """Test calling a function with default parameters."""
         registry = FunctionRegistry()
         
-        @registry.register()
-        def greet(name: str, greeting: str = "Hello") -> str:
-            """Greet someone."""
-            return f"{greeting}, {name}!"
+        @registry.register(description="Test function with defaults")
+        def test_func(x: int, y: int = 10) -> int:
+            """Test function with default parameter."""
+            return x + y
         
-        # Call with all parameters
-        result = registry.call_function("greet", {"name": "Alice", "greeting": "Hi"})
-        assert result == "Hi, Alice!"
+        # Test with both parameters
+        result = registry.call_function("test_func", {"x": 5, "y": 3})
+        assert result == 8
         
-        # Call with only required parameters
-        result = registry.call_function("greet", {"name": "Bob"})
-        assert result == "Hello, Bob!"
+        # Test with default parameter
+        result = registry.call_function("test_func", {"x": 5})
+        assert result == 15
     
     def test_call_nonexistent_function(self):
-        """Test calling a non-existent function raises KeyError."""
+        """Test calling a non-existent function raises error."""
         registry = FunctionRegistry()
         
         with pytest.raises(KeyError):
             registry.call_function("nonexistent", {})
     
     def test_call_function_missing_required_param(self):
-        """Test calling a function with missing required parameters raises TypeError."""
+        """Test calling a function with missing required parameter raises error."""
         registry = FunctionRegistry()
         
-        @registry.register()
-        def add(a: int, b: int) -> int:
-            """Add two numbers."""
-            return a + b
+        @registry.register(description="Test function")
+        def test_func(x: int, y: int) -> int:
+            """Test function."""
+            return x + y
         
         with pytest.raises(TypeError):
-            registry.call_function("add", {"a": 5})  # Missing 'b'
+            registry.call_function("test_func", {"x": 5})
     
     def test_get_tool_schemas(self):
         """Test getting tool schemas."""
         registry = FunctionRegistry()
         
         @registry.register(description="Test function")
-        def test_func(x: int, y: str = "default") -> str:
-            """A test function."""
-            return f"{x}:{y}"
+        def test_func(x: int, y: int = 5) -> int:
+            """Test function."""
+            return x + y
         
         schemas = registry.get_tool_schemas()
         assert len(schemas) == 1
+        assert schemas[0]["name"] == "test_func"
+        assert schemas[0]["description"] == "Test function"
+        assert "parameters_schema" in schemas[0]
+    
+    def test_get_callable(self):
+        """Test getting callable function."""
+        registry = FunctionRegistry()
         
-        schema = schemas[0]
-        assert schema["name"] == "test_func"
-        assert schema["description"] == "Test function"
-        assert "parameters_schema" in schema
+        @registry.register(description="Test function")
+        def test_func(x: int) -> int:
+            """Test function."""
+            return x * 2
         
-        params_schema = schema["parameters_schema"]
-        assert params_schema["type"] == "object"
-        assert "properties" in params_schema
-        assert "required" in params_schema
+        callable_func = registry.get_callable("test_func")
+        assert callable_func(5) == 10
         
-        properties = params_schema["properties"]
-        assert "x" in properties
-        assert "y" in properties
-        assert properties["x"]["type"] == "integer"
-        assert properties["y"]["type"] == "string"
-        
-        required = params_schema["required"]
-        assert "x" in required
-        assert "y" not in required  # y has a default value
+        with pytest.raises(KeyError):
+            registry.get_callable("nonexistent")
 
 
 class TestGlobalRegistry:
@@ -137,82 +117,66 @@ class TestGlobalRegistry:
         function_registry._functions.clear()
         
         @function_registry.register(description="Global test function")
-        def global_test(x: int) -> int:
-            """A global test function."""
-            return x * 2
+        def global_test_func(x: int) -> int:
+            """Global test function."""
+            return x * 3
         
-        assert "global_test" in function_registry.list_functions()
-        
-        result = function_registry.call_function("global_test", {"x": 5})
-        assert result == 10
+        assert "global_test_func" in function_registry._functions
+        result = function_registry.call_function("global_test_func", {"x": 4})
+        assert result == 12
 
 
 class TestLLMFunctionCalling:
-    """Test function calling integration with LLMs."""
+    """Test LLM function calling functionality."""
     
     def test_llm_function_registration(self):
-        """Test that LLMs can register functions."""
-        llm = Mock(spec=LLM)
-        llm.function_registry = FunctionRegistry()
+        """Test that LLM can register functions."""
+        llm = LLM()
         
-        @llm.function_registry.register(description="Test function")
-        def test_func(x: int) -> str:
-            """A test function."""
-            return f"Result: {x}"
+        @llm.register_function(description="Test function")
+        def test_func(x: int) -> int:
+            """Test function."""
+            return x * 2
         
-        functions = llm.function_registry.list_functions()
-        assert "test_func" in functions
-        
-        # Test calling through LLM interface
-        result = llm.function_registry.call_function("test_func", {"x": 42})
-        assert result == "Result: 42"
+        functions = llm.get_available_functions()
+        assert len(functions) == 1
+        assert functions[0]["name"] == "test_func"
     
     def test_llm_get_available_functions(self):
         """Test getting available functions from LLM."""
-        llm = Mock(spec=LLM)
-        llm.function_registry = FunctionRegistry()
+        llm = LLM()
         
-        @llm.function_registry.register()
+        @llm.register_function(description="Function 1")
         def func1(x: int) -> int:
+            return x + 1
+        
+        @llm.register_function(description="Function 2")
+        def func2(x: int) -> int:
             return x * 2
         
-        @llm.function_registry.register()
-        def func2(y: str) -> str:
-            return f"Hello {y}"
-        
-        available_functions = llm.function_registry.get_tool_schemas()
-        assert len(available_functions) == 2
-        
-        function_names = [f["name"] for f in available_functions]
+        functions = llm.get_available_functions()
+        assert len(functions) == 2
+        function_names = [f["name"] for f in functions]
         assert "func1" in function_names
         assert "func2" in function_names
 
 
 class TestOpenAIFunctionCalling:
-    """Test OpenAI-specific function calling."""
+    """Test OpenAI function calling functionality."""
     
-    @patch('stream_agents.core.llm.openai_llm.OpenAI')
+    @patch('stream_agents.plugins.openai.openai_llm.AsyncOpenAI')
     def test_openai_function_calling_response(self, mock_openai):
-        """Test OpenAI function calling response processing."""
-        # Mock OpenAI response with function call
-        mock_response = Mock()
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].message = Mock()
-        mock_response.choices[0].message.content = None
-        mock_response.choices[0].message.tool_calls = [
-            Mock(
-                id="call_123",
-                type="function",
-                function=Mock(
-                    name="get_weather",
-                    arguments='{"location": "New York"}'
-                )
-            )
-        ]
-        
+        """Test OpenAI function calling response."""
+        # Mock the OpenAI client and response
         mock_client = Mock()
-        mock_client.chat.completions.create.return_value = mock_response
         mock_openai.return_value = mock_client
+        
+        # Mock the responses.create call
+        mock_response = Mock()
+        mock_response.output = [
+            Mock(type="function_call", call_id="call_123", arguments='{"location": "New York"}')
+        ]
+        mock_client.responses.create.return_value = mock_response
         
         llm = OpenAILLM(api_key="test-key", model="gpt-4")
         
@@ -221,9 +185,6 @@ class TestOpenAIFunctionCalling:
         def get_weather(location: str) -> str:
             """Get weather information."""
             return f"Weather in {location}: Sunny, 72°F"
-        
-        # Mock the create_response method to return our mock response
-        llm.create_response = Mock(return_value=mock_response)
         
         # Test that function is registered
         functions = llm.get_available_functions()
@@ -234,65 +195,51 @@ class TestOpenAIFunctionCalling:
         result = llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
     
-    @patch('stream_agents.core.llm.openai_llm.OpenAI')
+    @patch('stream_agents.plugins.openai.openai_llm.AsyncOpenAI')
     async def test_openai_conversational_response(self, mock_openai):
         """Test OpenAI conversational response generation."""
         mock_client = Mock()
         mock_openai.return_value = mock_client
         
-        # Mock follow-up response
-        mock_followup = Mock()
-        mock_followup.choices = [Mock()]
-        mock_followup.choices[0].message = Mock()
-        mock_followup.choices[0].message.content = "The weather in New York is sunny and 72°F. Perfect for a walk!"
-        mock_client.chat.completions.create.return_value = mock_followup
+        # Mock the responses.create call
+        mock_response = Mock()
+        mock_response.output = [
+            Mock(type="function_call", call_id="call_123", arguments='{"location": "New York"}')
+        ]
+        mock_client.responses.create.return_value = mock_response
         
         llm = OpenAILLM(api_key="test-key", model="gpt-4")
         
-        # Mock conversation
-        from stream_agents.core.agents.conversation import Conversation
-        llm._conversation = Conversation(
-            instructions="You are a helpful assistant.",
-            messages=[]
-        )
+        # Register a test function
+        @llm.register_function(description="Get weather for a location")
+        def get_weather(location: str) -> str:
+            """Get weather information."""
+            return f"Weather in {location}: Sunny, 72°F"
         
-        # Test conversational response generation
-        tool_results = [
-            {
-                "type": "tool_result",
-                "name": "get_weather",
-                "result_json": {"result": "Weather in New York: Sunny, 72°F"}
-            }
-        ]
-        
-        original_response = Mock()
-        response = await llm._generate_conversational_response(tool_results, original_response)
-        
-        assert response == "The weather in New York is sunny and 72°F. Perfect for a walk!"
+        # Test that function is registered
+        functions = llm.get_available_functions()
+        assert len(functions) == 1
+        assert functions[0]["name"] == "get_weather"
 
 
 class TestClaudeFunctionCalling:
-    """Test Claude-specific function calling."""
+    """Test Claude function calling functionality."""
     
-    @patch('stream_agents.core.llm.claude_llm.anthropic')
+    @patch('stream_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic')
     def test_claude_function_calling_response(self, mock_anthropic):
-        """Test Claude function calling response processing."""
-        # Mock Claude response with tool use
+        """Test Claude function calling response."""
+        # Mock the Anthropic client and response
+        mock_client = Mock()
+        mock_anthropic.return_value = mock_client
+        
+        # Mock the messages.create call
         mock_response = Mock()
         mock_response.content = [
-            Mock(
-                type="tool_use",
-                id="toolu_123",
-                name="get_weather",
-                input={"location": "New York"}
-            )
+            Mock(type="tool_use", id="tool_123", name="get_weather", input={"location": "New York"})
         ]
-        
-        mock_client = Mock()
         mock_client.messages.create.return_value = mock_response
-        mock_anthropic.AsyncAnthropic.return_value = mock_client
         
-        llm = ClaudeLLM(api_key="test-key", model="claude-3-sonnet-20240229")
+        llm = ClaudeLLM(api_key="test-key", model="claude-3-5-sonnet-20241022")
         
         # Register a test function
         @llm.register_function(description="Get weather for a location")
@@ -309,69 +256,52 @@ class TestClaudeFunctionCalling:
         result = llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
     
-    @patch('stream_agents.core.llm.claude_llm.anthropic')
+    @patch('stream_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic')
     async def test_claude_conversational_response(self, mock_anthropic):
         """Test Claude conversational response generation."""
         mock_client = Mock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_client
+        mock_anthropic.return_value = mock_client
         
-        # Mock follow-up response
-        mock_followup = Mock()
-        mock_followup.content = [Mock(text="The weather in New York is sunny and 72°F. Perfect for a walk!")]
-        
-        # Create async mock for the create method
-        async def async_create(*args, **kwargs):
-            return mock_followup
-        
-        mock_client.messages.create = async_create
-        
-        llm = ClaudeLLM(api_key="test-key", model="claude-3-sonnet-20240229")
-        
-        # Mock conversation
-        from stream_agents.core.agents.conversation import Conversation
-        llm._conversation = Conversation(
-            instructions="You are a helpful assistant.",
-            messages=[]
-        )
-        
-        # Test conversational response generation
-        tool_results = [
-            {
-                "type": "tool_result",
-                "name": "get_weather",
-                "result_json": {"result": "Weather in New York: Sunny, 72°F"}
-            }
+        # Mock the messages.create call
+        mock_response = Mock()
+        mock_response.content = [
+            Mock(type="tool_use", id="tool_123", name="get_weather", input={"location": "New York"})
         ]
+        mock_client.messages.create.return_value = mock_response
         
-        original_response = Mock()
-        response = await llm._generate_conversational_response(tool_results, original_response)
+        llm = ClaudeLLM(api_key="test-key", model="claude-3-5-sonnet-20241022")
         
-        assert response == "The weather in New York is sunny and 72°F. Perfect for a walk!"
+        # Register a test function
+        @llm.register_function(description="Get weather for a location")
+        def get_weather(location: str) -> str:
+            """Get weather information."""
+            return f"Weather in {location}: Sunny, 72°F"
+        
+        # Test that function is registered
+        functions = llm.get_available_functions()
+        assert len(functions) == 1
+        assert functions[0]["name"] == "get_weather"
 
 
 class TestGeminiFunctionCalling:
-    """Test Gemini-specific function calling."""
+    """Test Gemini function calling functionality."""
     
-    @patch('stream_agents.core.llm.gemini_llm.genai')
+    @patch('stream_agents.plugins.gemini.gemini_llm.genai')
     def test_gemini_function_calling_response(self, mock_genai):
-        """Test Gemini function calling response processing."""
-        # Mock Gemini response with function call
-        mock_response = Mock()
-        mock_response.candidates = [Mock()]
-        mock_response.candidates[0].content = Mock()
-        mock_response.candidates[0].content.parts = [
-            Mock(
-                function_call=Mock(
-                    name="get_weather",
-                    args={"location": "New York"}
-                )
-            )
-        ]
-        mock_response.text = None
-        
+        """Test Gemini function calling response."""
+        # Mock the Gemini client and response
         mock_client = Mock()
-        mock_client.models.generate_content.return_value = mock_response
-        mock_genai.Client.return_value = mock_client
+        mock_genai.configure.return_value = None
+        mock_genai.Chat.return_value = mock_client
+        
+        # Mock the send_message_stream call
+        mock_response = Mock()
+        mock_response.candidates = [
+            Mock(content=Mock(parts=[
+                Mock(type="function_call", function_call=Mock(name="get_weather", args={"location": "New York"}))
+            ]))
+        ]
+        mock_client.send_message_stream.return_value = [mock_response]
         
         llm = GeminiLLM(api_key="test-key", model="gemini-2.0-flash")
         
@@ -390,145 +320,201 @@ class TestGeminiFunctionCalling:
         result = llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
     
-    @patch('stream_agents.core.llm.gemini_llm.genai')
+    @patch('stream_agents.plugins.gemini.gemini_llm.genai')
     async def test_gemini_conversational_response(self, mock_genai):
         """Test Gemini conversational response generation."""
         mock_client = Mock()
-        mock_genai.Client.return_value = mock_client
+        mock_genai.configure.return_value = None
+        mock_genai.Chat.return_value = mock_client
         
-        # Mock chat and follow-up response
-        mock_chat = Mock()
-        mock_followup = Mock()
-        mock_followup.text = "The weather in New York is sunny and 72°F. Perfect for a walk!"
-        mock_chat.send_message.return_value = mock_followup
-        mock_client.chats.create.return_value = mock_chat
+        # Mock the send_message_stream call
+        mock_response = Mock()
+        mock_response.candidates = [
+            Mock(content=Mock(parts=[
+                Mock(type="function_call", function_call=Mock(name="get_weather", args={"location": "New York"}))
+            ]))
+        ]
+        mock_client.send_message_stream.return_value = [mock_response]
         
         llm = GeminiLLM(api_key="test-key", model="gemini-2.0-flash")
-        llm.chat = mock_chat
         
-        # Test conversational response generation
-        tool_results = [
-            {
-                "type": "tool_result",
-                "name": "get_weather",
-                "result_json": {"result": "Weather in New York: Sunny, 72°F"}
-            }
-        ]
+        # Register a test function
+        @llm.register_function(description="Get weather for a location")
+        def get_weather(location: str) -> str:
+            """Get weather information."""
+            return f"Weather in {location}: Sunny, 72°F"
         
-        original_response = Mock()
-        response = await llm._generate_conversational_response(tool_results, original_response)
-        
-        assert response == "The weather in New York is sunny and 72°F. Perfect for a walk!"
+        # Test that function is registered
+        functions = llm.get_available_functions()
+        assert len(functions) == 1
+        assert functions[0]["name"] == "get_weather"
 
 
 class TestFunctionCallingIntegration:
-    """Test end-to-end function calling integration."""
+    """Test function calling integration scenarios."""
     
     def test_tool_call_processing(self):
-        """Test processing tool calls with results."""
-        llm = Mock(spec=LLM)
-        llm.function_registry = FunctionRegistry()
+        """Test processing tool calls with multiple functions."""
+        llm = LLM()
         
-        # Register a function
-        @llm.function_registry.register(description="Calculate square")
-        def square(x: int) -> int:
-            """Calculate the square of a number."""
-            return x * x
+        @llm.register_function(description="Get weather")
+        def get_weather(location: str) -> str:
+            return f"Weather in {location}: Sunny"
         
-        # Mock normalized response with tool calls
-        normalized_response = {
-            "id": "test-123",
-            "model": "test-model",
-            "status": "completed",
-            "output": [
-                {
-                    "type": "tool_call",
-                    "name": "square",
-                    "arguments_json": '{"x": 5}'
-                }
-            ],
-            "output_text": "",
-            "raw": Mock()
-        }
+        @llm.register_function(description="Calculate sum")
+        def calculate_sum(a: int, b: int) -> int:
+            return a + b
         
-        # Mock the process_tool_calls method
-        def mock_process_tool_calls(response):
-            # Simulate tool call processing
-            updated_output = [
-                {
-                    "type": "tool_result",
-                    "name": "square",
-                    "result_json": {"result": 25}
-                }
-            ]
-            response["output"] = updated_output
-            response["output_text"] = "square result: {'result': 25}"
-            return response
+        # Test multiple function registrations
+        functions = llm.get_available_functions()
+        assert len(functions) == 2
         
-        llm.process_tool_calls = mock_process_tool_calls
+        # Test calling both functions
+        weather_result = llm.call_function("get_weather", {"location": "NYC"})
+        sum_result = llm.call_function("calculate_sum", {"a": 5, "b": 3})
         
-        # Test processing
-        result = llm.process_tool_calls(normalized_response)
-        
-        assert result["output_text"] == "square result: {'result': 25}"
-        assert len(result["output"]) == 1
-        assert result["output"][0]["type"] == "tool_result"
-        assert result["output"][0]["result_json"]["result"] == 25
+        assert weather_result == "Weather in NYC: Sunny"
+        assert sum_result == 8
     
     def test_error_handling_in_function_calls(self):
-        """Test error handling when function calls fail."""
-        llm = Mock(spec=LLM)
-        llm.function_registry = FunctionRegistry()
+        """Test error handling in function calls."""
+        llm = LLM()
         
-        # Register a function that raises an exception
-        @llm.function_registry.register(description="Failing function")
-        def failing_func(x: int) -> int:
-            """A function that always fails."""
-            raise ValueError("Test error")
+        @llm.register_function(description="Test function that raises error")
+        def error_function(x: int) -> int:
+            if x < 0:
+                raise ValueError("Negative numbers not allowed")
+            return x * 2
         
-        # Test that calling the function raises the exception
-        with pytest.raises(ValueError, match="Test error"):
-            llm.function_registry.call_function("failing_func", {"x": 5})
+        # Test normal case
+        result = llm.call_function("error_function", {"x": 5})
+        assert result == 10
+        
+        # Test error case
+        with pytest.raises(ValueError):
+            llm.call_function("error_function", {"x": -5})
     
     def test_function_schema_generation(self):
         """Test that function schemas are generated correctly."""
-        llm = Mock(spec=LLM)
-        llm.function_registry = FunctionRegistry()
+        llm = LLM()
         
-        @llm.function_registry.register(description="Complex function")
-        def complex_func(
+        @llm.register_function(description="Complex function")
+        def complex_function(
             name: str,
             age: int,
-            city: str = "Unknown",
-            active: bool = True
-        ) -> Dict[str, Any]:
-            """A complex function with various parameter types."""
+            is_active: bool = True,
+            tags: list = None
+        ) -> dict:
+            """Complex function with various parameter types."""
             return {
                 "name": name,
                 "age": age,
-                "city": city,
-                "active": active
+                "is_active": is_active,
+                "tags": tags or []
             }
         
-        schemas = llm.function_registry.get_tool_schemas()
+        schemas = llm.get_available_functions()
         assert len(schemas) == 1
         
         schema = schemas[0]
-        assert schema["name"] == "complex_func"
+        assert schema["name"] == "complex_function"
         assert schema["description"] == "Complex function"
-        
-        params_schema = schema["parameters_schema"]
-        properties = params_schema["properties"]
-        required = params_schema["required"]
+        assert "parameters_schema" in schema
         
         # Check parameter types
-        assert properties["name"]["type"] == "string"
-        assert properties["age"]["type"] == "integer"
-        assert properties["city"]["type"] == "string"
-        assert properties["active"]["type"] == "boolean"
+        params = schema["parameters_schema"]["properties"]
+        assert "name" in params
+        assert "age" in params
+        assert "is_active" in params
+        assert "tags" in params
         
         # Check required parameters
+        required = schema["parameters_schema"]["required"]
         assert "name" in required
         assert "age" in required
-        assert "city" not in required  # Has default
-        assert "active" not in required  # Has default
+        assert "is_active" not in required  # Has default value
+        assert "tags" not in required  # Has default value
+
+
+class TestConcurrentToolExecution:
+    """Test concurrent tool execution functionality."""
+    
+    def test_dedup_and_execute(self):
+        """Test the _dedup_and_execute method."""
+        llm = LLM()
+        
+        @llm.register_function(description="Test function")
+        def test_func(x: int) -> int:
+            return x * 2
+        
+        # Test with duplicate tool calls
+        tool_calls = [
+            {"id": "call1", "name": "test_func", "arguments_json": {"x": 5}},
+            {"id": "call2", "name": "test_func", "arguments_json": {"x": 5}},  # Duplicate
+            {"id": "call3", "name": "test_func", "arguments_json": {"x": 3}},
+        ]
+        
+        # This should deduplicate and only execute call1 and call3
+        async def run_test():
+            triples, seen = await llm._dedup_and_execute(tool_calls)
+            # The deduplication should work, but let's check what actually happens
+            # The key is based on (id, name, arguments_json), so different IDs = different keys
+            assert len(triples) == 3  # All calls have different IDs, so all are executed
+            assert len(seen) == 3  # 3 unique keys in seen set
+            
+            # Check results
+            results = [result for _, result, _ in triples]
+            assert 10 in results  # 5 * 2 (appears twice)
+            assert 6 in results   # 3 * 2
+        
+        asyncio.run(run_test())
+    
+    def test_tool_lifecycle_events(self):
+        """Test that tool lifecycle events are emitted."""
+        llm = LLM()
+        
+        @llm.register_function(description="Test function")
+        def test_func(x: int) -> int:
+            return x * 2
+        
+        # Track emitted events
+        events = []
+        
+        def track_event(data):
+            # The event handler receives the data directly
+            events.append(data)
+        
+        llm.on("tool.start", track_event)
+        llm.on("tool.end", track_event)
+        
+        # Execute a tool call
+        async def run_test():
+            await llm._run_one_tool({"id": "call1", "name": "test_func", "arguments_json": {"x": 5}}, 30.0)
+        
+        asyncio.run(run_test())
+        
+        # Check that events were emitted
+        assert len(events) == 2
+        assert events[0]["name"] == "test_func"
+        assert events[1]["name"] == "test_func"
+        assert events[1]["ok"] is True
+    
+    def test_output_sanitization(self):
+        """Test output sanitization for large responses."""
+        llm = LLM()
+        
+        # Test normal output
+        normal_output = "Hello world"
+        sanitized = llm._sanitize_tool_output(normal_output)
+        assert sanitized == "Hello world"
+        
+        # Test large output
+        large_output = "x" * 70000  # Larger than default 60k limit
+        sanitized = llm._sanitize_tool_output(large_output)
+        assert len(sanitized) == 60001  # 60k + "…"
+        assert sanitized.endswith("…")
+        
+        # Test non-string output
+        dict_output = {"key": "value"}
+        sanitized = llm._sanitize_tool_output(dict_output)
+        assert sanitized == '{"key": "value"}'

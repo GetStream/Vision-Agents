@@ -1,4 +1,3 @@
-import pytest
 import os
 import tempfile
 import numpy as np
