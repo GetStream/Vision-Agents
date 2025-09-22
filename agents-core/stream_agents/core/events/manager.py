@@ -10,6 +10,41 @@ from .base import ExceptionEvent, HealthCheckEvent
 logger = logging.getLogger(__name__)
 
 
+def _truncate_event_for_logging(event, max_length=200):
+    """
+    Truncate event data for logging to prevent log spam.
+    
+    Args:
+        event: The event object to truncate
+        max_length: Maximum length of the string representation
+        
+    Returns:
+        Truncated string representation of the event
+    """
+    event_str = str(event)
+    
+    # Special handling for audio data arrays
+    if hasattr(event, 'pcm_data') and hasattr(event.pcm_data, 'samples'):
+        # Replace the full array with a summary
+        samples = event.pcm_data.samples
+        array_summary = f"array([{samples[0]}, {samples[1]}, ..., {samples[-1]}], dtype={samples.dtype}, size={len(samples)})"
+        event_str = event_str.replace(str(samples), array_summary)
+    
+    # If the event is still too long, truncate it
+    if len(event_str) > max_length:
+        # Find a good truncation point (end of a field)
+        truncate_at = max_length - 20  # Leave room for "... (truncated)"
+        while truncate_at > 0 and event_str[truncate_at] not in [',', ')', '}']:
+            truncate_at -= 1
+        
+        if truncate_at > 0:
+            event_str = event_str[:truncate_at] + "... (truncated)"
+        else:
+            event_str = event_str[:max_length-20] + "... (truncated)"
+    
+    return event_str
+
+
 class EventManager:
     """
     A comprehensive event management system for handling asynchronous event-driven communication.
@@ -311,10 +346,10 @@ class EventManager:
                 return
 
         if event.type in self._events:
-            logger.info(f"Received event {event}")
+            logger.info(f"Received event {_truncate_event_for_logging(event)}")
             return event
         elif self._ignore_unknown_events:
-                logger.info(f"Event not registered {event}")
+                logger.info(f"Event not registered {_truncate_event_for_logging(event)}")
         else:
             raise RuntimeError(f"Event not registered {event}")
 
@@ -406,9 +441,11 @@ class EventManager:
         """Process a single event."""
         for handler in self._handlers.get(event.type, []):
             try:
-                logger.info(f"Called handler {handler.__name__} for event {event.__class__.__name__}")
+                module_name = getattr(handler, '__module__', 'unknown')
+                logger.info(f"Called handler {handler.__name__} from {module_name} for event {event.__class__.__name__}")
                 await handler(event)
             except Exception as exc:
                 self._queue.appendleft(ExceptionEvent(exc, handler))
-                logger.exception(f"Error calling handler {handler.__name__} for event {event.__class__.__name__}")
+                module_name = getattr(handler, '__module__', 'unknown')
+                logger.exception(f"Error calling handler {handler.__name__} from {module_name} for event {event.__class__.__name__}")
 

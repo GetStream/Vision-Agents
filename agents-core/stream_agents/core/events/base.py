@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from types import FunctionType
+from dataclasses_json import DataClassJsonMixin
 
 from getstream.video.rtc.track_util import PcmData
 
@@ -91,8 +92,39 @@ class ExceptionEvent:
 
 
 @dataclasses.dataclass
-class HealthCheckEvent:
+class HealthCheckEvent(DataClassJsonMixin):
     connection_id: str
     created_at: int
     custom: dict
     type: str = 'health.check'
+
+
+@dataclass
+class ConnectionOkEvent(BaseEvent):
+    """Event emitted when WebSocket connection is established."""
+    
+    type: str = field(default="connection.ok", init=False)
+    connection_id: Optional[str] = None
+    server_time: Optional[str] = None
+    api_key: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+@dataclass
+class ConnectionErrorEvent(BaseEvent):
+    """Event emitted when WebSocket connection encounters an error."""
+    
+    type: str = field(default="connection.error", init=False)
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    reconnect_attempt: Optional[int] = None
+
+
+@dataclass
+class ConnectionClosedEvent(BaseEvent):
+    """Event emitted when WebSocket connection is closed."""
+    
+    type: str = field(default="connection.closed", init=False)
+    code: Optional[int] = None
+    reason: Optional[str] = None
+    was_clean: bool = False

@@ -10,6 +10,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from . import events
 
 from stream_agents.core.processors import BaseProcessor
 
@@ -123,7 +124,10 @@ class OpenAILLM(LLM):
         
         # Get input for event emission
         input_for_emit = kwargs.get("input", "")
-        self.emit("before_llm_response", self._normalize_message(input_for_emit))
+        self.events.send(events.BeforeLLMResponseEvent(
+            plugin_name="openai",
+            input_message=self._normalize_message(input_for_emit)
+        ))
 
         # OpenAI Responses API only accepts keyword arguments
         response = await self.client.responses.create(**kwargs)
@@ -169,7 +173,10 @@ class OpenAILLM(LLM):
             llm_response = LLMResponseEvent[OpenAIResponse](None, "")
 
         if llm_response is not None:
-            self.emit("after_llm_response", llm_response)
+            self.events.send(events.AfterLLMResponseEvent(
+                plugin_name="openai",
+                llm_response=llm_response
+            ))
 
         return llm_response or LLMResponseEvent[OpenAIResponse](None, "")
 
@@ -428,12 +435,20 @@ class OpenAILLM(LLM):
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
         # start by forwarding the native event
-        self.emit(event.type, event)
+        self.events.send(events.OpenAIStreamEvent(
+            plugin_name="openai",
+            event_type=event.type,
+            event_data=event
+        ))
 
         if event.type == "response.error":
             # Handle error events
             error_message = getattr(event, "error", {}).get("message", "Unknown error")
-            self.emit("error", {"message": error_message, "event": event})
+            self.events.send(events.LLMErrorEvent(
+                plugin_name="openai",
+                error_message=error_message,
+                event_data=event
+            ))
             return None
         elif event.type == "response.output_text.delta":
             # standardize the delta event
@@ -446,11 +461,17 @@ class OpenAILLM(LLM):
                 type=delta_event.type,
                 delta=delta_event.delta,
             )
-            self.emit("standardized.output_text.delta", standardized_event)
+            self.events.send(events.StandardizedTextDeltaEvent(
+                plugin_name="openai",
+                standardized_event=standardized_event
+            ))
         elif event.type == "response.completed":
             # standardize the response event and return the llm response
             completed_event: ResponseCompletedEvent = event
             llm_response = LLMResponseEvent[OpenAIResponse](completed_event.response, completed_event.response.output_text)
-            self.emit("standardized.response.completed", llm_response)
+            self.events.send(events.StandardizedResponseCompletedEvent(
+                plugin_name="openai",
+                llm_response=llm_response
+            ))
             return llm_response
         return None
