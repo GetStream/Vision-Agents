@@ -30,8 +30,13 @@ from typing import TYPE_CHECKING, Dict
 if TYPE_CHECKING:
     from .agent_session import AgentSessionContextManager
 
+logger = logging.getLogger(__name__)
 
-
+def _log_task_exception(task: asyncio.Task):
+    try:
+        task.result()
+    except Exception as e:
+        logger.exception("Error in background task")
 
 class Agent:
     """
@@ -345,7 +350,10 @@ class Agent:
         # Always listen to remote video tracks so we can forward frames to Realtime providers
         @self.edge.on("track_added")
         async def on_track(track_id, track_type, user):
-            asyncio.create_task(self._process_track(track_id, track_type, user))
+
+            task = asyncio.create_task(self._process_track(track_id, track_type, user))
+            task.add_done_callback(_log_task_exception)
+
 
     async def _reply_to_audio(
         self, pcm_data: PcmData, participant: Participant
@@ -374,6 +382,7 @@ class Agent:
 
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.sts_mode and isinstance(self.llm, Realtime):
+                # TODO: this behaviour should be easy to change in the agent class
                 task = asyncio.create_task(self.llm.simple_audio_response(pcm_data))
                 #task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
             else:
@@ -387,16 +396,16 @@ class Agent:
         - connect the track to video sender...
         -
         """
+        import pdb;pdb.set_trace()
 
-        """Process video frames from a specific track."""
-        self.logger.info(
-            f"🎥VDP: Processing track: {track_id} from user {getattr(participant, 'user_id', 'unknown')} (type: {track_type})"
-        )
 
         # Only process video tracks - track_type might be string, enum or numeric (2 for video)
         if track_type != TrackType.TRACK_TYPE_VIDEO:
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
+
+
+
 
         track = self.edge.add_track_subscriber(track_id)
         if not track:
@@ -414,6 +423,7 @@ class Agent:
         if self.sts_mode:
 
             try:
+
                 await self.llm._watch_video_track(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
             except Exception as e:

@@ -139,8 +139,6 @@ class Realtime2(realtime.Realtime):
         try:
             while True:
                 async for response in self._session.receive():
-                    self.logger.info("Received response: %s", response)
-
                     response: LiveServerMessage = response
 
                     is_input_transcript = response and response.server_content and response.server_content.input_transcription

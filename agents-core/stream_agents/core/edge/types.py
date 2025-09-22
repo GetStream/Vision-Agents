@@ -22,14 +22,15 @@ class Participant:
     user_id: str
 
 
-from enum import IntEnum
+from enum import StrEnum
 
-class TrackType(IntEnum):
-    TRACK_TYPE_UNSPECIFIED     = 0
-    TRACK_TYPE_AUDIO           = 1
-    TRACK_TYPE_VIDEO           = 2
-    TRACK_TYPE_SCREEN_SHARE    = 3
-    TRACK_TYPE_SCREEN_SHARE_AUDIO = 4
+
+class TrackType(StrEnum):
+    TRACK_TYPE_UNSPECIFIED     = "unspecified"
+    TRACK_TYPE_AUDIO           = "audio"
+    TRACK_TYPE_VIDEO           = "video"
+    TRACK_TYPE_SCREEN_SHARE    = "screen_share" # TODO: Verify its correct
+    TRACK_TYPE_SCREEN_SHARE_AUDIO = "screen_share_audio"
 
 TRACK_TYPE_UNSPECIFIED      = TrackType.TRACK_TYPE_UNSPECIFIED
 TRACK_TYPE_AUDIO            = TrackType.TRACK_TYPE_AUDIO
