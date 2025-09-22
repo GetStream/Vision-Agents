@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 """
 TODO
+- The base class Realtime has a ton of junk
 - MCP support
 - instructions with @mentions
 - event handling is not using either pyee or internal system in self.rtc
@@ -39,7 +40,7 @@ class Realtime(realtime.Realtime):
         self.rtc = RTCManager(self.model, self.voice, True)
         # audio output track?
         self.output_track = AudioStreamTrack(
-            framerate=48000, stereo=False, format="s16"
+            framerate=48000, stereo=True, format="s16"
         )
 
     async def connect(self):
