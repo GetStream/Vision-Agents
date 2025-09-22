@@ -46,13 +46,6 @@ def _truncate_event_for_logging(event, max_length=200):
     return event_str
 
 
-@dataclasses.dataclass
-class HealthCheckEvent:
-    connection_id: str
-    created_at: int
-    custom: dict
-    type: str = 'health.check'
-
 
 class EventManager:
     """

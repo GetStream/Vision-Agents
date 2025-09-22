@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from stream_agents.core.events import PluginBaseEvent, AudioFormat
-from typing import Optional, Any, Literal
+from typing import Optional, Any, Literal, Dict
+import uuid
 
 
 @dataclass
@@ -121,4 +122,39 @@ class LLMResponseEvent(PluginBaseEvent):
     type: str = field(default='llm.response', init=False)
     original: Any = None
     text: str = ""
+
+
+@dataclass
+class AfterLLMResponseEvent(PluginBaseEvent):
+    """Event emitted after an LLM response is completed."""
+    type: str = field(default='llm.response.after', init=False)
+    llm_response: Optional[LLMResponseEvent] = None
+
+
+@dataclass
+class StandardizedResponseCompletedEvent(PluginBaseEvent):
+    """Event emitted when a standardized response is completed."""
+    type: str = field(default='response.completed', init=False)
+    llm_response: Optional[LLMResponseEvent] = None
+
+
+@dataclass
+class ToolStartEvent(PluginBaseEvent):
+    """Event emitted when a tool execution starts."""
+    type: str = field(default='plugin.llm.tool.start', init=False)
+    tool_name: str = ""
+    arguments: Optional[Dict[str, Any]] = None
+    tool_call_id: Optional[str] = None
+
+
+@dataclass
+class ToolEndEvent(PluginBaseEvent):
+    """Event emitted when a tool execution ends."""
+    type: str = field(default='plugin.llm.tool.end', init=False)
+    tool_name: str = ""
+    success: bool = True
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    tool_call_id: Optional[str] = None
+    execution_time_ms: Optional[float] = None
 
