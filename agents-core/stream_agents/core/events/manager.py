@@ -350,7 +350,7 @@ class EventManager:
                 return
 
         if event.type in self._events:
-            logger.info(f"Received event {_truncate_event_for_logging(event)}")
+            #logger.info(f"Received event {_truncate_event_for_logging(event)}")
             return event
         elif self._ignore_unknown_events:
                 logger.info(f"Event not registered {_truncate_event_for_logging(event)}")
@@ -446,7 +446,7 @@ class EventManager:
         for handler in self._handlers.get(event.type, []):
             try:
                 module_name = getattr(handler, '__module__', 'unknown')
-                logger.info(f"Called handler {handler.__name__} from {module_name} for event {event.__class__.__name__}")
+                #logger.info(f"Called handler {handler.__name__} from {module_name} for event {event.__class__.__name__}")
                 await handler(event)
             except Exception as exc:
                 self._queue.appendleft(ExceptionEvent(exc, handler))

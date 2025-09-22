@@ -77,7 +77,7 @@ import uuid
 from stream_agents.core.events import PluginInitializedEvent, PluginClosedEvent
 from stream_agents.core.events.manager import EventManager
 
-from . import events
+from . import events, LLM
 
 T = TypeVar("T")
 
@@ -94,7 +94,7 @@ AfterCb = Callable[[RealtimeResponse[Any]], Any]
 logger = logging.getLogger(__name__)
 
 
-class Realtime(abc.ABC):
+class Realtime(LLM, abc.ABC):
     """Base class for Realtime implementations.
 
     This abstract base class provides the foundation for implementing real-time
@@ -178,45 +178,17 @@ class Realtime(abc.ABC):
         """Return True if the realtime session is currently active."""
         return self._is_connected
 
-    def _attach_agent(self, agent: Agent):
-        """
-        Attach agent to the llm
-        """
-        self.agent = agent
-        self._conversation = agent.conversation
-        self.instructions = agent.instructions
-
-        # Parse instructions to extract @ mentioned markdown files
-        self.parsed_instructions = parse_instructions(agent.instructions)
-
     @abc.abstractmethod
     async def connect(self): ...
 
-    # @abc.abstractmethod
-    # async def send_audio_pcm(self, pcm: PcmData, target_rate: int = 48000): ...
-
     @abc.abstractmethod
-    async def send_text(self, text: str):
-        """Send a text message from the human side to the conversation.
+    async def simple_audio_response(self, pcm: PcmData): ...
 
-        Providers should override to forward text upstream.
-        """
-        ...
-
-    async def wait_until_ready(self, timeout: Optional[float] = None) -> bool:
-        """Wait until the realtime session is ready. Returns True if ready."""
-        if self._ready_event.is_set():
-            return True
-        try:
-            return await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return False
-
-    async def start_video_sender(self, track: Any, fps: int = 1) -> None:
+    async def _watch_video_track(self, track: Any, fps: int = 1) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 
-    async def stop_video_sender(self) -> None:
+    async def _stop_watching_video_track(self) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 
@@ -236,60 +208,6 @@ class Realtime(abc.ABC):
         Default returns None.
         """
         return None
-
-    async def native_send_realtime_input(
-        self,
-        *,
-        text: Optional[str] = None,
-        audio: Optional[Any] = None,
-        media: Optional[Any] = None,
-    ) -> None:
-        """Advanced: provider-native realtime input (text/audio/media).
-
-        Providers that support a native realtime input API should override this.
-        Default implementation raises NotImplementedError.
-        """
-        raise NotImplementedError(
-            "native_send_realtime_input is not implemented for this provider"
-        )
-
-    async def native_response(
-        self,
-        *,
-        text: Optional[str] = None,
-        audio: Optional[Any] = None,
-        media: Optional[Any] = None,
-        timeout: Optional[float] = 30.0,
-    ) -> RealtimeResponse[Any]:
-        """Provider-native request that returns a standardized RealtimeResponse.
-
-        Delegates to the shared aggregation helper using native_send_realtime_input.
-        """
-
-        async def _sender():
-            await self.native_send_realtime_input(text=text, audio=audio, media=media)
-
-        return await self._aggregate_turn(
-            sender=_sender, before_text=text, timeout=timeout
-        )
-
-    async def simple_response(
-        self,
-        *,
-        text: str,
-        timeout: Optional[float] = 30.0,
-    ) -> RealtimeResponse[Any]:
-        """Send text and resolve when the assistant finishes the turn.
-
-        Aggregates streaming deltas with a hybrid strategy to build final text.
-        """
-
-        async def _sender():
-            await self.send_text(text)
-
-        return await self._aggregate_turn(
-            sender=_sender, before_text=text, timeout=timeout
-        )
 
     # ---- Shared aggregation helpers ----
     @staticmethod
