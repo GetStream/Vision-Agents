@@ -1,5 +1,8 @@
 import asyncio
-from typing import Any, Optional
+from typing import Any, Optional, List
+
+from getstream.video.rtc.audio_track import AudioStreamTrack
+
 from stream_agents.core.llm import realtime
 import logging
 import numpy as np
@@ -7,6 +10,9 @@ from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
 from openai.types.realtime import *
+
+from ...core.edge.types import Participant
+from ...core.processors import BaseProcessor
 
 load_dotenv()
 
@@ -31,6 +37,10 @@ class Realtime(realtime.Realtime):
         self.voice = voice
         # TODO: send video should depend on if the RTC connection with stream is sending video.
         self.rtc = RTCManager(self.model, self.voice, True)
+        # audio output track?
+        self.output_track = AudioStreamTrack(
+            framerate=48000, stereo=False, format="s16"
+        )
 
     async def connect(self):
         # Wire callbacks so we can emit audio/events upstream
@@ -44,20 +54,12 @@ class Realtime(realtime.Realtime):
             capabilities=["text", "audio"],
         )
 
+    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
+      participant: Participant = None):
+        await self.rtc.send_text(text)
+
     async def simple_audio_response(self, audio: PcmData):
         await self.rtc.send_audio_pcm(audio)
-
-    async def send_text(self, text: str, role="user"):
-        await self.rtc.send_text(text, role)
-
-    async def native_send_realtime_input(
-        self,
-        *,
-        text: Optional[str] = None,
-        audio: Optional[Any] = None,
-        media: Optional[Any] = None,
-    ) -> None:
-        ...
 
     async def request_session_info(self) -> None:
         await self.rtc.request_session_info()
@@ -77,11 +79,9 @@ class Realtime(realtime.Realtime):
 
     async def _handle_audio_output(self, audio_bytes: bytes) -> None:
         # Forward audio as event and to output track if available
-        logger.debug(f"🎵 Forwarding audio output: {len(audio_bytes)}")
-        if self.output_track is not None:
-            await self.output_track.write(audio_bytes)
-        else:
-            logger.info("Can't find output track to set bytes")
+        logger.info(f"🎵 Forwarding audio output: {len(audio_bytes)}")
+
+        await self.output_track.write(audio_bytes)
 
     async def _handle_video_output(self, video_array: np.ndarray) -> None:
         """Handle incoming video frames from OpenAI Realtime API.
@@ -103,7 +103,7 @@ class Realtime(realtime.Realtime):
 
     async def _watch_video_track(self, track, fps: int = 1) -> None:
         # TODO: only do this once?
-        self.rtc.set_video_callback(self._handle_video_output)
+        #self.rtc.set_video_callback(self._handle_video_output)
         # Delegate to RTC manager to swap the negotiated sender's track
         await self.rtc.start_video_sender(track, fps)
 
