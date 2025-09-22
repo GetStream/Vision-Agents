@@ -122,13 +122,6 @@ class OpenAILLM(LLM):
             input_content = args[0] if args else "Hello"
             kwargs["input"] = input_content
         
-        # Get input for event emission
-        input_for_emit = kwargs.get("input", "")
-        self.events.send(events.BeforeLLMResponseEvent(
-            plugin_name="openai",
-            input_message=self._normalize_message(input_for_emit)
-        ))
-
         # OpenAI Responses API only accepts keyword arguments
         response = await self.client.responses.create(**kwargs)
 

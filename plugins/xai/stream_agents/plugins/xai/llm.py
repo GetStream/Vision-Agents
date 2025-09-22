@@ -111,11 +111,6 @@ class XAILLM(LLM):
         assert self.xai_chat is not None
         self.xai_chat.append(user(input_text))
 
-        self.events.send(events.BeforeLLMResponseEvent(
-            plugin_name="xai",
-            input_message=self._normalize_message(input_text)
-        ))
-
         # Get response based on streaming preference
         if stream:
             # Handle streaming response
