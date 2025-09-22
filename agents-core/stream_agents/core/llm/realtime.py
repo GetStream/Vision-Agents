@@ -170,7 +170,7 @@ class Realtime(abc.ABC):
             session_id=self.session_id,
             plugin_name=self.provider_name,
         )
-        self.events.append(init_event)
+        self.events.send(init_event)
 
 
     @property
@@ -362,7 +362,7 @@ class Realtime(abc.ABC):
             session_config=session_config,
             capabilities=capabilities,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_disconnected_event(self, reason=None, was_clean=True):
         """Emit a structured disconnected event."""
@@ -373,7 +373,7 @@ class Realtime(abc.ABC):
             reason=reason,
             was_clean=was_clean,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_audio_input_event(
         self, audio_data, sample_rate=16000, user_metadata=None
@@ -386,7 +386,7 @@ class Realtime(abc.ABC):
             sample_rate=sample_rate,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_audio_output_event(
         self, audio_data, sample_rate=16000, response_id=None, user_metadata=None
@@ -400,7 +400,7 @@ class Realtime(abc.ABC):
             response_id=response_id,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
         event = events.RealtimeTranscriptEvent(
@@ -408,7 +408,7 @@ class Realtime(abc.ABC):
             user_metadata=user_metadata,
             original=original,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_transcript_event(
         self,
@@ -421,7 +421,7 @@ class Realtime(abc.ABC):
             user_metadata=user_metadata,
             original=original,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_response_event(
         self,
@@ -441,7 +441,7 @@ class Realtime(abc.ABC):
             conversation_item_id=conversation_item_id,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_conversation_item_event(
         self, item_id, item_type, status, role, content=None, user_metadata=None
@@ -457,7 +457,7 @@ class Realtime(abc.ABC):
             content=content,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     def _emit_error_event(self, error, context="", user_metadata=None):
         """Emit a structured error event."""
@@ -468,7 +468,7 @@ class Realtime(abc.ABC):
             context=context,
             user_metadata=user_metadata,
         )
-        self.events.append(event)
+        self.events.send(event)
 
     async def close(self):
         """Close the Realtime service and release any resources."""
@@ -481,7 +481,7 @@ class Realtime(abc.ABC):
             plugin_name=self.provider_name,
             cleanup_successful=True,
         )
-        self.events.append(close_event)
+        self.events.send(close_event)
 
     @abc.abstractmethod
     async def _close_impl(self): ...

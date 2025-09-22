@@ -38,6 +38,7 @@ from google.genai.types import (  # type: ignore[attr-defined]
 
 from getstream.audio.utils import resample_audio
 from stream_agents.core.llm import realtime
+from . import events
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 
@@ -88,6 +89,9 @@ class Realtime(realtime.Realtime):
             provider_config=provider_config,
             response_modalities=modalities_str,
         )
+
+        # Register plugin-specific events
+        self.events.register_events_from_module(events)
 
         self.api_key = (
             api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -209,7 +213,10 @@ class Realtime(realtime.Realtime):
             self._session = session
             self._is_connected = True
             self._ready_event.set()
-            self.emit("connected")
+            self.events.send(events.GeminiConnectedEvent(
+                plugin_name="gemini",
+                model=self.model
+            ))
             logger.info("Connected Gemini agent using model %s", self.model)
             # Start listener automatically
             await self.start_response_listener()
@@ -331,7 +338,10 @@ class Realtime(realtime.Realtime):
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                self.emit("error", e)
+                self.events.send(events.GeminiErrorEvent(
+                    plugin_name="gemini",
+                    error=e
+                ))
 
         self._video_sender_task = asyncio.create_task(_loop())
 
@@ -415,7 +425,10 @@ class Realtime(realtime.Realtime):
                         data = getattr(resp, "data", None)
                         if data is not None:
                             if emit_events:
-                                self.emit("audio", data)
+                                self.events.send(events.GeminiAudioEvent(
+                                    plugin_name="gemini",
+                                    audio_data=data
+                                ))
                             if self._playback_enabled:
                                 await self.output_track.write(data)
                             # Emit standardized audio output event
@@ -428,7 +441,10 @@ class Realtime(realtime.Realtime):
                         text = getattr(resp, "text", None)
                         if text:
                             if emit_events:
-                                self.emit("text", text)
+                                self.events.send(events.GeminiTextEvent(
+                                    plugin_name="gemini",
+                                    text=text
+                                ))
                             self._emit_response_event(text, is_complete=False)
                             turn_text_parts.append(text)
 
@@ -449,7 +465,10 @@ class Realtime(realtime.Realtime):
             except asyncio.CancelledError:  # graceful stop
                 return
             except Exception as e:
-                self.emit("error", e)
+                self.events.send(events.GeminiErrorEvent(
+                    plugin_name="gemini",
+                    error=e
+                ))
 
         logger.info("Response listener started")
         self._audio_receiver_task = asyncio.create_task(_receive_loop())

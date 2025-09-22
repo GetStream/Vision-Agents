@@ -6,6 +6,7 @@ from xai_sdk.proto import chat_pb2
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from stream_agents.core.processors import BaseProcessor
+from . import events
 
 if TYPE_CHECKING:
     from stream_agents.core.agents.conversation import Message
@@ -110,7 +111,10 @@ class XAILLM(LLM):
         assert self.xai_chat is not None
         self.xai_chat.append(user(input_text))
 
-        self.emit("before_llm_response", self._normalize_message(input_text))
+        self.events.send(events.BeforeLLMResponseEvent(
+            plugin_name="xai",
+            input_message=self._normalize_message(input_text)
+        ))
 
         # Get response based on streaming preference
         if stream:
@@ -138,7 +142,10 @@ class XAILLM(LLM):
             assert self.xai_chat is not None
             self.xai_chat.append(response)
 
-        self.emit("after_llm_response", llm_response)
+        self.events.send(events.AfterLLMResponseEvent(
+            plugin_name="xai",
+            llm_response=llm_response
+        ))
 
         return llm_response or LLMResponseEvent[Response](
             Response(chat_pb2.GetChatCompletionResponse(), 0), ""
@@ -166,7 +173,10 @@ class XAILLM(LLM):
         Forwards the chunk events and also send out a standardized version (the agent class hooks into that)
         """
         # Emit the raw chunk event
-        self.emit("chunk", chunk)
+        self.events.send(events.XAIChunkEvent(
+            plugin_name="xai",
+            chunk=chunk
+        ))
 
         # Emit standardized delta events for content
         if chunk.content:
@@ -178,13 +188,19 @@ class XAILLM(LLM):
                 type="response.output_text.delta",
                 delta=chunk.content,
             )
-            self.emit("standardized.output_text.delta", standardized_event)
+            self.events.send(events.StandardizedTextDeltaEvent(
+                plugin_name="xai",
+                standardized_event=standardized_event
+            ))
 
         # Check if this is the final chunk (finish_reason indicates completion)
         if chunk.choices and chunk.choices[0].finish_reason:
             # This is the final chunk, return the complete response
             llm_response = LLMResponseEvent[Response](response, response.content)
-            self.emit("standardized.response.completed", llm_response)
+            self.events.send(events.StandardizedResponseCompletedEvent(
+                plugin_name="xai",
+                llm_response=llm_response
+            ))
             return llm_response
 
         return None

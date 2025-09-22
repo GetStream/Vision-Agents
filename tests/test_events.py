@@ -54,7 +54,8 @@ async def test_register_events_from_module_raises_name_error():
     async def my_handler(event: ValidEvent):
         my_handler.value = event.field
 
-    await manager.send(ValidEvent(field=2))
+    manager.send(ValidEvent(field=2))
+    await manager.wait()
     assert my_handler.value == 2
 
 @pytest.mark.asyncio
@@ -80,8 +81,9 @@ async def test_subscribe_with_multiple_events_as_one_processes():
         nonlocal value
         value += 1
 
-    await manager.send(ValidEvent(field=1))
-    await manager.send(AnotherEvent(value=2))
+    manager.send(ValidEvent(field=1))
+    manager.send(AnotherEvent(value=2))
+    await manager.wait()
 
     assert value == 2
 
@@ -117,7 +119,8 @@ async def test_handler_exception_triggers_recursive_exception_event():
         if recursive_counter["count"] == 1:
             raise ValueError("Re-raising in exception handler")
 
-    await manager.send(ValidEvent(field=10))
+    manager.send(ValidEvent(field=10))
+    await manager.wait()
 
     # After processing, the recursive counter should be 2 (original failure + one re-raise)
     assert recursive_counter["count"] == 2
@@ -136,4 +139,78 @@ async def test_send_unknown_event_type_raises_key_error():
 
     # The event will be queued but there are no handlers for its type
     with pytest.raises(RuntimeError):
-        await manager.send(UnregisteredEvent(data="oops"))
+        manager.send(UnregisteredEvent(data="oops"))
+
+
+@pytest.mark.asyncio
+async def test_merge_managers_events_processed_in_one():
+    """Test that when two managers are merged, events from both are processed in the merged manager."""
+    # Create two separate managers
+    manager1 = EventManager()
+    manager2 = EventManager()
+    
+    # Register different events in each manager
+    manager1.register(ValidEvent)
+    manager2.register(AnotherEvent)
+    
+    # Set up handlers in each manager
+    all_events_processed = []
+    
+    @manager1.subscribe
+    async def manager1_handler(event: ValidEvent):
+        all_events_processed.append(("manager1", event))
+    
+    @manager2.subscribe
+    async def manager2_handler(event: AnotherEvent):
+        all_events_processed.append(("manager2", event))
+    
+    # Send events to both managers before merging
+    manager1.send(ValidEvent(field=1))
+    manager2.send(AnotherEvent(value="test"))
+    
+    # Wait for events to be processed in their respective managers
+    await manager1.wait()
+    await manager2.wait()
+    
+    # Verify events were processed in their original managers
+    assert len(all_events_processed) == 2
+    assert all_events_processed[0][0] == "manager1"
+    assert all_events_processed[0][1].field == 1
+    assert all_events_processed[1][0] == "manager2"
+    assert all_events_processed[1][1].value == "test"
+    
+    # Clear the processed events list
+    all_events_processed.clear()
+    
+    # Merge manager2 into manager1
+    manager1.merge(manager2)
+    
+    # Verify that manager2's processing task is stopped
+    assert manager2._processing_task is None
+    
+    # Send new events to both managers after merging
+    manager1.send(ValidEvent(field=2))
+    manager2.send(AnotherEvent(value="merged"))
+    
+    # Wait for events to be processed (only manager1's task should be running)
+    await manager1.wait()
+    
+    # After merging, both events should be processed by manager1's task
+    # (manager2's processing task should be stopped)
+    assert len(all_events_processed) == 2
+    # Both events should be processed by manager1's task
+    assert all_events_processed[0][0] == "manager1"  # ValidEvent
+    assert all_events_processed[0][1].field == 2
+    assert all_events_processed[1][0] == "manager2"  # AnotherEvent (handler from manager2)
+    assert all_events_processed[1][1].value == "merged"
+    
+    # Verify that manager2 can still send events but they go to manager1's queue
+    # and are processed by manager1's task
+    all_events_processed.clear()
+    manager2.send(AnotherEvent(value="from_manager2"))
+    await manager1.wait()
+    
+    # The event from manager2 should be processed by manager1's task
+    assert len(all_events_processed) == 1
+    assert all_events_processed[0][0] == "manager2"  # Handler from manager2
+    assert all_events_processed[0][1].value == "from_manager2"

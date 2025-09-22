@@ -16,6 +16,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from stream_agents.core.processors import BaseProcessor
+from . import events
 
 if TYPE_CHECKING:
     from stream_agents.core.agents.conversation import Message
@@ -294,7 +295,10 @@ class ClaudeLLM(LLM):
         class AfterLLMResponseEventEvent:
             pass
 
-        self.emit("after_llm_response", llm_response)
+        self.events.send(events.AfterLLMResponseEvent(
+            plugin_name="anthropic",
+            llm_response=llm_response
+        ))
 
         return llm_response
 
@@ -305,7 +309,10 @@ class ClaudeLLM(LLM):
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
         # forward the native event
-        self.emit("claude_event", event)
+        self.events.send(events.ClaudeStreamEvent(
+            plugin_name="anthropic",
+            event_data=event
+        ))
 
         # send a standardized version for delta and response
         if event.type == "content_block_delta":
@@ -321,7 +328,10 @@ class ClaudeLLM(LLM):
                     type="response.output_text.delta",
                     delta=delta_event.delta.text,
                 )
-                self.emit("standardized.output_text.delta", standardized_event)
+                self.events.send(events.StandardizedTextDeltaEvent(
+                    plugin_name="anthropic",
+                    standardized_event=standardized_event
+                ))
         elif event.type == "message_stop":
             stop_event: RawMessageStopEvent = event
             total_text = "".join(text_parts)

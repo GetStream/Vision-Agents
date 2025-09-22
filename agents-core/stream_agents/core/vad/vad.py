@@ -92,7 +92,7 @@ class VAD(abc.ABC):
         self._speech_start_time: Optional[float] = None
 
         # Emit initialization event
-        self.events.append(
+        self.events.send(
             PluginInitializedEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
@@ -218,7 +218,7 @@ class VAD(abc.ABC):
                 current_duration_ms = (len(current_samples) / self.sample_rate) * 1000
 
                 # Emit structured partial event
-                self.events.append(
+                self.events.send(
                     VADPartialEvent(
                         session_id=self.session_id,
                         plugin_name=self.provider_name,
@@ -268,7 +268,7 @@ class VAD(abc.ABC):
             self._speech_start_time = time.time()
 
             # Emit speech start event
-            self.events.append(
+            self.events.send(
                 VADSpeechStartEvent(
                     session_id=self.session_id,
                     plugin_name=self.provider_name,
@@ -304,7 +304,7 @@ class VAD(abc.ABC):
 
         if len(speech_data) >= min_speech_frames * self.frame_size:
             # Emit structured audio event
-            self.events.append(
+            self.events.send(
                 VADAudioEvent(
                     session_id=self.session_id,
                     plugin_name=self.provider_name,
@@ -320,7 +320,7 @@ class VAD(abc.ABC):
         # Emit speech end event if we were actively detecting speech
         if self.is_speech_active and self._speech_start_time:
             total_speech_duration = (time.time() - self._speech_start_time) * 1000
-            self.events.append(
+            self.events.send(
                 VADSpeechEndEvent(
                     session_id=self.session_id,
                     plugin_name=self.provider_name,
@@ -366,7 +366,7 @@ class VAD(abc.ABC):
         user_metadata: Optional[Dict[str, Any]] = None,
     ):
         """Emit a structured error event."""
-        self.events.append(
+        self.events.send(
             VADErrorEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
@@ -384,7 +384,7 @@ class VAD(abc.ABC):
             await self.flush()
 
         # Emit closure event
-        self.events.append(
+        self.events.send(
             PluginClosedEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
