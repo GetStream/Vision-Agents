@@ -18,6 +18,8 @@ from getstream.video.rtc.tracks import TrackSubscriptionConfig, SubscriptionConf
 from stream_agents.plugins.getstream.stream_conversation import StreamConversation
 from stream_agents.core.edge import EdgeTransport
 from stream_agents.core.edge.types import Connection, User
+from stream_agents.core.events.manager import EventManager
+from stream_agents.core.edge import events
 
 if TYPE_CHECKING:
     from stream_agents.core.agents.agents import Agent
@@ -44,6 +46,8 @@ class StreamEdge(EdgeTransport):
         super().__init__()
         self.client = Stream.from_env()
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.events = EventManager()
+        self.events.register_events_from_module(events)
 
     def create_conversation(self, call: Call, user, instructions):
         chat_client: ChatClient = call.client.stream.chat
@@ -89,16 +93,29 @@ class StreamEdge(EdgeTransport):
 
         @self._connection.on("audio")
         async def on_audio_received(pcm: PcmData, participant: Participant):
-            self.emit("audio", pcm, participant)
+            self.events.send(events.AudioReceivedEvent(
+                plugin_name="getstream",
+                pcm_data=pcm,
+                participant=participant
+            ))
 
         @self._connection.on("track_added")
         async def on_track(track_id, track_type, user):
             # TODO: maybe make it easy to subscribe only to video tracks?
-            self.emit("track_added", track_id, track_type, user)
+            self.events.send(events.TrackAddedEvent(
+                plugin_name="getstream",
+                track_id=track_id,
+                track_type=track_type,
+                user=user
+            ))
 
         @self._connection.on("call_ended")
         async def call_ended(*args, **kwargs):
-            self.emit("call_ended", *args, **kwargs)
+            self.events.send(events.CallEndedEvent(
+                plugin_name="getstream",
+                args=args,
+                kwargs=kwargs
+            ))
 
         standardize_connection = StreamConnection(connection)
 

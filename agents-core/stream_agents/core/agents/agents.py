@@ -9,7 +9,8 @@ from aiortc import VideoStreamTrack
 from aiortc.contrib.media import MediaRelay
 
 from ..edge.types import Participant, PcmData, Connection, TrackType, User
-from ..events.events import RealtimePartialTranscriptEvent
+from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
+from ..llm.events import RealtimePartialTranscriptEvent
 from ..llm.events import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
@@ -27,6 +28,7 @@ from ..events.manager import EventManager
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
+from . import events
 from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
 
@@ -90,6 +92,8 @@ class Agent:
 
         self.events = EventManager()
         self.events.register_events_from_module(getstream.models, 'call.')
+        self.events.register_events_from_module(events)
+        
         self.llm = llm
         self.stt = stt
         self.tts = tts
@@ -105,17 +109,19 @@ class Agent:
         self._user_conversation_handle: Optional[StreamHandle] = None
         self._agent_conversation_handle: Optional[StreamHandle] = None
 
-        if self.llm is not None:
-            self.llm._attach_agent(self)
-            self.llm.events.subscribe(self._handle_after_response)
-            self.llm.events.subscribe(self._handle_output_text_delta)
-
+        # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, vad, llm]:
             if plugin and hasattr(plugin, 'events'):
                 self.logger.info(f"Registered plugin {plugin}")
                 self.events.merge(plugin.events)
 
+        if self.llm is not None:
+            self.llm._attach_agent(self)
+            self.llm.events.subscribe(self._handle_after_response)
+            self.llm.events.subscribe(self._handle_output_text_delta)
+
         self.events.subscribe(self._on_vad_audio)
+        self.events.subscribe(self._on_agent_say)
         # Initialize state variables
         self._is_running: bool = False
         self._current_frame = None
@@ -138,6 +144,14 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
+
+    def _truncate_for_logging(self, obj, max_length=200):
+        """Truncate object string representation for logging to prevent spam."""
+        obj_str = str(obj)
+        if len(obj_str) > max_length:
+            obj_str = obj_str[:max_length] + "... (truncated)"
+        return obj_str
+
         self._setup_mcp_servers()
 
     async def close(self):
@@ -283,7 +297,7 @@ class Agent:
 
         self._is_running = True
 
-        connection._connection._coordinator_ws_client.handlers.append(self.events.send)
+        connection._connection._coordinator_ws_client.on_wildcard('*', lambda event_name, event: self.events.send(event))
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -321,8 +335,8 @@ class Agent:
         try:
             fut = asyncio.get_event_loop().create_future()
 
-            @self.edge.on("call_ended")
-            def on_ended():
+            @self.edge.events.subscribe
+            async def on_ended(event: CallEndedEvent):
                 if not fut.done():
                     fut.set_result(None)
 
@@ -331,11 +345,36 @@ class Agent:
             logging.warning(f"⚠️ Error while waiting for call to end: {e}")
             # Don't raise the exception, just log it and continue cleanup
 
-    async def say(self, text: str):
+    def send(self, event):
+        """
+        Send an event through the agent's event system.
+        
+        This is a convenience method that calls agent.events.send().
+        Use this for consistency with agent.events.subscribe().
+        
+        Args:
+            event: The event to send
+        """
+        self.events.send(event)
+
+    async def say(self, text: str, metadata: Optional[Dict[str, Any]] = None):
+        """
+        Make the agent say something by emitting an event.
+        
+        Args:
+            text: The text for the agent to say
+            metadata: Optional metadata to include with the event
+        """
         user_id = self.agent_user.id
         self.conversation.add_message(Message(content=text, user_id=user_id))
-        if self.tts is not None:
-            await self.tts.send(text, user_id)
+        
+        # Emit agent say event using the send method
+        self.send(events.AgentSayEvent(
+            plugin_name="agent",
+            text=text,
+            user_id=user_id,
+            metadata=metadata or {}
+        ))
 
     async def send_audio(self, pcm):
         # TODO: stream & buffer
@@ -352,7 +391,7 @@ class Agent:
         if self.conversation is None:
             return
 
-        self.logger.info(f"received standardized.output_text.delta {event}")
+        self.logger.info(f"received standardized.output_text.delta {self._truncate_for_logging(event)}")
         # Create a new streaming message if we don't have one
         if self._agent_conversation_handle is None:
             self._agent_conversation_handle = self.conversation.start_streaming_message(
@@ -382,7 +421,56 @@ class Agent:
         await self.queue.resume(llm_response, user_id=self.agent_user.id)
 
     def _on_vad_audio(self, event: VADAudioEvent):
-        self.logger.info(f"Vad audio event {event}")
+        self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
+
+    async def _on_agent_say(self, event: events.AgentSayEvent):
+        """Handle agent say events by calling TTS if available."""
+        try:
+            # Emit say started event
+            synthesis_id = str(uuid4())
+            self.events.send(events.AgentSayStartedEvent(
+                plugin_name="agent",
+                text=event.text,
+                user_id=event.user_id,
+                synthesis_id=synthesis_id
+            ))
+            
+            start_time = time.time()
+            
+            if self.tts is not None:
+                # Call TTS with user metadata
+                user_metadata = {"user_id": event.user_id}
+                if event.metadata:
+                    user_metadata.update(event.metadata)
+                
+                await self.tts.send(event.text, user_metadata)
+                
+                # Calculate duration
+                duration_ms = (time.time() - start_time) * 1000
+                
+                # Emit say completed event
+                self.events.send(events.AgentSayCompletedEvent(
+                    plugin_name="agent",
+                    text=event.text,
+                    user_id=event.user_id,
+                    synthesis_id=synthesis_id,
+                    duration_ms=duration_ms
+                ))
+                
+                self.logger.info(f"Agent said: {event.text}")
+            else:
+                self.logger.warning("No TTS available, cannot synthesize speech")
+                
+        except Exception as e:
+            # Emit say error event
+            self.events.send(events.AgentSayErrorEvent(
+                plugin_name="agent",
+                text=event.text,
+                user_id=event.user_id,
+                error_message=str(e),
+                error=e
+            ))
+            self.logger.error(f"Error in agent say: {e}")
 
     def _setup_mcp_servers(self):
         """Set up MCP servers if any are configured."""
@@ -409,16 +497,22 @@ class Agent:
 
     async def _listen_to_audio_and_video(self) -> None:
         # Handle audio data for STT or Realtime
-        @self.edge.on("audio")
-        async def on_audio_received(pcm: PcmData, participant: Participant):
+        @self.edge.events.subscribe
+        async def on_audio_received(event: AudioReceivedEvent):
+            pcm = event.pcm_data
+            participant = event.participant
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
             await self._reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
-        @self.edge.on("track_added")
-        async def on_track(track_id, track_type, user):
+
+        @self.edge.events.subscribe
+        async def on_track(event: TrackAddedEvent):
+            track_id = event.track_id
+            track_type = event.track_type
+            user = event.user
             task = asyncio.create_task(self._process_track(track_id, track_type, user))
             task.add_done_callback(_log_task_exception)
 
@@ -547,7 +641,7 @@ class Agent:
                 frame_request_start = time.monotonic()
                 # TODO: evaluate if this makes sense or not...
                 #video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=current_timeout)
-                video_frame = track.recv()
+                video_frame = await track.recv()
                 frame_request_end = time.monotonic()
                 frame_request_duration = frame_request_end - frame_request_start
                 
@@ -555,11 +649,6 @@ class Agent:
                     # Reset error counts on successful frame processing
                     timeout_errors = 0
                     consecutive_errors = 0
-                    
-                    # Log frame processing timing
-                    self.logger.info(f"🎥VDP: FRAME PROCESSING: track_id={track_id} "
-                                   f"request_duration={frame_request_duration:.3f}s "
-                                   f"frame_size={video_frame.width}x{video_frame.height}")
                     
                     if hasImageProcessers:
                         img = video_frame.to_image()

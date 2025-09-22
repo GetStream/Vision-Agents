@@ -191,7 +191,8 @@ class Realtime(realtime.Realtime):
                                 pcm_data = PcmData.from_bytes(data, sample_rate=24000, format="s16")
                                 # Resample from 24kHz to 48kHz for WebRTC
                                 resampled_pcm = pcm_data.resample(target_sample_rate=48000)
-                                self.emit("audio", resampled_pcm.samples.tobytes()) # audio event is resampled to 48khz
+                                # TODO: update to new event syntax
+                                # self.emit("audio", resampled_pcm.samples.tobytes()) # audio event is resampled to 48khz
                                 await self.output_track.write(data) # original 24khz here
                             else:
                                 print("text", response.text)

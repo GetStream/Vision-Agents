@@ -66,7 +66,7 @@ class STT(abc.ABC):
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
-        self.events.append(PluginInitializedEvent(
+        self.events.send(PluginInitializedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             plugin_type="STT",
@@ -114,7 +114,7 @@ class STT(abc.ABC):
             user_metadata: User-specific metadata.
             metadata: Transcription metadata (processing time, confidence, etc.).
         """
-        self.events.append(events.STTTranscriptEvent(
+        self.events.send(events.STTTranscriptEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
@@ -141,7 +141,7 @@ class STT(abc.ABC):
             user_metadata: User-specific metadata.
             metadata: Transcription metadata (processing time, confidence, etc.).
         """
-        self.events.append(events.STTPartialTranscriptEvent(
+        self.events.send(events.STTPartialTranscriptEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
@@ -168,7 +168,7 @@ class STT(abc.ABC):
             context: Additional context about where the error occurred.
             user_metadata: User-specific metadata.
         """
-        self.events.append(events.STTErrorEvent(
+        self.events.send(events.STTErrorEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             error=error,
@@ -282,7 +282,7 @@ class STT(abc.ABC):
             self._is_closed = True
 
             # Emit closure event
-            self.events.append(PluginClosedEvent(
+            self.events.send(PluginClosedEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 plugin_type="STT",

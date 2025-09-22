@@ -1,5 +1,4 @@
-from .events import (
-    EventType,
+from .base import (
     ConnectionState,
     AudioFormat,
     BaseEvent,
