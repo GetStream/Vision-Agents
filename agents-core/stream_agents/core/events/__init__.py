@@ -4,25 +4,11 @@ from .events import (
     AudioFormat,
     BaseEvent,
     PluginBaseEvent,
-    # Realtime Events (formerly STS)
-    RealtimeConnectedEvent,
-    RealtimeDisconnectedEvent,
-    RealtimeAudioInputEvent,
-    RealtimeAudioOutputEvent,
-    RealtimeTranscriptEvent,
-    RealtimeResponseEvent,
-    RealtimeConversationItemEvent,
-    RealtimeErrorEvent,
-    # Generic Events
     PluginInitializedEvent,
     PluginClosedEvent,
     PluginErrorEvent,
 )
-from .event_metrics import (
-    calculate_stt_metrics,
-    calculate_tts_metrics,
-    calculate_vad_metrics,
-)
+from .manager import EventManager
 
 from getstream.models import (
     BlockedUserEvent,
@@ -135,30 +121,12 @@ __all__ = [
 ]
 
 __all__ += [
-    "EventType",
     "ConnectionState",
     "AudioFormat",
     "BaseEvent",
     "PluginBaseEvent",
-    "RealtimeConnectedEvent",
-    "RealtimeDisconnectedEvent",
-    "RealtimeAudioInputEvent",
-    "RealtimeAudioOutputEvent",
-    "RealtimeTranscriptEvent",
-    "RealtimeResponseEvent",
-    "RealtimeConversationItemEvent",
-    "RealtimeErrorEvent",
     "PluginInitializedEvent",
     "PluginClosedEvent",
     "PluginErrorEvent",
-    "EventFilter",
-    "EventRegistry",
-    "EventLogger",
-    "serialize_event",
-    "serialize_events",
-    "deserialize_event",
-    "calculate_stt_metrics",
-    "calculate_tts_metrics",
-    "calculate_vad_metrics",
-    "EVENT_CLASS_MAP",
+    "EventManager"
 ]
