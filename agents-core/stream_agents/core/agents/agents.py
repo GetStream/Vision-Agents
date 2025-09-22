@@ -9,7 +9,7 @@ from aiortc import VideoStreamTrack
 from aiortc.contrib.media import MediaRelay
 
 from ..edge.types import Participant, PcmData, Connection, TrackType, User
-from ..events.events import RealtimePartialTranscriptEvent
+from ..llm.events import RealtimePartialTranscriptEvent
 from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
 from ..llm.events import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
