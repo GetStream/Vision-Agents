@@ -5,7 +5,7 @@ from typing import Optional, Callable, Any
 import av
 from aiortc import VideoStreamTrack
 
-from .queue import LatestNQueue
+from stream_agents.core.forwarder.queue import LatestNQueue
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class VideoForwarder:
       - run `start_event_consumer(on_frame)` (push model via callback).
     `fps` limits how often frames are forwarded to consumers (coalescing to newest).
     """
-    def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 5, fps: Optional[float] = 30):
+    def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = 30):
         self.input_track = input_track
         self.queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=max_buffer)
         self.fps = fps  # None = unlimited, else forward at ~fps
@@ -80,30 +80,39 @@ class VideoForwarder:
     async def start_event_consumer(
         self,
         on_frame: Callable[[av.VideoFrame], Any],  # async or sync
+        *,
+        log_interval_seconds: float = 10.0,
     ) -> None:
         """
         Starts a task that calls `on_frame(latest_frame)` at ~fps.
         If fps is None, it forwards as fast as frames arrive (still coalescing).
         """
         async def _consumer():
-            logger.info("consumer loop")
             loop = asyncio.get_running_loop()
             min_interval = (1.0 / self.fps) if (self.fps and self.fps > 0) else 0.0
             last_ts = 0.0
             is_coro = asyncio.iscoroutinefunction(on_frame)
+            frames_forwarded = 0
+            last_log = loop.time()
+            last_width: Optional[int] = None
+            last_height: Optional[int] = None
             try:
                 while not self._stopped.is_set():
                     # Wait for at least one frame
-                    logger.info("waiting on next frame")
                     frame = await self.next_frame()
-                    logger.info("next frame found")
+                    # track latest resolution for summary logs
+                    try:
+                        last_width = int(getattr(frame, "width", None)) or last_width
+                        last_height = int(getattr(frame, "height", None)) or last_height
+                    except Exception:
+                        # ignore resolution extraction errors
+                        pass
                     # Throttle to fps (if set)
                     if min_interval > 0.0:
                         now = loop.time()
                         elapsed = now - last_ts
                         if elapsed < min_interval:
                             # coalesce: keep draining to newest until it's time
-                            logger.info("sleeping for %f seconds", min_interval - elapsed)
                             await asyncio.sleep(min_interval - elapsed)
                         last_ts = loop.time()
                     # Call handler
@@ -111,12 +120,30 @@ class VideoForwarder:
                         await on_frame(frame)  # type: ignore[arg-type]
                     else:
                         on_frame(frame)
+                    frames_forwarded += 1
+                    # periodic summary logging
+                    if log_interval_seconds > 0:
+                        now_time = loop.time()
+                        if (now_time - last_log) >= log_interval_seconds:
+                            if last_width and last_height:
+                                logger.info(
+                                    "shared %d frames at %dx%d resolution in the last %.0f seconds",
+                                    frames_forwarded,
+                                    last_width,
+                                    last_height,
+                                    log_interval_seconds,
+                                )
+                            else:
+                                logger.info(
+                                    "shared %d frames in the last %.0f seconds",
+                                    frames_forwarded,
+                                    log_interval_seconds,
+                                )
+                            frames_forwarded = 0
+                            last_log = now_time
             except asyncio.CancelledError:
-                logger.info("cancelled consumer")
                 raise
-            except Exception as e:
-                logger.info("unexpected error", e)
-                # optional: log
-                pass
+            except Exception:
+                logger.exception("unexpected error in video forwarder consumer")
 
         self._tasks.add(asyncio.create_task(_consumer()))

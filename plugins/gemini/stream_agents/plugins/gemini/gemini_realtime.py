@@ -13,11 +13,11 @@ from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict
     SessionResumptionConfig
 
 from stream_agents.core.edge.types import Participant, PcmData
+from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 from stream_agents.core.llm import realtime
 from stream_agents.core.processors import BaseProcessor
 import av
 
-from stream_agents.plugins.gemini.video_forwarder import VideoForwarder
 
 from PIL import Image
 
