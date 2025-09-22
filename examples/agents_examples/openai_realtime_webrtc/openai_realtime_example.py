@@ -45,7 +45,7 @@ You are a voice assistant.
 """
         ),
         # Enable video input and set a conservative default frame rate for realtime responsiveness
-        llm=openai.Realtime(send_video=True),
+        llm=openai.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
@@ -60,10 +60,8 @@ You are a voice assistant.
     with await agent.join(call):
         print("Joining call")
         agent.edge.open_demo(call)
-        # Ensure the LLM realtime connection is ready (should already be awaited internally)
-        await agent.llm.wait_until_ready(timeout=10.0)  # type: ignore[attr-defined]
         print("LLM ready")
-        await agent.llm.request_session_info()
+        #await agent.llm.request_session_info()
         print("Requested session info")
         # Wait for a human to join the call before greeting
         print("Waiting for human to join the call")

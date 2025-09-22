@@ -13,13 +13,24 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+"""
+TODO
+- MCP support
+- instructions with @mentions
+
+
+
+"""
+
+
+
 class Realtime(realtime.Realtime):
-    def __init__(self, model: str = "gpt-realtime", voice: str = "marin", send_video: bool = False):
+    def __init__(self, model: str = "gpt-realtime", voice: str = "marin"):
         super().__init__()
         self.model = model
         self.voice = voice
-        self.send_video = send_video
-        self.rtc = RTCManager(self.model, self.voice, self.send_video)
+        # TODO: send video should depend on if the RTC connection with stream is sending video.
+        self.rtc = RTCManager(self.model, self.voice, True)
 
         try:
             loop = asyncio.get_running_loop()
@@ -32,8 +43,7 @@ class Realtime(realtime.Realtime):
         # Wire callbacks so we can emit audio/events upstream
         self.rtc.set_event_callback(self._handle_openai_event)
         self.rtc.set_audio_callback(self._handle_audio_output)
-        if self.send_video:
-            self.rtc.set_video_callback(self._handle_video_output)
+
         await self.rtc.connect()
         # Emit connected/ready
         self._emit_connected_event(
@@ -41,7 +51,7 @@ class Realtime(realtime.Realtime):
             capabilities=["text", "audio"],
         )
 
-    async def send_audio_pcm(self, audio: PcmData):
+    async def simple_audio_response(self, audio: PcmData):
         await self.rtc.send_audio_pcm(audio)
 
     async def send_text(self, text: str, role="user"):
@@ -98,9 +108,11 @@ class Realtime(realtime.Realtime):
         else:
             logger.warning("No output_track set - video will not be visible to remote participants")
 
-    async def start_video_sender(self, track, fps: int = 1) -> None:
+    async def _watch_video_track(self, track, fps: int = 1) -> None:
+        # TODO: only do this once?
+        self.rtc.set_video_callback(self._handle_video_output)
         # Delegate to RTC manager to swap the negotiated sender's track
         await self.rtc.start_video_sender(track, fps)
 
-    async def stop_video_sender(self) -> None:
+    async def _stop_watching_video_track(self) -> None:
         await self.rtc.stop_video_sender()

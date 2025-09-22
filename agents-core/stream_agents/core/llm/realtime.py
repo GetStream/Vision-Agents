@@ -184,6 +184,7 @@ class Realtime(LLM, abc.ABC):
     @abc.abstractmethod
     async def simple_audio_response(self, pcm: PcmData): ...
 
+
     async def _watch_video_track(self, track: Any, fps: int = 1) -> None:
         """Optionally overridden by providers that support video input."""
         return None
@@ -192,6 +193,8 @@ class Realtime(LLM, abc.ABC):
         """Optionally overridden by providers that support video input."""
         return None
 
+
+    # TODO: do we need this?
     async def interrupt_playback(self) -> None:
         """Optionally overridden by providers to stop current audio playback."""
         return None
@@ -201,6 +204,7 @@ class Realtime(LLM, abc.ABC):
         return None
 
     # --- Optional provider-native passthroughs for advanced usage ---
+    # TODO: do we need this?
     def get_native_session(self) -> Any:
         """Return underlying provider session if available (advanced use).
 
@@ -210,6 +214,7 @@ class Realtime(LLM, abc.ABC):
         return None
 
     # ---- Shared aggregation helpers ----
+    # TODO: do we need this?
     @staticmethod
     def _merge_final_text(collected_parts: List[str], done_text: Optional[str]) -> str:
         accumulated = "".join(collected_parts)
