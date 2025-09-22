@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 """
 TODO:
+- RealtimeLLM should extend LLM
 - mcp & functions
 - chat/transcription integration
 """
