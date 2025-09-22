@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 
 """
 TODO
-- The base class Realtime has a ton of junk
+- Docs for this file
 - MCP support
 - instructions with @mentions
 - event handling is not using either pyee or internal system in self.rtc
-
+- The base class Realtime has a ton of junk
 
 """
 
@@ -83,24 +83,6 @@ class Realtime(realtime.Realtime):
         logger.info(f"🎵 Forwarding audio output: {len(audio_bytes)}")
 
         await self.output_track.write(audio_bytes)
-
-    async def _handle_video_output(self, video_array: np.ndarray) -> None:
-        """Handle incoming video frames from OpenAI Realtime API.
-        
-        Args:
-            video_array: RGB video frame as numpy array from frame.to_ndarray()
-        """
-        logger.debug(f"🎥 Forwarding video frame: shape={video_array.shape}, dtype={video_array.dtype}")
-    
-        # Write to output track for remote participants to see
-        if self.output_track is not None:
-            try:
-                await self.output_track.write(video_array)
-                logger.debug(f"✅ Video frame written to output track: {video_array.shape}")
-            except Exception as e:
-                logger.error(f"❌ Failed to write video frame to output track: {e}")
-        else:
-            logger.warning("No output_track set - video will not be visible to remote participants")
 
     async def _watch_video_track(self, track, fps: int = 1) -> None:
         # TODO: only do this once?

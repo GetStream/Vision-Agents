@@ -8,6 +8,9 @@ never mock.
 tests use pytest. 
 never adjust sys.path.
 
+docs should be short.
+docstrings should follow the google style guides for docstrings.
+
 integration tests use
 @pytest.mark.integration
 

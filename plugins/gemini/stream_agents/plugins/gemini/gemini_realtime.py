@@ -1,5 +1,4 @@
 import asyncio
-import io
 import logging
 from typing import Optional, List
 from aiortc import MediaStreamTrack
@@ -16,19 +15,16 @@ from stream_agents.core.edge.types import Participant, PcmData
 from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 from stream_agents.core.llm import realtime
 from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.utils.utils import frame_to_png_bytes
 import av
-
-
-from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 
 """
 TODO:
-- Fully document this file
-- mcp & functions
-- chat/transcription integration
+- mcp & functions - Deven
+- chat/transcription integration (trigger the right events when receiving transcriptions) - Tommaso
 """
 
 DEFAULT_MODEL = "gemini-2.5-flash-exp-native-audio-thinking-dialog"
@@ -36,9 +32,27 @@ DEFAULT_MODEL = "gemini-2.5-flash-exp-native-audio-thinking-dialog"
 
 class Realtime(realtime.Realtime):
     """
+    Realtime on Gemini. https://ai.google.dev/gemini-api/docs/live
 
-    Audio data in the Live API is always raw, little-endian, 16-bit PCM. Audio output always uses a sample rate of 24kHz.
-    Input audio is natively 16kHz, but the Live API will resample if needed
+    Examples:
+
+        config : LiveConnectConfigDict = {}
+        model = "" # https://ai.google.dev/gemini-api/docs/live#audio-generation
+        llm = Realtime(model="", config=config)
+        # simple response
+        llm.simple_response(text="Describe what you see and say hi")
+        # native API call (forwards to gemini's send_realtime_input)
+        llm.send_realtime_input()
+
+        #Alternatively you can also pass an existing client
+
+        client = genai.Client()
+        llm = Realtime(client=client)
+
+    Development notes
+    - Audio data in the Live API is always raw, little-endian, 16-bit PCM.
+    - Audio output always uses a sample rate of 24kHz.
+    - Input audio is natively 16kHz, but the Live API will resample if needed
     """
     model : str
     session_resumption_id: Optional[str] = None
@@ -68,53 +82,44 @@ class Realtime(realtime.Realtime):
         self._session: Optional[AsyncSession] = None
         self._receive_task = None
 
-    def _get_config(self) -> LiveConnectConfigDict:
-        config = self.config.copy()
-        # resume if we have a session resumption id/handle
-        if self.session_resumption_id:
-            config["session_resumption"] = SessionResumptionConfig(handle=self.session_resumption_id)
-        # set the instructions
-        # TODO: potentially we can share the markdown as files/parts.. might do better TBD
-        config["system_instruction"] = self._build_enhanced_instructions()
-        return config
-
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
                               participant: Participant = None):
         """
-        Simplify and send the text to send client content
+        Simple response standardizes how to send a text instruction to this LLM.
+
+        Example:
+            llm.simple_response("tell me a poem about Boulder")
+
+        For more advanced use cases you can use the native send_realtime_input
         """
-        self.logger.info("Simple response")
+        self.logger.info("Simple response called with text: %s", text)
         await self.send_realtime_input(text=text)
-        self.logger.info("Simple response completed")
+
 
     async def simple_audio_response(self, pcm: PcmData):
+        """
+        Simple audio response standardizes how to send audio to the LLM
+
+        Example:
+            pcm : PcmData = PcmData()
+            llm.simple_response(pcm)
+
+        For more advanced use cases you can use the native send_realtime_input
+        """
         self.logger.debug(f"Sending audio to gemini: {pcm.duration}")
+        # Build blob and send directly
+        audio_bytes = pcm.samples.tobytes()
+        mime = f"audio/pcm;rate={pcm.sample_rate}"
+        blob = Blob(data=audio_bytes, mime_type=mime)
 
-        try:
-            # Build blob and send directly
-            audio_bytes = pcm.samples.tobytes()
-            mime = f"audio/pcm;rate={pcm.sample_rate}"
-            blob = Blob(data=audio_bytes, mime_type=mime)
-
-            await self._session.send_realtime_input(audio=blob)
-        except Exception as e:
-            logging.error(e)
-
+        await self._session.send_realtime_input(audio=blob)
 
     async def send_realtime_input(self, *args, **kwargs):
         """
-        Wrap the native send_realtime_input
-        """
-        await self._session.send_realtime_input(
-            *args, **kwargs
-        )
-
-    async def send_client_content(self, *args, **kwargs):
-        """
-        Wrap the native send client content
+        send_realtime_input wraps the native send_realtime_input
         """
         try:
-            await self._session.send_client_content(
+            await self._session.send_realtime_input(
                 *args, **kwargs
             )
         except Exception as e:
@@ -126,26 +131,37 @@ class Realtime(realtime.Realtime):
             else:
                 raise
 
+    async def send_client_content(self, *args, **kwargs):
+        """
+        Don't use send client content, it can cause bugs when combined with send_realtime_input
+        """
+        await self._session.send_client_content(
+            *args, **kwargs
+        )
+
     async def connect(self):
         """
         Connect to Gemini's websocket
         """
-        self.logger.info("Connecting to Realtime, config set to %s", self.config)
-
-        # use resumption id here
-
-        self._session_context = self.client.aio.live.connect(model=self.model, config=self._get_config())
+        self.logger.info("Connecting to gemini live, config set to %s", self.config)
+        self._session_context = self.client.aio.live.connect(model=self.model, config=self._get_config_with_resumption())
         self._session = await self._session_context.__aenter__()
-        self.logger.info("Connected to session %s", self._session)
+        self._is_connected = True
+        self.logger.info("Gemini live connected to session %s", self._session)
 
         # Start the receive loop task
         self._receive_task = asyncio.create_task(self._receive_loop())
+
 
     async def _reconnect(self):
         await self.connect()
 
     async def _receive_loop(self):
-        self.logger.info("_receive_loop started")
+        """
+        Main loop for receiving messages. Gemini's event system isn't ideal. It doesn't specify an event type with a clear structure
+        So you end up having to detect the type and reply as needed
+        Hopefully they will improve this in the future
+        """
         try:
             while True:
                 async for response in self._session.receive():
@@ -216,7 +232,12 @@ class Realtime(realtime.Realtime):
         finally:
             self.logger.info("_receive_loop ended")
 
-    def _is_temporary_error(self, e: Exception):
+    @staticmethod
+    def _is_temporary_error(e: Exception):
+        """
+        Temporary errors should typically trigger a reconnect
+        So if the websocket breaks this should return True and trigger a reconnect
+        """
         should_reconnect = False
         return should_reconnect
 
@@ -237,29 +258,12 @@ class Realtime(realtime.Realtime):
             self._session_context = None
             self._session = None
 
-    @classmethod
-    def _frame_to_png_bytes(cls, frame) -> bytes:
-        """Convert a video frame to PNG bytes."""
-        if Image is None:
-            logger.warning("PIL Image not available, cannot convert frame to PNG")
-            return b""
-        
-        try:
-            if hasattr(frame, "to_image"):
-                img = frame.to_image()
-            else:
-                arr = frame.to_ndarray(format="rgb24")
-                img = Image.fromarray(arr)
-            
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-        except Exception as e:
-            logger.error(f"Error converting frame to PNG: {e}")
-            return b""
 
     async def _watch_video_track(self, input_track: MediaStreamTrack, fps: int = 1) -> None:
-        """Start sending video frames to Gemini using VideoForwarder."""
+        """
+        Start sending video frames to Gemini using VideoForwarder.
+        We follow the on_track from Stream. If video is turned on or off this gets forwarded.
+        """
         if self._video_forwarder is not None:
             self.logger.warning("Video sender already running, stopping previous one")
             await self._stop_watching_video_track()
@@ -277,31 +281,32 @@ class Realtime(realtime.Realtime):
         # Start the callback consumer that sends frames to Gemini
         await self._video_forwarder.start_event_consumer(self._send_video_frame)
         
-        self.logger.info(f"Started video sender with {fps} FPS")
+        self.logger.info(f"Started video forwarding with {fps} FPS")
 
     async def _stop_watching_video_track(self) -> None:
-        """Stop the video sender."""
         if self._video_forwarder is not None:
             await self._video_forwarder.stop()
             self._video_forwarder = None
-            self.logger.info("Stopped video sender")
+            self.logger.info("Stopped video forwarding")
 
     async def _send_video_frame(self, frame: av.VideoFrame) -> None:
+        """
+        Send a video frame to Gemini using send_realtime_input
+        """
         if not frame:
             return
-        """Send a video frame to Gemini as a PNG blob."""
-        if not hasattr(self, '_session') or self._session is None:
-            self.logger.warning("No active session, cannot send video frame")
-            return
-        
+
         try:
-            png_bytes = self.__class__._frame_to_png_bytes(frame)
+            png_bytes = frame_to_png_bytes(frame)
             blob = Blob(data=png_bytes, mime_type="image/png")
             await self._session.send_realtime_input(media=blob)
         except Exception as e:
             self.logger.error(f"Error sending video frame: {e}")
 
     def _create_config(self, config: Optional[LiveConnectConfigDict]=None) -> LiveConnectConfigDict:
+        """
+        _create_config combines the default config with your settings
+        """
         default_config = LiveConnectConfigDict(
             response_modalities=[Modality.AUDIO],
             input_audio_transcription=AudioTranscriptionConfigDict(),
@@ -325,6 +330,17 @@ class Realtime(realtime.Realtime):
                 default_config[k] = v
         return default_config
 
-
+    def _get_config_with_resumption(self) -> LiveConnectConfigDict:
+        """
+        _get_config_with_resumption adds the system instructions and session resumption (these both are available only later)
+        """
+        config = self.config.copy()
+        # resume if we have a session resumption id/handle
+        if self.session_resumption_id:
+            config["session_resumption"] = SessionResumptionConfig(handle=self.session_resumption_id)
+        # set the instructions
+        # TODO: potentially we can share the markdown as files/parts.. might do better TBD
+        config["system_instruction"] = self._build_enhanced_instructions()
+        return config
 
 
