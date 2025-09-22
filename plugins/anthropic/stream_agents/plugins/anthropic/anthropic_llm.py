@@ -57,6 +57,7 @@ class ClaudeLLM(LLM):
             client: optional Anthropic client. by default creates a new client object.
         """
         super().__init__()
+        self.events.register_events_from_module(events)
         self.model = model
         self._pending_tool_uses_by_index = {}  # index -> {id, name, parts: []}
 

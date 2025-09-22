@@ -44,6 +44,7 @@ class GeminiLLM(LLM):
             client: optional Anthropic client. by default creates a new client object.
         """
         super().__init__()
+        self.events.register_events_from_module(events)
         self.model = model
         self.chat: Optional[Any] = None
 

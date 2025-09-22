@@ -9,7 +9,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent, StandardizedResponseCompletedEvent, AfterLLMResponseEvent
 from . import events
 
 from stream_agents.core.processors import BaseProcessor
@@ -52,6 +52,7 @@ class OpenAILLM(LLM):
             client: optional OpenAI client. by default creates a new client object.
         """
         super().__init__()
+        self.events.register_events_from_module(events)
         self.model = model
         self.openai_conversation: Optional[Any] = None
         self.conversation = None
@@ -166,7 +167,7 @@ class OpenAILLM(LLM):
             llm_response = LLMResponseEvent[OpenAIResponse](None, "")
 
         if llm_response is not None:
-            self.events.send(events.AfterLLMResponseEvent(
+            self.events.send(AfterLLMResponseEvent(
                 plugin_name="openai",
                 llm_response=llm_response
             ))
@@ -451,18 +452,21 @@ class OpenAILLM(LLM):
                 item_id=delta_event.item_id,
                 output_index=delta_event.output_index,
                 sequence_number=delta_event.sequence_number,
-                type=delta_event.type,
                 delta=delta_event.delta,
             )
-            self.events.send(events.StandardizedTextDeltaEvent(
+            self.events.send(StandardizedTextDeltaEvent(
                 plugin_name="openai",
-                standardized_event=standardized_event
+                content_index=delta_event.content_index,
+                item_id=delta_event.item_id,
+                output_index=delta_event.output_index,
+                sequence_number=delta_event.sequence_number,
+                delta=delta_event.delta,
             ))
         elif event.type == "response.completed":
             # standardize the response event and return the llm response
             completed_event: ResponseCompletedEvent = event
             llm_response = LLMResponseEvent[OpenAIResponse](completed_event.response, completed_event.response.output_text)
-            self.events.send(events.StandardizedResponseCompletedEvent(
+            self.events.send(StandardizedResponseCompletedEvent(
                 plugin_name="openai",
                 llm_response=llm_response
             ))

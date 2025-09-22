@@ -52,6 +52,7 @@ class XAILLM(LLM):
             client: optional xAI client. by default creates a new client object.
         """
         super().__init__()
+        self.events.register_events_from_module(events)
         self.model = model
         self.xai_chat: Optional["Chat"] = None
         self.conversation = None
