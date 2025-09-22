@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 """
-- chat/transcription integration
-- at mention support (for docs)
+TODO:
 - mcp & functions
+- chat/transcription integration
 """
 
 DEFAULT_MODEL = "gemini-2.5-flash-exp-native-audio-thinking-dialog"
@@ -41,6 +41,7 @@ class Realtime2(realtime.Realtime):
     """
     model : str
     session_resumption_id: Optional[str] = None
+    config: LiveConnectConfigDict
 
     def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None, api_key: Optional[str] = None ) -> None:
         super().__init__()
@@ -55,7 +56,7 @@ class Realtime2(realtime.Realtime):
                 client = genai.Client(http_options=http_options)
 
         self.client = client
-        self.config = self._create_config(config)
+        self.config: LiveConnectConfigDict = self._create_config(config)
         self.logger = logging.getLogger(__name__)
         # Gemini generates at 24k. webrtc automatically translates it to 48khz
         self.output_track = AudioStreamTrack(
@@ -65,6 +66,16 @@ class Realtime2(realtime.Realtime):
         self._session_context = None
         self._session: Optional[AsyncSession] = None
         self._receive_task = None
+
+    def _get_config(self) -> LiveConnectConfigDict:
+        config = self.config.copy()
+        # resume if we have a session resumption id/handle
+        if self.session_resumption_id:
+            config["session_resumption"] = SessionResumptionConfig(handle=self.session_resumption_id)
+        # set the instructions
+        # TODO: potentially we can share the markdown as files/parts.. might do better TBD
+        config["system_instruction"] = self._build_enhanced_instructions()
+        return config
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
                               participant: Participant = None):
@@ -121,10 +132,8 @@ class Realtime2(realtime.Realtime):
         self.logger.info("Connecting to Realtime, config set to %s", self.config)
 
         # use resumption id here
-        config = self.config.copy()
-        if self.session_resumption_id:
-            config["session_resumption"] = SessionResumptionConfig(handle=self.session_resumption_id)
-        self._session_context = self.client.aio.live.connect(model=self.model, config=self.config)
+
+        self._session_context = self.client.aio.live.connect(model=self.model, config=self._get_config())
         self._session = await self._session_context.__aenter__()
         self.logger.info("Connected to session %s", self._session)
 
@@ -180,8 +189,7 @@ class Realtime2(realtime.Realtime):
                                 pcm_data = PcmData.from_bytes(data, sample_rate=24000, format="s16")
                                 # Resample from 24kHz to 48kHz for WebRTC
                                 resampled_pcm = pcm_data.resample(target_sample_rate=48000)
-                                self.logger.info("Gemini generating audio %d %s, resampled to 48kHz", len(data), part.inline_data.mime_type)
-                                self.emit("audio", resampled_pcm.samples.tobytes())
+                                self.emit("audio", resampled_pcm.samples.tobytes()) # audio event is resampled to 48khz
                                 await self.output_track.write(data) # original 24khz here
                             else:
                                 print("text", response.text)
@@ -280,7 +288,6 @@ class Realtime2(realtime.Realtime):
         if not frame:
             return
         """Send a video frame to Gemini as a PNG blob."""
-        self.logger.info(f"Sending video frame to gemini: {frame}")
         if not hasattr(self, '_session') or self._session is None:
             self.logger.warning("No active session, cannot send video frame")
             return
@@ -288,9 +295,7 @@ class Realtime2(realtime.Realtime):
         try:
             png_bytes = self.__class__._frame_to_png_bytes(frame)
             blob = Blob(data=png_bytes, mime_type="image/png")
-            self.logger.info(f"Sending video frame to gemini: {frame}")
             await self._session.send_realtime_input(media=blob)
-            self.logger.info(f"Sent video frame ({len(png_bytes)} bytes)")
         except Exception as e:
             self.logger.error(f"Error sending video frame: {e}")
 

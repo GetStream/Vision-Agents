@@ -22,8 +22,8 @@ async def start_agent() -> None:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=agent_user,  # the user object for the agent (name, image etc)
-        instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        llm=gemini.Realtime2(),
+        instructions="Read @voice-agent.md",
+        llm=gemini.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 

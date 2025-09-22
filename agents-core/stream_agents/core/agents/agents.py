@@ -396,16 +396,10 @@ class Agent:
         - connect the track to video sender...
         -
         """
-        import pdb;pdb.set_trace()
-
-
         # Only process video tracks - track_type might be string, enum or numeric (2 for video)
         if track_type != TrackType.TRACK_TYPE_VIDEO:
             self.logger.debug(f"Ignoring non-video track: {track_type}")
             return
-
-
-
 
         track = self.edge.add_track_subscriber(track_id)
         if not track:
@@ -421,9 +415,7 @@ class Agent:
 
         # If Realtime provider supports video, forward frames upstream once per track
         if self.sts_mode:
-
             try:
-
                 await self.llm._watch_video_track(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
             except Exception as e:

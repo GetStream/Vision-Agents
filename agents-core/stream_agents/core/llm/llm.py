@@ -55,6 +55,32 @@ class LLM(AsyncIOEventEmitter, abc.ABC):
     ) -> LLMResponse[Any]:
         raise NotImplementedError
 
+    def _build_enhanced_instructions(self) -> Optional[str]:
+        """
+        Build enhanced instructions by combining the original instructions with markdown file contents.
+
+        Returns:
+            Enhanced instructions string with markdown file contents included, or None if no parsed instructions
+        """
+        if not hasattr(self, 'parsed_instructions') or not self.parsed_instructions:
+            return None
+
+        parsed = self.parsed_instructions
+        enhanced_instructions = [parsed.input_text]
+
+        # Add markdown file contents if any exist
+        if parsed.markdown_contents:
+            enhanced_instructions.append("\n\n## Referenced Documentation:")
+            for filename, content in parsed.markdown_contents.items():
+                if content:  # Only include non-empty content
+                    enhanced_instructions.append(f"\n### {filename}")
+                    enhanced_instructions.append(content)
+                else:
+                    enhanced_instructions.append(f"\n### {filename}")
+                    enhanced_instructions.append("*(File not found or could not be read)*")
+
+        return "\n".join(enhanced_instructions)
+
     def _attach_agent(self, agent: Agent):
         """
         Attach agent to the llm
