@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import Mock
 
 from getstream.chat.client import ChatClient
-from getstream.models import MessageRequest, ChannelResponse, ChannelInput, MessagePaginationParams
+from getstream.models import MessageRequest, ChannelResponse, ChannelInput
 
 from stream_agents.core.agents.conversation import (
     Conversation,
@@ -673,7 +673,6 @@ class TestStreamConversation:
     def test_wait_for_pending_operations_timeout(self, stream_conversation, mock_chat_client):
         """Test that wait_for_pending_operations returns False on timeout."""
         # Make send_message block for a long time
-        import threading
         block_event = threading.Event()
         
         def slow_send_message(*args, **kwargs):

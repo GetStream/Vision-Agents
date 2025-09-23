@@ -8,7 +8,6 @@ from typing import (
     TypeVar,
 )
 
-from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Optional, List, Any, Union
+from typing import Optional, List, Any
 from uuid import uuid4
 
 import aiortc
@@ -73,7 +73,7 @@ class Agent:
         agent_user: User,
         # instructions
         instructions: str = "Keep your replies short and dont use special characters.",
-        # setup stt, tts, and turn detection if not using an llm with realtime/sts
+        # setup stt, tts, and turn detection if not using a realtime llm
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
         turn_detection: Optional[BaseTurnDetector] = None,
@@ -86,6 +86,38 @@ class Agent:
         # MCP servers for external tool and resource access
         mcp_servers: Optional[List[MCPBaseServer]] = None,
     ):
+        """Create a new Agent instance.
+
+        The Agent orchestrates audio/video I/O with an edge transport, optional
+        speech pipelines (STT, TTS, VAD, turn detection), processors, and an LLM.
+        It supports two modes:
+
+        - Realtime mode: when `llm` is a `Realtime` implementation. The LLM
+          handles speech-to-text, text-to-speech, and often turn detection.
+        - Traditional mode: when `llm` is a standard `LLM` and you wire STT/TTS/turn
+          detection explicitly.
+
+        Args:
+            edge: Edge transport responsible for joining/publishing to calls and
+                emitting audio/video events (e.g., `StreamEdge`).
+            llm: Language model. Use a `Realtime` provider for speech-to-speech, or
+                an `LLM` with separate STT/TTS.
+            agent_user: Identity of the agent within the call/chat system.
+            instructions: System instructions sent to the LLM at session start.
+            stt: Optional speech-to-text component (ignored in Realtime mode).
+            tts: Optional text-to-speech component (ignored in Realtime mode).
+            turn_detection: Optional turn detector to gate speaking/listening
+                (ignored in Realtime mode if provider handles turns).
+            vad: Optional voice activity detector used by processors/pipelines.
+            processors: Optional list of processors for audio/video/image or for
+                publishing tracks.
+            mcp_servers: Optional list of MCP servers to expose tools/resources to
+                the agent.
+
+        Notes:
+            - In Realtime mode, STT/TTS/turn detection are ignored if provided.
+            - Video-only agents are supported via video/image processors without STT/TTS.
+        """
         self.instructions = instructions
         self.edge = edge
         self.agent_user = agent_user
@@ -132,7 +164,7 @@ class Agent:
         self._connection: Optional[Connection] = None
         self._audio_track: Optional[aiortc.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
-        self._sts_connection = None
+        self._realtime_connection = None
         self._pc_track_handler_attached: bool = False
 
         # validation time
@@ -166,7 +198,15 @@ class Agent:
             self.logger.debug("No MCP servers configured")
 
     async def close(self):
-        """Clean up all connections and resources."""
+        """Clean up all connections and resources.
+
+        Closes MCP connections, realtime output, active media tracks, processor
+        tasks, the call connection, STT/TTS services, and stops turn detection.
+        Safe to call multiple times.
+
+        This is an async method because several components expose async shutdown
+        hooks (e.g., WebRTC connections, plugin services).
+        """
         self._is_running = False
         self._user_conversation_handle = None
         self._agent_conversation_handle = None
@@ -175,9 +215,9 @@ class Agent:
         await self._disconnect_mcp_servers()
 
         # Close Realtime connection
-        if self._sts_connection:
-            await self._sts_connection.__aexit__(None, None, None)
-        self._sts_connection = None
+        if self._realtime_connection:
+            await self._realtime_connection.__aexit__(None, None, None)
+        self._realtime_connection = None
 
         # Clean up active tracks
         self.logger.info(f"🎥VDP: Cleaning up {len(self._active_tracks)} active tracks")
@@ -236,10 +276,39 @@ class Agent:
         self.edge.close()
 
     def subscribe(self, function):
-        """Subscribe to event"""
+        """Subscribe a callback to the agent-wide event bus.
+
+        The event bus is a merged stream of events from the edge, LLM, STT, TTS,
+        VAD, and other registered plugins.
+
+        Args:
+            function: Async or sync callable that accepts a single event object.
+
+        Returns:
+            A disposable subscription handle (depends on the underlying emitter).
+        """
         return self.events.subscribe(function)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
+        """Join a call and initialize media and conversation state.
+
+        Behaviour depends on mode:
+        - Realtime: waits for the provider to be ready and forwards `instructions`
+          as a system message. Audio/video streams are wired directly to the
+          provider via the edge transport and internal relays.
+        - Traditional: subscribes to audio events, forwards audio to STT and
+          processors, and sets up conversation syncing via transcripts.
+
+        Args:
+            call: The `getstream.models.Call` to join.
+
+        Returns:
+            AgentSessionContextManager: An async context manager that keeps the
+            session open for the duration of the call.
+
+        Raises:
+            RuntimeError: If the agent is already running.
+        """
         self.call = call
         self.conversation = None
 
@@ -253,22 +322,21 @@ class Agent:
                 call, self.agent_user, self.instructions
             )
 
-        # when using STS, we sync conversation using transcripts otherwise we fallback to ST (if available)
-        if self.sts_mode:
+        # when using Realtime, we sync conversation using transcripts otherwise we fallback to STT (if available)
+        if self.realtime_mode:
             self.events.subscribe(self._on_transcript)
             self.events.subscribe(self._on_partial_transcript)
         elif self.stt:
             self.events.subscribe(self._on_transcript)
             self.events.subscribe(self._on_partial_transcript)
 
-        """Join a Stream video call."""
         if self._is_running:
             raise RuntimeError("Agent is already running")
 
         self.logger.info(f"🤖 Agent joining call: {call.id}")
 
         # Ensure Realtime providers are ready before proceeding (they manage their own connection)
-        if self.sts_mode and isinstance(self.llm, Realtime):
+        if self.realtime_mode and isinstance(self.llm, Realtime):
             await self.llm.connect()
 
 
@@ -309,16 +377,10 @@ class Agent:
                                     relay = MediaRelay()
                                     self._persistent_media_relay = relay
                                 forward_branch = relay.subscribe(track)
-                                print(
-                                    f"🎥 Forwarding video frames to Realtime provider (pc.on early track) {forward_branch}"
-                                )
-                                if self.sts_mode and isinstance(self.llm, Realtime):
-                                    await self.llm.start_video_sender(
-                                        forward_branch, fps=30
-                                    )
-                                    self.logger.info(
-                                        "🎥 Forwarding video frames to Realtime provider (pc.on early track)"
-                                    )
+                                print(f"🎥 Forwarding video frames to Realtime provider (pc.on early track) {forward_branch}")
+                                if self.realtime_mode and isinstance(self.llm, Realtime):
+                                    await self.llm.start_video_sender(forward_branch, fps=30)
+                                    self.logger.info("🎥 Forwarding video frames to Realtime provider (pc.on early track)")
                         except Exception as e:
                             self.logger.error(
                                 f"Error handling pc.on('track') video (early): {e}"
@@ -360,7 +422,11 @@ class Agent:
         return AgentSessionContextManager(self, self._connection)
 
     async def finish(self):
-        """Wait for the call to end gracefully."""
+        """Wait for the call to end gracefully.
+
+        Subscribes to the edge transport's `call_ended` event and awaits it. If
+        no connection is active, returns immediately.
+        """
         # If connection is None or already closed, return immediately
         if not self._connection:
             logging.info("🔚 Agent connection already closed, finishing immediately")
@@ -395,8 +461,11 @@ class Agent:
         """
         Make the agent say something by emitting an event.
 
+        Adds the message to the conversation and, if TTS is configured, streams
+        synthesized audio to the call via the agent's output track.
+
         Args:
-            text: The text for the agent to say
+            text: The message to say.
             metadata: Optional metadata to include with the event
         """
         user_id = self.agent_user.id
@@ -410,11 +479,21 @@ class Agent:
         )
 
     async def send_audio(self, pcm):
+        """Send raw PCM audio on the agent's outbound audio track.
+
+        Args:
+            pcm: Raw PCM frame/bytes compatible with the configured audio track.
+        """
         # TODO: stream & buffer
         if self._audio_track is not None:
             await self._audio_track.send_audio(pcm)
 
     async def create_user(self):
+        """Create the agent user in the edge provider, if required.
+
+        Returns:
+            Provider-specific user creation response.
+        """
         response = await self.edge.create_user(self.agent_user)
         return response
 
@@ -586,7 +665,7 @@ class Agent:
                 self.logger.error(f"Error processing audio for processors: {e}")
 
             # when in Realtime mode call the Realtime directly (non-blocking)
-            if self.sts_mode and isinstance(self.llm, Realtime):
+            if self.realtime_mode and isinstance(self.llm, Realtime):
                 # TODO: this behaviour should be easy to change in the agent class
                 task = asyncio.create_task(self.llm.simple_audio_response(pcm_data))
                 #task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
@@ -641,11 +720,11 @@ class Agent:
             self.logger.info(f"🎥VDP: ✅ Subscribed to track: {track_id}")
 
         # Give the track a moment to be ready
-        self.logger.info(f"🎥VDP: Waiting for track to be ready...")
+        self.logger.info("🎥VDP: Waiting for track to be ready...")
         await asyncio.sleep(0.5)
 
         # If Realtime provider supports video, forward frames upstream once per track
-        if self.sts_mode:
+        if self.realtime_mode:
             try:
                 await self.llm._watch_video_track(track)
                 self.logger.info("🎥 Forwarding video frames to Realtime provider")
@@ -659,12 +738,8 @@ class Agent:
                     f"🎥VDP: Exception traceback: {traceback.format_exc()}"
                 )
         else:
-            self.logger.warning(
-                f"🎥VDP: STS mode check failed - sts_mode={self.sts_mode}, llm_type={type(self.llm).__name__}"
-            )
-            self.logger.warning(
-                f"🎥VDP: isinstance(self.llm, Realtime) = {isinstance(self.llm, Realtime)}"
-            )
+            self.logger.warning(f"🎥VDP: Realtime mode check failed - realtime_mode={self.realtime_mode}, llm_type={type(self.llm).__name__}")
+            self.logger.warning(f"🎥VDP: isinstance(self.llm, Realtime) = {isinstance(self.llm, Realtime)}")
 
         hasImageProcessers = len(self.image_processors) > 0
         self.logger.info(
@@ -927,8 +1002,8 @@ class Agent:
     async def _on_transcript(self, event: STTTranscriptEvent | RealtimeTranscriptEvent):
         self.logger.info(f"🎤 [STT transcript]: {event.text}")
 
-        # if the agent is in STS mode than we dont need to process the transcription
-        if not self.sts_mode:
+        # if the agent is in realtime mode than we dont need to process the transcription
+        if not self.realtime_mode:
             await self._process_transcription(event.text, event.user_metadata)
 
         if self.conversation is None:
@@ -968,51 +1043,82 @@ class Agent:
             )
 
     @property
-    def sts_mode(self) -> bool:
-        """Check if the agent is in Realtime mode."""
+    def realtime_mode(self) -> bool:
+        """Check if the agent is in Realtime mode.
+
+        Returns:
+            True if `llm` is a `Realtime` implementation; otherwise False.
+        """
         if self.llm is not None and isinstance(self.llm, Realtime):
             return True
         return False
 
     @property
     def publish_audio(self) -> bool:
-        if self.tts is not None or self.sts_mode:
+        """Whether the agent should publish an outbound audio track.
+
+        Returns:
+            True if TTS is configured or when in Realtime mode.
+        """
+        if self.tts is not None or self.realtime_mode:
             return True
         else:
             return False
 
     @property
     def publish_video(self) -> bool:
+        """Whether the agent should publish an outbound video track.
+        """
         return len(self.video_publishers) > 0
 
     @property
     def audio_processors(self) -> List[Any]:
-        """Get processors that can process audio."""
+        """Get processors that can process audio.
+
+        Returns:
+            List of processors that implement `process_audio(audio_bytes, user_id)`.
+        """
         return filter_processors(self.processors, ProcessorType.AUDIO)
 
     @property
     def video_processors(self) -> List[Any]:
-        """Get processors that can process video."""
+        """Get processors that can process video.
+
+        Returns:
+            List of processors that implement `process_video(track, user_id)`.
+        """
         return filter_processors(self.processors, ProcessorType.VIDEO)
 
     @property
     def video_publishers(self) -> List[Any]:
-        """Get processors that can process video."""
+        """Get processors capable of publishing a video track.
+
+        Returns:
+            List of processors that implement `create_video_track()`.
+        """
         return filter_processors(self.processors, ProcessorType.VIDEO_PUBLISHER)
 
     @property
     def audio_publishers(self) -> List[Any]:
-        """Get processors that can process video."""
+        """Get processors capable of publishing an audio track.
+
+        Returns:
+            List of processors that implement `create_audio_track()`.
+        """
         return filter_processors(self.processors, ProcessorType.AUDIO_PUBLISHER)
 
     @property
     def image_processors(self) -> List[Any]:
-        """Get processors that can process images."""
+        """Get processors that can process images.
+
+        Returns:
+            List of processors that implement `process_image()`.
+        """
         return filter_processors(self.processors, ProcessorType.IMAGE)
 
     def _validate_configuration(self):
         """Validate the agent configuration."""
-        if self.sts_mode:
+        if self.realtime_mode:
             # Realtime mode - should not have separate STT/TTS
             if self.stt or self.tts:
                 self.logger.warning(
@@ -1049,7 +1155,7 @@ class Agent:
 
         # Set up audio track if TTS is available
         if self.publish_audio:
-            if self.sts_mode and isinstance(self.llm, Realtime):
+            if self.realtime_mode and isinstance(self.llm, Realtime):
                 self._audio_track = self.llm.output_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:

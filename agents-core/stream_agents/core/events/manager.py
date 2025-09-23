@@ -347,7 +347,7 @@ class EventManager:
             try:
                 event_class = self._events[event_type]
                 event = event_class.from_dict(event, infer_missing=True)
-            except Exception as exc:
+            except Exception:
                 logger.exception(f"Can't convert dict {event} to event class, skipping")
                 return
 

@@ -1,15 +1,11 @@
-import datetime
 import logging
-import uuid
 import threading
 import queue
 import time
-from abc import ABC, abstractmethod
-from typing import Optional, List, Any, Dict
+from typing import List, Dict
 
 from getstream.chat.client import ChatClient
 from getstream.models import MessageRequest, ChannelResponse
-from dataclasses import dataclass
 
 from stream_agents.core.agents.conversation import InMemoryConversation, Message
 

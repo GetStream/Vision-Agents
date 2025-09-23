@@ -1,14 +1,9 @@
 import datetime
 import logging
 import uuid
-import threading
-import queue
-import time
 from abc import ABC, abstractmethod
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any
 
-from getstream.chat.client import ChatClient
-from getstream.models import MessageRequest, ChannelResponse
 from dataclasses import dataclass
 
 
@@ -16,6 +11,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Message:
+    """A single utterance or assistant message within a conversation.
+
+    Attributes:
+        content: Text content of the message.
+        original: Optional provider-native object for this message.
+        timestamp: Time the message was created (auto-filled on init).
+        role: Role of the sender (e.g., "user", "assistant").
+        user_id: Logical user identifier associated with the message.
+        id: Unique message identifier (auto-generated if not provided).
+    """
     content: str
     original: Optional[Any] = None  # the original openai, claude or gemini message
     timestamp: Optional[datetime.datetime] = None
@@ -58,6 +63,12 @@ class Conversation(ABC):
         instructions: str,
         messages: List[Message],
     ):
+        """Create a conversation container.
+
+        Args:
+            instructions: System instructions that guide the assistant.
+            messages: Initial message history.
+        """
         self.instructions = instructions
         self.messages = [m for m in messages]
 
@@ -195,21 +206,49 @@ class InMemoryConversation(Conversation):
     messages: List[Message]
 
     def __init__(self, instructions: str, messages: List[Message]):
+        """Create an in-memory conversation holder.
+
+        Stores messages in a local list and performs updates in place. Useful for
+        tests and local development, or as a base for provider-backed
+        conversations.
+        """
         super().__init__(instructions, messages)
 
     def lookup(self, id: str) -> Optional[Message]:
-        """Internal method to find message by ID - needed by StreamConversation"""
+        """Find a message by ID. Needed by StreamConversation
+
+        Args:
+            id: Message identifier to lookup.
+
+        Returns:
+            The `Message` if found, otherwise None.
+        """
         msgs = [m for m in self.messages if m.id == id]
         if msgs:
             return msgs[0]
         return None
 
     def add_message(self, message: Message, completed: bool = True):
+        """Append a message to the in-memory list and return None.
+
+        The `completed` flag is not used for in-memory conversations.
+        """
         self.messages.append(message)
         # In-memory conversation doesn't need to handle completed flag
         return None
 
     def update_message(self, message_id: str, input_text: str, user_id: str, replace_content: bool, completed: bool):
+        """Update or create a message in-memory.
+
+        If the message is not found, a new one is created with the given id.
+
+        Args:
+            message_id: Target message identifier.
+            input_text: Text to set (replace) or append.
+            user_id: Owner user id for the message.
+            replace_content: If True, replace content; otherwise append.
+            completed: Ignored for in-memory conversations.
+        """
         # Find the message by id
         message = self.lookup(message_id)
         

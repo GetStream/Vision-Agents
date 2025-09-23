@@ -234,7 +234,20 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
 
 
 class RTCManager:
+    """Manages WebRTC connection to OpenAI's Realtime API.
+
+    Handles the low-level WebRTC peer connection, audio/video streaming,
+    and data channel communication with OpenAI's servers.
+    """
+
     def __init__(self, model: str, voice: str, send_video: bool):
+        """Initialize the RTC manager.
+
+        Args:
+            model: OpenAI model to use for the session (e.g., "gpt-realtime").
+            voice: Voice to use for audio responses (e.g., "marin", "alloy").
+            send_video: Whether to enable video track negotiation for potential video input.
+        """
         self.api_key = getenv("OPENAI_API_KEY")
         self.model = model
         self.voice = voice
@@ -245,7 +258,6 @@ class RTCManager:
         self._mic_track: RealtimeAudioTrack = None
         self._audio_callback: Optional[Callable[[bytes], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
-        self._video_callback: Optional[Callable[[np.ndarray], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
         self.send_video = send_video
         self._video_track: Optional[VideoStreamTrack] = None
@@ -253,6 +265,11 @@ class RTCManager:
         self._forwarding_track: Optional[StreamVideoForwardingTrack] = None
 
     async def connect(self) -> None:
+        """Establish WebRTC connection to OpenAI's Realtime API.
+
+        Sets up the peer connection, negotiates audio and video tracks,
+        and establishes the data channel for real-time communication.
+        """
         self.token = await self._get_session_token()
         logger.info("Obtained OpenAI session token")
         await self._add_data_channel()
@@ -365,6 +382,11 @@ class RTCManager:
 
 
     async def send_audio_pcm(self, pcm_data: PcmData) -> None:
+        """Send raw PCM audio data to OpenAI.
+
+        Args:
+            pcm_data: PCM audio data containing samples and sample rate.
+        """
         if not self._mic_track:
             return
         try:
@@ -385,7 +407,12 @@ class RTCManager:
 
 
     async def send_text(self, text: str, role: str = "user"):
-        """Send a text message to OpenAI."""
+        """Send a text message to OpenAI.
+        
+        Args:
+            text: The text message to send.
+            role: Message role. Defaults to "user".
+        """
         event = {
             "type": "conversation.item.create",
             "item": {
@@ -427,10 +454,14 @@ class RTCManager:
             logger.error(f"Failed to send event: {e}")
 
     async def start_video_sender(self, stream_video_track: MediaStreamTrack, fps: int = 1) -> None:
-        """Replace OpenAI's dummy track with Stream Video forwarding track.
-        
+        """Replace dummy video track with the actual Stream Video forwarding track.
+
         This creates a forwarding track that reads frames from the Stream Video track
         and forwards them through the OpenAI WebRTC connection.
+
+        Args:
+            stream_video_track: Video track to forward to OpenAI.
+            fps: Target frames per second.
         """
         logger.info(f"🎥 start_video_sender called with Stream Video track: {type(stream_video_track).__name__}")
         logger.info(f"🎥 Track kind: {getattr(stream_video_track, 'kind', 'unknown')}")
@@ -462,7 +493,7 @@ class RTCManager:
             
             # Replace the dummy track with the forwarding track
             try:
-                logger.info(f"🎥 Replacing OpenAI dummy track with StreamVideoForwardingTrack")
+                logger.info("🎥 Replacing OpenAI dummy track with StreamVideoForwardingTrack")
                 self._video_sender.replaceTrack(forwarding_track)
                 self._forwarding_track = forwarding_track
                 self._active_video_source = stream_video_track
@@ -581,32 +612,6 @@ class RTCManager:
                         logger.debug(f"Failed to process remote audio frame: {e}")
             asyncio.create_task(_reader())
             
-        elif track.kind == "video":
-            logger.info("Remote video track attached; starting video reader")
-
-            async def _reader():
-                try:
-                    while True:
-                        try:
-                            frame = await asyncio.wait_for(track.recv(), timeout=1.0)
-                        except asyncio.TimeoutError:
-                            continue
-                        except Exception as e:
-                            logger.debug(f"Remote video track ended or error: {e}")
-                            break
-                        try:
-                            rgb = frame.to_ndarray()
-                            cb = self._video_callback
-                            if cb is not None:
-                                await cb(rgb)
-                        except Exception as e:
-                            logger.debug(f"Failed to process remote video frame: {e}")
-                except Exception as e:
-                    logger.error(f"Video reader task failed: {e}")
-                finally:
-                    logger.info("Video reader task ended")
-
-            asyncio.create_task(_reader())
 
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""
@@ -627,8 +632,9 @@ class RTCManager:
     async def request_session_info(self) -> None:
         """Request and log current session information.
 
-        Note: session.get is not a valid OpenAI Realtime API event type.
-        Session information is automatically stored when session.created event is received.
+        Note:
+            Session information is automatically stored when session.created event is received.
+            This method only logs the stored information.
         """
         if self.session_info:
             logger.info(f"Current session info: {self.session_info}")
@@ -636,12 +642,19 @@ class RTCManager:
             logger.info("No session information available yet. Waiting for session.created event.")
 
     def set_audio_callback(self, callback: Callable[[bytes], Any]) -> None:
+        """Set callback for receiving audio data from OpenAI.
+
+        Args:
+            callback: Function that receives raw audio bytes from OpenAI responses.
+        """
         self._audio_callback = callback
 
-    def set_video_callback(self, callback: Callable[[np.ndarray], Any]) -> None:
-        self._video_callback = callback
-
     def set_event_callback(self, callback: Callable[[dict], Any]) -> None:
+        """Set callback for receiving events from OpenAI.
+
+        Args:
+            callback: Function that receives event dicts from the OpenAI data channel.
+        """
         self._event_callback = callback
 
     async def _forward_video_frames(self, source_track: MediaStreamTrack, fps: int) -> None:
@@ -691,6 +704,7 @@ class RTCManager:
             logger.info(f"🎥 Video forwarding task ended. Total frames processed: {frame_count}")
 
     async def close(self) -> None:
+        """Close the WebRTC connection and clean up resources."""
         try:
             # Clean up video sender task
             if self._video_sender_task is not None:

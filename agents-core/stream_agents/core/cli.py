@@ -8,8 +8,7 @@ and lifecycle management.
 
 import asyncio
 import logging
-import signal
-from typing import Any, Callable, Optional, Coroutine
+from typing import Any, Callable, Coroutine
 
 import click
 

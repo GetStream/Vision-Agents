@@ -1,5 +1,4 @@
 import os
-import asyncio
 import pytest
 
 from stream_agents.core.mcp.mcp_server_local import MCPServerLocal

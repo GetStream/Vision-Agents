@@ -4,15 +4,54 @@ from stream_agents.core.agents import Agent
 
 
 class AgentSessionContextManager:
+    """Context manager that owns an `Agent` session lifecycle.
+
+    This wrapper keeps the underlying RTC connection (if any) open for the
+    duration of the context, and guarantees a best-effort asynchronous cleanup of
+    both the RTC connection and the `Agent` resources on exit.
+
+    It accepts an optional connection context manager (e.g., a WebRTC join
+    context) that may implement an async `__aexit__`. On exit, we shield the
+    asynchronous teardown so it completes even as the loop shuts down. Any
+    exception that caused the context to exit is propagated.
+
+    Typical usage:
+        agent = Agent(...)
+        with await agent.join(call):
+            await agent.finish()
+
+    Args:
+        agent: The `Agent` whose resources and event wiring should be managed.
+        connection_cm: Optional provider-specific connection context manager
+            returned by the edge transport (kept open during the context).
+    """
     def __init__(self, agent: Agent, connection_cm=None):
         self.agent = agent
         self._connection_cm = connection_cm
 
     def __enter__(self):
-        # return a resource if needed
+        """Enter the session context.
+
+        Returns:
+            AgentSessionContextManager: The context manager itself.
+        """
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        """Exit the session context and trigger cleanup.
+
+        Ensures the provider connection (if provided) and the `Agent` are closed.
+        Cleanup coroutines are shielded so they are not cancelled by loop
+        shutdown. Exceptions are not suppressed.
+
+        Args:
+            exc_type: Exception type causing exit, if any.
+            exc_value: Exception instance, if any.
+            traceback: Traceback object, if any.
+
+        Returns:
+            False, so any exception is propagated to the caller.
+        """
         loop = asyncio.get_running_loop()
 
         # ------------------------------------------------------------------

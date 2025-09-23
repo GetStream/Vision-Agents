@@ -3,8 +3,6 @@ import logging
 import time
 import uuid
 from typing import Optional, Dict, Any, Tuple, List
-import asyncio
-from asyncio import AbstractEventLoop
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant

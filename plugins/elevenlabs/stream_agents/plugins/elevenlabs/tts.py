@@ -2,7 +2,6 @@ import logging
 
 from stream_agents.core import tts
 from elevenlabs.client import AsyncElevenLabs
-from stream_agents.core.events.manager import EventManager
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from typing import AsyncIterator, Optional
 
