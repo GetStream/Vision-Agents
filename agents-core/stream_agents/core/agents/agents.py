@@ -135,6 +135,7 @@ class Agent:
         self._current_frame = None
         self._interval_task = None
         self._callback_executed = False
+        self._track_tasks : Dict[str, asyncio.Task] = {}
         self._connection: Optional[Connection] = None
         self._audio_track: Optional[aiortc.AudioStreamTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
@@ -146,6 +147,16 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
+
+    async def simple_response(
+        self, text: str, participant: Optional[Participant] = None
+    ) -> None:
+        """
+        Overwrite simple_response if you want to change how the Agent class calls the LLM
+        """
+        await self.llm.simple_response(
+            text=text, processors=self.processors, participant=participant
+        )
 
     def subscribe(self, function):
         """Subscribe a callback to the agent-wide event bus.
@@ -252,6 +263,10 @@ class Agent:
         if self._realtime_connection:
             await self._realtime_connection.__aexit__(None, None, None)
         self._realtime_connection = None
+
+        # shutdown task processing
+        for _, track in self._track_tasks:
+            track.cancel()
 
         # Close RTC connection
         if self._connection:
@@ -436,13 +451,13 @@ class Agent:
             await self._reply_to_audio(pcm, participant)
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
-
         @self.edge.events.subscribe
         async def on_track(event: TrackAddedEvent):
             track_id = event.track_id
             track_type = event.track_type
             user = event.user
             task = asyncio.create_task(self._process_track(track_id, track_type, user))
+            self._track_tasks[track_id] = task
             task.add_done_callback(_log_task_exception)
 
     async def _reply_to_audio(
@@ -450,25 +465,17 @@ class Agent:
     ) -> None:
         if participant and getattr(participant, "user_id", None) != self.agent_user.id:
             # first forward to processors
-            try:
-                # Extract audio bytes for processors using the proper PCM data structure
-                # PCM data has: format, sample_rate, samples, pts, dts, time_base
-                audio_bytes = pcm_data.samples.tobytes()
-                if self.vad:
-                    asyncio.create_task(self.vad.process_audio(pcm_data, participant))
-                # Forward to audio processors (skip None values)
-                for processor in self.audio_processors:
-                    if processor is None:
-                        continue
-                    try:
-                        await processor.process_audio(audio_bytes, participant.user_id)
-                    except Exception as e:
-                        self.logger.error(
-                            f"Error in audio processor {type(processor).__name__}: {e}"
-                        )
+            # Extract audio bytes for processors using the proper PCM data structure
+            # PCM data has: format, sample_rate, samples, pts, dts, time_base
+            audio_bytes = pcm_data.samples.tobytes()
+            if self.vad:
+                asyncio.create_task(self.vad.process_audio(pcm_data, participant))
+            # Forward to audio processors (skip None values)
+            for processor in self.audio_processors:
+                if processor is None:
+                    continue
+                await processor.process_audio(audio_bytes, participant.user_id)
 
-            except Exception as e:
-                self.logger.error(f"Error processing audio for processors: {e}")
 
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.realtime_mode and isinstance(self.llm, Realtime):
@@ -482,6 +489,7 @@ class Agent:
                     await self.stt.process_audio(pcm_data, participant)
 
     async def _process_track(self, track_id: str, track_type: str, participant):
+        # TODO: handle CancelledError
         # we only process video tracks
         if track_type != TrackType.TRACK_TYPE_VIDEO:
             return
@@ -547,6 +555,8 @@ class Agent:
                     f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s"
                 )
                 await asyncio.sleep(backoff_delay)
+            except asyncio.CancelledError:
+                return
 
             except Exception as e:
                 raise
@@ -597,7 +607,7 @@ class Agent:
 
         # if the agent is in realtime mode than we dont need to process the transcription
         if not self.realtime_mode:
-            await self._process_transcription(event.text, event.user_metadata)
+            await self.simple_response(event.text, event.user_metadata)
 
         if self.conversation is None:
             return
@@ -627,13 +637,7 @@ class Agent:
         """Handle STT service errors."""
         self.logger.error(f"❌ STT Error: {error}")
 
-    async def _process_transcription(
-        self, text: str, participant: Optional[Participant] = None
-    ) -> None:
-        if self.llm is not None:
-            await self.llm.simple_response(
-                text=text, processors=self.processors, participant=participant
-            )
+
 
     @property
     def realtime_mode(self) -> bool:

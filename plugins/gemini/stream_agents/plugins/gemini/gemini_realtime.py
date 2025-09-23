@@ -57,6 +57,7 @@ class Realtime(realtime.Realtime):
     model : str
     session_resumption_id: Optional[str] = None
     config: LiveConnectConfigDict
+    connected : bool = False
 
     def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None, api_key: Optional[str] = None ) -> None:
         super().__init__()
@@ -106,6 +107,9 @@ class Realtime(realtime.Realtime):
 
         For more advanced use cases you can use the native send_realtime_input
         """
+        if not self.connected:
+            return
+
         self.logger.debug(f"Sending audio to gemini: {pcm.duration}")
         # Build blob and send directly
         audio_bytes = pcm.samples.tobytes()
@@ -146,7 +150,7 @@ class Realtime(realtime.Realtime):
         self.logger.info("Connecting to gemini live, config set to %s", self.config)
         self._session_context = self.client.aio.live.connect(model=self.model, config=self._get_config_with_resumption())
         self._session = await self._session_context.__aenter__()
-        self._is_connected = True
+        self.connected = True
         self.logger.info("Gemini live connected to session %s", self._session)
 
         # Start the receive loop task
@@ -242,6 +246,8 @@ class Realtime(realtime.Realtime):
         return should_reconnect
 
     async def _close_impl(self):
+        self.connected = False
+
         if hasattr(self, '_receive_task') and self._receive_task:
             self._receive_task.cancel()
             try:
