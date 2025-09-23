@@ -3,6 +3,7 @@ import collections
 import types
 import typing
 import logging
+import dataclasses
 from typing import get_origin, Union, get_args
 from .base import ExceptionEvent, HealthCheckEvent, ConnectionOkEvent, ConnectionErrorEvent, ConnectionClosedEvent
 
@@ -43,6 +44,7 @@ def _truncate_event_for_logging(event, max_length=200):
             event_str = event_str[:max_length-20] + "... (truncated)"
     
     return event_str
+
 
 
 class EventManager:

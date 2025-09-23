@@ -1,8 +1,11 @@
+import io
+import logging
 import numpy as np
 import re
 import os
 from dataclasses import dataclass
 from typing import Dict, Optional
+from PIL import Image
 
 
 # Type alias for markdown file contents: maps filename to file content
@@ -85,5 +88,31 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
         base_dir=base_dir,
         markdown_contents=markdown_contents
     )
+
+
+def frame_to_png_bytes(frame) -> bytes:
+    """
+    Convert a video frame to PNG bytes.
+    
+    Args:
+        frame: Video frame object that can be converted to an image
+        
+    Returns:
+        PNG bytes of the frame, or empty bytes if conversion fails
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        if hasattr(frame, "to_image"):
+            img = frame.to_image()
+        else:
+            arr = frame.to_ndarray(format="rgb24")
+            img = Image.fromarray(arr)
+        
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        logger.error(f"Error converting frame to PNG: {e}")
+        return b""
 
 

@@ -1,5 +1,8 @@
 import asyncio
-from typing import Any, Optional
+from typing import Any, Optional, List
+
+from getstream.video.rtc.audio_track import AudioStreamTrack
+
 from stream_agents.core.llm import realtime
 import logging
 from dotenv import load_dotenv
@@ -7,9 +10,24 @@ from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
 from openai.types.realtime import *
 
+from ...core.edge.types import Participant
+from ...core.processors import BaseProcessor
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+"""
+TODO
+- Docs for this file
+- MCP support
+- instructions with @mentions
+- event handling is not using either pyee or internal system in self.rtc
+- The base class Realtime has a ton of junk
+
+"""
+
 
 
 class Realtime(realtime.Realtime):
@@ -29,19 +47,16 @@ class Realtime(realtime.Realtime):
         - RTCManager to handle WebRTC connection and media streaming.
         - Output track to forward audio and video to the remote participant.
     """
-    def __init__(self, model: str = "gpt-realtime", voice: str = "marin", send_video: bool = False):
+    def __init__(self, model: str = "gpt-realtime", voice: str = "marin"):
         super().__init__()
         self.model = model
         self.voice = voice
-        self.send_video = send_video
-        self.rtc = RTCManager(self.model, self.voice, self.send_video)
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.connect())
-        except RuntimeError:
-            # Not in an event loop; caller will invoke connect() later
-            pass
+        # TODO: send video should depend on if the RTC connection with stream is sending video.
+        self.rtc = RTCManager(self.model, self.voice, True)
+        # audio output track?
+        self.output_track = AudioStreamTrack(
+            framerate=48000, stereo=True, format="s16"
+        )
 
     async def connect(self):
         """Establish the WebRTC connection to OpenAI's Realtime API.
@@ -59,41 +74,12 @@ class Realtime(realtime.Realtime):
             capabilities=["text", "audio"],
         )
 
-    async def send_audio_pcm(self, audio: PcmData):
-        """Send raw PCM audio data to the OpenAI session.
+    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
+      participant: Participant = None):
+        await self.rtc.send_text(text)
 
-        Args:
-            audio: PCM audio data to transmit via WebRTC.
-        """
+    async def simple_audio_response(self, audio: PcmData):
         await self.rtc.send_audio_pcm(audio)
-
-    async def send_text(self, text: str, role="user"):
-        """Send a text message to the OpenAI session.
-
-        Args:
-            text: Message text to send to the AI model.
-            role: Message role. Defaults to "user".
-        """
-        await self.rtc.send_text(text, role)
-
-    async def native_send_realtime_input(
-        self,
-        *,
-        text: Optional[str] = None,
-        audio: Optional[Any] = None,
-        media: Optional[Any] = None,
-    ) -> None:
-        """Send native OpenAI Realtime API input directly to the session.
-
-        Args:
-            text: Optional text input to send.
-            audio: Optional audio input to send.
-            media: Optional media input to send.
-
-        Note:
-        Currently not implemented.
-        """
-        ...
 
     async def request_session_info(self) -> None:
         """Request session information from the OpenAI API.
@@ -145,29 +131,15 @@ class Realtime(realtime.Realtime):
             Registered as callback with RTC manager.
         """
         # Forward audio as event and to output track if available
-        logger.debug(f"🎵 Forwarding audio output: {len(audio_bytes)}")
-        if self.output_track is not None:
-            await self.output_track.write(audio_bytes)
-        else:
-            logger.info("Can't find output track to set bytes")
+        logger.info(f"🎵 Forwarding audio output: {len(audio_bytes)}")
 
-    async def start_video_sender(self, track, fps: int = 1) -> None:
-        """Start sending video data to the OpenAI session.
+        await self.output_track.write(audio_bytes)
 
-        Args:
-            track: Video track to send via WebRTC.
-            fps: Target frames per second. Defaults to 1.
-
-        Note:
-            Delegates to RTC manager. Requires send_video=True during initialization.
-        """
+    async def _watch_video_track(self, track, fps: int = 1) -> None:
+        # TODO: only do this once?
+        #self.rtc.set_video_callback(self._handle_video_output)
         # Delegate to RTC manager to swap the negotiated sender's track
         await self.rtc.start_video_sender(track, fps)
 
-    async def stop_video_sender(self) -> None:
-        """Stop sending video data to the OpenAI session.
-
-        Note:
-            Delegates to RTC manager to stop video transmission.
-        """
+    async def _stop_watching_video_track(self) -> None:
         await self.rtc.stop_video_sender()

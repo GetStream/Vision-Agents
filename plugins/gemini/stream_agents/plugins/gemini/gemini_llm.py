@@ -44,6 +44,7 @@ class GeminiLLM(LLM):
             client: optional Anthropic client. by default creates a new client object.
         """
         super().__init__()
+        self.events.register_events_from_module(events)
         self.model = model
         self.chat: Optional[Any] = None
 
@@ -91,13 +92,6 @@ class GeminiLLM(LLM):
                 cfg = types.GenerateContentConfig()
             cfg.tools = conv_tools
             kwargs["config"] = cfg
-
-        # Get the message content for the event
-        message_content = kwargs.get("message", kwargs.get("content", ""))
-        self.events.send(events.BeforeLLMResponseEvent(
-            plugin_name="gemini",
-            input_message=self._normalize_message(message_content)
-        ))
 
         # Generate content using the client
         iterator = self.chat.send_message_stream(*args, **kwargs)

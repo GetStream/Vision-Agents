@@ -9,7 +9,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent, StandardizedResponseCompletedEvent, AfterLLMResponseEvent
 from . import events
 
 from stream_agents.core.processors import BaseProcessor
@@ -52,6 +52,7 @@ class OpenAILLM(LLM):
             client: optional OpenAI client. by default creates a new client object.
         """
         super().__init__()
+        self.events.register_events_from_module(events)
         self.model = model
         self.openai_conversation: Optional[Any] = None
         self.conversation = None
@@ -122,13 +123,6 @@ class OpenAILLM(LLM):
             input_content = args[0] if args else "Hello"
             kwargs["input"] = input_content
         
-        # Get input for event emission
-        input_for_emit = kwargs.get("input", "")
-        self.events.send(events.BeforeLLMResponseEvent(
-            plugin_name="openai",
-            input_message=self._normalize_message(input_for_emit)
-        ))
-
         # OpenAI Responses API only accepts keyword arguments
         response = await self.client.responses.create(**kwargs)
 
@@ -173,7 +167,7 @@ class OpenAILLM(LLM):
             llm_response = LLMResponseEvent[OpenAIResponse](None, "")
 
         if llm_response is not None:
-            self.events.send(events.AfterLLMResponseEvent(
+            self.events.send(AfterLLMResponseEvent(
                 plugin_name="openai",
                 llm_response=llm_response
             ))
@@ -206,27 +200,24 @@ class OpenAILLM(LLM):
             if not triples:
                 break
             
-            executed_calls = []
-            outputs_by_id = {}
+            # Process all tool calls, including failed ones
+            tool_messages = []
             for tc, res, err in triples:
                 cid = tc.get("id")
-                if cid:
-                    outputs_by_id[cid] = res
-                    executed_calls.append(tc)
-            
-            # Create tool result messages - only for calls that were executed
-            tool_messages = []
-            for tc in executed_calls:
-                cid = tc.get("id")
-                if cid in outputs_by_id:
-                    output = outputs_by_id[cid]
-                    # Convert to string for OpenAI Responses API with sanitization
-                    output_str = self._sanitize_tool_output(output)
-                    tool_messages.append({
-                        "type": "function_call_output",
-                        "call_id": cid,
-                        "output": output_str,
-                    })
+                if not cid:
+                    # Skip tool calls without ID - they can't be reported back
+                    continue
+                
+                # Use error result if there was an error, otherwise use the result
+                output = err if err is not None else res
+                
+                # Convert to string for OpenAI Responses API with sanitization
+                output_str = self._sanitize_tool_output(output)
+                tool_messages.append({
+                    "type": "function_call_output",
+                    "call_id": cid,
+                    "output": output_str,
+                })
             
             # Don't send empty tool result inputs
             if not tool_messages:
@@ -434,18 +425,21 @@ class OpenAILLM(LLM):
                 item_id=delta_event.item_id,
                 output_index=delta_event.output_index,
                 sequence_number=delta_event.sequence_number,
-                type=delta_event.type,
                 delta=delta_event.delta,
             )
-            self.events.send(events.StandardizedTextDeltaEvent(
+            self.events.send(StandardizedTextDeltaEvent(
                 plugin_name="openai",
-                standardized_event=standardized_event
+                content_index=delta_event.content_index,
+                item_id=delta_event.item_id,
+                output_index=delta_event.output_index,
+                sequence_number=delta_event.sequence_number,
+                delta=delta_event.delta,
             ))
         elif event.type == "response.completed":
             # standardize the response event and return the llm response
             completed_event: ResponseCompletedEvent = event
             llm_response = LLMResponseEvent[OpenAIResponse](completed_event.response, completed_event.response.output_text)
-            self.events.send(events.StandardizedResponseCompletedEvent(
+            self.events.send(StandardizedResponseCompletedEvent(
                 plugin_name="openai",
                 llm_response=llm_response
             ))

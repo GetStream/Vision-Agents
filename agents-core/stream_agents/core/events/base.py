@@ -7,8 +7,6 @@ from typing import Any, Dict, List, Optional
 from types import FunctionType
 from dataclasses_json import DataClassJsonMixin
 
-from getstream.video.rtc.track_util import PcmData
-
 
 class ConnectionState(Enum):
     """Connection states for streaming plugins."""
