@@ -200,27 +200,24 @@ class OpenAILLM(LLM):
             if not triples:
                 break
             
-            executed_calls = []
-            outputs_by_id = {}
+            # Process all tool calls, including failed ones
+            tool_messages = []
             for tc, res, err in triples:
                 cid = tc.get("id")
-                if cid:
-                    outputs_by_id[cid] = res
-                    executed_calls.append(tc)
-            
-            # Create tool result messages - only for calls that were executed
-            tool_messages = []
-            for tc in executed_calls:
-                cid = tc.get("id")
-                if cid in outputs_by_id:
-                    output = outputs_by_id[cid]
-                    # Convert to string for OpenAI Responses API with sanitization
-                    output_str = self._sanitize_tool_output(output)
-                    tool_messages.append({
-                        "type": "function_call_output",
-                        "call_id": cid,
-                        "output": output_str,
-                    })
+                if not cid:
+                    # Skip tool calls without ID - they can't be reported back
+                    continue
+                
+                # Use error result if there was an error, otherwise use the result
+                output = err if err is not None else res
+                
+                # Convert to string for OpenAI Responses API with sanitization
+                output_str = self._sanitize_tool_output(output)
+                tool_messages.append({
+                    "type": "function_call_output",
+                    "call_id": cid,
+                    "output": output_str,
+                })
             
             # Don't send empty tool result inputs
             if not tool_messages:
