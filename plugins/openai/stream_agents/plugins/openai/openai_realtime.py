@@ -76,9 +76,31 @@ class Realtime(realtime.Realtime):
 
     async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
       participant: Participant = None):
+        """Send a simple text input to the OpenAI Realtime session.
+
+        This is a convenience wrapper that forwards a text prompt upstream via
+        the underlying realtime connection. It does not stream partial deltas
+        back; callers should subscribe to the provider's events to receive
+        responses.
+
+        Args:
+            text: Text prompt to send.
+            processors: Optional processors list (not used here; included for
+                interface parity with the core `LLM` API).
+            participant: Optional participant metadata (ignored here).
+        """
         await self.rtc.send_text(text)
 
     async def simple_audio_response(self, audio: PcmData):
+        """Send a single PCM audio frame to the OpenAI Realtime session.
+
+        The audio should be raw PCM matching the realtime session's expected
+        format (typically 48 kHz mono, 16-bit). For continuous audio capture,
+        call this repeatedly with consecutive frames.
+
+        Args:
+            audio: PCM audio frame to forward upstream.
+        """
         await self.rtc.send_audio_pcm(audio)
 
     async def request_session_info(self) -> None:
