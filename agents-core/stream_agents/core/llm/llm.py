@@ -6,6 +6,7 @@ import json
 from typing import Optional, TYPE_CHECKING, Tuple, List, Dict, Any, TypeVar, Callable, Generic
 
 from stream_agents.core.llm import events
+from stream_agents.core.llm.events import ToolStartEvent, ToolEndEvent
 
 if TYPE_CHECKING:
     from stream_agents.core.agents import Agent
@@ -233,7 +234,10 @@ class LLM(abc.ABC):
             Tuple of (tool_call, result, error)
         """
         import inspect
+        import time
+        
         args = tc.get("arguments_json", tc.get("arguments", {})) or {}
+        start_time = time.time()
         
         async def _invoke():
             # Get the actual function to check if it's async
@@ -250,18 +254,41 @@ class LLM(abc.ABC):
                 return await self._maybe_await(res)
         
         try:
-            # Emit tool start event
-            self.emit("tool.start", {"name": tc["name"], "args": args})
+            # Send tool start event
+            self.events.send(ToolStartEvent(
+                plugin_name="llm",
+                tool_name=tc["name"],
+                arguments=args,
+                tool_call_id=tc.get("id")
+            ))
             
             res = await asyncio.wait_for(_invoke(), timeout=timeout_s)
+            execution_time = (time.time() - start_time) * 1000
             
-            # Emit tool end event
-            self.emit("tool.end", {"name": tc["name"], "ok": True})
+            # Send tool end event (success)
+            self.events.send(ToolEndEvent(
+                plugin_name="llm",
+                tool_name=tc["name"],
+                success=True,
+                result=res,
+                tool_call_id=tc.get("id"),
+                execution_time_ms=execution_time
+            ))
             
             return tc, res, None
         except Exception as e:
-            # Emit tool end event with error
-            self.emit("tool.end", {"name": tc["name"], "ok": False, "error": str(e)})
+            execution_time = (time.time() - start_time) * 1000
+            
+            # Send tool end event (error)
+            self.events.send(ToolEndEvent(
+                plugin_name="llm",
+                tool_name=tc["name"],
+                success=False,
+                error=str(e),
+                tool_call_id=tc.get("id"),
+                execution_time_ms=execution_time
+            ))
+            
             return tc, {"error": str(e)}, e
 
     async def _execute_tools(self, calls: List[Dict[str, Any]], *, max_concurrency: int = 8, timeout_s: float = 30):

@@ -154,7 +154,7 @@ class TTS(abc.ABC):
                 audio_chunks = 1
                 await self._track.write(audio_data)
 
-                TTSAudioEvent(
+                audio_event = TTSAudioEvent(
                     session_id=self.session_id,
                     plugin_name=self.provider_name,
                     audio_data=audio_data,

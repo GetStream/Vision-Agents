@@ -1,12 +1,23 @@
-"""GitHub MCP Demo - Connect to GitHub MCP server and demonstrate functionality."""
+"""GitHub MCP Demo - Demonstrate automatic MCP tool registration with function registry.
+
+This demo shows how MCP tools are automatically registered with the LLM's function registry
+when an agent connects to MCP servers. The tools become available for function calling
+by the LLM without any manual registration required.
+"""
 
 import asyncio
 import logging
 import os
+from uuid import uuid4
 from dotenv import load_dotenv
 
 from stream_agents.core.agents import Agent
 from stream_agents.core.mcp import MCPServerRemote
+from stream_agents.plugins.openai.openai_llm import OpenAILLM
+from stream_agents.plugins import elevenlabs, deepgram, silero, getstream
+from stream_agents.core import cli
+from stream_agents.core.events import CallSessionParticipantJoinedEvent
+from stream_agents.core.edge.types import User
 
 # Load environment variables from .env file
 load_dotenv()
@@ -34,16 +45,31 @@ async def main():
         session_timeout=300.0
     )
     
-    # Create a mock processor to satisfy validation requirements
-    from unittest.mock import MagicMock
-    mock_processor = MagicMock()
-    mock_processor.process_video = MagicMock()
+    # Get OpenAI API key from environment
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        logger.error("OPENAI_API_KEY environment variable not found!")
+        logger.error("Please set OPENAI_API_KEY in your .env file or environment")
+        return
     
-    # Create agent with GitHub MCP server
+    # Create OpenAI LLM
+    llm = OpenAILLM(model="gpt-4o", api_key=openai_api_key)
+    
+    # Create real edge transport and agent user
+    edge = getstream.Edge()
+    agent_user = User(name="GitHub AI Assistant", id="github-agent")
+    
+    # Create agent with GitHub MCP server and OpenAI LLM
     agent = Agent(
-        instructions="You are a helpful AI assistant with access to GitHub via MCP server.",
-        processors=[mock_processor],
-        mcp_servers=[github_server]
+        edge=edge,
+        llm=llm,
+        agent_user=agent_user,
+        instructions="You are a helpful AI assistant with access to GitHub via MCP server. You can help with GitHub operations like creating issues, managing pull requests, searching repositories, and more. Keep responses conversational and helpful.",
+        processors=[],
+        mcp_servers=[github_server],
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
+        vad=silero.VAD()
     )
     
     logger.info("Agent created with GitHub MCP server")
@@ -60,52 +86,43 @@ async def main():
             logger.error("This might be due to network issues or server unavailability")
             return
         
-        # Get available tools from GitHub MCP server
-        logger.info("Fetching available tools from GitHub MCP server...")
-        try:
-            tools = await asyncio.wait_for(agent.get_mcp_tools(), timeout=15.0)
-        except asyncio.TimeoutError:
-            logger.error("❌ Tool listing timed out after 15 seconds")
-            logger.error("The GitHub MCP server might be slow or unresponsive")
-            return
+        # Check if MCP tools were registered with the function registry
+        logger.info("Checking function registry for MCP tools...")
+        available_functions = agent.llm.get_available_functions()
+        mcp_functions = [f for f in available_functions if f['name'].startswith('mcp_')]
         
-        if tools:
-            logger.info(f"✅ Found {len(tools)} available tools:")
-            for i, tool in enumerate(tools, 1):
-                logger.info(f"  {i}. {tool.name}: {getattr(tool, 'description', 'No description')}")
+        logger.info(f"✅ Found {len(mcp_functions)} MCP tools registered in function registry")
+        logger.info("MCP tools are now available to the LLM for function calling!")
+        
+        # Create the agent user
+        await agent.create_user()
+        
+        # Set up event handler for when participants join
+        @agent.subscribe
+        async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
+            await agent.say(f"Hello {event.participant.user.name}! I'm your GitHub AI assistant with access to {len(mcp_functions)} GitHub tools. I can help you with repositories, issues, pull requests, and more!")
+        
+        # Create a call
+        call = agent.edge.client.video.call("default", str(uuid4()))
+        
+        # Open the demo UI
+        logger.info("🌐 Opening browser with demo UI...")
+        agent.edge.open_demo(call)
+        
+        # Have the agent join the call/room
+        logger.info("🎤 Agent joining call...")
+        with await agent.join(call):
+            logger.info("✅ Agent is now live! You can talk to it in the browser.")
+            logger.info("Try asking: 'What repositories do I have?' or 'Create a new issue'")
             
-            # Try to call a simple tool if available
-            try:
-                logger.info("\n🔍 Attempting to call a tool...")
-                # Look for a simple tool to call (like list_repositories or get_user_info)
-                simple_tools = [tool for tool in tools if any(keyword in tool.name.lower() 
-                                for keyword in ['list', 'get', 'user', 'repo', 'info'])]
-                
-                if simple_tools:
-                    tool_to_call = simple_tools[0]
-                    logger.info(f"Calling tool: {tool_to_call.name}")
-                    
-                    # Call the tool with empty arguments (most GitHub tools don't require args)
-                    result = await agent.call_mcp_tool(0, tool_to_call.name, {})
-                    logger.info("✅ Tool call successful!")
-                    logger.info(f"Result: {result}")
-                else:
-                    logger.info("No simple tools found to call")
-                    
-            except Exception as e:
-                logger.warning(f"Tool call failed: {e}")
-                logger.info("This might be expected if the tool requires specific arguments")
-        
-        else:
-            logger.warning("No tools available from GitHub MCP server")
-        
-        # Disconnect from MCP servers
-        await agent._disconnect_mcp_servers()
-        logger.info("Disconnected from GitHub MCP server")
+            # Run until the call ends
+            await agent.finish()
         
     except Exception as e:
         logger.error(f"Error with GitHub MCP server: {e}")
-        logger.error("Make sure your GITHUB_PAT is valid and has the necessary permissions")
+        logger.error("Make sure your GITHUB_PAT and OPENAI_API_KEY are valid")
+        import traceback
+        traceback.print_exc()
     
     # Clean up
     await agent.close()
@@ -113,4 +130,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(cli.start_dispatcher(main))

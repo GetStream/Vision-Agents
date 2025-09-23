@@ -52,6 +52,7 @@ class XAILLM(LLM):
             client: optional xAI client. by default creates a new client object.
         """
         super().__init__()
+        self.events.register_events_from_module(events)
         self.model = model
         self.xai_chat: Optional["Chat"] = None
         self.conversation = None
@@ -110,11 +111,6 @@ class XAILLM(LLM):
         # Add user message
         assert self.xai_chat is not None
         self.xai_chat.append(user(input_text))
-
-        self.events.send(events.BeforeLLMResponseEvent(
-            plugin_name="xai",
-            input_message=self._normalize_message(input_text)
-        ))
 
         # Get response based on streaming preference
         if stream:
