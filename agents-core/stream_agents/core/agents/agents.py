@@ -68,6 +68,8 @@ class Agent:
     * agent.llm.simple_response("greet the user")
     * await agent.finish() // (wait for the call session to finish)
     * agent.close() // cleanup
+
+    Note: Don't reuse the agent object. Create a new agent object each time.
     """
 
     def __init__(
