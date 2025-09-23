@@ -71,68 +71,36 @@ agent = Agent(
 )
 ```
 
-### Other examples
+## Processors
 
-We're always adding more examples. Stay tuned and share your ideas.
+Processors make it easy to combine the video & LLM with additional state. Here are some built-in examples
 
-* Video AI avatar
-* React UI customization
-* Linear standup agent
+* YoloPose
+* YoloObjectDetection
+* YoloSpeedMeasurement
+* ImageCapture
+* BufferedVideoCapture
+* TavusAvatar
 
 ## Docs
 
 TODO Link to docs
 
 
-## 📦 Installation
-
-```bash
-# Install dependencies using uv
-uv add openai python-dotenv stream_agents
-```
-
-
-## 🏗️ Architecture
-
-### Core Components
-
-- **`agents/`** - Agent framework and protocols
-- **`models/`** - AI model implementations (OpenAI, extensible to others)
-- **`examples/`** - Working examples and demos
-- **`tests/`** - Comprehensive test suite
-
-### Agent System
-
-```python
-agent = Agent(
-    tools=[external_api_tool],           # External API integrations
-    pre_processors=[data_processor],     # Input data processing
-    llm=ai_model,                      # AI model for responses
-    stt=speech_to_text,                  # Speech recognition
-    tts=text_to_speech,                  # Voice synthesis
-    turn_detection=turn_detector         # Conversation management
-)
-```
-
-## 🧪 Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run specific test suites
-pytest tests/test_agent.py -v
-pytest tests/test_models.py -v
-```
-
-## 🛣️ Roadmap
-
-
 ## Competitors & Partners
 
 Reach out to nash@getstream.io, and we'll collaborate on getting you added
+We'd like to add support for and are reaching out to:
 
-## 🤝 Dev Guidelines
+* Mediasoup
+* Janus
+* Cloudflare
+* Twilio
+* AWS IVS
+* Vonage
+* And others.
+
+## Dev / Contributor Guidelines
 
 ### Light wrapping
 

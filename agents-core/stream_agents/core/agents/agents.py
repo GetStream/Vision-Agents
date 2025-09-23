@@ -29,7 +29,7 @@ from ..llm.llm import LLM
 from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
 from . import events
-from ..turn_detection import TurnEvent, TurnEventData, BaseTurnDetector
+from ..turn_detection import TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
 
 import getstream.models
@@ -51,16 +51,23 @@ class Agent:
     """
     Agent class makes it easy to build your own video AI.
 
+    Example:
+
+        # realtime mode
+        agent = Agent(
+            edge=getstream.Edge(),
+            agent_user=agent_user,
+            instructions="Read @voice-agent.md",
+            llm=gemini.Realtime(),
+            processors=[],  # processors can fetch extra data, check images/audio data or transform video
+        )
+
     Commonly used methods
 
     * agent.join(call) // join a call
     * agent.llm.simple_response("greet the user")
     * await agent.finish() // (wait for the call session to finish)
     * agent.close() // cleanup
-
-    TODO:
-    - MCP functionality should be moved into its own class
-    - Should edge be required?
     """
 
     def __init__(
@@ -86,38 +93,6 @@ class Agent:
         # MCP servers for external tool and resource access
         mcp_servers: Optional[List[MCPBaseServer]] = None,
     ):
-        """Create a new Agent instance.
-
-        The Agent orchestrates audio/video I/O with an edge transport, optional
-        speech pipelines (STT, TTS, VAD, turn detection), processors, and an LLM.
-        It supports two modes:
-
-        - Realtime mode: when `llm` is a `Realtime` implementation. The LLM
-          handles speech-to-text, text-to-speech, and often turn detection.
-        - Traditional mode: when `llm` is a standard `LLM` and you wire STT/TTS/turn
-          detection explicitly.
-
-        Args:
-            edge: Edge transport responsible for joining/publishing to calls and
-                emitting audio/video events (e.g., `StreamEdge`).
-            llm: Language model. Use a `Realtime` provider for speech-to-speech, or
-                an `LLM` with separate STT/TTS.
-            agent_user: Identity of the agent within the call/chat system.
-            instructions: System instructions sent to the LLM at session start.
-            stt: Optional speech-to-text component (ignored in Realtime mode).
-            tts: Optional text-to-speech component (ignored in Realtime mode).
-            turn_detection: Optional turn detector to gate speaking/listening
-                (ignored in Realtime mode if provider handles turns).
-            vad: Optional voice activity detector used by processors/pipelines.
-            processors: Optional list of processors for audio/video/image or for
-                publishing tracks.
-            mcp_servers: Optional list of MCP servers to expose tools/resources to
-                the agent.
-
-        Notes:
-            - In Realtime mode, STT/TTS/turn detection are ignored if provided.
-            - Video-only agents are supported via video/image processors without STT/TTS.
-        """
         self.instructions = instructions
         self.edge = edge
         self.agent_user = agent_user
@@ -149,10 +124,9 @@ class Agent:
                 self.logger.info(f"Registered plugin {plugin}")
                 self.events.merge(plugin.events)
 
-        if self.llm is not None:
-            self.llm._attach_agent(self)
-            self.llm.events.subscribe(self._handle_after_response)
-            self.llm.events.subscribe(self._handle_output_text_delta)
+        self.llm._attach_agent(self)
+        self.llm.events.subscribe(self._handle_after_response)
+        self.llm.events.subscribe(self._handle_output_text_delta)
 
         self.events.subscribe(self._on_vad_audio)
         self.events.subscribe(self._on_agent_say)
@@ -169,33 +143,93 @@ class Agent:
 
         # validation time
         self._validate_configuration()
-
-        # Initialize track management attributes
-        self._active_tracks: Dict[str, Any] = {}  # Track active video/audio tracks
-        self._last_health_check: float = 0.0  # Last health check timestamp
-        self._track_health_check_interval: float = (
-            1.0  # Health check interval in seconds
-        )
-
         self._prepare_rtc()
         self._setup_stt()
         self._setup_turn_detection()
 
-    def _truncate_for_logging(self, obj, max_length=200):
-        """Truncate object string representation for logging to prevent spam."""
-        obj_str = str(obj)
-        if len(obj_str) > max_length:
-            obj_str = obj_str[:max_length] + "... (truncated)"
-        return obj_str
+    def subscribe(self, function):
+        """Subscribe a callback to the agent-wide event bus.
 
-    def _setup_mcp_servers(self):
-        """Set up MCP servers if any are configured."""
-        if self.mcp_servers:
-            self.logger.info(f"🔌 Setting up {len(self.mcp_servers)} MCP server(s)")
-            for i, server in enumerate(self.mcp_servers):
-                self.logger.info(f"  {i + 1}. {server.__class__.__name__}")
-        else:
-            self.logger.debug("No MCP servers configured")
+        The event bus is a merged stream of events from the edge, LLM, STT, TTS,
+        VAD, and other registered plugins.
+
+        Args:
+            function: Async or sync callable that accepts a single event object.
+
+        Returns:
+            A disposable subscription handle (depends on the underlying emitter).
+        """
+        return self.events.subscribe(function)
+
+
+    async def join(self, call: Call) -> "AgentSessionContextManager":
+        # validation. join can only be called once
+        if self._is_running:
+            raise RuntimeError("Agent is already running")
+
+        self.call = call
+        self.conversation = None
+
+        await self._connect_mcp_servers()
+
+        # Setup chat and connect it to transcript events
+        self.conversation = self.edge.create_conversation(
+            call, self.agent_user, self.instructions
+        )
+        self.events.subscribe(self._on_transcript)
+        self.events.subscribe(self._on_partial_transcript)
+
+        # Ensure Realtime providers are ready before proceeding (they manage their own connection)
+        self.logger.info(f"🤖 Agent joining call: {call.id}")
+        if isinstance(self.llm, Realtime):
+            await self.llm.connect()
+
+
+        connection = await self.edge.join(self, call)
+        self._connection = connection
+        self._is_running = True
+
+        connection._connection._coordinator_ws_client.on_wildcard(
+            "*", lambda event_name, event: self.events.send(event)
+        )
+
+        self.logger.info(f"🤖 Agent joined call: {call.id}")
+
+        # Set up audio and video tracks together to avoid SDP issues
+        audio_track = self._audio_track if self.publish_audio else None
+        video_track = self._video_track if self.publish_video else None
+
+        if audio_track or video_track:
+            await self.edge.publish_tracks(audio_track, video_track)
+            await self._listen_to_audio_and_video()
+
+        from .agent_session import AgentSessionContextManager
+
+        return AgentSessionContextManager(self, self._connection)
+
+    async def finish(self):
+        """Wait for the call to end gracefully.
+
+        Subscribes to the edge transport's `call_ended` event and awaits it. If
+        no connection is active, returns immediately.
+        """
+        # If connection is None or already closed, return immediately
+        if not self._connection:
+            logging.info("🔚 Agent connection already closed, finishing immediately")
+            return
+
+        try:
+            fut = asyncio.get_event_loop().create_future()
+
+            @self.edge.events.subscribe
+            async def on_ended(event: CallEndedEvent):
+                if not fut.done():
+                    fut.set_result(None)
+
+            await fut
+        except Exception as e:
+            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
+            # Don't raise the exception, just log it and continue cleanup
 
     async def close(self):
         """Clean up all connections and resources.
@@ -218,27 +252,6 @@ class Agent:
         if self._realtime_connection:
             await self._realtime_connection.__aexit__(None, None, None)
         self._realtime_connection = None
-
-        # Clean up active tracks
-        self.logger.info(f"🎥VDP: Cleaning up {len(self._active_tracks)} active tracks")
-        for track_id in list(self._active_tracks.keys()):
-            self._remove_track(track_id)
-
-        # Clean up track processing tasks
-        if hasattr(self, "_track_tasks"):
-            self.logger.info(
-                f"🎥VDP: Canceling {len(self._track_tasks)} track processing tasks"
-            )
-            for task in self._track_tasks:
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass  # Expected when canceling
-                    except Exception as e:
-                        self.logger.debug(f"🎥VDP: Error during task cancellation: {e}")
-            self._track_tasks.clear()
 
         # Close RTC connection
         if self._connection:
@@ -274,219 +287,6 @@ class Agent:
 
         # Close edge transport
         self.edge.close()
-
-    def subscribe(self, function):
-        """Subscribe a callback to the agent-wide event bus.
-
-        The event bus is a merged stream of events from the edge, LLM, STT, TTS,
-        VAD, and other registered plugins.
-
-        Args:
-            function: Async or sync callable that accepts a single event object.
-
-        Returns:
-            A disposable subscription handle (depends on the underlying emitter).
-        """
-        return self.events.subscribe(function)
-
-    async def join(self, call: Call) -> "AgentSessionContextManager":
-        """Join a call and initialize media and conversation state.
-
-        Behaviour depends on mode:
-        - Realtime: waits for the provider to be ready and forwards `instructions`
-          as a system message. Audio/video streams are wired directly to the
-          provider via the edge transport and internal relays.
-        - Traditional: subscribes to audio events, forwards audio to STT and
-          processors, and sets up conversation syncing via transcripts.
-
-        Args:
-            call: The `getstream.models.Call` to join.
-
-        Returns:
-            AgentSessionContextManager: An async context manager that keeps the
-            session open for the duration of the call.
-
-        Raises:
-            RuntimeError: If the agent is already running.
-        """
-        self.call = call
-        self.conversation = None
-
-        # Connect to MCP servers
-        await self._connect_mcp_servers()
-
-        # Only set up chat if we have LLM (for conversation capabilities)
-        if self.llm:
-            # ask the edge to start the chat
-            self.conversation = self.edge.create_conversation(
-                call, self.agent_user, self.instructions
-            )
-
-        # when using Realtime, we sync conversation using transcripts otherwise we fallback to STT (if available)
-        if self.realtime_mode:
-            self.events.subscribe(self._on_transcript)
-            self.events.subscribe(self._on_partial_transcript)
-        elif self.stt:
-            self.events.subscribe(self._on_transcript)
-            self.events.subscribe(self._on_partial_transcript)
-
-        if self._is_running:
-            raise RuntimeError("Agent is already running")
-
-        self.logger.info(f"🤖 Agent joining call: {call.id}")
-
-        # Ensure Realtime providers are ready before proceeding (they manage their own connection)
-        if self.realtime_mode and isinstance(self.llm, Realtime):
-            await self.llm.connect()
-
-
-        connection = await self.edge.join(self, call)
-        self._connection = connection
-
-        # Attach fallback pc.on('track') handler ASAP to avoid missing early remote video tracks
-        try:
-            if not self._pc_track_handler_attached:
-                base_pc = getattr(self._connection, "subscriber_pc", None)
-                pc = None
-                if base_pc is not None:
-                    pc = (
-                        getattr(base_pc, "pc", None)
-                        or getattr(base_pc, "_pc", None)
-                        or base_pc
-                    )
-                if pc is not None and hasattr(pc, "on"):
-                    self.logger.info(
-                        "🔗 Attaching pc.on('track') handler to subscriber peer connection (early)"
-                    )
-                    # Create or reuse a persistent MediaRelay to keep branches alive
-                    try:
-                        self._persistent_media_relay = (
-                            getattr(self, "_persistent_media_relay", None)
-                            or MediaRelay()
-                        )
-                    except Exception:
-                        self._persistent_media_relay = None
-
-                    @pc.on("track")
-                    async def _on_pc_track_early(track):
-                        try:
-                            kind = getattr(track, "kind", None)
-                            if kind == "video":
-                                relay = self._persistent_media_relay
-                                if relay is None:
-                                    relay = MediaRelay()
-                                    self._persistent_media_relay = relay
-                                forward_branch = relay.subscribe(track)
-                                print(f"🎥 Forwarding video frames to Realtime provider (pc.on early track) {forward_branch}")
-                                if self.realtime_mode and isinstance(self.llm, Realtime):
-                                    await self.llm.start_video_sender(forward_branch, fps=30)
-                                    self.logger.info("🎥 Forwarding video frames to Realtime provider (pc.on early track)")
-                        except Exception as e:
-                            self.logger.error(
-                                f"Error handling pc.on('track') video (early): {e}"
-                            )
-
-                    self._pc_track_handler_attached = True
-        except Exception:
-            pass
-
-        self._is_running = True
-
-        connection._connection._coordinator_ws_client.on_wildcard(
-            "*", lambda event_name, event: self.events.send(event)
-        )
-
-        self.logger.info(f"🤖 Agent joined call: {call.id}")
-
-        # Set up audio and video tracks together to avoid SDP issues
-        audio_track = self._audio_track if self.publish_audio else None
-        video_track = self._video_track if self.publish_video else None
-
-        if audio_track or video_track:
-            await self.edge.publish_tracks(audio_track, video_track)
-
-            # Set up event handlers for audio processing
-            await self._listen_to_audio_and_video()
-
-            # Video track detection is handled by event-based _process_track method
-            # No need for polling since Stream Video events are reliable
-
-            # Realtime providers manage their own event loops; nothing to do here
-
-            from .agent_session import AgentSessionContextManager
-
-            return AgentSessionContextManager(self, self._connection)
-        # In case tracks are not added, still return context manager
-        from .agent_session import AgentSessionContextManager
-
-        return AgentSessionContextManager(self, self._connection)
-
-    async def finish(self):
-        """Wait for the call to end gracefully.
-
-        Subscribes to the edge transport's `call_ended` event and awaits it. If
-        no connection is active, returns immediately.
-        """
-        # If connection is None or already closed, return immediately
-        if not self._connection:
-            logging.info("🔚 Agent connection already closed, finishing immediately")
-            return
-
-        try:
-            fut = asyncio.get_event_loop().create_future()
-
-            @self.edge.events.subscribe
-            async def on_ended(event: CallEndedEvent):
-                if not fut.done():
-                    fut.set_result(None)
-
-            await fut
-        except Exception as e:
-            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
-            # Don't raise the exception, just log it and continue cleanup
-
-    def send(self, event):
-        """
-        Send an event through the agent's event system.
-
-        This is a convenience method that calls agent.events.send().
-        Use this for consistency with agent.events.subscribe().
-
-        Args:
-            event: The event to send
-        """
-        self.events.send(event)
-
-    async def say(self, text: str, metadata: Optional[Dict[str, Any]] = None):
-        """
-        Make the agent say something by emitting an event.
-
-        Adds the message to the conversation and, if TTS is configured, streams
-        synthesized audio to the call via the agent's output track.
-
-        Args:
-            text: The message to say.
-            metadata: Optional metadata to include with the event
-        """
-        user_id = self.agent_user.id
-        self.conversation.add_message(Message(content=text, user_id=user_id))
-
-        # Emit agent say event using the send method
-        self.send(
-            events.AgentSayEvent(
-                plugin_name="agent", text=text, user_id=user_id, metadata=metadata or {}
-            )
-        )
-
-    async def send_audio(self, pcm):
-        """Send raw PCM audio on the agent's outbound audio track.
-
-        Args:
-            pcm: Raw PCM frame/bytes compatible with the configured audio track.
-        """
-        # TODO: stream & buffer
-        if self._audio_track is not None:
-            await self._audio_track.send_audio(pcm)
 
     async def create_user(self):
         """Create the agent user in the edge provider, if required.
@@ -539,6 +339,12 @@ class Agent:
 
     def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
+
+    def _on_rtc_reconnect(self):
+        # update the code to listen?
+        # republish the audio track and video track?
+        # TODO: implement me
+        pass
 
     async def _on_agent_say(self, event: events.AgentSayEvent):
         """Handle agent say events by calling TTS if available."""
@@ -676,111 +482,27 @@ class Agent:
                     await self.stt.process_audio(pcm_data, participant)
 
     async def _process_track(self, track_id: str, track_type: str, participant):
-        # Only process video tracks - track_type might be string, enum or numeric (2 for video)
-        self.logger.info(
-            f"🎥VDP: Checking track type: {track_type} vs {TrackType.TRACK_TYPE_VIDEO}"
-        )
-        if track_type not in ("video", TrackType.TRACK_TYPE_VIDEO, 2):
-            self.logger.warning(
-                f"🎥VDP: EARLY EXIT - Ignoring non-video track: {track_type} (expected: video, {TrackType.TRACK_TYPE_VIDEO}, or 2)"
-            )
+        # we only process video tracks
+        if track_type != TrackType.TRACK_TYPE_VIDEO:
             return
 
+        # subscribe to the video track
         track = self.edge.add_track_subscriber(track_id)
         if not track:
             self.logger.error(
-                f"🎥VDP: EARLY EXIT - Failed to subscribe to track: {track_id}"
+                f"Failed to subscribe to {track_id}"
             )
             return
 
-        self.logger.info(
-            f"🎥VDP: Track subscription successful, validating video track..."
-        )
-
-        # Determine if this is a video track using both reported kind and original type
-        is_video_type = track_type in ("video", TrackType.TRACK_TYPE_VIDEO, 2)
-        kind = getattr(track, "kind", None)
-        is_video_kind = kind == "video"
-
-        self.logger.info(
-            f"🎥VDP: Track validation - is_video_type={is_video_type}, kind='{kind}', is_video_kind={is_video_kind}"
-        )
-
-        if not (is_video_kind or is_video_type):
-            self.logger.warning(
-                f"🎥VDP: EARLY EXIT - Ignoring non-video track after subscribe: kind={kind} original_type={track_type}"
-            )
-            return
-
-        try:
-            self.logger.info(
-                f"🎥VDP: ✅ Subscribed to track: {track_id}, kind={getattr(track, 'kind', None)}, class={track.__class__.__name__}"
-            )
-        except Exception:
-            self.logger.info(f"🎥VDP: ✅ Subscribed to track: {track_id}")
-
-        # Give the track a moment to be ready
-        self.logger.info("🎥VDP: Waiting for track to be ready...")
-        await asyncio.sleep(0.5)
-
-        # If Realtime provider supports video, forward frames upstream once per track
+        # If Realtime provider supports video, tell it to watch the video
         if self.realtime_mode:
-            try:
-                await self.llm._watch_video_track(track)
-                self.logger.info("🎥 Forwarding video frames to Realtime provider")
-
-            except Exception as e:
-                self.logger.error(f"🎥VDP: ❌ Failed to start OpenAI video sender: {e}")
-                self.logger.error(f"🎥VDP: Exception type: {type(e).__name__}")
-                import traceback
-
-                self.logger.error(
-                    f"🎥VDP: Exception traceback: {traceback.format_exc()}"
-                )
-        else:
-            self.logger.warning(f"🎥VDP: Realtime mode check failed - realtime_mode={self.realtime_mode}, llm_type={type(self.llm).__name__}")
-            self.logger.warning(f"🎥VDP: isinstance(self.llm, Realtime) = {isinstance(self.llm, Realtime)}")
+            await self.llm._watch_video_track(track)
+            self.logger.info("Forwarding video frames to Realtime provider")
 
         hasImageProcessers = len(self.image_processors) > 0
-        self.logger.info(
-            f"📸 Has image processors: {hasImageProcessers}, count: {len(self.image_processors)}"
-        )
-
-        self.logger.info(
-            f"📸 Starting video processing loop for track {track_id} {participant.user_id} {participant.name}"
-        )
-
-        # Enhanced video processing with timeout limits and error recovery
-        timeout_errors = 0
-        max_timeout_errors = 10  # Circuit breaker threshold
-        base_timeout = 5.0
-        consecutive_errors = 0
-        max_consecutive_errors = 5
-
-        self.logger.info(
-            f"🎥VDP: Starting robust video processing loop (max_timeouts={max_timeout_errors})"
-        )
 
         while True:
-            # Periodic health check
             try:
-                self._check_track_health()
-            except AttributeError as e:
-                # Handle case where attributes haven't been initialized yet
-                if "_last_health_check" in str(
-                    e
-                ) or "_track_health_check_interval" in str(e):
-                    self.logger.debug(
-                        "🎥VDP: Health check attributes not initialized yet, skipping"
-                    )
-                    break
-                else:
-                    raise
-
-            try:
-                # Adaptive timeout based on error count
-                current_timeout = base_timeout * (1.5 ** min(timeout_errors, 3))
-
                 # Track frame processing timing
                 frame_request_start = time.monotonic()
 
@@ -819,27 +541,6 @@ class Agent:
                     consecutive_errors += 1
 
             except asyncio.TimeoutError:
-                timeout_errors += 1
-                consecutive_errors += 1
-
-                self.logger.warning(
-                    f"🎥VDP: Timeout #{timeout_errors} (timeout={current_timeout:.1f}s, consecutive_errors={consecutive_errors})"
-                )
-
-                # Circuit breaker: stop processing if too many timeouts
-                if timeout_errors >= max_timeout_errors:
-                    self.logger.error(
-                        f"🎥VDP: Circuit breaker triggered - too many timeouts ({timeout_errors}), stopping track processing"
-                    )
-                    break
-
-                # Circuit breaker: stop processing if too many consecutive errors
-                if consecutive_errors >= max_consecutive_errors:
-                    self.logger.error(
-                        f"🎥VDP: Circuit breaker triggered - too many consecutive errors ({consecutive_errors}), stopping track processing"
-                    )
-                    break
-
                 # Exponential backoff for timeout errors
                 backoff_delay = min(2.0 ** min(timeout_errors, 5), 30.0)
                 self.logger.debug(
@@ -848,26 +549,10 @@ class Agent:
                 await asyncio.sleep(backoff_delay)
 
             except Exception as e:
-                consecutive_errors += 1
-                self.logger.error(
-                    f"🎥VDP: Error receiving track: {e} - {type(e)} (consecutive_errors={consecutive_errors})"
-                )
-
-                # Circuit breaker: stop processing on persistent errors
-                if consecutive_errors >= max_consecutive_errors:
-                    self.logger.error(
-                        f"🎥VDP: Circuit breaker triggered - too many consecutive errors ({consecutive_errors}), stopping track processing"
-                    )
-                    break
-
-                # Short delay for non-timeout errors
-                await asyncio.sleep(0.5)
+                raise
 
         # Cleanup and logging
         self.logger.info(f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}")
-
-        # Remove track from active tracking
-        self._remove_track(track_id)
 
     def _on_turn_started(self, event: TurnEventData) -> None:
         """Handle when a participant starts their turn."""
@@ -882,98 +567,6 @@ class Agent:
         self.logger.info(
             f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.confidence})"
         )
-
-    def _register_track(self, track_id: str, track_info: Dict) -> None:
-        """Register a track for lifecycle management."""
-        self._active_tracks[track_id] = {
-            **track_info,
-            "registered_at": time.monotonic(),
-            "last_health_check": time.monotonic(),
-        }
-        self.logger.info(f"🎥VDP: Registered track {track_id} for lifecycle management")
-
-    def _remove_track(self, track_id: str) -> None:
-        """Remove a track from lifecycle management."""
-        if track_id in self._active_tracks:
-            track_info = self._active_tracks.pop(track_id)
-            duration = time.monotonic() - track_info["registered_at"]
-            self.logger.info(
-                f"🎥VDP: Removed track {track_id} from lifecycle management (duration: {duration:.1f}s)"
-            )
-
-    def _check_track_health(self) -> None:
-        """Check health of all active tracks."""
-        now = time.monotonic()
-
-        # Only check health periodically
-        if now - self._last_health_check < self._track_health_check_interval:
-            return
-
-        self._last_health_check = now
-        unhealthy_tracks = []
-
-        for track_id, track_info in self._active_tracks.items():
-            try:
-                # Check if track has health status method
-                if hasattr(track_info.get("forwarding_track"), "get_health_status"):
-                    health_status = track_info["forwarding_track"].get_health_status()
-                    if not health_status["is_healthy"]:
-                        unhealthy_tracks.append(track_id)
-                        self.logger.warning(
-                            f"🎥VDP: Track {track_id} is unhealthy: {health_status}"
-                        )
-                else:
-                    # Basic health check - if track has been active for too long without updates
-                    if now - track_info["last_health_check"] > 60.0:  # 1 minute
-                        unhealthy_tracks.append(track_id)
-                        self.logger.warning(
-                            f"🎥VDP: Track {track_id} has not been checked for 60+ seconds"
-                        )
-
-                # Update last health check time
-                track_info["last_health_check"] = now
-
-            except Exception as e:
-                self.logger.error(
-                    f"🎥VDP: Error checking health of track {track_id}: {e}"
-                )
-                unhealthy_tracks.append(track_id)
-
-        # Log summary
-        if unhealthy_tracks:
-            self.logger.warning(
-                f"🎥VDP: Found {len(unhealthy_tracks)} unhealthy tracks: {unhealthy_tracks}"
-            )
-        else:
-            self.logger.debug(
-                f"🎥VDP: All {len(self._active_tracks)} tracks are healthy"
-            )
-
-    def get_track_health_summary(self) -> Dict[str, Any]:
-        """Get a summary of all track health status."""
-        summary = {
-            "total_tracks": len(self._active_tracks),
-            "healthy_tracks": 0,
-            "unhealthy_tracks": 0,
-            "track_details": {},
-        }
-
-        for track_id, track_info in self._active_tracks.items():
-            try:
-                if hasattr(track_info.get("forwarding_track"), "get_health_status"):
-                    health_status = track_info["forwarding_track"].get_health_status()
-                    summary["track_details"][track_id] = health_status
-                    if health_status["is_healthy"]:
-                        summary["healthy_tracks"] += 1
-                    else:
-                        summary["unhealthy_tracks"] += 1
-                else:
-                    summary["track_details"][track_id] = {"status": "unknown"}
-            except Exception as e:
-                summary["track_details"][track_id] = {"error": str(e)}
-                summary["unhealthy_tracks"] += 1
-
-        return summary
 
     async def _on_partial_transcript(
         self, event: STTPartialTranscriptEvent | RealtimePartialTranscriptEvent
@@ -1292,3 +885,19 @@ class Agent:
             self.logger.error(
                 f"  ❌ Failed to get tools from MCP server {server_index + 1}: {e}"
             )
+
+    def _truncate_for_logging(self, obj, max_length=200):
+        """Truncate object string representation for logging to prevent spam."""
+        obj_str = str(obj)
+        if len(obj_str) > max_length:
+            obj_str = obj_str[:max_length] + "... (truncated)"
+        return obj_str
+
+    def _setup_mcp_servers(self):
+        """Set up MCP servers if any are configured."""
+        if self.mcp_servers:
+            self.logger.info(f"🔌 Setting up {len(self.mcp_servers)} MCP server(s)")
+            for i, server in enumerate(self.mcp_servers):
+                self.logger.info(f"  {i + 1}. {server.__class__.__name__}")
+        else:
+            self.logger.debug("No MCP servers configured")
