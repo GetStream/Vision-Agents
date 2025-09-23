@@ -27,7 +27,7 @@ TODO:
 - chat/transcription integration (trigger the right events when receiving transcriptions) - Tommaso
 """
 
-DEFAULT_MODEL = "gemini-2.5-flash-exp-native-audio-thinking-dialog"
+DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
 
 
 class Realtime(realtime.Realtime):
