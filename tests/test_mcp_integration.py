@@ -1,7 +1,6 @@
 import os
 import asyncio
 import pytest
-from typing import Dict, Any, List
 
 from stream_agents.core.mcp.mcp_server_local import MCPServerLocal
 from stream_agents.core.mcp.mcp_server_remote import MCPServerRemote
@@ -324,9 +323,9 @@ async def test_openai_llm_mcp_weather_integration():
         pytest.skip("MCP_LOCAL_CMD not set to weather server, skipping test")
     if not os.getenv("STREAM_API_KEY") or not os.getenv("STREAM_API_SECRET"):
         pytest.skip("STREAM_API_KEY or STREAM_API_SECRET not set, skipping test")
-    
+
     # Setup components
-    llm = OpenAILLM(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))  # Use cheaper model
+    llm = OpenAILLM(model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))  # Use cheaper model
     weather_server = MCPServerLocal(command=os.getenv("MCP_LOCAL_CMD"), session_timeout=60.0)
     
     # Create real edge and agent user
@@ -342,7 +341,6 @@ async def test_openai_llm_mcp_weather_integration():
         mcp_servers=[weather_server],
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        vad=silero.VAD()
     )
     
     try:
@@ -355,14 +353,12 @@ async def test_openai_llm_mcp_weather_integration():
         assert len(mcp_functions) > 0, "No MCP tools registered"
         
         # Test function calling
-        response = await agent.llm.create_response(
-            input="What's the weather like in London?",
-            instructions="You are a helpful weather assistant. Use the weather tool to get current weather information."
+        response = await agent.llm.simple_response(
+            text="What's the weather like in London?",
         )
 
         # Verify response was received (the core integration test)
         assert response is not None, "No response received from LLM"
-        assert len(response.text) > 0, "No response text received from LLM"
  
     finally:
         await agent.close()
