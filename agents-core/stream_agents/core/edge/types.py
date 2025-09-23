@@ -5,6 +5,7 @@ from typing import Any, Optional, NamedTuple
 import numpy as np
 from numpy._typing import NDArray
 from pyee.asyncio import AsyncIOEventEmitter
+import av
 
 
 
@@ -21,14 +22,15 @@ class Participant:
     user_id: str
 
 
-from enum import IntEnum
+from enum import StrEnum
 
-class TrackType(IntEnum):
-    TRACK_TYPE_UNSPECIFIED     = 0
-    TRACK_TYPE_AUDIO           = 1
-    TRACK_TYPE_VIDEO           = 2
-    TRACK_TYPE_SCREEN_SHARE    = 3
-    TRACK_TYPE_SCREEN_SHARE_AUDIO = 4
+
+class TrackType(StrEnum):
+    TRACK_TYPE_UNSPECIFIED     = "unspecified"
+    TRACK_TYPE_AUDIO           = "audio"
+    TRACK_TYPE_VIDEO           = "video"
+    TRACK_TYPE_SCREEN_SHARE    = "screen_share" # TODO: Verify its correct
+    TRACK_TYPE_SCREEN_SHARE_AUDIO = "screen_share_audio"
 
 TRACK_TYPE_UNSPECIFIED      = TrackType.TRACK_TYPE_UNSPECIFIED
 TRACK_TYPE_AUDIO            = TrackType.TRACK_TYPE_AUDIO
@@ -117,3 +119,80 @@ class PcmData(NamedTuple):
         if self.dts is not None and self.time_base is not None:
             return self.dts * self.time_base
         return None
+
+    @classmethod
+    def from_bytes(
+        cls, 
+        audio_bytes: bytes, 
+        sample_rate: int = 16000, 
+        format: str = "s16"
+    ) -> "PcmData":
+        """
+        Create PcmData from raw audio bytes.
+        
+        Args:
+            audio_bytes: Raw audio data as bytes
+            sample_rate: Sample rate in Hz
+            format: Audio format (e.g., "s16", "f32")
+            
+        Returns:
+            PcmData object
+        """
+        audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+        return cls(samples=audio_array, sample_rate=sample_rate, format=format)
+
+    def resample(self, target_sample_rate: int) -> "PcmData":
+        """
+        Resample PcmData to a different sample rate using AV library.
+        
+        Args:
+            target_sample_rate: Target sample rate in Hz
+            
+        Returns:
+            New PcmData object with resampled audio
+        """
+        if self.sample_rate == target_sample_rate:
+            return self
+        
+        # Ensure samples are 2D for AV library (channels, samples)
+        samples = self.samples
+        if samples.ndim == 1:
+            # Reshape 1D array to 2D (1 channel, samples)
+            samples = samples.reshape(1, -1)
+        
+        # Create AV audio frame from the samples
+        frame = av.AudioFrame.from_ndarray(samples, format='s16', layout='mono')
+        frame.sample_rate = self.sample_rate
+        
+        # Create resampler
+        resampler = av.AudioResampler(
+            format='s16',
+            layout='mono',
+            rate=target_sample_rate
+        )
+        
+        # Resample the frame
+        resampled_frames = resampler.resample(frame)
+        if resampled_frames:
+            resampled_frame = resampled_frames[0]
+            resampled_samples = resampled_frame.to_ndarray()
+            
+            # AV returns (channels, samples), so for mono we want the first (and only) channel
+            if len(resampled_samples.shape) > 1:
+                # Take the first channel (mono)
+                resampled_samples = resampled_samples[0]
+            
+            # Convert to int16
+            resampled_samples = resampled_samples.astype(np.int16)
+            
+            return PcmData(
+                samples=resampled_samples,
+                sample_rate=target_sample_rate,
+                format=self.format,
+                pts=self.pts,
+                dts=self.dts,
+                time_base=self.time_base
+            )
+        else:
+            # If resampling failed, return original data
+            return self

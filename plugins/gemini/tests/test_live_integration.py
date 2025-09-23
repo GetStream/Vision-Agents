@@ -117,7 +117,7 @@ async def test_gemini_live_simple_and_native_and_video():
         raise RuntimeError("Gemini Live did not become ready in time")
 
     # Send one video frame stream in background
-    await sts.start_video_sender(_FakeVideo(), fps=1)
+    await sts._watch_video_track(_FakeVideo(), fps=1)
 
     # Standard simple_response and native paths
     await sts.simple_response(text="Say a short sentence.")
@@ -133,7 +133,7 @@ async def test_gemini_live_simple_and_native_and_video():
             "No response received from Gemini Live"
         )
     finally:
-        await sts.stop_video_sender()
+        await sts._stop_watching_video_track()
         await sts.close()
 
 
