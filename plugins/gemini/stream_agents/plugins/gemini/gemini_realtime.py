@@ -14,6 +14,7 @@ from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict
 from stream_agents.core.edge.types import Participant, PcmData
 from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 from stream_agents.core.llm import realtime
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.processors import BaseProcessor
 from stream_agents.core.utils.utils import frame_to_png_bytes
@@ -205,7 +206,11 @@ class Realtime(realtime.Realtime):
                                     self.logger.info("Gemini thought %s", part.text)
                                 else:
                                     self.logger.info("output: %s", part.text)
-                                    self._emit_text_delta(part.text)
+                                    event = StandardizedTextDeltaEvent(
+                                        plugin_name="gemini",
+                                        delta=part.text
+                                    )
+                                    self.events.emit(event)
                             elif part.inline_data:
                                 data = part.inline_data.data
                                 # Convert bytes to PcmData at 24kHz (Gemini's output rate)
