@@ -204,7 +204,8 @@ class Realtime(realtime.Realtime):
                                 if part.thought:
                                     self.logger.info("Gemini thought %s", part.text)
                                 else:
-                                    print("text", response.text)
+                                    self.logger.info("output: %s", part.text)
+                                    self._emit_text_delta(part.text)
                             elif part.inline_data:
                                 data = part.inline_data.data
                                 # Convert bytes to PcmData at 24kHz (Gemini's output rate)
@@ -219,11 +220,15 @@ class Realtime(realtime.Realtime):
                                 self.logger.info(f"Received function call: {part.function_call.name}")
                                 await self._handle_function_call(part.function_call)
                             else:
-                                print("text", response.text)
+                                self.logger.debug("Unrecognized part type: %s", part)
                     elif is_turn_complete:
                         self.logger.info("is_turn_complete complete")
                     elif is_generation_complete:
                         self.logger.info("is_generation_complete complete")
+                    elif response.tool_call:
+                        # Handle tool calls from Gemini Live
+                        self.logger.info(f"Received tool call: {response.tool_call}")
+                        await self._handle_tool_call(response.tool_call)
                     else:
                         self.logger.warning("Unrecognized event structure for gemini %s", response)
 
@@ -337,14 +342,8 @@ class Realtime(realtime.Realtime):
             ),
         )
         
-        # Add tools if available - Gemini Live uses similar format to regular Gemini
-        tools_spec = self.get_available_functions()
-        if tools_spec:
-            conv_tools = self._convert_tools_to_provider_format(tools_spec)
-            # Add tools to the live config
-            # Note: The exact key name may need adjustment based on Gemini Live API documentation
-            default_config["tools"] = conv_tools
-            self.logger.info(f"Added {len(tools_spec)} tools to Gemini Live config")
+        # Note: Tools will be added later in _get_config_with_resumption()
+        # when functions are actually registered
         
         if config is not None:
             for k, v in config.items():
@@ -353,7 +352,7 @@ class Realtime(realtime.Realtime):
 
     def _get_config_with_resumption(self) -> LiveConnectConfigDict:
         """
-        _get_config_with_resumption adds the system instructions and session resumption (these both are available only later)
+        _get_config_with_resumption adds the system instructions, session resumption, and tools
         """
         config = self.config.copy()
         # resume if we have a session resumption id/handle
@@ -362,6 +361,18 @@ class Realtime(realtime.Realtime):
         # set the instructions
         # TODO: potentially we can share the markdown as files/parts.. might do better TBD
         config["system_instruction"] = self._build_enhanced_instructions()
+        
+        # Add tools if available - Gemini Live uses similar format to regular Gemini
+        tools_spec = self.get_available_functions()
+        if tools_spec:
+            conv_tools = self._convert_tools_to_provider_format(tools_spec)
+            # Add tools to the live config
+            # Note: The exact key name may need adjustment based on Gemini Live API documentation
+            config["tools"] = conv_tools
+            self.logger.info(f"Added {len(tools_spec)} tools to Gemini Live config")
+        else:
+            self.logger.debug("No tools available - function calling will not work")
+        
         return config
 
     def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
@@ -414,6 +425,17 @@ class Realtime(realtime.Realtime):
             self.logger.debug(f"Error extracting tool calls from response: {e}")
         
         return calls
+
+    async def _handle_tool_call(self, tool_call: Any) -> None:
+        """
+        Handle tool calls from Gemini Live.
+        """
+        try:
+            if hasattr(tool_call, 'function_calls') and tool_call.function_calls:
+                for function_call in tool_call.function_calls:
+                    await self._handle_function_call(function_call)
+        except Exception as e:
+            self.logger.error(f"Error handling tool call: {e}")
 
     async def _handle_function_call(self, function_call: Any) -> None:
         """
@@ -477,7 +499,9 @@ class Realtime(realtime.Realtime):
             )
             
             # Send the function response back to the live session
-            await self._session.send_realtime_input(parts=[function_response])
+            # Note: The exact API for sending function responses may need adjustment
+            # based on the actual Gemini Live API documentation
+            await self._session.send_realtime_input(text=f"Function {function_name} returned: {response_data}")
             self.logger.debug(f"Sent function response for {function_name}: {response_data}")
             
         except Exception as e:

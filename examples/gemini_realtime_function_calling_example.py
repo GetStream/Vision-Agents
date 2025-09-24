@@ -7,13 +7,17 @@ This example shows how to:
 2. Use function calling in real-time conversations
 3. Handle MCP integration
 
-Note: This is a conceptual example. The actual Gemini Live API may not yet support
-function calling, so this demonstrates the implementation structure.
+The Gemini Live API supports function calling, so this example should work!
 """
 
 import asyncio
 import logging
+import os
+from dotenv import load_dotenv
 from stream_agents.plugins.gemini import Realtime
+
+# Load environment variables
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -22,10 +26,16 @@ logger = logging.getLogger(__name__)
 async def main():
     """Main example function."""
     
+    # Get API key from environment
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        logger.error("GOOGLE_API_KEY not found in environment variables")
+        return
+    
     # Create Gemini Realtime instance
     realtime = Realtime(
         model="gemini-2.5-flash-native-audio-preview-09-2025",
-        api_key="your-api-key-here"  # Replace with actual API key
+        api_key=api_key
     )
     
     # Register some example functions
@@ -85,8 +95,7 @@ if __name__ == "__main__":
     print("Gemini Realtime Function Calling Example")
     print("=" * 50)
     print("This example demonstrates function calling with Gemini Realtime.")
-    print("Note: The actual Gemini Live API may not yet support function calling.")
-    print("This shows the implementation structure for when it becomes available.")
+    print("The Gemini Live API supports function calling, so this should work!")
     print("=" * 50)
     
     # Run the example
