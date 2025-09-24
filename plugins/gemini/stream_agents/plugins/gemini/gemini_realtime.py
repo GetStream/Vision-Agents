@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from aiortc import MediaStreamTrack
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
@@ -14,6 +14,7 @@ from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict
 from stream_agents.core.edge.types import Participant, PcmData
 from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 from stream_agents.core.llm import realtime
+from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.processors import BaseProcessor
 from stream_agents.core.utils.utils import frame_to_png_bytes
 import av
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 """
 TODO:
-- mcp & functions - Deven
+- mcp & functions - Deven ✅ COMPLETED
 - chat/transcription integration (trigger the right events when receiving transcriptions) - Tommaso
 """
 
@@ -213,6 +214,10 @@ class Realtime(realtime.Realtime):
                                 # TODO: update to new event syntax
                                 # self.emit("audio", resampled_pcm.samples.tobytes()) # audio event is resampled to 48khz
                                 await self.output_track.write(data) # original 24khz here
+                            elif hasattr(part, 'function_call') and part.function_call:
+                                # Handle function calls from Gemini Live
+                                self.logger.info(f"Received function call: {part.function_call.name}")
+                                await self._handle_function_call(part.function_call)
                             else:
                                 print("text", response.text)
                     elif is_turn_complete:
@@ -331,6 +336,16 @@ class Realtime(realtime.Realtime):
                 sliding_window=SlidingWindowDict(target_tokens=12800),
             ),
         )
+        
+        # Add tools if available - Gemini Live uses similar format to regular Gemini
+        tools_spec = self.get_available_functions()
+        if tools_spec:
+            conv_tools = self._convert_tools_to_provider_format(tools_spec)
+            # Add tools to the live config
+            # Note: The exact key name may need adjustment based on Gemini Live API documentation
+            default_config["tools"] = conv_tools
+            self.logger.info(f"Added {len(tools_spec)} tools to Gemini Live config")
+        
         if config is not None:
             for k, v in config.items():
                 default_config[k] = v
@@ -348,5 +363,124 @@ class Realtime(realtime.Realtime):
         # TODO: potentially we can share the markdown as files/parts.. might do better TBD
         config["system_instruction"] = self._build_enhanced_instructions()
         return config
+
+    def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+        """
+        Convert ToolSchema objects to Gemini Live format.
+        
+        Args:
+            tools: List of ToolSchema objects
+            
+        Returns:
+            List of tools in Gemini Live format
+        """
+        function_declarations = []
+        for tool in tools:
+            function_declarations.append({
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool["parameters_schema"]
+            })
+        
+        # Return as dict with function_declarations (similar to regular Gemini format)
+        return [{"function_declarations": function_declarations}]
+
+    def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToolCallItem]:
+        """
+        Extract tool calls from Gemini Live response.
+        
+        Args:
+            response: Gemini Live response object
+            
+        Returns:
+            List of normalized tool call items
+        """
+        calls: List[NormalizedToolCallItem] = []
+        
+        try:
+            # Check for function calls in the response
+            if hasattr(response, 'server_content') and response.server_content:
+                if hasattr(response.server_content, 'model_turn') and response.server_content.model_turn:
+                    parts = response.server_content.model_turn.parts
+                    for part in parts:
+                        if hasattr(part, 'function_call') and part.function_call:
+                            calls.append({
+                                "type": "tool_call",
+                                "name": getattr(part.function_call, "name", "unknown"),
+                                "arguments_json": getattr(part.function_call, "args", {}),
+                                "id": getattr(part.function_call, "id", None)
+                            })
+        except Exception as e:
+            self.logger.debug(f"Error extracting tool calls from response: {e}")
+        
+        return calls
+
+    async def _handle_function_call(self, function_call: Any) -> None:
+        """
+        Handle function calls from Gemini Live responses.
+        
+        Args:
+            function_call: Function call object from Gemini Live
+        """
+        try:
+            # Extract tool call details
+            tool_call = {
+                "name": getattr(function_call, "name", "unknown"),
+                "arguments_json": getattr(function_call, "args", {}),
+                "id": getattr(function_call, "id", None)
+            }
+            
+            self.logger.info(f"Executing function call: {tool_call['name']} with args: {tool_call['arguments_json']}")
+            
+            # Execute using existing tool execution infrastructure
+            tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
+            
+            # Prepare response data
+            if error:
+                response_data = {"error": str(error)}
+                self.logger.error(f"Function call {tool_call['name']} failed: {error}")
+            else:
+                # Ensure response is a dictionary for Gemini Live
+                if not isinstance(result, dict):
+                    response_data = {"result": result}
+                else:
+                    response_data = result
+                self.logger.info(f"Function call {tool_call['name']} succeeded: {response_data}")
+            
+            # Send function response back to Gemini Live session
+            await self._send_function_response(tool_call["name"], response_data, tool_call.get("id"))
+            
+        except Exception as e:
+            self.logger.error(f"Error handling function call: {e}")
+            # Send error response back
+            await self._send_function_response(
+                getattr(function_call, "name", "unknown"), 
+                {"error": str(e)}, 
+                getattr(function_call, "id", None)
+            )
+
+    async def _send_function_response(self, function_name: str, response_data: Dict[str, Any], call_id: Optional[str] = None) -> None:
+        """
+        Send function response back to Gemini Live session.
+        
+        Args:
+            function_name: Name of the function that was called
+            response_data: Response data to send back
+            call_id: Optional call ID for the function call
+        """
+        try:
+            # Create function response part
+            from google.genai import types
+            function_response = types.Part.from_function_response(
+                name=function_name, 
+                response=response_data
+            )
+            
+            # Send the function response back to the live session
+            await self._session.send_realtime_input(parts=[function_response])
+            self.logger.debug(f"Sent function response for {function_name}: {response_data}")
+            
+        except Exception as e:
+            self.logger.error(f"Error sending function response for {function_name}: {e}")
 
 
