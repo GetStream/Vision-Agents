@@ -79,38 +79,16 @@ async def main():
     logger.info(f"GitHub server: {github_server}")
     
     try:
-        # Connect to GitHub MCP server with timeout
-        logger.info("Connecting to GitHub MCP server...")
-        try:
-            await asyncio.wait_for(agent._connect_mcp_servers(), timeout=30.0)
-            logger.info("✅ Successfully connected to GitHub MCP server")
-        except asyncio.TimeoutError:
-            logger.error("❌ Connection to GitHub MCP server timed out after 30 seconds")
-            logger.error("This might be due to network issues or server unavailability")
-            return
-        
-        # Check if MCP tools were registered with the function registry
-        logger.info("Checking function registry for MCP tools...")
-        available_functions = agent.llm.get_available_functions()
-        mcp_functions = [f for f in available_functions if f['name'].startswith('mcp_')]
-        
-        logger.info(f"✅ Found {len(mcp_functions)} MCP tools registered in function registry")
-        logger.info("MCP tools are now available to Gemini Realtime for function calling!")
-        
-        # Log some example MCP tools for reference
-        if mcp_functions:
-            logger.info("Available GitHub MCP tools:")
-            for func in mcp_functions[:5]:  # Show first 5 tools
-                logger.info(f"  - {func['name']}: {func.get('description', 'No description')}")
-            if len(mcp_functions) > 5:
-                logger.info(f"  ... and {len(mcp_functions) - 5} more tools")
-        
         # Create the agent user
         await agent.create_user()
         
         # Set up event handler for when participants join
         @agent.subscribe
         async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
+            # Check MCP tools after connection
+            available_functions = agent.llm.get_available_functions()
+            mcp_functions = [f for f in available_functions if f['name'].startswith('mcp_')]
+            logger.info(f"✅ Found {len(mcp_functions)} MCP tools available for function calling")
             await agent.say(f"Hello {event.participant.user.name}! I'm your GitHub AI assistant powered by Gemini Live. I have access to {len(mcp_functions)} GitHub tools and can help you with repositories, issues, pull requests, and more through voice commands!")
         
         # Create a call

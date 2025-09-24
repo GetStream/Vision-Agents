@@ -71,7 +71,7 @@ class MCPToolConverter:
         async def mcp_tool_wrapper(**kwargs) -> Any:
             """Wrapper function for MCP tool calls."""
             try:
-                result = await agent_ref.call_mcp_tool(server_index, tool_name, kwargs)
+                result = await agent_ref.call_tool(server_index, tool_name, kwargs)
                 # Extract the actual result from MCP response
                 if hasattr(result, 'content') and result.content:
                     # MCP tools return CallToolResult with content
