@@ -5,7 +5,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from stream_agents.core.processors import YOLOPoseProcessor
-from stream_agents.plugins import gemini, getstream
+from stream_agents.plugins import gemini, getstream, openai
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
 from getstream import Stream
@@ -24,7 +24,8 @@ async def start_agent() -> None:
         edge=getstream.Edge(),
         agent_user=agent_user,
         instructions="Read @golf_coach.md",
-        llm=gemini.Realtime(),
+        #llm=gemini.Realtime(),
+        llm=openai.Realtime(), # TODO: video FPS and video resolution?
         processors=[YOLOPoseProcessor()],
     )
 

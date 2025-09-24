@@ -173,9 +173,10 @@ class StreamEdge(EdgeTransport):
             "token": token,
             "skip_lobby": "true",
             "video_encoder": "vp8",
-            "bitrate": 2000000,
+            "bitrate": 12000000,
             "w": 1920,
             "h": 1080,
+            # TODO: FPS..., aim at 60fps
         }
 
         url = f"{base_url}{call.id}?{urlencode(params)}"

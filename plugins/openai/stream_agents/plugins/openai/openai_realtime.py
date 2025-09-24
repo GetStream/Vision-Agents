@@ -10,8 +10,8 @@ from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
 from openai.types.realtime import *
 
-from ...core.edge.types import Participant
-from ...core.processors import BaseProcessor
+from stream_agents.core.edge.types import Participant
+from stream_agents.core.processors import Processor
 
 load_dotenv()
 
@@ -74,7 +74,7 @@ class Realtime(realtime.Realtime):
             capabilities=["text", "audio"],
         )
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
+    async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
       participant: Participant = None):
         """Send a simple text input to the OpenAI Realtime session.
 

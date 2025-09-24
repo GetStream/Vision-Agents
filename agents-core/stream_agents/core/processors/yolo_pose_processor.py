@@ -37,11 +37,11 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
     def __init__(self):
         super().__init__()
         self.frame_queue: asyncio.Queue[Image.Image] = asyncio.Queue(maxsize=10)
-        self.last_frame = Image.new("RGB", (640, 480), color="black")
-        self._stopped = False
         # Set video quality parameters
-        self.width = 640
-        self.height = 480
+        self.width = 1920
+        self.height = 1080
+        self.last_frame = Image.new("RGB", (self.width, self.height), color="black")
+        self._stopped = False
         logger.info(
             f"🎥 YOLOPoseVideoTrack initialized with dimensions: {self.width}x{self.height}"
         )
@@ -173,13 +173,7 @@ class YOLOPoseProcessor(
         logger.info(f"🤖 YOLO Pose Processor initialized with model: {model_path}")
 
     def _load_model(self):
-        try:
-            from ultralytics import YOLO
-        except ImportError:
-            raise ImportError(
-                "ultralytics package is required for YOLOPoseProcessor. "
-                "Install it with: pip install ultralytics"
-            )
+        from ultralytics import YOLO
 
         """Load the YOLO pose model."""
         if not Path(self.model_path).exists():
