@@ -19,36 +19,16 @@ from .base_processor import (
     ImageCapture,
 )
 
-# Optional processors with external dependencies
-try:
-    from .yolo_pose_processor import YOLOPoseProcessor
-
-    __all__ = [
-        "Processor",
-        "AudioVideoProcessor",
-        "AudioProcessorMixin",
-        "VideoProcessorMixin",
-        "ImageProcessorMixin",
-        "VideoPublisherMixin",
-        "AudioPublisherMixin",
-        "ProcessorType",
-        "filter_processors",
-        "AudioLogger",
-        "ImageCapture",
-        "YOLOPoseProcessor",
-    ]
-except ImportError:
-    # YOLOPoseProcessor requires ultralytics
-    __all__ = [
-        "Processor",
-        "AudioVideoProcessor",
-        "AudioProcessorMixin",
-        "VideoProcessorMixin",
-        "ImageProcessorMixin",
-        "VideoPublisherMixin",
-        "AudioPublisherMixin",
-        "ProcessorType",
-        "filter_processors",
-        "AudioLogger",
-        "ImageCapture",
-    ]
+__all__ = [
+    "Processor",
+    "AudioVideoProcessor",
+    "AudioProcessorMixin",
+    "VideoProcessorMixin",
+    "ImageProcessorMixin",
+    "VideoPublisherMixin",
+    "AudioPublisherMixin",
+    "ProcessorType",
+    "filter_processors",
+    "AudioLogger",
+    "ImageCapture",
+]

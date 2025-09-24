@@ -5,7 +5,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from getstream import Stream
 from getstream.models import UserRequest
-from stream_agents.plugins import deepgram, elevenlabs, openai
+from stream_agents.plugins import deepgram, elevenlabs, openai, ultralytics
 from stream_agents.core import processors, edge, agents, cli
 
 # Main feats:
@@ -34,7 +34,7 @@ async def main() -> None:
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         # processors can fetch extra data, check images/audio data or transform video
-        processors=[processors.YOLOPoseProcessor()],
+        processors=[ultralytics.YOLOPoseProcessor()],
     )
 
     try:

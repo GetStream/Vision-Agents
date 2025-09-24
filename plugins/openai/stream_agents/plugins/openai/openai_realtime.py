@@ -153,7 +153,6 @@ class Realtime(realtime.Realtime):
             Registered as callback with RTC manager.
         """
         # Forward audio as event and to output track if available
-        logger.info(f"🎵 Forwarding audio output: {len(audio_bytes)}")
 
         await self.output_track.write(audio_bytes)
 
