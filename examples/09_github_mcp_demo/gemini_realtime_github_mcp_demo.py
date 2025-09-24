@@ -70,9 +70,6 @@ async def main():
         instructions="You are a helpful AI assistant with access to GitHub via MCP server. You can help with GitHub operations like creating issues, managing pull requests, searching repositories, and more. Keep responses conversational and helpful. When you need to perform GitHub operations, use the available MCP tools.",
         processors=[],
         mcp_servers=[github_server],
-        tts=elevenlabs.TTS(),
-        stt=deepgram.STT(),
-        vad=silero.VAD()
     )
     
     logger.info("Agent created with Gemini Realtime and GitHub MCP server")
@@ -89,7 +86,7 @@ async def main():
             available_functions = agent.llm.get_available_functions()
             mcp_functions = [f for f in available_functions if f['name'].startswith('mcp_')]
             logger.info(f"✅ Found {len(mcp_functions)} MCP tools available for function calling")
-            await agent.say(f"Hello {event.participant.user.name}! I'm your GitHub AI assistant powered by Gemini Live. I have access to {len(mcp_functions)} GitHub tools and can help you with repositories, issues, pull requests, and more through voice commands!")
+            await agent.simple_response(f"Hello {event.participant.user.name}! I'm your GitHub AI assistant powered by Gemini Live. I have access to {len(mcp_functions)} GitHub tools and can help you with repositories, issues, pull requests, and more through voice commands!")
         
         # Create a call
         call = agent.edge.client.video.call("default", str(uuid4()))
