@@ -501,7 +501,7 @@ class Realtime(realtime.Realtime):
             # Send the function response back to the live session
             # Note: The exact API for sending function responses may need adjustment
             # based on the actual Gemini Live API documentation
-            await self._session.send_realtime_input(text=f"Function {function_name} returned: {response_data}")
+            await self._session.send_realtime_input(parts=[function_response])
             self.logger.debug(f"Sent function response for {function_name}: {response_data}")
             
         except Exception as e:

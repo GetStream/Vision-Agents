@@ -3,7 +3,6 @@ Test function calling functionality in Gemini Realtime class.
 """
 
 import pytest
-import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 from stream_agents.plugins.gemini.gemini_realtime import Realtime
 
