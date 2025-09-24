@@ -59,8 +59,8 @@ class Realtime(realtime.Realtime):
     config: LiveConnectConfigDict
     connected : bool = False
 
-    def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None, api_key: Optional[str] = None ) -> None:
-        super().__init__()
+    def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None, api_key: Optional[str] = None , **kwargs) -> None:
+        super().__init__(**kwargs)
         self.model = model
         if http_options is None:
             http_options = HttpOptions(api_version="v1alpha")
@@ -265,7 +265,7 @@ class Realtime(realtime.Realtime):
             self._session = None
 
 
-    async def _watch_video_track(self, input_track: MediaStreamTrack, fps: int = 1) -> None:
+    async def _watch_video_track(self, input_track: MediaStreamTrack, **kwargs) -> None:
         """
         Start sending video frames to Gemini using VideoForwarder.
         We follow the on_track from Stream. If video is turned on or off this gets forwarded.
@@ -278,7 +278,7 @@ class Realtime(realtime.Realtime):
         self._video_forwarder = VideoForwarder(
             input_track,  # type: ignore[arg-type]
             max_buffer=5,
-            fps=float(fps)
+            fps=float(self.fps)
         )
         
         # Start the forwarder

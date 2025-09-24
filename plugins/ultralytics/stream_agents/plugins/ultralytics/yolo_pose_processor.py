@@ -32,12 +32,12 @@ logger = logging.getLogger(__name__)
 class YOLOPoseVideoTrack(VideoStreamTrack):
     """Custom video track for YOLO pose detection output."""
 
-    def __init__(self):
+    def __init__(self, width: int = 640, height: int = 480):
         super().__init__()
         self.frame_queue: asyncio.Queue[Image.Image] = asyncio.Queue(maxsize=10)
         # Set video quality parameters
-        self.width = 640
-        self.height = 480
+        self.width = width
+        self.height = height
         self.last_frame = Image.new("RGB", (self.width, self.height), color="black")
         self._stopped = False
         logger.info(

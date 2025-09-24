@@ -63,7 +63,7 @@ class TestRealtime2Integration(BaseTest):
         await realtime2.simple_response("Describe what you see in this video please")
         await asyncio.sleep(10.0)
         # Start video sender with low FPS to avoid overwhelming the connection
-        await realtime2._watch_video_track(bunny_video_track, fps=5)
+        await realtime2._watch_video_track(bunny_video_track)
         
         # Let it run for a few seconds
         await asyncio.sleep(10.0)

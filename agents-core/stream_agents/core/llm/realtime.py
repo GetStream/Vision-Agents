@@ -40,15 +40,18 @@ class Realtime(LLM, abc.ABC):
         - Transcript outgoing audio
 
     """
+    fps : int = 1
 
     def __init__(
         self,
+        fps: int = 1, # the number of video frames per second to send (for implementations that support setting fps)
     ):
         super().__init__()
         self._is_connected = False
 
         self.provider_name = "realtime_base"
         self.session_id = str(uuid.uuid4())
+        self.fps = fps
         # The most common style output track (webrtc)
         # TODO: do we like the output track here, or do we want to do an event, and have the agent manage the output track
         self.output_track: AudioStreamTrack = AudioStreamTrack(
@@ -67,7 +70,7 @@ class Realtime(LLM, abc.ABC):
     async def simple_audio_response(self, pcm: PcmData): ...
 
 
-    async def _watch_video_track(self, track: Any, fps: int = 1) -> None:
+    async def _watch_video_track(self, track: Any) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 

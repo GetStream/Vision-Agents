@@ -23,8 +23,8 @@ async def start_agent() -> None:
         edge=getstream.Edge(),
         agent_user=agent_user,
         instructions="Read @golf_coach.md",
-        #llm=gemini.Realtime(),
-        llm=openai.Realtime(), # TODO: video FPS and video resolution?
+        llm=gemini.Realtime(fps=30),
+        #llm=gemini.Realtime(fps=30), # TODO: video FPS and video resolution?
         processors=[ultralytics.YOLOPoseProcessor()],
     )
 
