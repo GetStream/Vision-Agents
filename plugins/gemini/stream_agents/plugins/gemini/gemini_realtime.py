@@ -319,13 +319,14 @@ class Realtime(realtime.Realtime):
             output_audio_transcription=AudioTranscriptionConfigDict(),
             speech_config=SpeechConfigDict(
                 voice_config=VoiceConfigDict(
-                    prebuilt_voice_config=PrebuiltVoiceConfigDict(voice_name="Puck")
+                    prebuilt_voice_config=PrebuiltVoiceConfigDict(voice_name="Leda")
                 ),
                 language_code="en-US",
             ),
             realtime_input_config=RealtimeInputConfigDict(
                 turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
             ),
+            enable_affective_dialog=True,
             context_window_compression=ContextWindowCompressionConfigDict(
                 trigger_tokens=25600,
                 sliding_window=SlidingWindowDict(target_tokens=12800),

@@ -754,6 +754,7 @@ class Agent:
                 self._audio_track = self.llm.output_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
+                # TODO: what if we want to transform audio...
                 self._audio_track = self.edge.create_audio_track()
                 if self.tts:
                     self.tts.set_output_track(self._audio_track)
@@ -762,6 +763,7 @@ class Agent:
         if self.publish_video:
             # Get the first video publisher to create the track
             video_publisher = self.video_publishers[0]
+            # TODO: some lLms like moondream publish video
             self._video_track = video_publisher.create_video_track()
             self.logger.info("🎥 Video track initialized from video publisher")
 
