@@ -27,7 +27,7 @@ from .conversation import StreamHandle, Message, Conversation
 from ..events.manager import EventManager
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
-from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
+from ..processors.base_processor import filter_processors, ProcessorType, Processor
 from . import events
 from ..turn_detection import TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
@@ -91,7 +91,7 @@ class Agent:
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
-        processors: Optional[List[BaseProcessor]] = None,
+        processors: Optional[List[Processor]] = None,
         # MCP servers for external tool and resource access
         mcp_servers: Optional[List[MCPBaseServer]] = None,
     ):

@@ -12,7 +12,7 @@ from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.llm.events import StandardizedTextDeltaEvent, StandardizedResponseCompletedEvent, AfterLLMResponseEvent
 from . import events
 
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 
 if TYPE_CHECKING:
     from stream_agents.core.agents.conversation import Message
@@ -64,7 +64,7 @@ class OpenAILLM(LLM):
         else:
             self.client = AsyncOpenAI()
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
+    async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
                               participant: Participant = None):
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.

@@ -6,7 +6,7 @@ in Stream Agents applications.
 """
 
 from .base_processor import (
-    BaseProcessor,
+    Processor,
     AudioVideoProcessor,
     AudioProcessorMixin,
     VideoProcessorMixin,
@@ -24,7 +24,7 @@ try:
     from .yolo_pose_processor import YOLOPoseProcessor
 
     __all__ = [
-        "BaseProcessor",
+        "Processor",
         "AudioVideoProcessor",
         "AudioProcessorMixin",
         "VideoProcessorMixin",
@@ -40,7 +40,7 @@ try:
 except ImportError:
     # YOLOPoseProcessor requires ultralytics
     __all__ = [
-        "BaseProcessor",
+        "Processor",
         "AudioVideoProcessor",
         "AudioProcessorMixin",
         "VideoProcessorMixin",

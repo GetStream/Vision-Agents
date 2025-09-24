@@ -9,7 +9,7 @@ from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from . import events
 
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 
 if TYPE_CHECKING:
     from stream_agents.core.agents.conversation import Message
@@ -53,7 +53,7 @@ class GeminiLLM(LLM):
         else:
             self.client = genai.Client(api_key=api_key)
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None, participant: Optional[Any] = None) -> LLMResponseEvent[Any]:
+    async def simple_response(self, text: str, processors: Optional[List[Processor]] = None, participant: Optional[Any] = None) -> LLMResponseEvent[Any]:
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
 

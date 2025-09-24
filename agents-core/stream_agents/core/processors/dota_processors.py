@@ -1,7 +1,7 @@
 import logging
 import requests
 from typing import Optional, List, Dict, Any
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 
 try:
     import stratz
@@ -13,7 +13,7 @@ except ImportError:
     logging.warning("stratz package not available. Install with: pip install stratz")
 
 
-class DotaGameProcessor(BaseProcessor):
+class DotaGameProcessor(Processor):
     """
     Dota 2 game processor that integrates with Stratz API.
 

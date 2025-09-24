@@ -14,7 +14,7 @@ from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict
 from stream_agents.core.edge.types import Participant, PcmData
 from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 from stream_agents.core.llm import realtime
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 from stream_agents.core.utils.utils import frame_to_png_bytes
 import av
 
@@ -83,7 +83,7 @@ class Realtime(realtime.Realtime):
         self._session: Optional[AsyncSession] = None
         self._receive_task = None
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
+    async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
                               participant: Participant = None):
         """
         Simple response standardizes how to send a text instruction to this LLM.

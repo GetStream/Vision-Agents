@@ -5,7 +5,7 @@ from xai_sdk.proto import chat_pb2
 
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 from . import events
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ class XAILLM(LLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[BaseProcessor]] = None,
+        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ):
         """
