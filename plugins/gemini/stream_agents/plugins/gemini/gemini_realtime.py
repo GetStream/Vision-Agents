@@ -493,15 +493,16 @@ class Realtime(realtime.Realtime):
         try:
             # Create function response part
             from google.genai import types
-            function_response = types.Part.from_function_response(
-                name=function_name, 
+            
+            function_response = types.FunctionResponse(
+                id=call_id,  # Use the call_id if provided
+                name=function_name,
                 response=response_data
             )
             
-            # Send the function response back to the live session
-            # Note: The exact API for sending function responses may need adjustment
-            # based on the actual Gemini Live API documentation
-            await self._session.send_realtime_input(parts=[function_response])
+            # Send the function response using the correct method
+            # The Gemini Live API uses send_tool_response for function responses
+            await self._session.send_tool_response(function_responses=[function_response])
             self.logger.debug(f"Sent function response for {function_name}: {response_data}")
             
         except Exception as e:
