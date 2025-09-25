@@ -10,8 +10,8 @@ from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
 from openai.types.realtime import *
 
-from ...core.edge.types import Participant
-from ...core.processors import BaseProcessor
+from stream_agents.core.edge.types import Participant
+from stream_agents.core.processors import BaseProcessor
 
 load_dotenv()
 
@@ -64,6 +64,13 @@ class Realtime(realtime.Realtime):
         Sets up callbacks and connects to OpenAI's servers. Emits connected event
         with session configuration when ready.
         """
+        instructions: Optional[str] = None
+        if hasattr(self, "parsed_instructions") and self.parsed_instructions:
+            instructions = self._build_enhanced_instructions()
+        elif getattr(self, "instructions", None):
+            instructions = self.instructions
+
+        self.rtc.instructions = instructions
         # Wire callbacks so we can emit audio/events upstream
         self.rtc.set_event_callback(self._handle_openai_event)
         self.rtc.set_audio_callback(self._handle_audio_output)
@@ -152,9 +159,6 @@ class Realtime(realtime.Realtime):
         Note:
             Registered as callback with RTC manager.
         """
-        # Forward audio as event and to output track if available
-        logger.info(f"🎵 Forwarding audio output: {len(audio_bytes)}")
-
         await self.output_track.write(audio_bytes)
 
     async def _watch_video_track(self, track, fps: int = 1) -> None:

@@ -13,22 +13,12 @@ from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamT
 from fractions import Fraction
 import numpy as np
 from av import AudioFrame, VideoFrame
+import av
 from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 
-# Import timing utilities
-try:
-    from stream_agents.core.utils.timing import timing_decorator, frame_timing_decorator
-except ImportError:
-    # Fallback if timing module not available
-    def timing_decorator(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-    
-    def frame_timing_decorator(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
+from stream_agents.core.utils.timing import frame_timing_decorator
+from collections import deque
+
 
 load_dotenv()
 
@@ -40,12 +30,7 @@ OPENAI_SESSIONS_URL = f"{OPENAI_REALTIME_BASE}/sessions"
 
 
 class RealtimeAudioTrack(AudioStreamTrack):
-    """Minimal audio track without a queue.
-
-    - Generates 20 ms mono PCM16 silence by default
-    - Accepts optional push-based PCM via set_input(bytes, sample_rate)
-    - Drops old input if new input arrives (no buffering)
-    """
+    """Buffered audio track fed with push-based PCM."""
 
     kind = "audio"
 
@@ -53,53 +38,106 @@ class RealtimeAudioTrack(AudioStreamTrack):
         super().__init__()
         self._sample_rate = int(sample_rate)
         self._ts = 0
-        self._latest_chunk: Optional[bytes] = None
         self._silence_cache: dict[int, np.ndarray] = {}
+        self._sample_buffer = bytearray()
+        self._frame_queue: deque[bytes] = deque()
+        self._max_buffer_seconds = 2.0
+        self._dropped_bytes = 0
+        self._last_enqueue_ts: float | None = None
+        self._max_frame_drift = 0.06  # seconds of tolerance before we force a frame
+        self._last_dequeue_ts: float | None = None
 
-    def set_input (self, pcm_data: bytes, sample_rate: Optional[int] = None) -> None:
+    @property
+    def sample_rate(self) -> int:
+        return self._sample_rate
+
+    def set_input(self, pcm_data: bytes) -> None:
         if not pcm_data:
             return
-        if sample_rate is not None:
-            self._sample_rate = int(sample_rate)
-        self._latest_chunk = bytes(pcm_data)
+
+        self._sample_buffer.extend(pcm_data)
+        self._enqueue_full_frames()
+
+        max_buffer_bytes = int(self._sample_rate * 2 * self._max_buffer_seconds)
+        buffered = len(self._sample_buffer) + len(self._frame_queue) * int(0.02 * self._sample_rate) * 2
+        if buffered > max_buffer_bytes:
+            overflow = buffered - max_buffer_bytes
+            trimmed = 0
+            # First drop oldest queued frames if any
+            while self._frame_queue and trimmed < overflow:
+                chunk = self._frame_queue.popleft()
+                trimmed += len(chunk)
+            # Then trim sample buffer if still overflow
+            if trimmed < overflow and self._sample_buffer:
+                trim_bytes = min(len(self._sample_buffer), overflow - trimmed)
+                del self._sample_buffer[:trim_bytes]
+                trimmed += trim_bytes
+
+            logger.warning("🎤 RealtimeAudioTrack buffer overflow; dropped %d bytes", trimmed)
 
     async def recv(self):
-        # Pace roughly at 20 ms per frame
-        await asyncio.sleep(0.02)
+        frame_samples = max(int(0.02 * self._sample_rate), 1)
 
-        sr = int(self._sample_rate) if self._sample_rate else 48000
-        samples_per_frame = int(0.02 * sr)
+        if not self._frame_queue:
+            # Give upstream a brief chance to deliver the missing samples before padding
+            if self._sample_buffer:
+                missing_samples = frame_samples - len(self._sample_buffer) // 2
+                if missing_samples > 0:
+                    wait_time = missing_samples / max(self._sample_rate, 1)
+                    if wait_time > 0:
+                        await asyncio.sleep(min(wait_time, self._max_frame_drift))
+                    self._enqueue_full_frames(force=True)
 
-        chunk = self._latest_chunk
-        if chunk:
-            # Consume and clear the latest pushed chunk
-            self._latest_chunk = None
-            arr = np.frombuffer(chunk, dtype=np.int16)
-            if arr.ndim == 1:
-                samples = arr.reshape(1, -1)
-            else:
-                samples = arr[:1, :]
-            # Pad or truncate to exactly one 20 ms frame
-            needed = samples_per_frame
-            have = samples.shape[1]
-            if have < needed:
-                pad = np.zeros((1, needed - have), dtype=np.int16)
-                samples = np.concatenate([samples, pad], axis=1)
-            elif have > needed:
-                samples = samples[:, :needed]
+        if self._frame_queue:
+            chunk = self._frame_queue.popleft()
+            samples_array = np.frombuffer(chunk, dtype=np.int16)
         else:
-            cached = self._silence_cache.get(sr)
-            if cached is None:
-                cached = np.zeros((1, samples_per_frame), dtype=np.int16)
-                self._silence_cache[sr] = cached
-            samples = cached
+            cached = self._silence_cache.get(self._sample_rate)
+            if cached is None or cached.shape[0] != frame_samples:
+                cached = np.zeros(frame_samples, dtype=np.int16)
+                self._silence_cache[self._sample_rate] = cached
+            samples_array = cached
+            logger.debug("🎤 Audio jitter: padding with silence (queue=%d, buffer=%d bytes)", len(self._frame_queue), len(self._sample_buffer))
 
-        frame = AudioFrame.from_ndarray(samples, format="s16", layout="mono")
-        frame.sample_rate = sr
+        channel_samples = samples_array.reshape(1, -1)
+
+        frame = AudioFrame.from_ndarray(channel_samples, format="s16", layout="mono")
+        frame_sample_count = channel_samples.shape[1]
+        frame.sample_rate = self._sample_rate
         frame.pts = self._ts
-        frame.time_base = Fraction(1, sr)
-        self._ts += samples.shape[1]
+        frame.time_base = Fraction(1, frame.sample_rate)
+        self._ts += frame_sample_count
+
+        await asyncio.sleep(max(frame_sample_count / frame.sample_rate, 0.001))
+
         return frame
+
+    def _enqueue_full_frames(self, *, force: bool = False) -> None:
+        frame_samples = max(int(0.02 * self._sample_rate), 1)
+        frame_bytes = frame_samples * 2
+
+        now = time.monotonic()
+        if self._last_enqueue_ts is None:
+            self._last_enqueue_ts = now
+
+        frames_enqueued = 0
+        while len(self._sample_buffer) >= frame_bytes:
+            chunk = bytes(self._sample_buffer[:frame_bytes])
+            del self._sample_buffer[:frame_bytes]
+            self._frame_queue.append(chunk)
+            self._last_enqueue_ts = now
+            frames_enqueued += 1
+
+        if frames_enqueued > 1:
+            logger.debug("🎤 Audio jitter: queued %d frames (buffer=%d bytes)", frames_enqueued, len(self._sample_buffer))
+
+        if force and self._sample_buffer:
+            # Pad whatever is left to a full frame so playback keeps moving
+            padding = frame_bytes - len(self._sample_buffer)
+            chunk = bytes(self._sample_buffer) + bytes(padding)
+            self._sample_buffer.clear()
+            self._frame_queue.append(chunk)
+            self._last_enqueue_ts = now
 
 
 class StreamVideoForwardingTrack(VideoStreamTrack):
@@ -263,6 +301,8 @@ class RTCManager:
         self._video_track: Optional[VideoStreamTrack] = None
         self._video_sender_task: Optional[asyncio.Task] = None
         self._forwarding_track: Optional[StreamVideoForwardingTrack] = None
+        self._remote_audio_task: Optional[asyncio.Task] = None
+        self.instructions: Optional[str] = None
 
     async def connect(self) -> None:
         """Establish WebRTC connection to OpenAI's Realtime API.
@@ -303,6 +343,8 @@ class RTCManager:
             "Content-Type": "application/json",
         }
         payload = {"model": self.model, "voice": self.voice}
+        if self.instructions:
+            payload["instructions"] = self.instructions
 
         async with AsyncClient() as client:
             for attempt in range(2):
@@ -390,18 +432,28 @@ class RTCManager:
         if not self._mic_track:
             return
         try:
-            sr = pcm_data.sample_rate or 48000
             arr = pcm_data.samples
             if arr.size == 0:
                 return
             if arr.ndim == 2 and arr.shape[0] > 1:
                 arr = arr.mean(axis=0)
+
+            target_sr = self._mic_track.sample_rate
+            sr = pcm_data.sample_rate or target_sr
+            if sr != target_sr:
+                frame = av.AudioFrame.from_ndarray(arr.reshape(1, -1), format="s16", layout="mono")
+                frame.sample_rate = int(sr)
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=target_sr)
+                resampled_frames = resampler.resample(frame)
+                if resampled_frames:
+                    arr = resampled_frames[0].to_ndarray()[0]
+
             if arr.dtype != np.int16:
                 if np.issubdtype(arr.dtype, np.floating):
                     arr = (np.clip(arr, -1.0, 1.0) * 32767.0).astype(np.int16)
                 else:
                     arr = arr.astype(np.int16)
-            self._mic_track.set_input(arr.tobytes(), sr)
+            self._mic_track.set_input(arr.tobytes())
         except Exception as e:
             logger.error(f"Failed to push mic audio: {e}")
 
@@ -588,29 +640,36 @@ class RTCManager:
         if track.kind == "audio":
             logger.info("Remote audio track attached; starting audio reader")
 
-            async def _reader():
-                while True:
-                    try:
-                        frame = await asyncio.wait_for(track.recv(), timeout=1.0)
-                    except asyncio.TimeoutError:
-                        continue
-                    except Exception as e:
-                        logger.debug(f"Remote audio track ended or error: {e}")
-                        break
+            if self._remote_audio_task is not None:
+                self._remote_audio_task.cancel()
 
-                    try:
-                        samples = frame.to_ndarray()
-                        if samples.ndim == 2 and samples.shape[0] > 1:
-                            samples = samples.mean(axis=0)
-                        if samples.dtype != np.int16:
-                            samples = (samples * 32767).astype(np.int16)
-                        audio_bytes = samples.tobytes()
-                        cb = self._audio_callback
-                        if cb is not None:
-                            await cb(audio_bytes)
-                    except Exception as e:
-                        logger.debug(f"Failed to process remote audio frame: {e}")
-            asyncio.create_task(_reader())
+            async def _reader(remote_track: MediaStreamTrack):
+                try:
+                    while True:
+                        try:
+                            frame = await asyncio.wait_for(remote_track.recv(), timeout=1.0)
+                        except asyncio.TimeoutError:
+                            continue
+                        except Exception as recv_error:
+                            logger.debug(f"Remote audio track ended or error: {recv_error}")
+                            break
+
+                        try:
+                            samples = frame.to_ndarray()
+                            if samples.ndim == 2 and samples.shape[0] > 1:
+                                samples = samples.mean(axis=0)
+                            if samples.dtype != np.int16:
+                                samples = (samples * 32767).astype(np.int16)
+                            audio_bytes = samples.tobytes()
+                            cb = self._audio_callback
+                            if cb is not None:
+                                await cb(audio_bytes)
+                        except Exception as process_error:
+                            logger.debug(f"Failed to process remote audio frame: {process_error}")
+                except asyncio.CancelledError:
+                    logger.debug("Remote audio reader cancelled")
+
+            self._remote_audio_task = asyncio.create_task(_reader(track))
             
 
     async def _handle_event(self, event: dict) -> None:
@@ -714,6 +773,14 @@ class RTCManager:
                 except asyncio.CancelledError:
                     pass
             
+            if self._remote_audio_task is not None:
+                self._remote_audio_task.cancel()
+                try:
+                    await self._remote_audio_task
+                except asyncio.CancelledError:
+                    pass
+                self._remote_audio_task = None
+
             if self.data_channel is not None:
                 try:
                     self.data_channel.close()

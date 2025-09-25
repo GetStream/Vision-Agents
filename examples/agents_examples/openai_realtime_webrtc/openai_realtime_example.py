@@ -35,7 +35,7 @@ async def start_agent() -> None:
         agent_user=agent_user,  # the user object for the agent (name, image etc)
         instructions=("""
 You are a voice assistant.
-- Greet the user once when asked, then wait for the next input.
+- Greet the user once when asked, then wait for the next user input.
 - Speak English only.
 - If you see images/video, describe them when asked. Don't hallucinate.
 - If you don't see images/video, say you don't see them.
