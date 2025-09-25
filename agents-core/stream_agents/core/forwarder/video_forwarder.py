@@ -127,11 +127,12 @@ class VideoForwarder:
                         if (now_time - last_log) >= log_interval_seconds:
                             if last_width and last_height:
                                 logger.info(
-                                    "shared %d frames at %dx%d resolution in the last %.0f seconds",
+                                    "shared %d frames at %dx%d resolution in the last %.0f seconds target is %f fps",
                                     frames_forwarded,
                                     last_width,
                                     last_height,
                                     log_interval_seconds,
+                                    self.fps,
                                 )
                             else:
                                 logger.info(

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from stream_agents.core.agents.conversation import Conversation
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 from stream_agents.core.utils.utils import parse_instructions
 from stream_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
@@ -52,7 +52,7 @@ class LLM(abc.ABC):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[BaseProcessor]] = None,
+        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         raise NotImplementedError

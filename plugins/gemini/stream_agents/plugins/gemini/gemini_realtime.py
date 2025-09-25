@@ -16,7 +16,7 @@ from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 from stream_agents.core.llm import realtime
 from stream_agents.core.llm.events import RealtimeAudioOutputEvent, StandardizedTextDeltaEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 from stream_agents.core.utils.utils import frame_to_png_bytes
 import av
 
@@ -61,8 +61,8 @@ class Realtime(realtime.Realtime):
     config: LiveConnectConfigDict
     connected : bool = False
 
-    def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None, api_key: Optional[str] = None ) -> None:
-        super().__init__()
+    def __init__(self, model: str=DEFAULT_MODEL, config: Optional[LiveConnectConfigDict]=None, http_options: Optional[HttpOptions] = None, client: Optional[genai.Client] = None, api_key: Optional[str] = None , **kwargs) -> None:
+        super().__init__(**kwargs)
         self.model = model
         if http_options is None:
             http_options = HttpOptions(api_version="v1alpha")
@@ -85,7 +85,7 @@ class Realtime(realtime.Realtime):
         self._session: Optional[AsyncSession] = None
         self._receive_task = None
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
+    async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
                               participant: Participant = None):
         """
         Simple response standardizes how to send a text instruction to this LLM.
@@ -287,7 +287,7 @@ class Realtime(realtime.Realtime):
             self._session = None
 
 
-    async def _watch_video_track(self, input_track: MediaStreamTrack, fps: int = 1) -> None:
+    async def _watch_video_track(self, input_track: MediaStreamTrack, **kwargs) -> None:
         """
         Start sending video frames to Gemini using VideoForwarder.
         We follow the on_track from Stream. If video is turned on or off this gets forwarded.
@@ -300,7 +300,7 @@ class Realtime(realtime.Realtime):
         self._video_forwarder = VideoForwarder(
             input_track,  # type: ignore[arg-type]
             max_buffer=5,
-            fps=float(fps)
+            fps=float(self.fps)
         )
         
         # Start the forwarder
@@ -309,7 +309,7 @@ class Realtime(realtime.Realtime):
         # Start the callback consumer that sends frames to Gemini
         await self._video_forwarder.start_event_consumer(self._send_video_frame)
         
-        self.logger.info(f"Started video forwarding with {fps} FPS")
+        self.logger.info(f"Started video forwarding with {self.fps} FPS")
 
     async def _stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
@@ -341,13 +341,14 @@ class Realtime(realtime.Realtime):
             output_audio_transcription=AudioTranscriptionConfigDict(),
             speech_config=SpeechConfigDict(
                 voice_config=VoiceConfigDict(
-                    prebuilt_voice_config=PrebuiltVoiceConfigDict(voice_name="Puck")
+                    prebuilt_voice_config=PrebuiltVoiceConfigDict(voice_name="Leda")
                 ),
                 language_code="en-US",
             ),
             realtime_input_config=RealtimeInputConfigDict(
                 turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
             ),
+            enable_affective_dialog=True,
             context_window_compression=ContextWindowCompressionConfigDict(
                 trigger_tokens=25600,
                 sliding_window=SlidingWindowDict(target_tokens=12800),

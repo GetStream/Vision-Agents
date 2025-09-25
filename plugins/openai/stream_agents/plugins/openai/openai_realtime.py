@@ -10,8 +10,8 @@ from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
 from openai.types.realtime import *
 
-from ...core.edge.types import Participant
-from ...core.processors import BaseProcessor
+from stream_agents.core.edge.types import Participant
+from stream_agents.core.processors import Processor
 
 load_dotenv()
 
@@ -47,8 +47,8 @@ class Realtime(realtime.Realtime):
         - RTCManager to handle WebRTC connection and media streaming.
         - Output track to forward audio and video to the remote participant.
     """
-    def __init__(self, model: str = "gpt-realtime", voice: str = "marin"):
-        super().__init__()
+    def __init__(self, model: str = "gpt-realtime", voice: str = "marin", *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.model = model
         self.voice = voice
         # TODO: send video should depend on if the RTC connection with stream is sending video.
@@ -74,7 +74,7 @@ class Realtime(realtime.Realtime):
             capabilities=["text", "audio"],
         )
 
-    async def simple_response(self, text: str, processors: Optional[List[BaseProcessor]] = None,
+    async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
       participant: Participant = None):
         """Send a simple text input to the OpenAI Realtime session.
 
@@ -153,15 +153,10 @@ class Realtime(realtime.Realtime):
             Registered as callback with RTC manager.
         """
         # Forward audio as event and to output track if available
-        logger.info(f"🎵 Forwarding audio output: {len(audio_bytes)}")
-
         await self.output_track.write(audio_bytes)
 
-    async def _watch_video_track(self, track, fps: int = 1) -> None:
-        # TODO: only do this once?
-        #self.rtc.set_video_callback(self._handle_video_output)
-        # Delegate to RTC manager to swap the negotiated sender's track
-        await self.rtc.start_video_sender(track, fps)
+    async def _watch_video_track(self, track, **kwargs) -> None:
+        await self.rtc.start_video_sender(track, self.fps)
 
     async def _stop_watching_video_track(self) -> None:
         await self.rtc.stop_video_sender()

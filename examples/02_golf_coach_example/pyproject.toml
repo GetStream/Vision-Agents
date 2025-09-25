@@ -7,6 +7,9 @@ requires-python = ">=3.13"
 dependencies = [
   "python-dotenv>=1.0",
   "stream-agents",
+  "stream-agents-plugins-openai",
+  "stream-agents-plugins-getstream",
+  "stream-agents-plugins-ultralytics",
   "ultralytics>=8.3.184",
   "av>=14.4.0",
 ]

@@ -15,7 +15,7 @@ from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 from . import events
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ class ClaudeLLM(LLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[BaseProcessor]] = None,
+        processors: Optional[List[Processor]] = None,
         participant: Participant = None,
     ):
         """

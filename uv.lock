@@ -38,6 +38,7 @@ members = [
     "stream-agents-plugins-moonshine",
     "stream-agents-plugins-openai",
     "stream-agents-plugins-silero",
+    "stream-agents-plugins-ultralytics",
     "stream-agents-plugins-xai",
 ]
 
@@ -5138,6 +5139,43 @@ dev = [
     { name = "scipy", specifier = ">=1.15.3,<1.16" },
     { name = "soundfile", specifier = ">=0.13.1" },
     { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "stream-agents-plugins-ultralytics"
+version = "0.1.0"
+source = { editable = "plugins/ultralytics" }
+dependencies = [
+    { name = "aiortc" },
+    { name = "av" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "stream-agents" },
+    { name = "ultralytics" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiortc", specifier = ">=1.6.0" },
+    { name = "av", specifier = ">=10.0.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "opencv-python", specifier = ">=4.8.0" },
+    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "stream-agents", editable = "agents-core" },
+    { name = "ultralytics", specifier = ">=8.0.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]

@@ -25,7 +25,7 @@ from .conversation import StreamHandle, Message, Conversation
 from ..events.manager import EventManager
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
-from ..processors.base_processor import filter_processors, ProcessorType, BaseProcessor
+from ..processors.base_processor import filter_processors, ProcessorType, Processor
 from . import events
 from ..turn_detection import TurnEventData, BaseTurnDetector
 from typing import TYPE_CHECKING, Dict
@@ -89,7 +89,7 @@ class Agent:
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
-        processors: Optional[List[BaseProcessor]] = None,
+        processors: Optional[List[Processor]] = None,
         # MCP servers for external tool and resource access
         mcp_servers: Optional[List[MCPBaseServer]] = None,
     ):
@@ -754,6 +754,7 @@ class Agent:
                 self._audio_track = self.llm.output_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
+                # TODO: what if we want to transform audio...
                 self._audio_track = self.edge.create_audio_track()
                 if self.tts:
                     self.tts.set_output_track(self._audio_track)
@@ -762,6 +763,7 @@ class Agent:
         if self.publish_video:
             # Get the first video publisher to create the track
             video_publisher = self.video_publishers[0]
+            # TODO: some lLms like moondream publish video
             self._video_track = video_publisher.create_video_track()
             self.logger.info("🎥 Video track initialized from video publisher")
 

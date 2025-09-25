@@ -1,7 +1,7 @@
 """
 YOLO Pose Detection Processor
 
-This processor implements real-time pose detection using YOLO llm,
+This processor implements real-time pose detection using YOLO models,
 extracting the pose detection logic from the kickboxing example and
 adapting it to the new processor architecture.
 """
@@ -19,14 +19,12 @@ from PIL import Image
 from aiortc import VideoStreamTrack
 import av
 
-
-from .base_processor import (
+from stream_agents.core.processors.base_processor import (
     AudioVideoProcessor,
     ImageProcessorMixin,
     VideoProcessorMixin,
     VideoPublisherMixin,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +32,14 @@ logger = logging.getLogger(__name__)
 class YOLOPoseVideoTrack(VideoStreamTrack):
     """Custom video track for YOLO pose detection output."""
 
-    def __init__(self):
+    def __init__(self, width: int = 640, height: int = 480):
         super().__init__()
         self.frame_queue: asyncio.Queue[Image.Image] = asyncio.Queue(maxsize=10)
-        self.last_frame = Image.new("RGB", (640, 480), color="black")
-        self._stopped = False
         # Set video quality parameters
-        self.width = 640
-        self.height = 480
+        self.width = width
+        self.height = height
+        self.last_frame = Image.new("RGB", (self.width, self.height), color="black")
+        self._stopped = False
         logger.info(
             f"🎥 YOLOPoseVideoTrack initialized with dimensions: {self.width}x{self.height}"
         )
@@ -173,13 +171,7 @@ class YOLOPoseProcessor(
         logger.info(f"🤖 YOLO Pose Processor initialized with model: {model_path}")
 
     def _load_model(self):
-        try:
-            from ultralytics import YOLO
-        except ImportError:
-            raise ImportError(
-                "ultralytics package is required for YOLOPoseProcessor. "
-                "Install it with: pip install ultralytics"
-            )
+        from ultralytics import YOLO
 
         """Load the YOLO pose model."""
         if not Path(self.model_path).exists():
@@ -190,6 +182,7 @@ class YOLOPoseProcessor(
         self.pose_model = YOLO(self.model_path)
         self.pose_model.to(self.device)
         logger.info(f"✅ YOLO pose model loaded: {self.model_path} on {self.device}")
+
 
     def create_video_track(self):
         """Create a video track for publishing pose-annotated frames."""
@@ -223,7 +216,9 @@ class YOLOPoseProcessor(
             frame_array = np.array(image)
 
             # Process pose detection
+            start_time = asyncio.get_event_loop().time()
             annotated_array, pose_data = await self._process_pose_async(frame_array)
+            processing_time = asyncio.get_event_loop().time() - start_time
 
             # Convert back to PIL Image
             annotated_image = Image.fromarray(annotated_array)
@@ -233,6 +228,7 @@ class YOLOPoseProcessor(
                 self._last_frame = annotated_image
                 await self._video_track.add_frame(annotated_image)
                 logger.debug("🎥 Published pose-annotated frame to video track")
+
 
             logger.debug(f"🤖 Processed pose detection for user {user_id}")
 
@@ -245,6 +241,7 @@ class YOLOPoseProcessor(
 
         except Exception as e:
             logger.error(f"❌ Error processing image pose detection: {e}")
+
             return None
 
     async def process_video(self, track, user_id: str):
