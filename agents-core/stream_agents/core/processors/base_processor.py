@@ -1,3 +1,4 @@
+import abc
 import asyncio
 import logging
 from pathlib import Path
@@ -28,7 +29,7 @@ class ProcessorType(Enum):
     AUDIO_PUBLISHER = "create_audio_track"
 
 
-class BaseProcessor(Protocol):
+class Processor(Protocol):
     def state(self) -> Any:
         pass
 
@@ -36,12 +37,13 @@ class BaseProcessor(Protocol):
         pass
 
 
-class IntervalProcessor(BaseProcessor):
+class IntervalProcessor(Processor):
     # TODO: add interval loop
     pass
 
 
-class AudioProcessorMixin:
+class AudioProcessorMixin(abc.ABC):
+    @abc.abstractmethod
     async def process_audio(
         self, audio_data: bytes, participant: models_pb2.Participant
     ) -> None:
@@ -49,7 +51,8 @@ class AudioProcessorMixin:
         pass
 
 
-class VideoProcessorMixin:
+class VideoProcessorMixin(abc.ABC):
+    @abc.abstractmethod
     async def process_video(
         self,
         track: aiortc.mediastreams.MediaStreamTrack,
@@ -58,7 +61,8 @@ class VideoProcessorMixin:
         pass
 
 
-class ImageProcessorMixin:
+class ImageProcessorMixin(abc.ABC):
+    @abc.abstractmethod
     async def process_image(
         self, image: Image.Image, participant: models_pb2.Participant
     ):
@@ -76,8 +80,8 @@ class AudioPublisherMixin:
 
 
 def filter_processors(
-    processors: List[BaseProcessor], processor_type: ProcessorType
-) -> List[BaseProcessor]:
+    processors: List[Processor], processor_type: ProcessorType
+) -> List[Processor]:
     """
     Filter processors based on the processor type using hasattr checks.
 
@@ -98,7 +102,7 @@ def filter_processors(
     return filtered
 
 
-class AudioVideoProcessor(BaseProcessor):
+class AudioVideoProcessor(Processor):
     def __init__(
         self,
         interval: int = 3,

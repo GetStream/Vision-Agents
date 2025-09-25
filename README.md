@@ -28,7 +28,7 @@ agent = Agent(
     # openai realtime, no need to set tts, or sst (though that's also supported)
     llm=openai.Realtime(model="gpt-realtime"),
     processors=[
-        YOLOPoseProcessor()
+        ultralytics.YOLOPoseProcessor()
     ],  # processors can fetch extra data, check images/audio data or transform video
 )
 ```

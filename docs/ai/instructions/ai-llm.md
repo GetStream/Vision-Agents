@@ -204,8 +204,9 @@ Here's a complete example of an LLM plugin:
 from typing import Optional, List, Any
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
-from stream_agents.core.processors import BaseProcessor
+from stream_agents.core.processors import Processor
 from . import events
+
 
 class MyLLM(LLM):
     def __init__(self, model: str = "my-model", api_key: Optional[str] = None):
@@ -213,27 +214,27 @@ class MyLLM(LLM):
         self.events.register_events_from_module(events)
         self.model = model
         self.api_key = api_key or os.getenv("MYLLM_API_KEY")
-    
+
     async def simple_response(
-        self,
-        text: str,
-        processors: Optional[List[BaseProcessor]] = None,
-        participant: Optional[Participant] = None,
+            self,
+            text: str,
+            processors: Optional[List[Processor]] = None,
+            participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         """Generate a response using the LLM API."""
         try:
             # Call your LLM API
             response = await self._call_api(text)
-            
+
             # Emit events
             self.events.send(events.MyLLMStreamEvent(
                 plugin_name="myllm",
                 event_type="response",
                 event_data=response
             ))
-            
+
             return LLMResponseEvent(response, response.text)
-            
+
         except Exception as e:
             # Emit error event
             self.events.send(events.MyLLMErrorEvent(

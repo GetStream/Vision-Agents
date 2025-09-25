@@ -12,6 +12,7 @@ stream-agents-plugins-openai = { workspace = true }
 stream-agents-plugins-silero = { workspace = true }
 stream-agents-plugins-xai = { workspace = true }
 stream-agents-plugins-getstream = { workspace = true }
+stream-agents-plugins-ultralytics = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -27,7 +28,8 @@ members = [
     "plugins/openai",
     "plugins/silero",
     "plugins/xai",
-    "plugins/getstream"
+    "plugins/getstream",
+    "plugins/ultralytics"
 ]
 exclude = [
 "**/__pycache__",
