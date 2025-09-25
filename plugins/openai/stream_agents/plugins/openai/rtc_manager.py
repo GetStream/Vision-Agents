@@ -263,6 +263,7 @@ class RTCManager:
         self._video_track: Optional[VideoStreamTrack] = None
         self._video_sender_task: Optional[asyncio.Task] = None
         self._forwarding_track: Optional[StreamVideoForwardingTrack] = None
+        self.instructions: Optional[str] = None
 
     async def connect(self) -> None:
         """Establish WebRTC connection to OpenAI's Realtime API.
@@ -303,6 +304,8 @@ class RTCManager:
             "Content-Type": "application/json",
         }
         payload = {"model": self.model, "voice": self.voice}
+        if self.instructions:
+            payload["instructions"] = self.instructions
 
         async with AsyncClient() as client:
             for attempt in range(2):

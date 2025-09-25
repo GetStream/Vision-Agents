@@ -64,6 +64,14 @@ class Realtime(realtime.Realtime):
         Sets up callbacks and connects to OpenAI's servers. Emits connected event
         with session configuration when ready.
         """
+        instructions: Optional[str] = None
+        if hasattr(self, "parsed_instructions") and self.parsed_instructions:
+            instructions = self._build_enhanced_instructions()
+        elif getattr(self, "instructions", None):
+            instructions = self.instructions
+
+        self.rtc.instructions = instructions
+        
         # Wire callbacks so we can emit audio/events upstream
         self.rtc.set_event_callback(self._handle_openai_event)
         self.rtc.set_audio_callback(self._handle_audio_output)
