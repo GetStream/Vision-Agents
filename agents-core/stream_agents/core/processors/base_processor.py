@@ -25,8 +25,8 @@ class ProcessorType(Enum):
     AUDIO = "process_audio"
     VIDEO = "process_video"
     IMAGE = "process_image"
-    VIDEO_PUBLISHER = "create_video_track"
-    AUDIO_PUBLISHER = "create_audio_track"
+    VIDEO_PUBLISHER = "publish_video_track"
+    AUDIO_PUBLISHER = "publish_audio_track"
 
 
 class Processor(Protocol):

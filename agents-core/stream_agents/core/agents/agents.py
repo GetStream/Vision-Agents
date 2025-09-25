@@ -216,6 +216,7 @@ class Agent:
         video_track = self._video_track if self.publish_video else None
 
         if audio_track or video_track:
+
             await self.edge.publish_tracks(audio_track, video_track)
             await self._listen_to_audio_and_video()
 
@@ -510,6 +511,15 @@ class Agent:
 
         hasImageProcessers = len(self.image_processors) > 0
 
+        # video processors
+        for processor in self.video_processors:
+            try:
+                await processor.process_video(track, participant.user_id)
+            except Exception as e:
+                self.logger.error(
+                    f"Error in video processor {type(processor).__name__}: {e}"
+                )
+
         while True:
             try:
                 # Track frame processing timing
@@ -538,14 +548,7 @@ class Agent:
                                     f"Error in image processor {type(processor).__name__}: {e}"
                                 )
 
-                    # video processors
-                    for processor in self.video_processors:
-                        try:
-                            await processor.process_video(track, participant.user_id)
-                        except Exception as e:
-                            self.logger.error(
-                                f"Error in video processor {type(processor).__name__}: {e}"
-                            )
+
                 else:
                     self.logger.warning("🎥VDP: Received empty frame")
                     consecutive_errors += 1

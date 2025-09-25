@@ -74,7 +74,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
         #        (self.width, self.height), Image.Resampling.BILINEAR
         #    )
 
-        self.frame_queue.put_nowait(frame)
+        self.frame_queue.put_latest_nowait(frame)
 
 
     async def recv(self) -> av.frame.Frame:
@@ -182,6 +182,8 @@ class YOLOPoseProcessor(
         self,
         incoming_track: aiortc.mediastreams.MediaStreamTrack, *args, **kwargs
     ):
+        logger.info(f"✅ process_video starting efg")
+
         # forward the track, and run add_pose_to_ndarray
         self._video_forwarder = VideoForwarder(
             incoming_track,
