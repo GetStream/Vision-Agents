@@ -19,13 +19,13 @@ from PIL import Image
 from aiortc import VideoStreamTrack
 import av
 
-from stream_agents.core.forwarder.queue import LatestNQueue
 from stream_agents.core.processors.base_processor import (
     AudioVideoProcessor,
     ImageProcessorMixin,
     VideoProcessorMixin,
     VideoPublisherMixin,
 )
+from stream_agents.core.utils.queue import LatestNQueue
 
 logger = logging.getLogger(__name__)
 

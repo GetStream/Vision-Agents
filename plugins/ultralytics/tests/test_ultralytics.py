@@ -2,41 +2,54 @@
 Tests for the ultralytics plugin.
 """
 
+import asyncio
+from pathlib import Path
+from typing import Iterator
+
 import pytest
+from PIL import Image
+
 from stream_agents.plugins.ultralytics import YOLOPoseProcessor
+from tests.base_test import BaseTest
 
 
-class TestYOLOPoseProcessor:
+class TestYOLOPoseProcessor(BaseTest):
     """Test cases for YOLOPoseProcessor."""
 
-    def test_processor_initialization(self):
-        """Test that the processor can be initialized."""
-        processor = YOLOPoseProcessor(
-            model_path="yolo11n-pose.pt",
-            conf_threshold=0.5,
-            device="cpu"
-        )
-        
-        assert processor.model_path == "yolo11n-pose.pt"
-        assert processor.conf_threshold == 0.5
-        assert processor.device == "cpu"
-        assert processor.enable_hand_tracking is True
-        assert processor.enable_wrist_highlights is True
+    @pytest.fixture(scope="session")
+    def golf_image(self) -> Iterator[Image.Image]:
+        """Load the local golf swing test image from tests/test_assets."""
+        asset_path = Path(self.assets_dir) / "golf_swing.png"
+        with Image.open(asset_path) as img:
+            yield img.convert("RGB")
 
-    def test_processor_state(self):
-        """Test that the processor state is correctly returned."""
-        processor = YOLOPoseProcessor()
-        state = processor.state()
-        
-        assert "processor_type" in state
-        assert "model_path" in state
-        assert "confidence_threshold" in state
-        assert "device" in state
-        assert state["processor_type"] == "YOLO Pose Detection"
+    @pytest.fixture
+    def pose_processor(self) -> Iterator[YOLOPoseProcessor]:
+        """Create and manage YOLOPoseProcessor lifecycle."""
+        processor = YOLOPoseProcessor(device="cpu")
+        try:
+            yield processor
+        finally:
+            processor.close()
 
-    def test_processor_cleanup(self):
-        """Test that the processor cleans up properly."""
-        processor = YOLOPoseProcessor()
-        processor.cleanup()
-        
-        assert processor._shutdown is True
+    async def test_pose_data_from_image(self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor):
+        """Run pose detection on the golf swing image and validate pose data is returned."""
+        result = await pose_processor.process_image(image=golf_image, user_id="ultra-test")
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "pose_data" in result
+        assert isinstance(result["pose_data"], dict)
+        # pose_data may be empty on certain images, but structure must exist
+        assert "persons" in result["pose_data"]
+
+    async def test_annotated_image_output(self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor):
+        """Run pose detection and ensure an annotated image is produced."""
+        result = await pose_processor.process_image(image=golf_image, user_id="ultra-test")
+
+        assert result is not None
+        assert "annotated_image" in result
+        annotated_image = result["annotated_image"]
+        assert isinstance(annotated_image, Image.Image)
+        # Ensure same size as input for simplicity
+        assert annotated_image.size == golf_image.size

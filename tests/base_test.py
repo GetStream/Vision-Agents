@@ -9,6 +9,11 @@ from stream_agents.core.edge.types import PcmData
 
 
 class BaseTest:
+    @property
+    def assets_dir(self):
+        """Get the test assets directory path."""
+        return os.path.join(os.path.dirname(__file__), "test_assets")
+    
     @pytest.fixture
     def mia_audio_16khz(self):
         audio_file_path = os.path.join(os.path.dirname(__file__), "test_assets/mia.mp3")
