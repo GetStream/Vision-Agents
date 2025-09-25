@@ -2,8 +2,6 @@
 
 import asyncio
 import time
-import base64
-import io
 import logging
 
 import aiortc
@@ -18,8 +16,6 @@ import av
 from numpy import ndarray
 
 from stream_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    ImageProcessorMixin,
     VideoProcessorMixin,
     VideoPublisherMixin, Processor,
 )
@@ -54,6 +50,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
     def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT):
         super().__init__()
+        logger.info("YPV: hi")
         self.frame_queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=10)
 
         # Set video quality parameters
@@ -66,6 +63,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
     async def add_frame(self, frame : av.VideoFrame):
         # Resize the image and stick it on the queue
+        logger.info("YPV: add frame")
         if self._stopped:
             return
 
@@ -81,6 +79,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
     async def recv(self) -> av.frame.Frame:
         """Receive the next video frame."""
+        logger.info("YPV: recv")
         if self._stopped:
             raise Exception("Track stopped")
 
@@ -162,7 +161,7 @@ class YOLOPoseProcessor(
         self._shutdown = False
 
         # Video track for publishing (if used as video publisher)
-        self._video_track: Optional[YOLOPoseVideoTrack] = None
+        self._video_track: YOLOPoseVideoTrack = YOLOPoseVideoTrack()
 
         logger.info(f"🤖 YOLO Pose Processor initialized with model: {model_path}")
 
@@ -191,14 +190,17 @@ class YOLOPoseProcessor(
 
         # Start the forwarder
         await self._video_forwarder.start()
-        await self._video_forwarder.start_event_consumer(self._send_video_frame)
+        await self._video_forwarder.start_event_consumer(self._add_pose_and_add_frame)
 
-    async def _send_video_frame(self, frame: av.VideoFrame):
+    async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
+        frame_with_pose = self.add_pose_to_frame(frame)
+        await self._video_track.add_frame(frame_with_pose)
+
+    async def add_pose_to_frame(self, frame: av.VideoFrame):
         frame_array = frame.to_ndarray()
         array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
         frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
-        await self._video_track.add_frame(frame_with_pose)
-        pass
+        return frame_with_pose
 
     async def add_pose_to_image(self, image: Image.Image) -> tuple[Image.Image, Any]:
         """
@@ -223,7 +225,6 @@ class YOLOPoseProcessor(
         """
         Creates a yolo pose video track
         """
-        self._video_track = YOLOPoseVideoTrack()
         return self._video_track
 
     async def _process_pose_async(
