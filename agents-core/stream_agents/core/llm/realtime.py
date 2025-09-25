@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from typing import (
     Any,
-    Callable,
-    Generic,
-    List,
-    TypeVar,
 )
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
+from stream_agents.core.edge.types import PcmData
 
 
 import abc

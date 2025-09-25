@@ -216,9 +216,7 @@ class YOLOPoseProcessor(
             frame_array = np.array(image)
 
             # Process pose detection
-            start_time = asyncio.get_event_loop().time()
             annotated_array, pose_data = await self._process_pose_async(frame_array)
-            processing_time = asyncio.get_event_loop().time() - start_time
 
             # Convert back to PIL Image
             annotated_image = Image.fromarray(annotated_array)

@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from getstream import Stream
 from getstream.models import UserRequest
 from stream_agents.plugins import deepgram, elevenlabs, openai, ultralytics
-from stream_agents.core import processors, edge, agents, cli
+from stream_agents.core import edge, agents, cli
 
 # Main feats:
 # 1. API endpoints to create a sessions, end session

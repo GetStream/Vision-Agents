@@ -2,7 +2,6 @@
 Tests for the ultralytics plugin.
 """
 
-import pytest
 from stream_agents.plugins.ultralytics import YOLOPoseProcessor
 
 

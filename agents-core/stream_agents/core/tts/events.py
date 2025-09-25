@@ -4,6 +4,7 @@ from stream_agents.core.events import (
 )
 from dataclasses import dataclass, field
 from typing import Optional, Any
+import uuid
 
 
 @dataclass

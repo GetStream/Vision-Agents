@@ -1,5 +1,4 @@
-import asyncio
-from typing import Any, Optional, List
+from typing import Optional, List
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
@@ -8,7 +7,10 @@ import logging
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
-from openai.types.realtime import *
+from openai.types.realtime import (
+    ResponseAudioTranscriptDoneEvent,
+    InputAudioBufferSpeechStartedEvent,
+)
 
 from stream_agents.core.edge.types import Participant
 from stream_agents.core.processors import Processor

@@ -224,8 +224,6 @@ class TTS(abc.ABC):
                 )
 
             # Log completion with timing information
-            end_time = time.time()
-            total_time = end_time - start_time
 
             # Estimate audio duration - this is approximate without knowing format details
             # Use track framerate if available, otherwise assume 16kHz

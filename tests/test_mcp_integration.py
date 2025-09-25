@@ -1,12 +1,13 @@
 import os
 import pytest
+import asyncio
 
 from stream_agents.core.mcp.mcp_server_local import MCPServerLocal
 from stream_agents.core.mcp.mcp_server_remote import MCPServerRemote
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
 from stream_agents.plugins.openai.openai_llm import OpenAILLM
-from stream_agents.plugins import getstream, elevenlabs, deepgram, silero
+from stream_agents.plugins import getstream, elevenlabs, deepgram
 from dotenv import load_dotenv
 
 load_dotenv()

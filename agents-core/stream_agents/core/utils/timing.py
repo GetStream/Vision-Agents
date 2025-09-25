@@ -4,6 +4,7 @@ Timing utilities for performance monitoring and latency tracking.
 
 import time
 import logging
+import asyncio
 from functools import wraps
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
@@ -79,7 +80,7 @@ def timing_decorator(method_name: Optional[str] = None, threshold: float = 0.1, 
                 duration = end_time - start_time
                 
                 # Create timing data
-                timing_data = TimingData(
+                TimingData(
                     start_time=start_time,
                     end_time=end_time,
                     duration=duration,
