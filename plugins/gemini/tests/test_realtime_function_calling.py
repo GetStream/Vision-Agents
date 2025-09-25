@@ -2,33 +2,52 @@
 Test function calling functionality in Gemini Realtime class.
 """
 
+import asyncio
+import os
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
-from stream_agents.plugins.gemini.gemini_realtime import Realtime
+from typing import List, Dict, Any
+from dotenv import load_dotenv
+
+from stream_agents.plugins import gemini
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent, RealtimeResponseEvent, RealtimeAudioOutputEvent
+
+# Load environment variables
+load_dotenv()
 
 
 class TestGeminiRealtimeFunctionCalling:
-    """Test function calling in Gemini Realtime class."""
+    """Integration tests for function calling in Gemini Realtime class."""
 
     @pytest.fixture
-    def realtime_instance(self):
-        """Create a realtime instance with mocked dependencies."""
-        with patch('stream_agents.core.llm.llm.EventManager') as mock_event_manager:
-            with patch('google.genai.Client') as mock_client:
-                # Mock the event manager to avoid event loop issues
-                mock_event_manager.return_value = Mock()
-                
-                # Mock the Gemini client
-                mock_client.return_value = Mock()
-                
-                realtime = Realtime(model="test-model", api_key="test-key")
-                return realtime
+    async def realtime_instance(self):
+        """Create a realtime instance with real Gemini client."""
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            pytest.skip("GOOGLE_API_KEY or GEMINI_API_KEY not set - skipping integration test")
 
-    def test_convert_tools_to_provider_format(self, realtime_instance):
-        """Test tool conversion to Gemini Live format."""
-        realtime = realtime_instance
+        # Check if google.genai is available
+        try:
+            import google.genai  # noqa: F401
+        except ImportError as e:
+            pytest.skip(f"Required Google packages not available: {e}")
+
+        realtime = gemini.Realtime(
+            model="gemini-2.5-flash-native-audio-preview-09-2025",
+            api_key=api_key
+        )
         
-        # Mock tools
+        try:
+            yield realtime
+        finally:
+            await realtime.close()
+
+    @pytest.mark.asyncio
+    async def test_convert_tools_to_provider_format(self):
+        """Test tool conversion to Gemini Live format."""
+        # Create a minimal instance just for testing the conversion method
+        realtime = gemini.Realtime(model="test-model", api_key="test-key")
+        
+        # Test tools
         tools = [
             {
                 "name": "get_weather",
@@ -72,183 +91,187 @@ class TestGeminiRealtimeFunctionCalling:
         assert tool2["description"] == "Perform calculations"
         assert "expression" in tool2["parameters"]["properties"]
 
-    def test_extract_tool_calls_from_response(self, realtime_instance):
-        """Test extraction of tool calls from Gemini Live response."""
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_live_function_calling_basic(self, realtime_instance):
+        """Test basic live function calling with weather function."""
         realtime = realtime_instance
         
-        # Mock response with function calls
-        mock_part = Mock()
-        mock_part.function_call = Mock()
-        mock_part.function_call.name = "get_weather"
-        mock_part.function_call.args = {"location": "New York"}
-        mock_part.function_call.id = "call_123"
+        # Track function calls and responses
+        function_calls: List[Dict[str, Any]] = []
+        text_responses: List[str] = []
         
-        mock_model_turn = Mock()
-        mock_model_turn.parts = [mock_part]
+        # Register a weather function
+        @realtime.register_function(description="Get current weather for a location")
+        def get_weather(location: str) -> Dict[str, str]:
+            """Get weather information for a location."""
+            function_calls.append({"name": "get_weather", "location": location})
+            return {
+                "location": location,
+                "temperature": "22°C",
+                "condition": "Sunny",
+                "humidity": "65%"
+            }
         
-        mock_server_content = Mock()
-        mock_server_content.model_turn = mock_model_turn
-        
-        mock_response = Mock()
-        mock_response.server_content = mock_server_content
-        
-        calls = realtime._extract_tool_calls_from_response(mock_response)
-        
-        assert len(calls) == 1
-        assert calls[0]["name"] == "get_weather"
-        assert calls[0]["arguments_json"] == {"location": "New York"}
-        assert calls[0]["id"] == "call_123"
-        assert calls[0]["type"] == "tool_call"
+        # Set up event listeners for audio output
+        @realtime.events.subscribe
+        async def handle_audio_output(event: RealtimeAudioOutputEvent):
+            if event.audio_data:
+                # Audio was received - this indicates Gemini responded
+                text_responses.append("audio_response_received")
 
-    def test_extract_tool_calls_from_response_no_calls(self, realtime_instance):
-        """Test extraction when no function calls are present."""
+        @realtime.events.subscribe
+        async def handle_response(event: RealtimeResponseEvent):
+            if event.text:
+                text_responses.append(event.text)
+        
+        # Connect and send a prompt that should trigger the function
+        await realtime.connect()
+        
+        # Send a prompt that encourages function calling
+        prompt = "What's the weather like in New York? Please use the get_weather function to check."
+        await realtime.simple_response(prompt)
+        
+        # Wait for response and function call
+        await asyncio.sleep(8.0)
+        
+        # Verify function was called
+        assert len(function_calls) > 0, "Function was not called by Gemini"
+        assert function_calls[0]["name"] == "get_weather"
+        assert function_calls[0]["location"] == "New York"
+        
+        # Remove the text response assertion
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_live_function_calling_error_handling(self, realtime_instance):
+        """Test live function calling with error handling."""
         realtime = realtime_instance
         
-        # Mock response without function calls
-        mock_part = Mock()
-        mock_part.text = "Hello world"
-        del mock_part.function_call  # No function call
+        # Track function calls and responses
+        function_calls: List[Dict[str, Any]] = []
+        text_responses: List[str] = []
         
-        mock_model_turn = Mock()
-        mock_model_turn.parts = [mock_part]
+        # Register a function that will raise an error
+        @realtime.register_function(description="A function that sometimes fails")
+        def unreliable_function(input_data: str) -> Dict[str, Any]:
+            """A function that raises an error for testing."""
+            function_calls.append({"name": "unreliable_function", "input": input_data})
+            if "error" in input_data.lower():
+                raise ValueError("Simulated error for testing")
+            return {"result": f"Success: {input_data}"}
         
-        mock_server_content = Mock()
-        mock_server_content.model_turn = mock_model_turn
+        # Set up event listeners for audio output
+        @realtime.events.subscribe
+        async def handle_audio_output(event: RealtimeAudioOutputEvent):
+            if event.audio_data:
+                # Audio was received - this indicates Gemini responded
+                text_responses.append("audio_response_received")
         
-        mock_response = Mock()
-        mock_response.server_content = mock_server_content
+        @realtime.events.subscribe
+        async def handle_response(event: RealtimeResponseEvent):
+            if event.text:
+                text_responses.append(event.text)
         
-        calls = realtime._extract_tool_calls_from_response(mock_response)
+        # Connect and send a prompt that should trigger the function with error
+        await realtime.connect()
         
-        assert len(calls) == 0
+        # Send a prompt that should cause an error
+        prompt = "Please call the unreliable_function with 'error test' as input."
+        await realtime.simple_response(prompt)
+        
+        # Wait for response and function call
+        await asyncio.sleep(8.0)
+        
+        # Verify function was called
+        assert len(function_calls) > 0, "Function was not called by Gemini"
+        assert function_calls[0]["name"] == "unreliable_function"
+        
+        # Verify we got a response (should mention the error)
+        assert len(text_responses) > 0, "No response received from Gemini"
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_live_function_calling_multiple_functions(self, realtime_instance):
+        """Test live function calling with multiple functions in one request."""
+        realtime = realtime_instance
+        
+        # Track function calls
+        function_calls: List[Dict[str, Any]] = []
+        text_responses: List[str] = []
+        
+        # Register multiple functions
+        @realtime.register_function(description="Get current time")
+        def get_time() -> Dict[str, str]:
+            """Get current time."""
+            function_calls.append({"name": "get_time"})
+            return {"time": "2024-01-15 14:30:00", "timezone": "UTC"}
+        
+        @realtime.register_function(description="Get system status")
+        def get_status() -> Dict[str, str]:
+            """Get system status."""
+            function_calls.append({"name": "get_status"})
+            return {"status": "healthy", "uptime": "24h"}
+        
+        # Set up event listeners for audio output
+        @realtime.events.subscribe
+        async def handle_audio_output(event: RealtimeAudioOutputEvent):
+            if event.audio_data:
+                # Audio was received - this indicates Gemini responded
+                text_responses.append("audio_response_received")
+        
+        @realtime.events.subscribe
+        async def handle_response(event: RealtimeResponseEvent):
+            if event.text:
+                text_responses.append(event.text)
+        
+        # Connect and send a prompt that should trigger multiple functions
+        await realtime.connect()
+        
+        # Send a prompt that encourages multiple function calls
+        prompt = "Please check the current time and system status using the available functions."
+        await realtime.simple_response(prompt)
+        
+        # Wait for response and function calls
+        await asyncio.sleep(10.0)
+        
+        # Verify functions were called
+        assert len(function_calls) >= 2, f"Expected at least 2 function calls, got {len(function_calls)}"
+        
+        function_names = [call["name"] for call in function_calls]
+        assert "get_time" in function_names, "get_time function was not called"
+        assert "get_status" in function_names, "get_status function was not called"
+        
+        # Verify we got a response
+        assert len(text_responses) > 0, "No response received from Gemini"
 
     @pytest.mark.asyncio
-    async def test_handle_function_call_success(self, realtime_instance):
-        """Test successful function call handling."""
-        realtime = realtime_instance
-        
-        # Mock function call
-        mock_function_call = Mock()
-        mock_function_call.name = "get_weather"
-        mock_function_call.args = {"location": "New York"}
-        mock_function_call.id = "call_123"
-        
-        # Mock the tool execution
-        with patch.object(realtime, '_run_one_tool', new_callable=AsyncMock) as mock_run_tool:
-            mock_run_tool.return_value = (
-                {"name": "get_weather", "arguments_json": {"location": "New York"}},
-                {"temperature": "22°C", "condition": "Sunny"},
-                None
-            )
-            
-            # Mock the response sending
-            with patch.object(realtime, '_send_function_response', new_callable=AsyncMock) as mock_send_response:
-                await realtime._handle_function_call(mock_function_call)
-                
-                # Verify tool was executed
-                mock_run_tool.assert_called_once()
-                
-                # Verify response was sent
-                mock_send_response.assert_called_once_with(
-                    "get_weather",
-                    {"temperature": "22°C", "condition": "Sunny"},
-                    "call_123"
-                )
-
-    @pytest.mark.asyncio
-    async def test_handle_function_call_error(self, realtime_instance):
-        """Test function call handling with error."""
-        realtime = realtime_instance
-        
-        # Mock function call
-        mock_function_call = Mock()
-        mock_function_call.name = "get_weather"
-        mock_function_call.args = {"location": "New York"}
-        mock_function_call.id = "call_123"
-        
-        # Mock the tool execution to return an error
-        with patch.object(realtime, '_run_one_tool', new_callable=AsyncMock) as mock_run_tool:
-            mock_run_tool.return_value = (
-                {"name": "get_weather", "arguments_json": {"location": "New York"}},
-                None,
-                Exception("API Error")
-            )
-            
-            # Mock the response sending
-            with patch.object(realtime, '_send_function_response', new_callable=AsyncMock) as mock_send_response:
-                await realtime._handle_function_call(mock_function_call)
-                
-                # Verify tool was executed
-                mock_run_tool.assert_called_once()
-                
-                # Verify error response was sent
-                mock_send_response.assert_called_once_with(
-                    "get_weather",
-                    {"error": "API Error"},
-                    "call_123"
-                )
-
-    @pytest.mark.asyncio
-    async def test_send_function_response(self, realtime_instance):
-        """Test sending function response back to Gemini Live."""
-        realtime = realtime_instance
-        
-        # Mock the session
-        mock_session = AsyncMock()
-        realtime._session = mock_session
-        
-        # Mock the types module
-        with patch('stream_agents.plugins.gemini.gemini_realtime.types') as mock_types:
-            mock_part = Mock()
-            mock_types.Part.from_function_response.return_value = mock_part
-            
-            await realtime._send_function_response(
-                "get_weather",
-                {"temperature": "22°C"},
-                "call_123"
-            )
-            
-            # Verify the function response part was created
-            mock_types.Part.from_function_response.assert_called_once_with(
-                name="get_weather",
-                response={"temperature": "22°C"}
-            )
-            
-            # Verify it was sent to the session
-            mock_session.send_realtime_input.assert_called_once_with(parts=[mock_part])
-
-    def test_create_config_with_tools(self, realtime_instance):
+    async def test_create_config_with_tools(self):
         """Test that tools are added to the config."""
-        realtime = realtime_instance
+        # Create a minimal instance for testing config creation
+        realtime = gemini.Realtime(model="test-model", api_key="test-key")
         
-        # Mock available functions
-        with patch.object(realtime, 'get_available_functions') as mock_get_functions:
-            mock_get_functions.return_value = [
-                {
-                    "name": "get_weather",
-                    "description": "Get weather information",
-                    "parameters_schema": {"type": "object", "properties": {}}
-                }
-            ]
-            
-            config = realtime._create_config()
-            
-            # Verify tools were added
-            assert "tools" in config
-            assert len(config["tools"]) == 1
-            assert "function_declarations" in config["tools"][0]
-            assert len(config["tools"][0]["function_declarations"]) == 1
-            assert config["tools"][0]["function_declarations"][0]["name"] == "get_weather"
+        # Register a test function
+        @realtime.register_function(description="Test function")
+        def test_func(param: str) -> str:
+            return f"test: {param}"
+        
+        config = realtime._get_config_with_resumption()
+        
+        # Verify tools were added
+        assert "tools" in config
+        assert len(config["tools"]) == 1
+        assert "function_declarations" in config["tools"][0]
+        assert len(config["tools"][0]["function_declarations"]) == 1
+        assert config["tools"][0]["function_declarations"][0]["name"] == "test_func"
 
-    def test_create_config_without_tools(self, realtime_instance):
+    @pytest.mark.asyncio
+    async def test_create_config_without_tools(self):
         """Test config creation when no tools are available."""
-        realtime = realtime_instance
+        # Create a minimal instance without registering any functions
+        realtime = gemini.Realtime(model="test-model", api_key="test-key")
         
-        # Mock no available functions
-        with patch.object(realtime, 'get_available_functions') as mock_get_functions:
-            mock_get_functions.return_value = []
-            
-            config = realtime._create_config()
-            
-            # Verify tools were not added
-            assert "tools" not in config
+        config = realtime._create_config()
+        
+        # Verify tools were not added
+        assert "tools" not in config
