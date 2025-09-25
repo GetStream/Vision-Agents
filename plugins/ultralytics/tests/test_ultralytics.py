@@ -11,7 +11,9 @@ from PIL import Image
 
 from stream_agents.plugins.ultralytics import YOLOPoseProcessor
 from tests.base_test import BaseTest
+import logging
 
+logger = logging.getLogger(__name__)
 
 class TestYOLOPoseProcessor(BaseTest):
     """Test cases for YOLOPoseProcessor."""
@@ -49,6 +51,8 @@ class TestYOLOPoseProcessor(BaseTest):
 
         assert result is not None
         assert "annotated_image" in result
+        logger.info(result)
+        print(result.get("pose_data"))
         annotated_image = result["annotated_image"]
         assert isinstance(annotated_image, Image.Image)
         # Ensure same size as input for simplicity

@@ -1,10 +1,4 @@
-"""
-YOLO Pose Detection Processor
 
-This processor implements real-time pose detection using YOLO models,
-extracting the pose detection logic from the kickboxing example and
-adapting it to the new processor architecture.
-"""
 
 import asyncio
 import base64
@@ -112,6 +106,13 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 class YOLOPoseProcessor(
     AudioVideoProcessor, ImageProcessorMixin, VideoProcessorMixin, VideoPublisherMixin
 ):
+    """
+    Yolo pose detection processor.
+
+    - It receives the images via process_image
+    - Converts it to an ND array
+
+    """
     def __init__(
         self,
         model_path: str = "yolo11n-pose.pt",
@@ -176,44 +177,28 @@ class YOLOPoseProcessor(
         user_id: str,
         metadata: Optional[dict[Any, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
-        if not self.should_process():
-            logger.debug("⏭️ Skipping frame processing - interval not met")
-            return None
 
-        input_size = image.size
-        logger.debug(f"🖼️ Processing image: {input_size[0]}x{input_size[1]} for user {user_id}")
+        width,height = image.size
+        # Convert PIL to numpy array
+        frame_array = np.array(image)
+        # Process pose detection
+        start_time = asyncio.get_event_loop().time()
+        annotated_array, pose_data = await self._process_pose_async(frame_array)
+        processing_time = asyncio.get_event_loop().time() - start_time
 
-        try:
-            # Convert PIL to numpy array
-            frame_array = np.array(image)
+        # Convert back to PIL Image
+        annotated_image = Image.fromarray(annotated_array)
 
-            # Process pose detection
-            start_time = asyncio.get_event_loop().time()
-            annotated_array, pose_data = await self._process_pose_async(frame_array)
-            processing_time = asyncio.get_event_loop().time() - start_time
+        person_count = len(pose_data.get("persons", []))
+        logger.debug(f"Added pose to {width} by {height} image in {processing_time:.3f}s")
 
-            # Convert back to PIL Image
-            annotated_image = Image.fromarray(annotated_array)
+        return {
+            "annotated_image": annotated_image,
+            "pose_data": pose_data,
+            "user_id": user_id,
+            "timestamp": asyncio.get_event_loop().time(),
+        }
 
-            # Publish annotated frame to output track if available
-            if self._video_track:
-                self._last_frame = annotated_image
-                await self._video_track.add_frame(annotated_image)
-                logger.debug(f"🎥 Published pose-annotated frame to video track ({processing_time:.3f}s)")
-
-            person_count = len(pose_data.get("persons", []))
-            logger.debug(f"✅ Processed pose detection for user {user_id}: {person_count} persons in {processing_time:.3f}s")
-
-            return {
-                "annotated_image": annotated_image,
-                "pose_data": pose_data,
-                "user_id": user_id,
-                "timestamp": asyncio.get_event_loop().time(),
-            }
-
-        except Exception as e:
-            logger.error(f"❌ Error processing image pose detection for user {user_id}: {e}")
-            return None
 
     async def process_video(self, track, user_id: str):
         """
