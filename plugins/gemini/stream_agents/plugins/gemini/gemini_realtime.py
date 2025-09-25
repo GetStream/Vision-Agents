@@ -287,7 +287,7 @@ class Realtime(realtime.Realtime):
         # Start the callback consumer that sends frames to Gemini
         await self._video_forwarder.start_event_consumer(self._send_video_frame)
         
-        self.logger.info(f"Started video forwarding with {fps} FPS")
+        self.logger.info(f"Started video forwarding with {self.fps} FPS")
 
     async def _stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
