@@ -1297,7 +1297,7 @@ wheels = [
 [[package]]
 name = "getstream"
 version = "2.3.1"
-source = { git = "https://github.com/GetStream/stream-py.git?rev=5d22ac964838da4f38af543dcbafd68f89be276a#5d22ac964838da4f38af543dcbafd68f89be276a" }
+source = { git = "https://github.com/GetStream/stream-py.git?rev=77e86ca47025ba386c5b8c6781cc1edd15d34b9e#77e86ca47025ba386c5b8c6781cc1edd15d34b9e" }
 dependencies = [
     { name = "aiohttp" },
     { name = "aiortc" },
@@ -4226,7 +4226,7 @@ requires-dist = [
     { name = "daily-python", specifier = ">=0.19.8" },
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
-    { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=5d22ac964838da4f38af543dcbafd68f89be276a" },
+    { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=77e86ca47025ba386c5b8c6781cc1edd15d34b9e" },
     { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },
@@ -4239,7 +4239,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.14.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = "==1.101.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = "==1.108.1" },
     { name = "opencv-python", specifier = ">=4.8.0" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pytest", marker = "extra == 'dev'" },

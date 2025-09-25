@@ -38,18 +38,34 @@ export GITHUB_PAT=your_github_personal_access_token_here
 ```
 
 ## Running the Demo
-
 ```bash
 cd examples/09_github_mcp_demo
 uv run python github_mcp_demo.py
 ```
 
+### Gemini Realtime Version (New)
+```bash
+cd examples/09_github_mcp_demo
+uv run python gemini_realtime_github_mcp_demo.py
+```
+
+**Note**: The Gemini Realtime version requires `GOOGLE_API_KEY` in your `.env` file in addition to `GITHUB_PAT`.
+
 ## What the Demo Does
+
 
 1. **Connects to GitHub MCP Server**: Establishes connection to `https://api.githubcopilot.com/mcp/`
 2. **Lists Available Tools**: Shows all available GitHub MCP tools
 3. **Demonstrates Tool Calling**: Attempts to call a simple tool
 4. **Handles Errors Gracefully**: Provides helpful error messages
+
+### Gemini Realtime Version
+1. **Connects to GitHub MCP Server**: Establishes connection to `https://api.githubcopilot.com/mcp/`
+2. **Registers MCP Tools**: Automatically registers GitHub MCP tools with Gemini Live
+3. **Real-time Function Calling**: Uses Gemini Live's function calling during voice conversations
+4. **Interactive Demo**: Opens a browser UI where you can talk to the agent
+5. **Voice Commands**: Try saying "What repositories do I have?" or "Create a new issue"
+
 
 ## Expected Output
 
