@@ -70,12 +70,12 @@ class ImageProcessorMixin(abc.ABC):
 
 
 class VideoPublisherMixin:
-    def create_video_track(self):
+    def publish_video_track(self):
         return aiortc.VideoStreamTrack()
 
 
 class AudioPublisherMixin:
-    def create_audio_track(self):
+    def publish_audio_track(self):
         return aiortc.AudioStreamTrack()
 
 

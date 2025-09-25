@@ -76,8 +76,8 @@ async def run_tavus_example():
             logger.info(f"🔗 Join the conversation at: {processor.conversation_url}")
 
         # Get the audio and video tracks for streaming
-        audio_track = processor.create_audio_track()
-        video_track = processor.create_video_track()
+        audio_track = processor.publish_audio_track()
+        video_track = processor.publish_video_track()
 
         logger.info(f"🎵 Audio track created: {type(audio_track)}")
         logger.info(f"🎥 Video track created: {type(video_track)}")
@@ -142,11 +142,11 @@ async def run_audio_only_example():
         logger.info(f"📊 Audio-only processor state: {state}")
 
         # Only audio track should be available
-        audio_track = processor.create_audio_track()
+        audio_track = processor.publish_audio_track()
         logger.info(f"🎵 Audio track created: {type(audio_track)}")
 
         # Video track should still be created but not used
-        video_track = processor.create_video_track()
+        video_track = processor.publish_video_track()
         logger.info(f"🎥 Video track created (but unused): {type(video_track)}")
 
         await asyncio.sleep(10)

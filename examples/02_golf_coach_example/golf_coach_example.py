@@ -23,8 +23,8 @@ async def start_agent() -> None:
         edge=getstream.Edge(),
         agent_user=agent_user,
         instructions="Read @golf_coach.md",
-        #llm=gemini.Realtime(fps=1),
-        llm=openai.Realtime(fps=1), # Careful with FPS can get expensive
+        llm=gemini.Realtime(fps=1),
+        #llm=openai.Realtime(fps=1), # Careful with FPS can get expensive
         processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")],
     )
 

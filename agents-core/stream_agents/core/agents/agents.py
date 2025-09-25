@@ -527,6 +527,7 @@ class Agent:
                     consecutive_errors = 0
                     
                     if hasImageProcessers:
+
                         img = video_frame.to_image()
 
                         for processor in self.image_processors:
@@ -767,7 +768,7 @@ class Agent:
             # Get the first video publisher to create the track
             video_publisher = self.video_publishers[0]
             # TODO: some lLms like moondream publish video
-            self._video_track = video_publisher.create_video_track()
+            self._video_track = video_publisher.publish_video_track()
             self.logger.info("🎥 Video track initialized from video publisher")
 
 
