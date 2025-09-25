@@ -38,8 +38,6 @@ export GITHUB_PAT=your_github_personal_access_token_here
 ```
 
 ## Running the Demo
-
-### OpenAI Version (Original)
 ```bash
 cd examples/09_github_mcp_demo
 uv run python github_mcp_demo.py
@@ -55,7 +53,7 @@ uv run python gemini_realtime_github_mcp_demo.py
 
 ## What the Demo Does
 
-### OpenAI Version
+
 1. **Connects to GitHub MCP Server**: Establishes connection to `https://api.githubcopilot.com/mcp/`
 2. **Lists Available Tools**: Shows all available GitHub MCP tools
 3. **Demonstrates Tool Calling**: Attempts to call a simple tool
@@ -67,6 +65,7 @@ uv run python gemini_realtime_github_mcp_demo.py
 3. **Real-time Function Calling**: Uses Gemini Live's function calling during voice conversations
 4. **Interactive Demo**: Opens a browser UI where you can talk to the agent
 5. **Voice Commands**: Try saying "What repositories do I have?" or "Create a new issue"
+
 
 ## Expected Output
 
