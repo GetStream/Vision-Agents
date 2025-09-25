@@ -53,7 +53,7 @@ class RealtimeTranscriptEvent(PluginBaseEvent):
 
 @dataclass
 class RealtimePartialTranscriptEvent(PluginBaseEvent):
-    original: Optional[any] = None
+    original: Optional[Any] = None
     type: str = field(default='plugin.realtime_partial_transcript', init=False)
     text: Optional[str] = None
     user_metadata: Optional[Any] = None

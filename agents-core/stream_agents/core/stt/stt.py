@@ -209,7 +209,7 @@ class STT(abc.ABC):
             )
 
             start_time = time.time()
-            results = await self._process_audio_impl(pcm_data, participant)
+            results = await self._process_audio_impl(pcm_data, participant.__dict__ if participant else None)
             processing_time = time.time() - start_time
 
             # If no results were returned, just return
@@ -230,13 +230,13 @@ class STT(abc.ABC):
                     metadata["processing_time_ms"] = processing_time * 1000
 
                 if is_final:
-                    self._emit_transcript_event(text, participant, metadata)
+                    self._emit_transcript_event(text, participant.__dict__ if participant else None, metadata)
                 else:
-                    self._emit_partial_transcript_event(text, participant, metadata)
+                    self._emit_partial_transcript_event(text, participant.__dict__ if participant else None, metadata)
 
         except Exception as e:
             # Emit any errors that occur during processing
-            self._emit_error_event(e, "audio processing", participant)
+            self._emit_error_event(e, "audio processing", participant.__dict__ if participant else None)
 
     @abc.abstractmethod
     async def _process_audio_impl(

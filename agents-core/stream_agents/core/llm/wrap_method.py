@@ -26,7 +26,7 @@ def wrap_native_method(target: Callable[P, R]) -> Callable[
 ]:
     def decorator(method: Callable[Concatenate[T, P], R]) -> Callable[Concatenate[T, P], R]:
         @functools.wraps(method)
-        def wrapper(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
+        def wrapper(self: T, *args: Any, **kwargs: Any) -> str:
             return method(self, *args, **kwargs)
         return wrapper
     return decorator
@@ -34,7 +34,7 @@ def wrap_native_method(target: Callable[P, R]) -> Callable[
 # ---------- Usage on an instance method ----------
 class MyLLM:
     @wrap_native_method(_native_method)
-    def native_method(self, *args: P.args, **kwargs: P.kwargs) -> R:
+    def native_method(self, *args: Any, **kwargs: Any) -> str:
         # The body is not used because the decorator replaces it,
         # but keeping the signature here lets IDEs show proper hints even before decoration.
         return _native_method(*args, **kwargs)
@@ -43,9 +43,8 @@ class MyLLM:
 mc = MyLLM()
 
 result = mc.native_method(
-    mc,
     text="hi",
     system="assistant",
     messages=[{"role": "user", "content": "hi"}],
-    max_tokens="42",
+    max_tokens=42,
 )

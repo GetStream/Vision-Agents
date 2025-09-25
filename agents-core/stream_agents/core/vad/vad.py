@@ -232,7 +232,7 @@ class VAD(abc.ABC):
                         audio_data=current_bytes,
                         duration_ms=current_duration_ms,
                         frame_count=len(current_samples) // self.frame_size,
-                        user_metadata=participant,
+                        user_metadata=participant.__dict__ if participant else None,
                     )
                 )
 
@@ -255,7 +255,7 @@ class VAD(abc.ABC):
 
                 # If silence exceeds padding duration, emit audio and reset
                 if self.silence_counter >= speech_pad_frames:
-                    await self._flush_speech_buffer(participant)
+                    await self._flush_speech_buffer(participant.__dict__ if participant else None)
 
             # Calculate max speech frames based on ms
             max_speech_frames = int(
@@ -264,7 +264,7 @@ class VAD(abc.ABC):
 
             # Force flush if speech duration exceeds maximum
             if self.total_speech_frames >= max_speech_frames:
-                await self._flush_speech_buffer(participant)
+                await self._flush_speech_buffer(participant.__dict__ if participant else None)
 
         # Start collecting speech when detected
         elif is_speech:
@@ -282,7 +282,7 @@ class VAD(abc.ABC):
                     speech_probability=speech_prob,
                     activation_threshold=self.activation_th,
                     frame_count=1,
-                    user_metadata=participant,
+                    user_metadata=participant.__dict__ if participant else None,
                 )
             )
 

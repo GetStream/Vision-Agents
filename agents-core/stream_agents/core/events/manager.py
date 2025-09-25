@@ -3,7 +3,7 @@ import collections
 import types
 import typing
 import logging
-from typing import get_origin, Union, get_args
+from typing import get_origin, Union, get_args, Any, Optional
 from .base import ExceptionEvent, HealthCheckEvent, ConnectionOkEvent, ConnectionErrorEvent, ConnectionClosedEvent
 
 
@@ -126,12 +126,12 @@ class EventManager:
             ignore_unknown_events (bool): If True, unknown events are ignored rather than raising errors.
                 Defaults to True.
         """
-        self._queue = collections.deque([])
-        self._events = {}
-        self._handlers = {}
-        self._modules = {}
+        self._queue: collections.deque[Any] = collections.deque([])
+        self._events: dict[type, Any] = {}
+        self._handlers: dict[type, list[Any]] = {}
+        self._modules: dict[str, Any] = {}
         self._ignore_unknown_events = ignore_unknown_events
-        self._processing_task = None
+        self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
 
         self.register(ExceptionEvent)
@@ -314,10 +314,10 @@ class EventManager:
 
         for name, event_class in annotations.items():
             origin = get_origin(event_class)
-            events = []
+            events: list[Any] = []
 
             if origin is Union or isinstance(event_class, types.UnionType):
-                events = get_args(event_class)
+                events = list(get_args(event_class))
                 is_union = True
             else:
                 events = [event_class]

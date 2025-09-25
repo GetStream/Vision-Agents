@@ -271,7 +271,7 @@ class Agent:
         self._realtime_connection = None
 
         # shutdown task processing
-        for _, track in self._track_tasks:
+        for track_id, track in self._track_tasks.items():
             track.cancel()
 
         # Close RTC connection
@@ -329,15 +329,18 @@ class Agent:
         )
         # Create a new streaming message if we don't have one
         if self._agent_conversation_handle is None:
+            if event.delta is None:
+                return
             self._agent_conversation_handle = self.conversation.start_streaming_message(
                 role="assistant",
                 user_id=self.agent_user.id,
                 initial_content=event.delta,
             )
         else:
-            self.conversation.append_to_message(
-                self._agent_conversation_handle, event.delta
-            )
+            if event.delta is not None:
+                self.conversation.append_to_message(
+                    self._agent_conversation_handle, event.delta
+                )
 
     async def _handle_after_response(self, llm_response: LLMResponseEvent):
         if self.conversation is None:
@@ -355,7 +358,7 @@ class Agent:
             self._agent_conversation_handle = None
 
         # Trigger TTS directly instead of through event system
-        if llm_response.text and llm_response.text.strip():
+        if llm_response.text and llm_response.text.strip() and self.tts:
             await self.tts.send(llm_response.text)
 
     def _on_vad_audio(self, event: VADAudioEvent):
@@ -416,7 +419,6 @@ class Agent:
                     plugin_name="agent",
                     text=event.text,
                     user_id=event.user_id,
-                    error_message=str(e),
                     error=e,
                 )
             )
@@ -443,6 +445,8 @@ class Agent:
         async def on_audio_received(event: AudioReceivedEvent):
             pcm = event.pcm_data
             participant = event.participant
+            if pcm is None or participant is None:
+                return
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
@@ -454,6 +458,8 @@ class Agent:
             track_id = event.track_id
             track_type = event.track_type
             user = event.user
+            if track_id is None or track_type is None:
+                return
             task = asyncio.create_task(self._process_track(track_id, track_type, user))
             self._track_tasks[track_id] = task
             task.add_done_callback(_log_task_exception)
@@ -600,7 +606,7 @@ class Agent:
         self.logger.info(f"🎤 [STT transcript]: {event.text}")
 
         # if the agent is in realtime mode than we dont need to process the transcription
-        if not self.realtime_mode:
+        if not self.realtime_mode and event.text:
             await self.simple_response(event.text, event.user_metadata)
 
         if self.conversation is None:
@@ -612,6 +618,8 @@ class Agent:
 
         if self._user_conversation_handle is None:
             # No partial transcripts were received, create a completed message directly
+            if event.text is None:
+                return
             message = Message(
                 original=event,
                 content=event.text,
@@ -621,9 +629,10 @@ class Agent:
             self.conversation.add_message(message)
         else:
             # Replace with final text and complete the message
-            self.conversation.replace_message(
-                self._user_conversation_handle, event.text
-            )
+            if event.text is not None:
+                self.conversation.replace_message(
+                    self._user_conversation_handle, event.text
+                )
             self.conversation.complete_message(self._user_conversation_handle)
             self._user_conversation_handle = None
 

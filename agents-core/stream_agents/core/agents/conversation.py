@@ -150,6 +150,8 @@ class Conversation(ABC):
         # The message now has an ID assigned by the add_message flow
         # Find it in the messages list (it's the last one added)
         added_message = self.messages[-1]
+        if added_message.id is None or added_message.user_id is None:
+            raise ValueError("Message ID and user_id must be set")
         return StreamHandle(message_id=added_message.id, user_id=added_message.user_id)
     
     def append_to_message(self, handle: StreamHandle, text: str):
