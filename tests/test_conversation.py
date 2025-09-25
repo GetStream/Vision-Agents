@@ -13,7 +13,6 @@ from stream_agents.core.agents.conversation import (
     Conversation,
     Message,
     InMemoryConversation,
-    StreamConversation,
     StreamHandle
 )
 import os
@@ -26,7 +25,7 @@ class TestConversation:
     def test_conversation_is_abstract(self):
         """Test that Conversation cannot be instantiated directly."""
         with pytest.raises(TypeError) as exc_info:
-            Conversation("instructions", [])
+            Conversation("instructions", [])  # type: ignore
         assert "Can't instantiate abstract class" in str(exc_info.value)
     
     def test_conversation_requires_abstract_methods(self):
@@ -36,7 +35,7 @@ class TestConversation:
             pass
         
         with pytest.raises(TypeError) as exc_info:
-            IncompleteConversation("instructions", [])
+            IncompleteConversation("instructions", [])  # type: ignore
         assert "Can't instantiate abstract class" in str(exc_info.value)
 
 
@@ -225,8 +224,8 @@ class TestInMemoryConversation:
         assert msg2.content == "Answer: 4"  # Replaced content, no space issue
 
 
-class TestStreamConversation:
-    """Test suite for StreamConversation class."""
+class TestInMemoryConversation:
+    """Test suite for InMemoryConversation class."""
     
     @pytest.fixture
     def mock_chat_client(self):
@@ -256,7 +255,7 @@ class TestStreamConversation:
     
     @pytest.fixture
     def stream_conversation(self, mock_chat_client, mock_channel):
-        """Create a StreamConversation instance with mocked dependencies."""
+        """Create an InMemoryConversation instance with mocked dependencies."""
         instructions = "You are a helpful assistant."
         messages = [
             Message(
@@ -270,7 +269,7 @@ class TestStreamConversation:
         for i, msg in enumerate(messages):
             msg.id = f"msg-{i}"
             
-        conversation = StreamConversation(
+        conversation = InMemoryConversation(
             instructions=instructions,
             messages=messages,
             channel=mock_channel,
@@ -699,7 +698,7 @@ class TestStreamConversation:
     def test_shutdown_worker_thread(self, mock_chat_client, mock_channel):
         """Test that shutdown properly stops the worker thread."""
         # Create a fresh conversation without using the fixture to avoid double shutdown
-        conversation = StreamConversation(
+        conversation = InMemoryConversation(
             instructions="Test",
             messages=[],
             channel=mock_channel,
