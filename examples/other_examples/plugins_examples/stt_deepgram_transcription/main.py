@@ -24,6 +24,7 @@ from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
 from stream_agents.core.stt.events import STTTranscriptEvent
 from stream_agents.plugins import deepgram, openai, getstream, elevenlabs
+
 load_dotenv()
 
 async def main():
@@ -58,7 +59,7 @@ async def main():
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.simple_response("Hello! I can transcribe your speech and respond to you.")
+        await agent.say("Hello! I can transcribe your speech and respond to you.")
         await agent.finish()
 
 if __name__ == "__main__":

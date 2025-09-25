@@ -40,7 +40,7 @@ async def main():
     # Subscribe to participant joined events
     @agent.subscribe
     async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
-        await agent.simple_response(f"Hello {event.participant.user.name}! Welcome to the call.")
+        await agent.say(f"Hello {event.participant.user.name}! Welcome to the call.")
 
     # Create call and open demo
     call = agent.edge.client.video.call("default", str(uuid4()))
