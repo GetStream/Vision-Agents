@@ -53,3 +53,10 @@ class TestYOLOPoseProcessor(BaseTest):
         assert isinstance(annotated_image, Image.Image)
         # Ensure same size as input for simplicity
         assert annotated_image.size == golf_image.size
+        
+        # Save the annotated image temporarily for inspection
+        temp_path = Path("/tmp/annotated_golf_swing.png")
+        annotated_image.save(temp_path)
+        print(f"Saved annotated image to: {temp_path}")
+
+
