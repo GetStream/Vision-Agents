@@ -5,7 +5,7 @@ from typing import Optional, Callable, Any
 import av
 from aiortc import VideoStreamTrack
 
-from stream_agents.core.forwarder.queue import LatestNQueue
+from stream_agents.core.utils.queue import LatestNQueue
 
 logger = logging.getLogger(__name__)
 

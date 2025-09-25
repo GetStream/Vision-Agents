@@ -265,6 +265,9 @@ class Agent:
         if self.mcp_manager:
             await self.mcp_manager.disconnect_all()
 
+        for processor in self.processors:
+            processor.close()
+
         # Close Realtime connection
         if self._realtime_connection:
             await self._realtime_connection.__aexit__(None, None, None)
