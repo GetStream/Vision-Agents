@@ -146,6 +146,11 @@ Integration tests run once a day to verify that changes to underlying APIs didn'
 - Short running tasks should check if the connection is closed before doing work
 - Long running tasks are should be cancelled when calling agent.close()
 
+### Video Frames & Tracks
+
+- Track.recv errors will fail silently. The API is to return a frame. Never return None. and wait till the next frame is available
+- When using frame.to_ndarray(format="rgb24") specify the format. Typically you want rgb24 when connecting/sending to Yolo etc
+
 ## Awesome Video AI
 
 A list of people & projects to follow for video AI

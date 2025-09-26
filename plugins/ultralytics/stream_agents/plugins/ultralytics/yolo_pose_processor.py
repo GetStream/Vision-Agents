@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WIDTH = 640
 DEFAULT_HEIGHT= 480
-#DEFAULT_WIDTH = 1920
-#DEFAULT_HEIGHT= 1080
+DEFAULT_WIDTH = 1920
+DEFAULT_HEIGHT= 1080
 
 """
 TODO: video track & Queuing need more testing/ thought
@@ -89,7 +89,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
             if frame:
                 self.last_frame = frame
                 frame_received = True
-                logger.debug(f"📥 Got new frame from queue: {frame.size}")
+                logger.debug(f"📥 Got new frame from queue: {frame}")
         except asyncio.TimeoutError:
             pass
         except Exception as e:
@@ -205,7 +205,7 @@ class YOLOPoseProcessor(
     async def add_pose_to_frame(self, frame: av.VideoFrame):
 
         try:
-            frame_array = frame.to_ndarray()
+            frame_array = frame.to_ndarray(format="rgb24")
             array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
             frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
         except Exception as e:
