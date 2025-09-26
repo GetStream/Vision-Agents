@@ -17,12 +17,13 @@ class VideoForwarder:
       - run `start_event_consumer(on_frame)` (push model via callback).
     `fps` limits how often frames are forwarded to consumers (coalescing to newest).
     """
-    def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = 30):
+    def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = 30, name: str = "video-forwarder"):
         self.input_track = input_track
         self.queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=max_buffer)
         self.fps = fps  # None = unlimited, else forward at ~fps
         self._tasks: set[asyncio.Task] = set()
         self._stopped = asyncio.Event()
+        self.name = name
 
     # ---------- lifecycle ----------
     async def start(self) -> None:
@@ -127,7 +128,8 @@ class VideoForwarder:
                         if (now_time - last_log) >= log_interval_seconds:
                             if last_width and last_height:
                                 logger.info(
-                                    "shared %d frames at %dx%d resolution in the last %.0f seconds target is %f fps",
+                                    "%s shared %d frames at %dx%d resolution in the last %.0f seconds target is %f fps",
+                                    self.name,
                                     frames_forwarded,
                                     last_width,
                                     last_height,
@@ -136,7 +138,8 @@ class VideoForwarder:
                                 )
                             else:
                                 logger.info(
-                                    "shared %d frames in the last %.0f seconds",
+                                    "%s shared %d frames in the last %.0f seconds",
+                                    self.name,
                                     frames_forwarded,
                                     log_interval_seconds,
                                 )

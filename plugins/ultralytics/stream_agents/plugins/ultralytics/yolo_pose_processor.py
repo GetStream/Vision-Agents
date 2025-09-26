@@ -136,6 +136,7 @@ class YOLOPoseProcessor(
         imgsz: int = 512,
         device: str = "cpu",
         max_workers: int = 2,
+        fps: int = 5,
         interval: int = 0,
         enable_hand_tracking: bool = True,
         enable_wrist_highlights: bool = True,
@@ -145,6 +146,7 @@ class YOLOPoseProcessor(
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
 
         self.model_path = model_path
+        self.fps = fps
         self.conf_threshold = conf_threshold
         self.imgsz = imgsz
         self.device = device
@@ -190,6 +192,8 @@ class YOLOPoseProcessor(
         self._video_forwarder = VideoForwarder(
             incoming_track,
             max_buffer=30, # 1 second
+            fps=self.fps,
+            name="yolo_forwarder",
         )
 
         # Start the forwarder

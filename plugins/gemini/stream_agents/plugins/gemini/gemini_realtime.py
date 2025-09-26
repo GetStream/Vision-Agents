@@ -301,7 +301,8 @@ class Realtime(realtime.Realtime):
         self._video_forwarder = VideoForwarder(
             input_track,  # type: ignore[arg-type]
             max_buffer=5,
-            fps=float(self.fps)
+            fps=float(self.fps),
+            name="gemini_forwarder",
         )
         
         # Start the forwarder
