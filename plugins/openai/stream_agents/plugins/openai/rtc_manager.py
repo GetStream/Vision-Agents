@@ -289,7 +289,6 @@ class RTCManager:
 
         answer_sdp = await self._setup_sdp_exchange()
         logger.info("Set up peer connection handlers")
-        logger.info(f"Answer SDP: {answer_sdp}")
 
         # Set the remote SDP we got from OpenAI
         answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
