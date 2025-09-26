@@ -38,7 +38,7 @@ async def main() -> None:
     )
 
     try:
-        # Join the call - this is the main functionality we're demonstrating
+        # Join the call - thisc is the main functionality we're demonstrating
         call = client.video.call("default", str(uuid4()))
         # Open the demo env
         agent.edge.open_demo(call)

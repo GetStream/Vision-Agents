@@ -63,7 +63,6 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
     async def add_frame(self, frame : av.VideoFrame):
         # Resize the image and stick it on the queue
-        logger.info("YPV: add frame")
         if self._stopped:
             return
 
@@ -198,7 +197,6 @@ class YOLOPoseProcessor(
         await self._video_forwarder.start_event_consumer(self._add_pose_and_add_frame)
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
-        logger.info("YPV: add frame")
         frame_with_pose = await self.add_pose_to_frame(frame)
         await self._video_track.add_frame(frame_with_pose)
 

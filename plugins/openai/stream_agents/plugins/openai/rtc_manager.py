@@ -13,6 +13,7 @@ from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamT
 from fractions import Fraction
 import numpy as np
 from av import AudioFrame, VideoFrame
+from openai.types.realtime import RealtimeSessionCreateRequestParam
 
 from stream_agents.core.utils.video_forwarder import VideoForwarder
 
@@ -181,7 +182,6 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
             if frame.format.name != "rgb24":
                 try:
                     frame = frame.reformat(format="rgb24")
-                    logger.debug(f"🎥 Converted frame format: {frame.format.name} → rgb24")
                 except Exception as e:
                     logger.warning(f"🎥 Frame format conversion failed: {e}, using original")
 
@@ -193,8 +193,6 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
 
             # Optional detailed timing log
             total_duration = time.monotonic() - frame_start_time
-            if self._frame_count % 30 == 0:
-                logger.info(f"🎥 FRAME TIMING: frame_id={self._frame_count} total={total_duration:.3f}s")
 
             return frame
 
@@ -273,23 +271,18 @@ class RTCManager:
         and establishes the data channel for real-time communication.
         """
         self.token = await self._get_session_token()
-        logger.info("Obtained OpenAI session token")
         await self._add_data_channel()
-        logger.info("Added data channel")
-        
+
         await self._set_audio_track()
-        logger.info("Set audio track for the call")
 
         if self.send_video:
             await self._set_video_track()
-            logger.info("Set video track for the call")
 
         @self.pc.on("track")
         async def on_track(track):
             await self._handle_added_track(track)
 
         answer_sdp = await self._setup_sdp_exchange()
-        logger.info("Set up peer connection handlers")
 
         # Set the remote SDP we got from OpenAI
         answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
@@ -303,7 +296,7 @@ class RTCManager:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {"model": self.model, "voice": self.voice}
+        payload: RealtimeSessionCreateRequestParam = {"model": self.model, "voice": self.voice, "type": "realtime"}
         if self.instructions:
             payload["instructions"] = self.instructions
 
@@ -329,7 +322,6 @@ class RTCManager:
 
         @self.data_channel.on("open")
         async def on_open():
-            logger.info("Data channel opened")
             self._data_channel_open_event.set()
 
             # Immediately switch to semantic VAD so it's active before the user speaks
@@ -466,10 +458,6 @@ class RTCManager:
             stream_video_track: Video track to forward to OpenAI.
             fps: Target frames per second.
         """
-        logger.info(f"🎥 start_video_sender called with Stream Video track: {type(stream_video_track).__name__}")
-        logger.info(f"🎥 Track kind: {getattr(stream_video_track, 'kind', 'unknown')}")
-        logger.info(f"🎥 Track state: {getattr(stream_video_track, 'readyState', 'unknown')}")
-        logger.info(f"🎥 FPS requested: {fps}")
         
         try:
             if not self.send_video:
@@ -490,7 +478,6 @@ class RTCManager:
                 logger.info("🎥 Existing video sender task stopped")
             
             # Create forwarding track and start its forwarder
-            logger.info("🎥 Creating StreamVideoForwardingTrack...")
             forwarding_track = StreamVideoForwardingTrack(stream_video_track, fps)
             await forwarding_track.start()
             
@@ -618,7 +605,6 @@ class RTCManager:
 
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""
-        logger.info(f"OpenAI event: {event}")
         cb = self._event_callback
         if cb is not None:
             try:
