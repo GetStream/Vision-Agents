@@ -104,8 +104,8 @@ async def main():
             logger.info("  - 'Create a new issue in my repository'")
             logger.info("  - 'Search for issues with the label bug'")
             logger.info("  - 'Show me recent pull requests'")
-            logger.info("  - 'What's the weather like?' (uses custom function)")
-            logger.info("  - 'Calculate 15 + 27' (uses custom function)")
+            logger.info("  - 'List my starred repositories'")
+            logger.info("  - 'Get details about a specific repository'")
             logger.info("")
             logger.info("The agent will use OpenAI Realtime's function calling to interact with GitHub!")
             
