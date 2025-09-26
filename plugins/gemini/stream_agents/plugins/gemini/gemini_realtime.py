@@ -491,7 +491,7 @@ class Realtime(realtime.Realtime):
                 self.logger.info(f"Function call {tool_call['name']} succeeded: {response_data}")
             
             # Send function response back to Gemini Live session
-            await self._send_function_response(tool_call["name"], str(response_data) if response_data is not None else "", None)
+            await self._send_function_response(str(tool_call["name"]), str(response_data) if response_data is not None else "", None)
             
         except Exception as e:
             self.logger.error(f"Error handling function call: {e}")

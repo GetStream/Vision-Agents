@@ -338,8 +338,7 @@ class ClaudeLLM(LLM):
                 from stream_agents.core.llm.events import StandardizedTextDeltaEvent
                 standardized_event = StandardizedTextDeltaEvent(
                     content_index=delta_event.index,
-                    delta=delta_event.delta.text,
-                    type="response.output_text.delta"
+                    delta=delta_event.delta.text
                 )
                 self.events.send(standardized_event)
         elif event.type == "message_stop":
