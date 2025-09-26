@@ -154,7 +154,7 @@ class OpenAILLM(LLM):
                 if getattr(event, "type", "") == "response.completed":
                     calls = self._extract_tool_calls_from_response(event.response)
                     for c in calls:
-                        key = (c["id"], c["name"], json.dumps(c["arguments_json"], sort_keys=True))
+                        key = (c["name"], json.dumps(c["arguments_json"], sort_keys=True))
                         if key not in seen:
                             pending_tool_calls.append(c)
                             seen.add(key)
@@ -229,12 +229,25 @@ class OpenAILLM(LLM):
             
             # Don't send empty tool result inputs
             if not tool_messages:
-                return llm_response or LLMResponseEvent[OpenAIResponse](response, "")
+                # Create a fallback response object
+                from openai.types.responses import Response
+                fallback_response = Response(
+                id="", 
+                model="", 
+                object="response", 
+                created_at=0, 
+                usage=None,
+                output=None,  # type: ignore[arg-type]
+                parallel_tool_calls=None,  # type: ignore[arg-type]
+                tool_choice=None,  # type: ignore[arg-type]
+                tools=None  # type: ignore[arg-type]
+            )
+                return llm_response or LLMResponseEvent[OpenAIResponse](fallback_response, "")
             
             # Send follow-up request with tool results
             follow_up_kwargs = {
                 "model": current_kwargs.get("model", self.model),
-                "conversation": self.openai_conversation.id,
+                "conversation": self.openai_conversation.id if self.openai_conversation else None,
                 "input": tool_messages,
                 "stream": True,
             }
@@ -286,13 +299,40 @@ class OpenAILLM(LLM):
                     current_kwargs = follow_up_kwargs
                     continue
                 else:
-                    return llm_response or LLMResponseEvent[OpenAIResponse](response, "")
+                    # Create a fallback response object
+                    from openai.types.responses import Response
+                    fallback_response = Response(
+                id="", 
+                model="", 
+                object="response", 
+                created_at=0, 
+                usage=None,
+                output=None,  # type: ignore[arg-type]
+                parallel_tool_calls=None,  # type: ignore[arg-type]
+                tool_choice=None,  # type: ignore[arg-type]
+                tools=None  # type: ignore[arg-type]
+            )
+                    return llm_response or LLMResponseEvent[OpenAIResponse](fallback_response, "")
             else:
                 # Defensive fallback
-                return LLMResponseEvent[OpenAIResponse](response, "")
+                from openai.types.responses import Response
+                fallback_response = Response(
+                id="", 
+                model="", 
+                object="response", 
+                created_at=0, 
+                usage=None,
+                output=None,  # type: ignore[arg-type]
+                parallel_tool_calls=None,  # type: ignore[arg-type]
+                tool_choice=None,  # type: ignore[arg-type]
+                tools=None  # type: ignore[arg-type]
+            )
+                return LLMResponseEvent[OpenAIResponse](fallback_response, "")
         
         # If we've exhausted all rounds, return the last response
-        return llm_response or LLMResponseEvent[OpenAIResponse](response, "")
+        from openai.types.responses import Response
+        fallback_response = Response(id="", model="", object="response", created_at=0, usage=None)  # type: ignore[call-arg]
+        return llm_response or LLMResponseEvent[OpenAIResponse](fallback_response, "")
 
     @staticmethod
     def _normalize_message(openai_input) -> List["Message"]:

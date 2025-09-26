@@ -6,7 +6,7 @@ from google.genai.types import GenerateContentResponse
 
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import AfterLLMResponseEvent, StandardizedTextDeltaEvent, LLMResponseEvent as EventLLMResponseEvent
 from . import events
 
 from stream_agents.core.processors import Processor
@@ -90,11 +90,11 @@ class GeminiLLM(LLM):
             cfg = kwargs.get("config")
             if not isinstance(cfg, types.GenerateContentConfig):
                 cfg = types.GenerateContentConfig()
-            cfg.tools = conv_tools
+            cfg.tools = conv_tools  # type: ignore[assignment]
             kwargs["config"] = cfg
 
         # Generate content using the client
-        iterator = self.chat.send_message_stream(*args, **kwargs)
+            iterator = self.chat.send_message_stream(*args, **kwargs)  # type: ignore[arg-type]
         text_parts : List[str] = []
         final_chunk = None
         pending_calls: List[NormalizedToolCallItem] = []
@@ -120,10 +120,12 @@ class GeminiLLM(LLM):
             current_calls = pending_calls
             cfg_with_tools = kwargs.get("config")
             
-            seen = set()
+            seen: set[tuple] = set()
             while current_calls and rounds < MAX_ROUNDS:
                 # Execute tools concurrently with deduplication
-                triples, seen = await self._dedup_and_execute(current_calls, max_concurrency=8, timeout_s=30, seen=seen)
+                # Convert NormalizedToolCallItem to dict format expected by _dedup_and_execute
+                calls_dict = [call.__dict__ for call in current_calls]
+                triples, seen = await self._dedup_and_execute(calls_dict, max_concurrency=8, timeout_s=30, seen=seen)
                 
                 executed = []
                 parts = []
@@ -139,9 +141,9 @@ class GeminiLLM(LLM):
                     parts.append(types.Part.from_function_response(name=tc["name"], response=sanitized_res))
                 
                 # Send function responses with tools config
-                follow_up_iter = self.chat.send_message_stream(parts, config=cfg_with_tools)
+                follow_up_iter = self.chat.send_message_stream(parts, config=cfg_with_tools)  # type: ignore[arg-type]
                 
-                follow_up_text_parts = []
+                follow_up_text_parts: list[str] = []
                 follow_up_last = None
                 next_calls = []
                 
@@ -167,9 +169,14 @@ class GeminiLLM(LLM):
             total_text = "".join(text_parts)
             llm_response = LLMResponseEvent(final_chunk, total_text)
 
-        self.events.send(events.AfterLLMResponseEvent(
+        # Convert LLMResponseEvent to the correct type for AfterLLMResponseEvent
+        event_llm_response = EventLLMResponseEvent(
+            original=llm_response.original,
+            text=llm_response.text
+        )
+        self.events.send(AfterLLMResponseEvent(
             plugin_name="gemini",
-            llm_response=llm_response
+            llm_response=event_llm_response
         ))
 
         # Return the LLM response
@@ -212,13 +219,9 @@ class GeminiLLM(LLM):
                 item_id="",
                 output_index=0,
                 sequence_number=0,
-                type="response.output_text.delta",
                 delta=chunk.text,
             )
-            self.events.send(events.StandardizedTextDeltaEvent(
-                plugin_name="gemini",
-                standardized_event=standardized_event
-            ))
+            self.events.send(standardized_event)
 
             text_parts.append(chunk.text)
 
@@ -322,5 +325,5 @@ class GeminiLLM(LLM):
                 parts.append(types.Part.from_function_response(name=tc["name"], response=response_data))
             except Exception:
                 # Fallback: create a simple text part
-                parts.append(types.Part.from_text(f"Function {tc['name']} returned: {res}"))
+                parts.append(types.Part(text=f"Function {tc['name']} returned: {res}"))
         return parts
