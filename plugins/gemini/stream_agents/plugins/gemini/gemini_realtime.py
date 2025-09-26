@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from typing import Optional, List, Dict, Any
-from aiortc import MediaStreamTrack
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai

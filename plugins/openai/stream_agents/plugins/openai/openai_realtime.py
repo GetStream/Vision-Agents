@@ -140,7 +140,7 @@ class Realtime(realtime.Realtime):
             self._emit_transcript_event(text=transcript_event.transcript, user_metadata={"role": "assistant", "source": "openai"})
             self._emit_response_event(text=transcript_event.transcript, response_id=transcript_event.response_id, is_complete=True, conversation_item_id=transcript_event.item_id)
         if et == "input_audio_buffer.speech_started":
-            speech_event: InputAudioBufferSpeechStartedEvent = InputAudioBufferSpeechStartedEvent.model_validate(event)
+            InputAudioBufferSpeechStartedEvent.model_validate(event)
             await self.output_track.flush()
 
     async def _handle_audio_output(self, audio_bytes: bytes) -> None:

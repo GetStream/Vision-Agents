@@ -14,7 +14,6 @@ from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
 from stream_agents.core.processors import Processor
 from . import events
 
