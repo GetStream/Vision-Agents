@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
 from stream_agents.plugins import moonshine, openai, getstream
-from stream_agents.core.events import STTTranscriptEvent
+from stream_agents.core.stt.events import STTTranscriptEvent
 
 load_dotenv()
 
@@ -58,7 +58,7 @@ async def main():
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.say("Hello! I can transcribe your speech and respond to you.")
+        await agent.simple_response("Hello! I can transcribe your speech and respond to you.")
         await agent.finish()
 
 if __name__ == "__main__":

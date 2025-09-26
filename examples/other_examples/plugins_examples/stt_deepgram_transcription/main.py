@@ -9,11 +9,11 @@ This example demonstrates how to:
 4. Respond to transcribed speech
 
 Usage:
-    python main.py
+    uv run main.py
 
 Requirements:
     - Create a .env file with your Stream and Deepgram credentials (see env.example)
-    - Install dependencies: pip install -e .
+    - Install dependencies: uv sync
 """
 
 import asyncio
@@ -22,9 +22,8 @@ from dotenv import load_dotenv
 
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
-from stream_agents.plugins import deepgram, openai, getstream
-from stream_agents.core.events import STTTranscriptEvent
-
+from stream_agents.core.stt.events import STTTranscriptEvent
+from stream_agents.plugins import deepgram, openai, getstream, elevenlabs
 load_dotenv()
 
 async def main():
@@ -35,6 +34,7 @@ async def main():
         instructions="I transcribe speech and respond to what users say.",
         llm=openai.LLM(model="gpt-4o-mini"),
         stt=deepgram.STT(),
+        tts=elevenlabs.TTS(),
     )
 
     # Subscribe to transcript events
@@ -58,7 +58,7 @@ async def main():
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.say("Hello! I can transcribe your speech and respond to you.")
+        await agent.simple_response("Hello! I can transcribe your speech and respond to you.")
         await agent.finish()
 
 if __name__ == "__main__":

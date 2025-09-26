@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
+from stream_agents.core.vad.events import VADAudioEvent
 from stream_agents.plugins import silero, openai, getstream
-from stream_agents.core.events import VADAudioEvent
 
 load_dotenv()
 
@@ -51,7 +51,7 @@ async def main():
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.say("Hello! I can detect when you speak and respond to you.")
+        await agent.simple_response("Hello! I can detect when you speak and respond to you.")
         await agent.finish()
 
 if __name__ == "__main__":
