@@ -58,7 +58,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
         self.height = height
         empty_image = Image.new("RGB", (self.width, self.height), color="blue")
         self.empty_frame = av.VideoFrame.from_image(empty_image)
-        self.last_frame : Optional[av.VideoFrame] = None
+        self.last_frame : av.VideoFrame = self.empty_frame
         self._stopped = False
 
     async def add_frame(self, frame : av.VideoFrame):
@@ -79,7 +79,6 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
     async def recv(self) -> av.frame.Frame:
         """Receive the next video frame."""
-        logger.info("YPV: recv")
         if self._stopped:
             raise Exception("Track stopped")
 
@@ -91,26 +90,30 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
                 self.last_frame = frame
                 frame_received = True
                 logger.debug(f"📥 Got new frame from queue: {frame.size}")
-            elif self.last_frame == None:
-                self.last_frame = self.empty_frame
         except asyncio.TimeoutError:
-            logger.error("⏰ No frame in queue, using last frame")
             pass
         except Exception as e:
             logger.warning(f"⚠️ Error getting frame from queue: {e}")
 
         # Get timestamp for the frame
+
         pts, time_base = await self.next_timestamp()
 
-        # Create av.VideoFrame from PIL Image
-        av_frame = self.last_frame
-        av_frame.pts = pts
-        av_frame.time_base = time_base
 
-        if frame_received:
-            logger.info(f"📤 Returning NEW video frame: {av_frame.width}x{av_frame.height}")
-        else:
-            logger.info(f"📤 Returning REPEATED video frame: {av_frame.width}x{av_frame.height}")
+        # Create av.VideoFrame from PIL Image
+        try:
+            av_frame = self.last_frame
+
+            av_frame.pts = pts
+            av_frame.time_base = time_base
+        except Exception as e:
+            import pdb; pdb.set_trace()
+
+
+        #if frame_received:
+        #    logger.info(f"Returning NEW video frame: {av_frame.width}x{av_frame.height}")
+        #else:
+        #    logger.info(f"Returning REPEATED video frame: {av_frame.width}x{av_frame.height}")
         return av_frame
 
     def stop(self):
@@ -195,10 +198,12 @@ class YOLOPoseProcessor(
         await self._video_forwarder.start_event_consumer(self._add_pose_and_add_frame)
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
-        frame_with_pose = self.add_pose_to_frame(frame)
+        logger.info("YPV: add frame")
+        frame_with_pose = await self.add_pose_to_frame(frame)
         await self._video_track.add_frame(frame_with_pose)
 
     async def add_pose_to_frame(self, frame: av.VideoFrame):
+
         frame_array = frame.to_ndarray()
         array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
         frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
