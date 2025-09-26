@@ -5,7 +5,6 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List
 from mcp import ClientSession, types
-from httpx import URL
 
 
 class MCPBaseServer(ABC):

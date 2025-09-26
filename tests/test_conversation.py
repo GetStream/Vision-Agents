@@ -693,12 +693,6 @@ class TestStreamConversation:
     
     def test_shutdown_worker_thread(self, mock_chat_client, mock_channel):
         """Test that shutdown properly stops the worker thread."""
-        # Create a fresh conversation without using the fixture to avoid double shutdown
-        conversation = InMemoryConversation(
-            instructions="Test",
-            messages=[]
-        )
-        
         # InMemoryConversation doesn't have worker threads or shutdown
         # This test is not applicable to InMemoryConversation
         pass
