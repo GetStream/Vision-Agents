@@ -607,7 +607,7 @@ class VAD(vad.VAD):
 
             # Force flush if speech duration exceeds maximum
             if self.total_speech_frames >= max_speech_frames:
-                await self._flush_speech_buffer(user)
+                await self._flush_speech_buffer(user.__dict__ if user else None)
 
     async def reset(self) -> None:
         """Reset the VAD state."""

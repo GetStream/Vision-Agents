@@ -201,7 +201,7 @@ class ClaudeLLM(LLM):
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
                 # Collect tool_use calls as they complete (your helper already reconstructs args)
-                new_calls, _ = self._extract_tool_calls_from_stream_chunk(event, None)
+                new_calls = self._extract_tool_calls_from_stream_chunk(event)
                 if new_calls:
                     accumulated_calls.extend(new_calls)
 

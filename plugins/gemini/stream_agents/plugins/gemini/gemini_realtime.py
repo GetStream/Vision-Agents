@@ -295,7 +295,7 @@ class Realtime(realtime.Realtime):
             self._session = None
 
 
-    async def _watch_video_track(self, input_track: MediaStreamTrack, **kwargs) -> None:
+    async def _watch_video_track(self, track: Any) -> None:
         """
         Start sending video frames to Gemini using VideoForwarder.
         We follow the on_track from Stream. If video is turned on or off this gets forwarded.
@@ -306,7 +306,7 @@ class Realtime(realtime.Realtime):
         
         # Create VideoForwarder with the input track
         self._video_forwarder = VideoForwarder(
-            input_track,  # type: ignore[arg-type]
+            track,  # type: ignore[arg-type]
             max_buffer=5,
             fps=float(self.fps)
         )
@@ -335,7 +335,8 @@ class Realtime(realtime.Realtime):
         try:
             png_bytes = frame_to_png_bytes(frame)
             blob = Blob(data=png_bytes, mime_type="image/png")
-            await self._session.send_realtime_input(media=blob)
+            if self._session:
+                await self._session.send_realtime_input(media=blob)
         except Exception as e:
             self.logger.error(f"Error sending video frame: {e}")
 
@@ -368,7 +369,7 @@ class Realtime(realtime.Realtime):
         
         if config is not None:
             for k, v in config.items():
-                default_config[k] = v
+                default_config[k] = v  # type: ignore[literal-required]
         return default_config
 
     def _get_config_with_resumption(self) -> LiveConnectConfigDict:
@@ -378,7 +379,7 @@ class Realtime(realtime.Realtime):
         config = self.config.copy()
         # resume if we have a session resumption id/handle
         if self.session_resumption_id:
-            config["session_resumption"] = SessionResumptionConfig(handle=self.session_resumption_id)
+            config["session_resumption"] = SessionResumptionConfig(handle=self.session_resumption_id)  # type: ignore[typeddict-item]
         # set the instructions
         # TODO: potentially we can share the markdown as files/parts.. might do better TBD
         config["system_instruction"] = self._build_enhanced_instructions()
@@ -389,7 +390,7 @@ class Realtime(realtime.Realtime):
             conv_tools = self._convert_tools_to_provider_format(tools_spec)
             # Add tools to the live config
             # Note: The exact key name may need adjustment based on Gemini Live API documentation
-            config["tools"] = conv_tools
+            config["tools"] = conv_tools  # type: ignore[typeddict-item]
             self.logger.info(f"Added {len(tools_spec)} tools to Gemini Live config")
         else:
             self.logger.debug("No tools available - function calling will not work")
@@ -431,17 +432,17 @@ class Realtime(realtime.Realtime):
         
         try:
             # Check for function calls in the response
-            if hasattr(response, 'server_content') and server_message.server_content:
-                if hasattr(server_message.server_content, 'model_turn') and server_message.server_content.model_turn:
-                    parts = server_message.server_content.model_turn.parts
+            if hasattr(response, 'server_content') and response.server_content:
+                if hasattr(response.server_content, 'model_turn') and response.server_content.model_turn:
+                    parts = response.server_content.model_turn.parts
                     for part in parts:
                         if hasattr(part, 'function_call') and part.function_call:
-                            calls.append({
-                                "type": "tool_call",
-                                "name": getattr(part.function_call, "name", "unknown"),
-                                "arguments_json": getattr(part.function_call, "args", {}),
-                                "id": getattr(part.function_call, "id", None)
-                            })
+                            from stream_agents.core.llm.llm_types import NormalizedToolCallItem
+                            calls.append(NormalizedToolCallItem(
+                                name=getattr(part.function_call, "name", "unknown"),
+                                arguments_json=getattr(part.function_call, "args", {}),
+                                id=getattr(part.function_call, "id", None)
+                            ))
         except Exception as e:
             self.logger.debug(f"Error extracting tool calls from response: {e}")
         
@@ -491,18 +492,18 @@ class Realtime(realtime.Realtime):
                 self.logger.info(f"Function call {tool_call['name']} succeeded: {response_data}")
             
             # Send function response back to Gemini Live session
-            await self._send_function_response(tool_call["name"], response_data, tool_call.get("id"))
+            await self._send_function_response(tool_call["name"], str(response_data) if response_data is not None else "", tool_call.get("id"))
             
         except Exception as e:
             self.logger.error(f"Error handling function call: {e}")
             # Send error response back
             await self._send_function_response(
                 getattr(function_call, "name", "unknown"), 
-                {"error": str(e)}, 
+                str({"error": str(e)}), 
                 getattr(function_call, "id", None)
             )
 
-    async def _send_function_response(self, function_name: str, response_data: Dict[str, Any], call_id: Optional[str] = None) -> None:
+    async def _send_function_response(self, function_name: str, response_data: str, call_id: Optional[str] = None) -> None:
         """
         Send function response back to Gemini Live session.
         
@@ -523,7 +524,8 @@ class Realtime(realtime.Realtime):
             
             # Send the function response using the correct method
             # The Gemini Live API uses send_tool_response for function responses
-            await self._session.send_tool_response(function_responses=[function_response])
+            if self._session:
+                await self._session.send_tool_response(function_responses=[function_response])
             self.logger.debug(f"Sent function response for {function_name}: {response_data}")
             
         except Exception as e:

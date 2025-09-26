@@ -3,9 +3,9 @@ from xai_sdk import AsyncClient
 from xai_sdk.chat import system, user, Response, Chunk
 from xai_sdk.proto import chat_pb2
 
-from stream_agents.core.llm.llm import LLM
+from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
-from stream_agents.core.llm.events import AfterLLMResponseEvent, StandardizedResponseCompletedEvent, LLMResponseEvent
+from stream_agents.core.llm.events import AfterLLMResponseEvent, StandardizedResponseCompletedEvent
 from stream_agents.core.processors import Processor
 from . import events
 
