@@ -270,6 +270,16 @@ class Realtime(realtime.Realtime):
             await self.rtc._send_event(event)
             logger.info(f"Sent tool response for call_id {call_id}")
             
+            # Trigger a new response to continue the conversation with audio
+            # This ensures the AI responds with audio after receiving the tool result
+            await self.rtc._send_event({
+                "type": "response.create",
+                "response": {
+                    "modalities": ["text", "audio"],
+                    "instructions": "Please respond to the user with the tool results in a conversational way."
+                }
+            })
+            
         except Exception as e:
             logger.error(f"Failed to send tool response: {e}")
 
