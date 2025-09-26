@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import (
     Any,
 )
@@ -49,6 +50,7 @@ class Realtime(LLM, abc.ABC):
         self.provider_name = "realtime_base"
         self.session_id = str(uuid.uuid4())
         self.fps = fps
+        self._ready_event = asyncio.Event()
         # The most common style output track (webrtc)
         # TODO: do we like the output track here, or do we want to do an event, and have the agent manage the output track
         self.output_track: AudioStreamTrack = AudioStreamTrack(

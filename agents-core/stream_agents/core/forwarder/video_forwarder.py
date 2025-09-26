@@ -48,7 +48,7 @@ class VideoForwarder:
         try:
             while not self._stopped.is_set():
                 frame = await self.input_track.recv()
-                await self.queue.put_latest(frame)
+                await self.queue.put_latest(frame)  # type: ignore[arg-type]
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -102,8 +102,12 @@ class VideoForwarder:
                     frame = await self.next_frame()
                     # track latest resolution for summary logs
                     try:
-                        last_width = int(getattr(frame, "width", None)) or last_width
-                        last_height = int(getattr(frame, "height", None)) or last_height
+                        width = getattr(frame, "width", None)
+                        height = getattr(frame, "height", None)
+                        if width is not None:
+                            last_width = int(width)
+                        if height is not None:
+                            last_height = int(height)
                     except Exception:
                         # ignore resolution extraction errors
                         pass

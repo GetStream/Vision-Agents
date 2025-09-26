@@ -237,7 +237,7 @@ class EventManager:
     def _generate_import_file(self):
         import_file = []
         for module, events in self._modules.items():
-            import_file.append(f"from {module.__name__} import (")
+            import_file.append(f"from {module} import (")
             for event in events:
                 import_file.append(f"    {event.__name__},")
             import_file.append(")")

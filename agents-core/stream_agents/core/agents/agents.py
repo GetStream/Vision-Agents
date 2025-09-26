@@ -507,7 +507,7 @@ class Agent:
             return
 
         # If Realtime provider supports video, tell it to watch the video
-        if self.realtime_mode:
+        if self.realtime_mode and hasattr(self.llm, '_watch_video_track'):
             await self.llm._watch_video_track(track)
             self.logger.info("Forwarding video frames to Realtime provider")
 
@@ -607,7 +607,13 @@ class Agent:
 
         # if the agent is in realtime mode than we dont need to process the transcription
         if not self.realtime_mode and event.text:
-            await self.simple_response(event.text, event.user_metadata)
+            # Convert user_metadata to Participant if it's a dict
+            participant = None
+            if isinstance(event.user_metadata, dict):
+                participant = Participant(**event.user_metadata)
+            elif hasattr(event.user_metadata, '__dict__'):
+                participant = event.user_metadata
+            await self.simple_response(event.text, participant)
 
         if self.conversation is None:
             return

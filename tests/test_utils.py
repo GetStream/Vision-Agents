@@ -133,7 +133,7 @@ class TestInstructions:
         input_text = "Test instruction"
         markdown_contents = {"file1.md": "# File 1 content"}
         
-        instructions = Instructions(input_text, markdown_contents)
+        instructions = Instructions(input_text, ".", markdown_contents)
         
         assert instructions.input_text == input_text
         assert instructions.markdown_contents == markdown_contents
@@ -141,18 +141,18 @@ class TestInstructions:
     def test_instructions_empty_markdown_files(self):
         """Test Instructions with empty markdown files dict."""
         input_text = "Simple instruction"
-        markdown_contents = {}
+        markdown_contents: dict[str, str] = {}
         
-        instructions = Instructions(input_text, markdown_contents)
+        instructions = Instructions(input_text, ".", markdown_contents)
         
         assert instructions.input_text == input_text
         assert instructions.markdown_contents == {}
     
     def test_instructions_equality(self):
         """Test Instructions equality comparison."""
-        instructions1 = Instructions("test", {"file.md": "content"})
-        instructions2 = Instructions("test", {"file.md": "content"})
-        instructions3 = Instructions("different", {"file.md": "content"})
+        instructions1 = Instructions("test", ".", {"file.md": "content"})
+        instructions2 = Instructions("test", ".", {"file.md": "content"})
+        instructions3 = Instructions("different", ".", {"file.md": "content"})
         
         assert instructions1 == instructions2
         assert instructions1 != instructions3

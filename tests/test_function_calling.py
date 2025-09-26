@@ -4,6 +4,7 @@ Tests for function calling functionality.
 
 import pytest
 import asyncio
+from typing import Optional
 from unittest.mock import Mock, patch
 
 from stream_agents.core.llm import FunctionRegistry, function_registry
@@ -403,7 +404,7 @@ class TestFunctionCallingIntegration:
             name: str,
             age: int,
             is_active: bool = True,
-            tags: list = None
+            tags: Optional[list] = None
         ) -> dict:
             """Complex function with various parameter types."""
             return {
@@ -484,8 +485,7 @@ class TestConcurrentToolExecution:
             # The event handler receives the data directly
             events.append(data)
         
-        llm.on("tool.start", track_event)
-        llm.on("tool.end", track_event)
+        llm.events.subscribe(track_event)
         
         # Execute a tool call
         async def run_test():

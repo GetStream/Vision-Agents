@@ -1,7 +1,7 @@
 """Remote MCP server connection using HTTP Streamable transport."""
 
 from datetime import timedelta
-from typing import Optional, Dict, Callable
+from typing import Optional, Dict, Callable, Any
 from urllib.parse import urlparse
 
 from mcp import ClientSession
@@ -32,9 +32,9 @@ class MCPServerRemote(MCPBaseServer):
         self.url = url
         self.headers = headers or {}
         self.timeout = timeout
-        self._client_context = None
-        self._session_context = None
-        self._get_session_id_cb: Optional[Callable[[], str]] = None
+        self._client_context: Optional[Any] = None
+        self._session_context: Optional[Any] = None
+        self._get_session_id_cb: Optional[Callable[[], str | None]] = None
         
         # Validate URL
         parsed = urlparse(url)
@@ -74,7 +74,7 @@ class MCPServerRemote(MCPBaseServer):
             await self._start_timeout_monitor()
             
             # Log session ID if available
-            if self._get_session_id_cb:
+            if self._get_session_id_cb is not None:
                 try:
                     session_id = self._get_session_id_cb()
                     self.logger.info(f"Successfully connected to remote MCP server at {self.url} (session: {session_id})")

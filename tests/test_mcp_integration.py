@@ -31,14 +31,16 @@ def get_mcp_server():
                 hdr_name = k[len("MCP_REMOTE_HEADERS_") :].replace("_", "-")
                 headers[hdr_name] = v
         if not headers:
-            headers = None
+            headers = {}
 
     if local_cmd:
         return MCPServerLocal(command=local_cmd, session_timeout=60.0)
-    else:
+    elif remote_url:
         return MCPServerRemote(
             url=remote_url, headers=headers, timeout=30.0, session_timeout=60.0
         )
+    else:
+        raise ValueError("Either local_cmd or remote_url must be provided")
 
 
 @pytest.mark.integration
@@ -326,7 +328,10 @@ async def test_openai_llm_mcp_weather_integration():
 
     # Setup components
     llm = OpenAILLM(model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))  # Use cheaper model
-    weather_server = MCPServerLocal(command=os.getenv("MCP_LOCAL_CMD"), session_timeout=60.0)
+    mcp_cmd = os.getenv("MCP_LOCAL_CMD")
+    if not mcp_cmd:
+        pytest.skip("MCP_LOCAL_CMD not set")
+    weather_server = MCPServerLocal(command=mcp_cmd, session_timeout=60.0)
     
     # Create real edge and agent user
     edge = getstream.Edge()
@@ -344,8 +349,7 @@ async def test_openai_llm_mcp_weather_integration():
     )
     
     try:
-        # Connect to MCP server
-        await agent._connect_mcp_servers()
+        # MCP servers are connected automatically when the agent is created
         
         # Verify tools are registered
         available_functions = agent.llm.get_available_functions()

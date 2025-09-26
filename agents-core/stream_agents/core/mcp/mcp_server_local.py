@@ -1,6 +1,6 @@
 """Local MCP server connection using stdio transport."""
 
-from typing import Optional, Dict, Callable
+from typing import Optional, Dict, Callable, Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -28,8 +28,8 @@ class MCPServerLocal(MCPBaseServer):
         self.command = command
         self.env = env or {}
         self._server_params: Optional[StdioServerParameters] = None
-        self._client_context = None
-        self._session_context = None
+        self._client_context: Optional[Any] = None
+        self._session_context: Optional[Any] = None
         self._get_session_id_cb: Optional[Callable[[], str]] = None
         
         # Parse command into executable and arguments

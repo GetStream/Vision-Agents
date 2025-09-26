@@ -26,7 +26,7 @@ def wrap_native_method(target: Callable[P, R]) -> Callable[
 ]:
     def decorator(method: Callable[Concatenate[T, P], R]) -> Callable[Concatenate[T, P], R]:
         @functools.wraps(method)
-        def wrapper(self: T, *args: Any, **kwargs: Any) -> str:
+        def wrapper(self: T, *args: Any, **kwargs: Any) -> R:
             return method(self, *args, **kwargs)
         return wrapper
     return decorator

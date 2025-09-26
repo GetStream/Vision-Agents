@@ -216,7 +216,7 @@ async def test_process_audio_handles_exceptions(mock_stt, valid_pcm_data):
     def on_error(error):
         error_events.append(error)
 
-    mock_stt_with_exception.on("error", on_error)
+    mock_stt_with_exception.events.subscribe(on_error)
 
     # Process audio (should not raise exception)
     await mock_stt_with_exception.process_audio(valid_pcm_data)
