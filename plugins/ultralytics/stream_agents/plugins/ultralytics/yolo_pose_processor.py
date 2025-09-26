@@ -204,9 +204,13 @@ class YOLOPoseProcessor(
 
     async def add_pose_to_frame(self, frame: av.VideoFrame):
 
-        frame_array = frame.to_ndarray()
-        array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
-        frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
+        try:
+            frame_array = frame.to_ndarray()
+            array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
+            frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
+        except Exception as e:
+            import pdb; pdb.set_trace()
+
         return frame_with_pose
 
     async def add_pose_to_image(self, image: Image.Image) -> tuple[Image.Image, Any]:
