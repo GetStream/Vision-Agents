@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import patch, MagicMock
 
 from stream_agents.plugins import elevenlabs
+from stream_agents.core.tts import events
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 
@@ -99,14 +100,15 @@ async def test_elevenlabs_tts_send():
     # Track emitted audio events
     emitted_audio = []
 
-    @tts.on("audio")
-    def on_audio(event):
+    @tts.events.subscribe
+    async def on_audio(event: events.TTSAudioEvent):
         emitted_audio.append(event.audio_data)
 
     # Send text to the TTS
     text = "Hello, world!"
     await tts.send(text)
 
+    await tts.events.wait()
     # Check that audio was written to the track
     assert len(track.written_data) > 0
 
@@ -230,50 +232,42 @@ async def test_elevenlabs_with_real_api():
     audio_received = asyncio.Event()
     received_chunks = []
 
-    @tts.on("audio")
-    def on_audio(audio_data, user):
-        received_chunks.append(audio_data)
+    @tts.events.susbscribe
+    async def on_audio(event: events.TTSAudioEvent):
+        received_chunks.append(event.audio_data)
         audio_received.set()
 
     # Track API errors
     api_errors = []
 
-    @tts.on("error")
-    def on_error(error):
+    @tts.events.subscribe
+    async def on_error(error: events.TTSErrorEvent):
         api_errors.append(error)
         audio_received.set()  # Unblock the waiting
 
+    # Use a short text to minimize API usage
+    text = "This is a test of the ElevenLabs text-to-speech API."
+
+    # Send the text to generate speech
+    send_task = asyncio.create_task(tts.send(text))
+
+    # Wait for either audio or an error
     try:
-        # Use a short text to minimize API usage
-        text = "This is a test of the ElevenLabs text-to-speech API."
+        await asyncio.wait_for(audio_received.wait(), timeout=15.0)
+    except asyncio.TimeoutError:
+        # Cancel the task if it's taking too long
+        send_task.cancel()
+        pytest.fail("No audio or error received within timeout")
 
-        # Send the text to generate speech
-        send_task = asyncio.create_task(tts.send(text))
+    # Check if we received any API errors
+    if api_errors:
+        pytest.skip(f"API error received: {api_errors[0]}")
 
-        # Wait for either audio or an error
-        try:
-            await asyncio.wait_for(audio_received.wait(), timeout=15.0)
-        except asyncio.TimeoutError:
-            # Cancel the task if it's taking too long
-            send_task.cancel()
-            pytest.fail("No audio or error received within timeout")
-
-        # Check if we received any API errors
-        if api_errors:
-            pytest.skip(f"API error received: {api_errors[0]}")
-
-        # Try to ensure the send task completes
-        try:
-            await send_task
-        except Exception as e:
-            pytest.skip(f"Exception during TTS generation: {e}")
-
-        # Verify that we received audio data
-        assert len(received_chunks) > 0, "No audio chunks were received"
+    # Try to ensure the send task completes
+    try:
+        await send_task
     except Exception as e:
-        pytest.skip(f"Unexpected error in ElevenLabs test: {e}")
-    finally:
-        # Always clean up event handlers
-        # This is important to avoid memory leaks from persistent event handlers
-        tts.remove_all_listeners("audio")
-        tts.remove_all_listeners("error")
+        pytest.skip(f"Exception during TTS generation: {e}")
+
+    # Verify that we received audio data
+    assert len(received_chunks) > 0, "No audio chunks were received"
