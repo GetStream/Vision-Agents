@@ -436,7 +436,6 @@ class Realtime(realtime.Realtime):
                     parts = response.server_content.model_turn.parts
                     for part in parts:
                         if hasattr(part, 'function_call') and part.function_call:
-                            from stream_agents.core.llm.llm_types import NormalizedToolCallItem
                             calls.append(NormalizedToolCallItem(
                                 name=getattr(part.function_call, "name", "unknown"),
                                 arguments_json=getattr(part.function_call, "args", {})
