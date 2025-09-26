@@ -12,13 +12,14 @@ from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict
     SessionResumptionConfig
 
 from stream_agents.core.edge.types import Participant, PcmData
-from stream_agents.core.forwarder.video_forwarder import VideoForwarder
 from stream_agents.core.llm import realtime
 from stream_agents.core.llm.events import RealtimeAudioOutputEvent, StandardizedTextDeltaEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.processors import Processor
 from stream_agents.core.utils.utils import frame_to_png_bytes
 import av
+
+from stream_agents.core.utils.video_forwarder import VideoForwarder
 
 logger = logging.getLogger(__name__)
 

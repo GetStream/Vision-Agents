@@ -1,125 +1,135 @@
-"""
-YOLO Pose Detection Processor
 
-This processor implements real-time pose detection using YOLO models,
-extracting the pose detection logic from the kickboxing example and
-adapting it to the new processor architecture.
-"""
 
 import asyncio
-import base64
-import io
+import time
 import logging
+
+import aiortc
 import numpy as np
 import cv2
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Coroutine
 from PIL import Image
 from aiortc import VideoStreamTrack
 import av
+from numpy import ndarray
 
 from stream_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    ImageProcessorMixin,
     VideoProcessorMixin,
-    VideoPublisherMixin,
+    VideoPublisherMixin, Processor,
 )
+from stream_agents.core.utils.queue import LatestNQueue
+from stream_agents.core.utils.video_forwarder import VideoForwarder
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_WIDTH = 640
+DEFAULT_HEIGHT= 480
+DEFAULT_WIDTH = 1920
+DEFAULT_HEIGHT= 1080
+
+"""
+TODO: video track & Queuing need more testing/ thought
+
+- Process video track not image
+- Use ND array
+- Fix bugs
+
+"""
 
 class YOLOPoseVideoTrack(VideoStreamTrack):
-    """Custom video track for YOLO pose detection output."""
+    """
+    The track has a async recv() method which is called repeatedly.
+    The recv method should wait for FPS interval before providing the next frame...
 
-    def __init__(self, width: int = 640, height: int = 480):
+    Queuing behaviour is where it gets a little tricky.
+
+    Ideally we'd do frame.to_ndarray -> process -> from.from_ndarray and skip image conversion
+    """
+
+    def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT):
         super().__init__()
-        self.frame_queue: asyncio.Queue[Image.Image] = asyncio.Queue(maxsize=10)
+        logger.info("YPV: hi")
+        self.frame_queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=10)
+
         # Set video quality parameters
         self.width = width
         self.height = height
-        self.last_frame = Image.new("RGB", (self.width, self.height), color="black")
+        empty_image = Image.new("RGB", (self.width, self.height), color="blue")
+        self.empty_frame = av.VideoFrame.from_image(empty_image)
+        self.last_frame : av.VideoFrame = self.empty_frame
         self._stopped = False
-        logger.info(
-            f"🎥 YOLOPoseVideoTrack initialized with dimensions: {self.width}x{self.height}"
-        )
 
-    async def add_frame(self, image: Image.Image):
-        """Add a frame to the video track."""
+    async def add_frame(self, frame : av.VideoFrame):
+        # Resize the image and stick it on the queue
+        logger.info("YPV: add frame")
         if self._stopped:
             return
 
-        try:
-            # Ensure the image is the correct size
-            if image.size != (self.width, self.height):
-                image = image.resize(
-                    (self.width, self.height), Image.Resampling.LANCZOS
-                )
+        # TODO: where do we resize?
+        # Ensure the image is the correct size
+        #if image.size != (self.width, self.height):
+        #    image = image.resize(
+        #        (self.width, self.height), Image.Resampling.BILINEAR
+        #    )
 
-            # Try to add frame without blocking if queue is full
-            try:
-                self.frame_queue.put_nowait(image)
-            except asyncio.QueueFull:
-                # Drop oldest frame if queue is full
-                try:
-                    self.frame_queue.get_nowait()
-                    self.frame_queue.put_nowait(image)
-                except asyncio.QueueEmpty:
-                    pass
+        self.frame_queue.put_latest_nowait(frame)
 
-        except Exception as e:
-            logger.error(f"Error adding frame to video track: {e}")
 
     async def recv(self) -> av.frame.Frame:
         """Receive the next video frame."""
         if self._stopped:
             raise Exception("Track stopped")
 
+        frame_received = False
         try:
             # Try to get a frame from queue with short timeout
             frame = await asyncio.wait_for(self.frame_queue.get(), timeout=0.02)
             if frame:
                 self.last_frame = frame
-                logger.debug(f"Got frame from queue: {frame.size}")
+                frame_received = True
+                logger.debug(f"📥 Got new frame from queue: {frame}")
         except asyncio.TimeoutError:
-            logger.debug("No frame in queue, using last frame")
             pass
         except Exception as e:
-            logger.warning(f"Error getting frame from queue: {e}")
+            logger.warning(f"⚠️ Error getting frame from queue: {e}")
 
         # Get timestamp for the frame
+
         pts, time_base = await self.next_timestamp()
 
-        # Ensure the image is the correct size before creating video frame
-        if self.last_frame.size != (self.width, self.height):
-            self.last_frame = self.last_frame.resize(
-                (self.width, self.height), Image.Resampling.LANCZOS
-            )
 
         # Create av.VideoFrame from PIL Image
-        av_frame = av.VideoFrame.from_image(self.last_frame)
-        av_frame.pts = pts
-        av_frame.time_base = time_base
+        try:
+            av_frame = self.last_frame
 
-        logger.debug(f"Returning video frame: {av_frame.width}x{av_frame.height}")
+            av_frame.pts = pts
+            av_frame.time_base = time_base
+        except Exception as e:
+            import pdb; pdb.set_trace()
+
+
+        #if frame_received:
+        #    logger.info(f"Returning NEW video frame: {av_frame.width}x{av_frame.height}")
+        #else:
+        #    logger.info(f"Returning REPEATED video frame: {av_frame.width}x{av_frame.height}")
         return av_frame
 
     def stop(self):
-        """Stop the video track."""
         self._stopped = True
-        logger.info("🛑 YOLOPoseVideoTrack stopped")
 
 
 class YOLOPoseProcessor(
-    AudioVideoProcessor, ImageProcessorMixin, VideoProcessorMixin, VideoPublisherMixin
+    Processor, VideoProcessorMixin, VideoPublisherMixin
 ):
     """
-    YOLO-based pose detection processor that can:
-    1. Process images with pose detection overlays
-    2. Process video tracks with real-time pose detection
-    3. Publish transformed video with pose annotations
-    """
+    Yolo pose detection processor.
 
+    - It receives the images via process_image
+    - Converts it to an ND array
+
+    """
     def __init__(
         self,
         model_path: str = "yolo11n-pose.pt",
@@ -133,19 +143,6 @@ class YOLOPoseProcessor(
         *args,
         **kwargs,
     ):
-        """
-        Initialize the YOLO Pose Processor.
-
-        Args:
-            model_path: Path to YOLO pose model file
-            conf_threshold: Confidence threshold for pose detection
-            imgsz: Image size for YOLO inference
-            device: Device to run inference on ('cpu' or 'cuda')
-            max_workers: Number of worker threads for processing
-            interval: Processing interval in seconds (0 for every frame)
-            enable_hand_tracking: Whether to draw detailed hand connections
-            enable_wrist_highlights: Whether to highlight wrist positions
-        """
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
 
         self.model_path = model_path
@@ -155,6 +152,7 @@ class YOLOPoseProcessor(
         self.enable_hand_tracking = enable_hand_tracking
         self.enable_wrist_highlights = enable_wrist_highlights
         self._last_frame: Optional[Image.Image] = None
+        self._video_forwarder: Optional[VideoForwarder] = None
 
         # Initialize YOLO model
         self._load_model()
@@ -166,7 +164,7 @@ class YOLOPoseProcessor(
         self._shutdown = False
 
         # Video track for publishing (if used as video publisher)
-        self._video_track: Optional[YOLOPoseVideoTrack] = None
+        self._video_track: YOLOPoseVideoTrack = YOLOPoseVideoTrack()
 
         logger.info(f"🤖 YOLO Pose Processor initialized with model: {model_path}")
 
@@ -183,79 +181,62 @@ class YOLOPoseProcessor(
         self.pose_model.to(self.device)
         logger.info(f"✅ YOLO pose model loaded: {self.model_path} on {self.device}")
 
-
-    def create_video_track(self):
-        """Create a video track for publishing pose-annotated frames."""
-
-        self._video_track = YOLOPoseVideoTrack()
-        logger.info("🎥 YOLO pose video track created for publishing")
-        return self._video_track
-
-    async def process_image(
+    async def process_video(
         self,
-        image: Image.Image,
-        user_id: str,
-        metadata: Optional[dict[Any, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Process a single image with pose detection.
+        incoming_track: aiortc.mediastreams.MediaStreamTrack, *args, **kwargs
+    ):
+        logger.info(f"✅ process_video starting efg")
 
-        Args:
-            image: PIL Image to process
-            user_id: ID of the user
-            metadata: Additional metadata
+        # forward the track, and run add_pose_to_ndarray
+        self._video_forwarder = VideoForwarder(
+            incoming_track,
+            max_buffer=30, # 1 second
+        )
 
-        Returns:
-            Dictionary containing pose detection results and annotated image
-        """
-        if not self.should_process():
-            return None
+        # Start the forwarder
+        await self._video_forwarder.start()
+        await self._video_forwarder.start_event_consumer(self._add_pose_and_add_frame)
+
+    async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
+        logger.info("YPV: add frame")
+        frame_with_pose = await self.add_pose_to_frame(frame)
+        await self._video_track.add_frame(frame_with_pose)
+
+    async def add_pose_to_frame(self, frame: av.VideoFrame):
 
         try:
-            # Convert PIL to numpy array
-            frame_array = np.array(image)
-
-            # Process pose detection
-            start_time = asyncio.get_event_loop().time()
-            annotated_array, pose_data = await self._process_pose_async(frame_array)
-            processing_time = asyncio.get_event_loop().time() - start_time
-
-            # Convert back to PIL Image
-            annotated_image = Image.fromarray(annotated_array)
-
-            # Publish annotated frame to output track if available
-            if self._video_track:
-                self._last_frame = annotated_image
-                await self._video_track.add_frame(annotated_image)
-                logger.debug("🎥 Published pose-annotated frame to video track")
-
-
-            logger.debug(f"🤖 Processed pose detection for user {user_id}")
-
-            return {
-                "annotated_image": annotated_image,
-                "pose_data": pose_data,
-                "user_id": user_id,
-                "timestamp": asyncio.get_event_loop().time(),
-            }
-
+            frame_array = frame.to_ndarray(format="rgb24")
+            array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
+            frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
         except Exception as e:
-            logger.error(f"❌ Error processing image pose detection: {e}")
+            import pdb; pdb.set_trace()
 
-            return None
+        return frame_with_pose
 
-    async def process_video(self, track, user_id: str):
+    async def add_pose_to_image(self, image: Image.Image) -> tuple[Image.Image, Any]:
         """
-        Process video frames from the input track with pose detection.
-        Note: The Agent class handles frame-by-frame processing via process_image,
-        so this method just logs that video processing is active.
-
-        Args:
-            track: Video track to process
-            user_id: ID of the user
+        Adds the pose to the given image. Note that this is slightly less efficient compared to
+        using add_pose_to_ndarray directly
         """
-        # The actual frame processing happens in process_image method
-        # called by the Agent for each frame
+        width, height = image.size
+        frame_array = np.array(image)
+        array_with_pose, pose_data = await self.add_pose_to_ndarray(frame_array)
+        annotated_image = Image.fromarray(array_with_pose)
+
+        return annotated_image, pose_data
+
+    async def add_pose_to_ndarray(self, frame_array: np.ndarray) -> tuple[ndarray, dict[str, Any]]:
+        """
+        Adds the pose information to the given frame array. This is slightly faster than using add_pose_to_image
+        """
+        annotated_array, pose_data = await self._process_pose_async(frame_array)
+        return annotated_array, pose_data
+
+    def publish_video_track(self):
+        """
+        Creates a yolo pose video track
+        """
+        return self._video_track
 
     async def _process_pose_async(
         self, frame_array: np.ndarray
@@ -270,53 +251,57 @@ class YOLOPoseProcessor(
             Tuple of (annotated_frame_array, pose_data)
         """
         loop = asyncio.get_event_loop()
+        frame_height, frame_width = frame_array.shape[:2]
+        
+        logger.debug(f"🤖 Starting pose processing: {frame_width}x{frame_height}")
 
         try:
             # Add timeout to prevent blocking
+            start_time = time.perf_counter()
             result = await asyncio.wait_for(
                 loop.run_in_executor(
                     self.executor, self._process_pose_sync, frame_array
                 ),
-                timeout=2.0,  # 2 second timeout
+                timeout=12.0,  # 12 second timeout
             )
+            processing_time = time.perf_counter() - start_time
+            logger.debug(f"✅ Pose processing completed in {processing_time:.3f}s for {frame_width}x{frame_height}")
             return result
         except asyncio.TimeoutError:
-            logger.warning("Pose processing timed out, returning original frame")
+            processing_time = time.perf_counter() - start_time
+            logger.warning(f"⏰ Pose processing TIMEOUT after {processing_time:.3f}s for {frame_width}x{frame_height} - returning original frame")
             return frame_array, {}
         except Exception as e:
-            logger.error(f"Error in async pose processing: {e}")
+            processing_time = time.perf_counter() - start_time
+            logger.error(f"❌ Error in async pose processing after {processing_time:.3f}s for {frame_width}x{frame_height}: {e}")
             return frame_array, {}
 
     def _process_pose_sync(
         self, frame_array: np.ndarray
     ) -> tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Synchronous pose processing for thread pool.
-        Based on the kickboxing example's pose detection logic.
-
-        Args:
-            frame_array: Input frame as numpy array
-
-        Returns:
-            Tuple of (annotated_frame_array, pose_data)
-        """
         try:
             if self._shutdown:
+                logger.debug("🛑 Pose processing skipped - processor shutdown")
                 return frame_array, {}
 
             # Store original dimensions for quality preservation
             original_height, original_width = frame_array.shape[:2]
+            logger.debug(f"🔍 Running YOLO pose detection on {original_width}x{original_height} frame")
 
             # Run pose detection
+            yolo_start = time.perf_counter()
             pose_results = self.pose_model(
                 frame_array,
                 verbose=False,
-                imgsz=self.imgsz,
+                #imgsz=self.imgsz,
                 conf=self.conf_threshold,
                 device=self.device,
             )
+            yolo_time = time.perf_counter() - yolo_start
+            logger.debug(f"🎯 YOLO inference completed in {yolo_time:.3f}s")
 
             if not pose_results:
+                logger.debug("❌ No pose results detected")
                 return frame_array, {}
 
             # Apply pose results to current frame
@@ -354,10 +339,11 @@ class YOLOPoseProcessor(
                     if self.enable_wrist_highlights:
                         self._highlight_wrists(annotated_frame, kpts)
 
+            logger.debug(f"✅ Pose processing completed successfully - detected {len(pose_data['persons'])} persons")
             return annotated_frame, pose_data
 
         except Exception as e:
-            logger.error(f"Error in pose processing: {e}")
+            logger.error(f"❌ Error in pose processing: {e}")
             return frame_array, {}
 
     def _draw_skeleton_connections(self, annotated_frame: np.ndarray, kpts: np.ndarray):
@@ -503,48 +489,8 @@ class YOLOPoseProcessor(
                         1,
                     )
 
-    def state(self) -> Dict[str, Any]:
-        """
-        Return current processor state for LLM context.
-
-        Returns:
-            Dictionary containing processor state information
-        """
-        return {
-            "processor_type": "YOLO Pose Detection",
-            "model_path": self.model_path,
-            "confidence_threshold": self.conf_threshold,
-            "device": self.device,
-            "last_frame": self._last_frame,
-            "hand_tracking_enabled": self.enable_hand_tracking,
-            "wrist_highlights_enabled": self.enable_wrist_highlights,
-            "processing_interval": self.interval,
-            "status": "active" if not self._shutdown else "shutdown",
-        }
-
-    def input(self) -> Optional[Dict[str, Any]]:
-        """Return input for OpenAI API."""
-        if self._last_frame:
-            buffered = io.BytesIO()
-            self._last_frame.save(buffered, format="PNG")
-            image_data = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-            # TODO: this should be a utility method
-            # Return the official OpenAI responses.create format
-            return {
-                "type": "input_image",
-                "image_url": f"data:image/png;base64,{image_data}",
-            }
-        return None
-
-    def cleanup(self):
+    def close(self):
         """Clean up resources."""
         self._shutdown = True
         if hasattr(self, "executor"):
             self.executor.shutdown(wait=False)
-        logger.info("🧹 YOLO Pose Processor cleaned up")
-
-    def __del__(self):
-        """Destructor to ensure cleanup."""
-        if hasattr(self, "_shutdown") and not self._shutdown:
-            self.cleanup()

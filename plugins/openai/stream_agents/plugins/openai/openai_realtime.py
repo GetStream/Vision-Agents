@@ -22,12 +22,9 @@ logger = logging.getLogger(__name__)
 
 """
 TODO
-- Docs for this file
-- MCP support ✅ COMPLETED
-- instructions with @mentions
-- event handling is not using either pyee or internal system in self.rtc
-- The base class Realtime has a ton of junk
-
+- client support
+- instructions with @mentions 
+- send video should depend on if the RTC connection with stream is sending video.
 """
 
 
@@ -48,8 +45,13 @@ class Realtime(realtime.Realtime):
         This class uses:
         - RTCManager to handle WebRTC connection and media streaming.
         - Output track to forward audio and video to the remote participant.
+<<<<<<< HEAD
         - Function calling support for real-time tool execution.
         - MCP integration for external service access.
+=======
+
+        # TODO: support sending client
+>>>>>>> 7e5280d51426abe639163cf77d4382c92c0d72b7
     """
     def __init__(self, model: str = "gpt-realtime", voice: str = "marin", *args, **kwargs):
         super().__init__(*args, **kwargs)

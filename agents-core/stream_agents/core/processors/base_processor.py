@@ -25,8 +25,8 @@ class ProcessorType(Enum):
     AUDIO = "process_audio"
     VIDEO = "process_video"
     IMAGE = "process_image"
-    VIDEO_PUBLISHER = "create_video_track"
-    AUDIO_PUBLISHER = "create_audio_track"
+    VIDEO_PUBLISHER = "publish_video_track"
+    AUDIO_PUBLISHER = "publish_audio_track"
 
 
 class Processor(Protocol):
@@ -70,12 +70,12 @@ class ImageProcessorMixin(abc.ABC):
 
 
 class VideoPublisherMixin:
-    def create_video_track(self):
+    def publish_video_track(self):
         return aiortc.VideoStreamTrack()
 
 
 class AudioPublisherMixin:
-    def create_audio_track(self):
+    def publish_audio_track(self):
         return aiortc.AudioStreamTrack()
 
 

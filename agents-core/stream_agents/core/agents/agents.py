@@ -216,6 +216,7 @@ class Agent:
         video_track = self._video_track if self.publish_video else None
 
         if audio_track or video_track:
+
             await self.edge.publish_tracks(audio_track, video_track)
             await self._listen_to_audio_and_video()
 
@@ -264,6 +265,9 @@ class Agent:
         # Disconnect from MCP servers
         if self.mcp_manager:
             await self.mcp_manager.disconnect_all()
+
+        for processor in self.processors:
+            processor.close()
 
         # Close Realtime connection
         if self._realtime_connection:
@@ -507,6 +511,15 @@ class Agent:
 
         hasImageProcessers = len(self.image_processors) > 0
 
+        # video processors
+        for processor in self.video_processors:
+            try:
+                await processor.process_video(track, participant.user_id)
+            except Exception as e:
+                self.logger.error(
+                    f"Error in video processor {type(processor).__name__}: {e}"
+                )
+
         while True:
             try:
                 # Track frame processing timing
@@ -524,6 +537,7 @@ class Agent:
                     consecutive_errors = 0
                     
                     if hasImageProcessers:
+
                         img = video_frame.to_image()
 
                         for processor in self.image_processors:
@@ -534,14 +548,7 @@ class Agent:
                                     f"Error in image processor {type(processor).__name__}: {e}"
                                 )
 
-                    # video processors
-                    for processor in self.video_processors:
-                        try:
-                            await processor.process_video(track, participant.user_id)
-                        except Exception as e:
-                            self.logger.error(
-                                f"Error in video processor {type(processor).__name__}: {e}"
-                            )
+
                 else:
                     self.logger.warning("🎥VDP: Received empty frame")
                     consecutive_errors += 1
@@ -764,7 +771,7 @@ class Agent:
             # Get the first video publisher to create the track
             video_publisher = self.video_publishers[0]
             # TODO: some lLms like moondream publish video
-            self._video_track = video_publisher.create_video_track()
+            self._video_track = video_publisher.publish_video_track()
             self.logger.info("🎥 Video track initialized from video publisher")
 
 

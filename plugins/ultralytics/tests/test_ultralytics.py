@@ -2,41 +2,89 @@
 Tests for the ultralytics plugin.
 """
 
+import asyncio
+from pathlib import Path
+from typing import Iterator
+
+import numpy as np
 import pytest
+from PIL import Image
+import av
+
 from stream_agents.plugins.ultralytics import YOLOPoseProcessor
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent.parent.parent))
+from tests.base_test import BaseTest
+import logging
 
+logger = logging.getLogger(__name__)
 
-class TestYOLOPoseProcessor:
+class TestYOLOPoseProcessor(BaseTest):
     """Test cases for YOLOPoseProcessor."""
 
-    def test_processor_initialization(self):
-        """Test that the processor can be initialized."""
-        processor = YOLOPoseProcessor(
-            model_path="yolo11n-pose.pt",
-            conf_threshold=0.5,
-            device="cpu"
-        )
-        
-        assert processor.model_path == "yolo11n-pose.pt"
-        assert processor.conf_threshold == 0.5
-        assert processor.device == "cpu"
-        assert processor.enable_hand_tracking is True
-        assert processor.enable_wrist_highlights is True
+    @pytest.fixture(scope="session")
+    def golf_image(self) -> Iterator[Image.Image]:
+        """Load the local golf swing test image from tests/test_assets."""
+        asset_path = Path(self.assets_dir) / "golf_swing.png"
+        with Image.open(asset_path) as img:
+            yield img.convert("RGB")
 
-    def test_processor_state(self):
-        """Test that the processor state is correctly returned."""
-        processor = YOLOPoseProcessor()
-        state = processor.state()
-        
-        assert "processor_type" in state
-        assert "model_path" in state
-        assert "confidence_threshold" in state
-        assert "device" in state
-        assert state["processor_type"] == "YOLO Pose Detection"
+    @pytest.fixture
+    def pose_processor(self) -> Iterator[YOLOPoseProcessor]:
+        """Create and manage YOLOPoseProcessor lifecycle."""
+        processor = YOLOPoseProcessor(device="cpu")
+        try:
+            yield processor
+        finally:
+            processor.close()
 
-    def test_processor_cleanup(self):
-        """Test that the processor cleans up properly."""
-        processor = YOLOPoseProcessor()
-        processor.cleanup()
+    async def test_annotated_ndarray(self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor):
+        frame_array = np.array(golf_image)
+        array_with_pose, pose = await pose_processor.add_pose_to_ndarray(frame_array)
+
+        assert array_with_pose is not None
+        assert pose is not None
+
+    async def test_annotated_image_output(self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor):
+        image_with_pose, pose = await pose_processor.add_pose_to_image(image=golf_image)
+
+        assert image_with_pose is not None
+        assert pose is not None
+
+        # Ensure same size as input for simplicity
+        assert image_with_pose.size == golf_image.size
         
-        assert processor._shutdown is True
+        # Save the annotated image temporarily for inspection
+        temp_path = Path("/tmp/annotated_golf_swing.png")
+        image_with_pose.save(temp_path)
+        print(f"Saved annotated image to: {temp_path}")
+
+    async def test_annotated_frame_output(self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor):
+        """Test add_pose_to_frame method with av.VideoFrame input."""
+        # Convert PIL Image to av.VideoFrame
+        frame = av.VideoFrame.from_image(golf_image)
+        
+        # Process the frame with pose detection
+        frame_with_pose = await pose_processor.add_pose_to_frame(frame)
+        
+        # Verify the result is an av.VideoFrame
+        assert frame_with_pose is not None
+        assert isinstance(frame_with_pose, av.VideoFrame)
+        
+        # Verify dimensions are preserved
+        assert frame_with_pose.width == frame.width
+        assert frame_with_pose.height == frame.height
+        
+        # Convert back to numpy array to verify it's been processed
+        result_array = frame_with_pose.to_ndarray()
+        original_array = frame.to_ndarray()
+        
+        # The arrays should be the same shape
+        assert result_array.shape == original_array.shape
+        
+        # The processed frame should be different from the original (pose annotations added)
+        # Note: This might not always be true if no pose is detected, but it's a reasonable check
+        assert not np.array_equal(result_array, original_array)
+
+

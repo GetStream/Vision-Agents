@@ -13,7 +13,8 @@ from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamT
 from fractions import Fraction
 import numpy as np
 from av import AudioFrame, VideoFrame
-from stream_agents.core.forwarder.video_forwarder import VideoForwarder
+
+from stream_agents.core.utils.video_forwarder import VideoForwarder
 
 # Import timing utilities
 try:
@@ -289,7 +290,6 @@ class RTCManager:
 
         answer_sdp = await self._setup_sdp_exchange()
         logger.info("Set up peer connection handlers")
-        logger.info(f"Answer SDP: {answer_sdp}")
 
         # Set the remote SDP we got from OpenAI
         answer = RTCSessionDescription(sdp=answer_sdp, type="answer")

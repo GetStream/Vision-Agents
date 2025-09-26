@@ -3,20 +3,20 @@ import os
 import pytest
 from dotenv import load_dotenv
 
-from stream_agents.plugins.gemini.realtime2 import Realtime2
+from stream_agents.plugins.gemini import Realtime
 from tests.base_test import BaseTest
 
 # Load environment variables
 load_dotenv()
 
 
-class TestRealtime2Integration(BaseTest):
+class TestGeminiRealtime(BaseTest):
     """Integration tests for Realtime2 connect flow"""
 
     @pytest.fixture
     async def realtime2(self):
         """Create and manage Realtime2 connection lifecycle"""
-        realtime2 = Realtime2(
+        realtime2 = Realtime(
             model="gemini-2.5-flash-exp-native-audio-thinking-dialog",
         )
         try:
