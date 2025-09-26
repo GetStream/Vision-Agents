@@ -266,7 +266,7 @@ class ClaudeLLM(LLM):
                     llm_response_optional = self._standardize_and_emit_event(ev, follow_up_text_parts)
                     if llm_response_optional is not None:
                         llm_response = llm_response_optional
-                    new_calls, _ = self._extract_tool_calls_from_stream_chunk(ev, None)
+                    new_calls = self._extract_tool_calls_from_stream_chunk(ev)
                     if new_calls:
                         accumulated_calls.extend(new_calls)
 
@@ -300,13 +300,19 @@ class ClaudeLLM(LLM):
             response_message = last_followup_stream or original
             if not isinstance(response_message, Message):
                 # Create a minimal message if we don't have one
-                response_message = Message(id="", content=[], role="assistant", model="", stop_reason=None, stop_sequence=None, usage=None)
+                from anthropic.types import Usage
+                response_message = Message(id="", content=[], role="assistant", model="", stop_reason=None, stop_sequence=None, usage=Usage(input_tokens=0, output_tokens=0), type="message")
             llm_response = LLMResponseEvent(response_message, total_text)
 
-        from stream_agents.core.llm.events import AfterLLMResponseEvent
+        from stream_agents.core.llm.events import AfterLLMResponseEvent, LLMResponseEvent as EventLLMResponseEvent
+        event_llm_response = EventLLMResponseEvent(
+            plugin_name="anthropic",
+            original=llm_response.original,
+            text=llm_response.text
+        )
         self.events.send(AfterLLMResponseEvent(
             plugin_name="anthropic",
-            llm_response=llm_response
+            llm_response=event_llm_response
         ))
 
         return llm_response
@@ -332,16 +338,10 @@ class ClaudeLLM(LLM):
                 from stream_agents.core.llm.events import StandardizedTextDeltaEvent
                 standardized_event = StandardizedTextDeltaEvent(
                     content_index=delta_event.index,
-                    item_id="",
-                    output_index=0,
-                    sequence_number=0,
-                    type="response.output_text.delta",
                     delta=delta_event.delta.text,
+                    type="response.output_text.delta"
                 )
-                self.events.send(events.StandardizedTextDeltaEvent(
-                    plugin_name="anthropic",
-                    standardized_event=standardized_event
-                ))
+                self.events.send(standardized_event)
         elif event.type == "message_stop":
             stop_event: RawMessageStopEvent = event
             total_text = "".join(text_parts)
@@ -422,8 +422,7 @@ class ClaudeLLM(LLM):
         for call in tool_calls:
             normalized_calls.append(NormalizedToolCallItem(
                 name=call["name"],
-                arguments_json=call["arguments_json"],
-                id=call["id"]
+                arguments_json=call["arguments_json"]
             ))
         return normalized_calls
 
@@ -445,8 +444,8 @@ class ClaudeLLM(LLM):
             cb = getattr(chunk, 'content_block', None)
             if getattr(cb, 'type', None) == "tool_use":
                 self._pending_tool_uses_by_index[chunk.index] = {
-                    "id": cb.id,
-                    "name": cb.name,
+                    "id": cb.id if cb else None,
+                    "name": cb.name if cb else None,
                     "parts": []
                 }
 
@@ -469,8 +468,7 @@ class ClaudeLLM(LLM):
                 from stream_agents.core.llm.llm_types import NormalizedToolCallItem
                 tool_calls.append(NormalizedToolCallItem(
                     name=pending["name"],
-                    arguments_json=args,
-                    id=pending["id"]
+                    arguments_json=args
                 ))
         
         return tool_calls
@@ -499,7 +497,7 @@ class ClaudeLLM(LLM):
             
             blocks.append({
                 "type": "tool_result",
-                "tool_use_id": tool_call["id"],  # Critical: must match tool_use.id
+                "tool_use_id": None,  # Note: id field not available in NormalizedToolCallItem
                 "content": payload
             })
         

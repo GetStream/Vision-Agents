@@ -139,9 +139,15 @@ class XAILLM(LLM):
             assert self.xai_chat is not None
             self.xai_chat.append(response)
 
+        from stream_agents.core.llm.events import LLMResponseEvent as EventLLMResponseEvent
+        event_llm_response = EventLLMResponseEvent(
+            plugin_name="xai",
+            original=llm_response.original if llm_response else None,
+            text=llm_response.text if llm_response else ""
+        )
         self.events.send(AfterLLMResponseEvent(
             plugin_name="xai",
-            llm_response=llm_response
+            llm_response=event_llm_response
         ))
 
         return llm_response or LLMResponseEvent[Response](
@@ -195,9 +201,15 @@ class XAILLM(LLM):
         if chunk.choices and chunk.choices[0].finish_reason:
             # This is the final chunk, return the complete response
             llm_response = LLMResponseEvent[Response](response, response.content)
+            from stream_agents.core.llm.events import LLMResponseEvent as EventLLMResponseEvent
+            event_llm_response = EventLLMResponseEvent(
+                plugin_name="xai",
+                original=llm_response.original,
+                text=llm_response.text
+            )
             self.events.send(StandardizedResponseCompletedEvent(
                 plugin_name="xai",
-                llm_response=llm_response
+                llm_response=event_llm_response
             ))
             return llm_response
 

@@ -440,8 +440,7 @@ class Realtime(realtime.Realtime):
                             from stream_agents.core.llm.llm_types import NormalizedToolCallItem
                             calls.append(NormalizedToolCallItem(
                                 name=getattr(part.function_call, "name", "unknown"),
-                                arguments_json=getattr(part.function_call, "args", {}),
-                                id=getattr(part.function_call, "id", None)
+                                arguments_json=getattr(part.function_call, "args", {})
                             ))
         except Exception as e:
             self.logger.debug(f"Error extracting tool calls from response: {e}")
@@ -492,7 +491,7 @@ class Realtime(realtime.Realtime):
                 self.logger.info(f"Function call {tool_call['name']} succeeded: {response_data}")
             
             # Send function response back to Gemini Live session
-            await self._send_function_response(tool_call["name"], str(response_data) if response_data is not None else "", tool_call.get("id"))
+            await self._send_function_response(tool_call["name"], str(response_data) if response_data is not None else "", None)
             
         except Exception as e:
             self.logger.error(f"Error handling function call: {e}")
@@ -519,7 +518,7 @@ class Realtime(realtime.Realtime):
             function_response = types.FunctionResponse(
                 id=call_id,  # Use the call_id if provided
                 name=function_name,
-                response=response_data
+                response=response_data  # type: ignore[arg-type]
             )
             
             # Send the function response using the correct method
