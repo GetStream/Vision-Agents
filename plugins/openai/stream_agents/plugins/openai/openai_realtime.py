@@ -1,9 +1,11 @@
 import asyncio
-from typing import Any, Optional, List
+import json
+from typing import Any, Optional, List, Dict
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 from stream_agents.core.llm import realtime
+from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 import logging
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
@@ -33,7 +35,7 @@ class Realtime(realtime.Realtime):
 
     Extends the base Realtime class with WebRTC-based audio and optional video
     streaming to OpenAI's servers. Supports speech-to-speech conversation, text
-    messaging, and multimodal interactions.
+    messaging, multimodal interactions, and function calling with MCP support.
 
     Args:
         model: OpenAI model to use (e.g., "gpt-realtime").
@@ -43,8 +45,13 @@ class Realtime(realtime.Realtime):
         This class uses:
         - RTCManager to handle WebRTC connection and media streaming.
         - Output track to forward audio and video to the remote participant.
+<<<<<<< HEAD
+        - Function calling support for real-time tool execution.
+        - MCP integration for external service access.
+=======
 
         # TODO: support sending client
+>>>>>>> 7e5280d51426abe639163cf77d4382c92c0d72b7
     """
     def __init__(self, model: str = "gpt-realtime", voice: str = "marin", *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -75,10 +82,14 @@ class Realtime(realtime.Realtime):
         self.rtc.set_event_callback(self._handle_openai_event)
         self.rtc.set_audio_callback(self._handle_audio_output)
         await self.rtc.connect()
+        
+        # Register tools with OpenAI realtime if available
+        await self._register_tools_with_openai_realtime()
+        
         # Emit connected/ready
         self._emit_connected_event(
             session_config={"model": self.model, "voice": self.voice},
-            capabilities=["text", "audio"],
+            capabilities=["text", "audio", "function_calling"],
         )
 
     async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
@@ -135,6 +146,7 @@ class Realtime(realtime.Realtime):
         Event Handling:
             - response.audio_transcript.done: Emits transcript/response events
             - input_audio_buffer.speech_started: Flushes output audio track
+            - response.tool_call: Handles tool calls from OpenAI realtime
 
         Note:
             Registered as callback with RTC manager.
@@ -144,9 +156,17 @@ class Realtime(realtime.Realtime):
             event: ResponseAudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent.model_validate(event)
             self._emit_transcript_event(text=event.transcript, user_metadata={"role": "assistant", "source": "openai"})
             self._emit_response_event(text=event.transcript, response_id=event.response_id, is_complete=True, conversation_item_id=event.item_id)
-        if et == "input_audio_buffer.speech_started":
+        elif et == "input_audio_buffer.speech_started":
             event: InputAudioBufferSpeechStartedEvent = InputAudioBufferSpeechStartedEvent.model_validate(event)
             await self.output_track.flush()
+        elif et == "response.output_item.added":
+            # Check if this is a function call
+            item = event.get("item", {})
+            if item.get("type") == "function_call":
+                await self._handle_tool_call_event(event)
+        elif et == "response.tool_call":
+            # Handle tool calls from OpenAI realtime
+            await self._handle_tool_call_event(event)
 
     async def _handle_audio_output(self, audio_bytes: bytes) -> None:
         """Process audio output received from the OpenAI API.
@@ -167,3 +187,180 @@ class Realtime(realtime.Realtime):
 
     async def _stop_watching_video_track(self) -> None:
         await self.rtc.stop_video_sender()
+
+    async def _handle_tool_call_event(self, event: dict) -> None:
+        """Handle tool call events from OpenAI realtime.
+        
+        Args:
+            event: Tool call event from OpenAI realtime API
+        """
+        try:
+            # Handle both event structures
+            if event.get("type") == "response.output_item.added":
+                item = event.get("item", {})
+                tool_call_data = item
+            else:
+                tool_call_data = event.get("tool_call", {})
+                
+            if not tool_call_data:
+                logger.warning("Received tool call event without tool_call data")
+                return
+                
+            # Extract tool call details
+            tool_call = {
+                "type": "tool_call",
+                "id": tool_call_data.get("call_id"),
+                "name": tool_call_data.get("name", "unknown"),
+                "arguments_json": tool_call_data.get("arguments", {})
+            }
+            
+            logger.info(f"Executing tool call: {tool_call['name']} with args: {tool_call['arguments_json']}")
+            
+            # Execute using existing tool execution infrastructure
+            tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
+            
+            # Prepare response data
+            if error:
+                response_data = {"error": str(error)}
+                logger.error(f"Tool call {tool_call['name']} failed: {error}")
+            else:
+                # Ensure response is a dictionary for OpenAI realtime
+                if not isinstance(result, dict):
+                    response_data = {"result": result}
+                else:
+                    response_data = result
+                logger.info(f"Tool call {tool_call['name']} succeeded: {response_data}")
+            
+            # Send tool response back to OpenAI realtime session
+            await self._send_tool_response(tool_call["id"], response_data)
+            
+        except Exception as e:
+            logger.error(f"Error handling tool call event: {e}")
+            # Send error response back
+            call_id = None
+            if event.get("type") == "response.output_item.added":
+                call_id = event.get("item", {}).get("call_id")
+            else:
+                call_id = event.get("tool_call", {}).get("call_id")
+            await self._send_tool_response(call_id, {"error": str(e)})
+
+    async def _send_tool_response(self, call_id: Optional[str], response_data: Dict[str, Any]) -> None:
+        """Send tool response back to OpenAI realtime session.
+        
+        Args:
+            call_id: The call ID from the original tool call
+            response_data: The response data to send back
+        """
+        if not call_id:
+            logger.warning("Cannot send tool response without call_id")
+            return
+            
+        try:
+            # Convert response to string for OpenAI realtime
+            response_str = self._sanitize_tool_output(response_data)
+            
+            # Send tool response event
+            event = {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": response_str
+                }
+            }
+            
+            await self.rtc._send_event(event)
+            logger.info(f"Sent tool response for call_id {call_id}")
+            
+            # Trigger a new response to continue the conversation with audio
+            # This ensures the AI responds with audio after receiving the tool result
+            await self.rtc._send_event({
+                "type": "response.create",
+                "response": {
+                    "modalities": ["text", "audio"],
+                    "instructions": "Please respond to the user with the tool results in a conversational way."
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to send tool response: {e}")
+
+    def _sanitize_tool_output(self, output: Any) -> str:
+        """Sanitize tool output for OpenAI realtime.
+        
+        Args:
+            output: The tool output to sanitize
+            
+        Returns:
+            Sanitized string output
+        """
+        if isinstance(output, str):
+            return output
+        elif isinstance(output, dict):
+            return json.dumps(output, ensure_ascii=False)
+        else:
+            return str(output)
+
+    def _convert_tools_to_openai_realtime_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+        """Convert ToolSchema objects to OpenAI realtime format.
+        
+        Args:
+            tools: List of ToolSchema objects from the function registry
+            
+        Returns:
+            List of tools in OpenAI realtime format
+        """
+        out = []
+        for t in tools or []:
+            name = t.get("name", "unnamed_tool")
+            description = t.get("description", "") or ""
+            params = t.get("parameters_schema") or t.get("parameters") or {}
+            if not isinstance(params, dict):
+                params = {}
+            params.setdefault("type", "object")
+            params.setdefault("properties", {})
+            params.setdefault("additionalProperties", False)
+
+            out.append({
+                "type": "function",
+                "name": name,
+                "description": description,
+                "parameters": params,
+            })
+        return out
+
+    async def _register_tools_with_openai_realtime(self) -> None:
+        """Register available tools with OpenAI realtime session.
+        
+        This method registers all available functions and MCP tools with the
+        OpenAI realtime session so they can be called during conversations.
+        """
+        try:
+            # Get available tools from function registry
+            available_tools = self.get_available_functions()
+            
+            if not available_tools:
+                logger.info("No tools available to register with OpenAI realtime")
+                return
+                
+            # Convert tools to OpenAI realtime format
+            tools_for_openai = self._convert_tools_to_openai_realtime_format(available_tools)
+            
+            if not tools_for_openai:
+                logger.info("No tools converted for OpenAI realtime")
+                return
+                
+            # Send tools configuration to OpenAI realtime
+            tools_event = {
+                "type": "session.update",
+                "session": {
+                    "tools": tools_for_openai
+                }
+            }
+            
+            await self.rtc._send_event(tools_event)
+            logger.info(f"Registered {len(tools_for_openai)} tools with OpenAI realtime")
+            
+        except Exception as e:
+            logger.error(f"Failed to register tools with OpenAI realtime: {e}")
+            # Don't raise the exception - tool registration failure shouldn't break the connection
