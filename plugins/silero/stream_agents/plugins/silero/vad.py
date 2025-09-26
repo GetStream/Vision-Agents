@@ -6,6 +6,8 @@ import warnings
 import time
 from typing import Dict, Any, Optional
 from stream_agents.core import vad
+from stream_agents.core.edge.types import Participant
+from stream_agents.core.vad.events import VADSpeechStartEvent
 
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
@@ -448,7 +450,7 @@ class VAD(vad.VAD):
                 duration_ms=duration_ms,
                 speech_probability=avg_speech_prob,
                 frame_count=len(speech_data) // self.frame_size,
-                user_metadata=user,
+                user_metadata=user.__dict__ if user else None,
             ))
 
         # Emit enhanced speech end event if we were actively detecting speech
@@ -461,7 +463,7 @@ class VAD(vad.VAD):
                 deactivation_threshold=self.deactivation_th,
                 total_speech_duration_ms=total_speech_duration,
                 total_frames=self.total_speech_frames,
-                user_metadata=user,
+                user_metadata=user.__dict__ if user else None,
             ))
 
         # Reset state variables
@@ -498,7 +500,7 @@ class VAD(vad.VAD):
         return (self.silence_counter * self.frame_size / self.sample_rate) * 1000
 
     async def _process_frame(
-        self, frame: PcmData, user: Optional[Dict[str, Any]] = None
+        self, frame: PcmData, user: Optional[Participant] = None
     ) -> None:
         """
         Process a single audio frame with enhanced Silero-specific event data.
@@ -528,13 +530,13 @@ class VAD(vad.VAD):
             self._speech_start_probability = speech_prob
             self._speech_probabilities = [speech_prob]  # Reset probability tracking
 
-            self.events.send(vad.VADSpeechStartEvent(
+            self.events.send(VADSpeechStartEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 speech_probability=speech_prob,
                 activation_threshold=self.activation_th,
                 frame_count=1,
-                user_metadata=user,
+                user_metadata=user.__dict__ if user else None,
                 audio_data=frame
             ))
 
@@ -577,7 +579,7 @@ class VAD(vad.VAD):
                     speech_probability=speech_prob,
                     frame_count=len(current_samples) // self.frame_size,
                     is_speech_active=True,
-                    user_metadata=user,
+                    user_metadata=user.__dict__ if user else None,
                 ))
 
                 self.partial_counter = 0

@@ -20,12 +20,12 @@ try:
     from stream_agents.core.utils.timing import timing_decorator, frame_timing_decorator
 except ImportError:
     # Fallback if timing module not available
-    def timing_decorator(*args, **kwargs):
+    def timing_decorator(method_name: str | None = None, threshold: float = 0.1, log_level: str = "info"):
         def decorator(func):
             return func
         return decorator
     
-    def frame_timing_decorator(*args, **kwargs):
+    def frame_timing_decorator(frame_id_key: str = "frame_id", threshold: float = 0.1):
         def decorator(func):
             return func
         return decorator
@@ -76,15 +76,15 @@ class RealtimeAudioTrack(AudioStreamTrack):
             self._latest_chunk = None
             arr = np.frombuffer(chunk, dtype=np.int16)
             if arr.ndim == 1:
-                samples = arr.reshape(1, -1)
+                samples = arr.reshape(1, -1)  # type: ignore[assignment]
             else:
-                samples = arr[:1, :]
+                samples = arr[:1, :]  # type: ignore[assignment]
             # Pad or truncate to exactly one 20 ms frame
             needed = samples_per_frame
             have = samples.shape[1]
             if have < needed:
                 pad = np.zeros((1, needed - have), dtype=np.int16)
-                samples = np.concatenate([samples, pad], axis=1)
+                samples = np.concatenate([samples, pad], axis=1)  # type: ignore[assignment]
             elif have > needed:
                 samples = samples[:, :needed]
         else:
@@ -113,7 +113,7 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         self._fps = max(1, fps)
         self._interval = 1.0 / self._fps
         self._ts = 0
-        self._last_frame_time = 0
+        self._last_frame_time = 0.0
         self._frame_count = 0
         self._error_count = 0
         self._consecutive_errors = 0
@@ -135,7 +135,7 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         if self._started:
             return
         # Create VideoForwarder with the input source track and start it once
-        self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)
+        self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)  # type: ignore[arg-type]
         await self._forwarder.start()
         self._started = True
 

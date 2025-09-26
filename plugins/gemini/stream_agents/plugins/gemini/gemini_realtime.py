@@ -81,12 +81,12 @@ class Realtime(realtime.Realtime):
             framerate=24000, stereo=False, format="s16"
         )
         self._video_forwarder: Optional[VideoForwarder] = None
-        self._session_context = None
+        self._session_context: Optional[Any] = None
         self._session: Optional[AsyncSession] = None
-        self._receive_task = None
+        self._receive_task: Optional[asyncio.Task[Any]] = None
 
     async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
-                              participant: Participant = None):
+                              participant: Optional[Participant] = None):
         """
         Simple response standardizes how to send a text instruction to this LLM.
 
@@ -118,16 +118,18 @@ class Realtime(realtime.Realtime):
         mime = f"audio/pcm;rate={pcm.sample_rate}"
         blob = Blob(data=audio_bytes, mime_type=mime)
 
-        await self._session.send_realtime_input(audio=blob)
+        if self._session:
+            await self._session.send_realtime_input(audio=blob)
 
     async def send_realtime_input(self, *args, **kwargs):
         """
         send_realtime_input wraps the native send_realtime_input
         """
         try:
-            await self._session.send_realtime_input(
-                *args, **kwargs
-            )
+            if self._session:
+                await self._session.send_realtime_input(
+                    *args, **kwargs
+                )
         except Exception as e:
             # reconnect here in some cases
             self.logger.error(e)
@@ -169,27 +171,29 @@ class Realtime(realtime.Realtime):
         Hopefully they will improve this in the future
         """
         try:
+            if not self._session:
+                return
             while True:
                 async for response in self._session.receive():
-                    response: LiveServerMessage = response
+                    server_message: LiveServerMessage = response
 
-                    is_input_transcript = response and response.server_content and response.server_content.input_transcription
-                    is_output_transcript = response and response.server_content and response.server_content.output_transcription
-                    is_response = response and response.server_content and response.server_content.model_turn
-                    is_interrupt = response and response.server_content and response.server_content.interrupted
-                    is_turn_complete = response and response.server_content and response.server_content.turn_complete
-                    is_generation_complete = response and response.server_content and response.server_content.generation_complete
+                    is_input_transcript = server_message and server_message.server_content and server_message.server_content.input_transcription
+                    is_output_transcript = server_message and server_message.server_content and server_message.server_content.output_transcription
+                    is_response = server_message and server_message.server_content and server_message.server_content.model_turn
+                    is_interrupt = server_message and server_message.server_content and server_message.server_content.interrupted
+                    is_turn_complete = server_message and server_message.server_content and server_message.server_content.turn_complete
+                    is_generation_complete = server_message and server_message.server_content and server_message.server_content.generation_complete
 
                     if is_input_transcript:
                         # TODO: what to do with this? check with Tommaso
 
-                        self.logger.info("input: %s", response.server_content.input_transcription.text)
+                        self.logger.info("input: %s", server_message.server_content.input_transcription.text)
                     elif is_output_transcript:
                         # TODO: what to do with this?
 
-                        self.logger.info("output: %s", response.server_content.output_transcription.text)
+                        self.logger.info("output: %s", server_message.server_content.output_transcription.text)
                     elif is_interrupt:
-                        self.logger.info("interrupted: %s", response.server_content.interrupted)
+                        self.logger.info("interrupted: %s", server_message.server_content.interrupted)
                     elif is_response:
                         # Store the resumption id so we can resume a broken connection
                         if response.session_resumption_update:
@@ -197,22 +201,22 @@ class Realtime(realtime.Realtime):
                             if update.resumable and update.new_handle:
                                 self.session_resumption_id = update.new_handle
 
-                        parts = response.server_content.model_turn.parts
+                        parts = server_message.server_content.model_turn.parts
 
                         for part in parts:
-                            part: Part = part
-                            if part.text:
-                                if part.thought:
-                                    self.logger.info("Gemini thought %s", part.text)
+                            part_obj: Part = part
+                            if part_obj.text:
+                                if part_obj.thought:
+                                    self.logger.info("Gemini thought %s", part_obj.text)
                                 else:
-                                    self.logger.info("output: %s", part.text)
+                                    self.logger.info("output: %s", part_obj.text)
                                     event = StandardizedTextDeltaEvent(
                                         plugin_name="gemini",
-                                        delta=part.text
+                                        delta=part_obj.text
                                     )
                                     self.events.send(event)
-                            elif part.inline_data:
-                                data = part.inline_data.data
+                            elif part_obj.inline_data:
+                                data = part_obj.inline_data.data
                                 # Convert bytes to PcmData at 24kHz (Gemini's output rate)
                                 pcm_data = PcmData.from_bytes(data, sample_rate=24000, format="s16")
                                 # Resample from 24kHz to 48kHz for WebRTC
@@ -423,9 +427,9 @@ class Realtime(realtime.Realtime):
         
         try:
             # Check for function calls in the response
-            if hasattr(response, 'server_content') and response.server_content:
-                if hasattr(response.server_content, 'model_turn') and response.server_content.model_turn:
-                    parts = response.server_content.model_turn.parts
+            if hasattr(response, 'server_content') and server_message.server_content:
+                if hasattr(server_message.server_content, 'model_turn') and server_message.server_content.model_turn:
+                    parts = server_message.server_content.model_turn.parts
                     for part in parts:
                         if hasattr(part, 'function_call') and part.function_call:
                             calls.append({

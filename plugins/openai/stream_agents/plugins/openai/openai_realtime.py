@@ -77,7 +77,7 @@ class Realtime(realtime.Realtime):
         )
 
     async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
-      participant: Participant = None):
+      participant: Optional[Participant] = None):
         """Send a simple text input to the OpenAI Realtime session.
 
         This is a convenience wrapper that forwards a text prompt upstream via
@@ -136,11 +136,11 @@ class Realtime(realtime.Realtime):
         """
         et = event.get("type")
         if et == "response.audio_transcript.done":
-            event: ResponseAudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent.model_validate(event)
-            self._emit_transcript_event(text=event.transcript, user_metadata={"role": "assistant", "source": "openai"})
-            self._emit_response_event(text=event.transcript, response_id=event.response_id, is_complete=True, conversation_item_id=event.item_id)
+            transcript_event: ResponseAudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent.model_validate(event)
+            self._emit_transcript_event(text=transcript_event.transcript, user_metadata={"role": "assistant", "source": "openai"})
+            self._emit_response_event(text=transcript_event.transcript, response_id=transcript_event.response_id, is_complete=True, conversation_item_id=transcript_event.item_id)
         if et == "input_audio_buffer.speech_started":
-            event: InputAudioBufferSpeechStartedEvent = InputAudioBufferSpeechStartedEvent.model_validate(event)
+            speech_event: InputAudioBufferSpeechStartedEvent = InputAudioBufferSpeechStartedEvent.model_validate(event)
             await self.output_track.flush()
 
     async def _handle_audio_output(self, audio_bytes: bytes) -> None:
