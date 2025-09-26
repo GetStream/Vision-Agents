@@ -3,9 +3,9 @@ from xai_sdk import AsyncClient
 from xai_sdk.chat import system, user, Response, Chunk
 from xai_sdk.proto import chat_pb2
 
-from stream_agents.core.llm.llm import LLM, LLMResponseEvent
+from stream_agents.core.llm.llm import LLM
 from stream_agents.core.llm.types import StandardizedTextDeltaEvent
-from stream_agents.core.llm.events import AfterLLMResponseEvent, StandardizedResponseCompletedEvent
+from stream_agents.core.llm.events import AfterLLMResponseEvent, StandardizedResponseCompletedEvent, LLMResponseEvent
 from stream_agents.core.processors import Processor
 from . import events
 
@@ -186,8 +186,9 @@ class XAILLM(LLM):
                 delta=chunk.content,
             )
             self.events.send(StandardizedTextDeltaEvent(
-                plugin_name="xai",
-                standardized_event=standardized_event
+                content_index=standardized_event.content_index,
+                delta=standardized_event.delta,
+                type=standardized_event.type
             ))
 
         # Check if this is the final chunk (finish_reason indicates completion)

@@ -86,7 +86,7 @@ class RealtimeAudioTrack(AudioStreamTrack):
                 pad = np.zeros((1, needed - have), dtype=np.int16)
                 samples = np.concatenate([samples, pad], axis=1)  # type: ignore[assignment]
             elif have > needed:
-                samples = samples[:, :needed]
+                samples = samples[:, :needed]  # type: ignore[assignment]
         else:
             cached = self._silence_cache.get(sr)
             if cached is None:
@@ -126,7 +126,7 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         self._started: bool = False
 
         # Rate limiting for inactive track warnings
-        self._last_inactive_warning = 0
+        self._last_inactive_warning = 0.0
         self._inactive_warning_interval = 30.0  # Only warn every 30 seconds
         
         logger.info(f"🎥 StreamVideoForwardingTrack initialized: fps={fps}, interval={self._interval:.3f}s (frame limiting DISABLED for performance)")
@@ -251,11 +251,11 @@ class RTCManager:
         self.api_key = getenv("OPENAI_API_KEY")
         self.model = model
         self.voice = voice
-        self.token = None
+        self.token: Optional[str] = None
         self.session_info: Optional[dict] = None  # Store session information
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
-        self._mic_track: RealtimeAudioTrack = None
+        self._mic_track: Optional[RealtimeAudioTrack] = None
         self._audio_callback: Optional[Callable[[bytes], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
@@ -311,7 +311,7 @@ class RTCManager:
                     resp.raise_for_status()
                     data: dict = resp.json()
                     secret = data.get("client_secret")
-                    return secret.get("value")
+                    return secret.get("value") if secret else None
                 except Exception as e:
                     if attempt == 0:
                         await asyncio.sleep(1.0)
@@ -599,6 +599,8 @@ class RTCManager:
                         break
 
                     try:
+                        if not hasattr(frame, 'to_ndarray'):
+                            continue  # Skip if not a Frame
                         samples = frame.to_ndarray()
                         if samples.ndim == 2 and samples.shape[0] > 1:
                             samples = samples.mean(axis=0)
@@ -679,7 +681,10 @@ class RTCManager:
                     
                     # Log frame details
                     logger.info(f"🎥 SUCCESS: Read frame #{frame_count} from user track!")
-                    logger.info(f"🎥 Frame details: {frame.width}x{frame.height}, format={frame.format}, pts={frame.pts}")
+                    if hasattr(frame, 'width') and hasattr(frame, 'height') and hasattr(frame, 'format'):
+                        logger.info(f"🎥 Frame details: {frame.width}x{frame.height}, format={frame.format}, pts={frame.pts}")
+                    else:
+                        logger.info(f"🎥 Frame details: pts={frame.pts}")
                     
                     # The frame is automatically forwarded through the WebRTC connection
                     # since we replaced the track with replaceTrack()

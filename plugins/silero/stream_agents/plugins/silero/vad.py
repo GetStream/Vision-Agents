@@ -598,7 +598,7 @@ class VAD(vad.VAD):
 
                 # If silence exceeds padding duration, emit audio and reset
                 if self.silence_counter >= speech_pad_frames:
-                    await self._flush_speech_buffer(user)
+                    await self._flush_speech_buffer(user.__dict__ if user else None)
 
             # Calculate max speech frames based on ms
             max_speech_frames = int(

@@ -143,9 +143,10 @@ class Realtime(realtime.Realtime):
         """
         Don't use send client content, it can cause bugs when combined with send_realtime_input
         """
-        await self._session.send_client_content(
-            *args, **kwargs
-        )
+        if self._session:
+            await self._session.send_client_content(
+                *args, **kwargs
+            )
 
     async def connect(self):
         """
@@ -187,13 +188,16 @@ class Realtime(realtime.Realtime):
                     if is_input_transcript:
                         # TODO: what to do with this? check with Tommaso
 
-                        self.logger.info("input: %s", server_message.server_content.input_transcription.text)
+                        if server_message.server_content and server_message.server_content.input_transcription:
+                            self.logger.info("input: %s", server_message.server_content.input_transcription.text)
                     elif is_output_transcript:
                         # TODO: what to do with this?
 
-                        self.logger.info("output: %s", server_message.server_content.output_transcription.text)
+                        if server_message.server_content and server_message.server_content.output_transcription:
+                            self.logger.info("output: %s", server_message.server_content.output_transcription.text)
                     elif is_interrupt:
-                        self.logger.info("interrupted: %s", server_message.server_content.interrupted)
+                        if server_message.server_content:
+                            self.logger.info("interrupted: %s", server_message.server_content.interrupted)
                     elif is_response:
                         # Store the resumption id so we can resume a broken connection
                         if response.session_resumption_update:
@@ -201,42 +205,42 @@ class Realtime(realtime.Realtime):
                             if update.resumable and update.new_handle:
                                 self.session_resumption_id = update.new_handle
 
-                        parts = server_message.server_content.model_turn.parts
-
-                        for part in parts:
-                            part_obj: Part = part
-                            if part_obj.text:
-                                if part_obj.thought:
-                                    self.logger.info("Gemini thought %s", part_obj.text)
-                                else:
-                                    self.logger.info("output: %s", part_obj.text)
-                                    event = StandardizedTextDeltaEvent(
+                        if server_message.server_content and server_message.server_content.model_turn and server_message.server_content.model_turn.parts:
+                            parts = server_message.server_content.model_turn.parts
+                            for part in parts:
+                                part_obj: Part = part
+                                if part_obj.text:
+                                    if part_obj.thought:
+                                        self.logger.info("Gemini thought %s", part_obj.text)
+                                    else:
+                                        self.logger.info("output: %s", part_obj.text)
+                                        event = StandardizedTextDeltaEvent(
+                                            plugin_name="gemini",
+                                            delta=part_obj.text
+                                        )
+                                        self.events.send(event)
+                                elif part_obj.inline_data:
+                                    data = part_obj.inline_data.data
+                                    # Convert bytes to PcmData at 24kHz (Gemini's output rate)
+                                    pcm_data = PcmData.from_bytes(data, sample_rate=24000, format="s16")
+                                    # Resample from 24kHz to 48kHz for WebRTC
+                                    pcm_data.resample(target_sample_rate=48000)
+                                    
+                                    # Emit audio output event
+                                    audio_event = RealtimeAudioOutputEvent(
                                         plugin_name="gemini",
-                                        delta=part_obj.text
+                                        audio_data=data,
+                                        sample_rate=24000
                                     )
-                                    self.events.send(event)
-                            elif part_obj.inline_data:
-                                data = part_obj.inline_data.data
-                                # Convert bytes to PcmData at 24kHz (Gemini's output rate)
-                                pcm_data = PcmData.from_bytes(data, sample_rate=24000, format="s16")
-                                # Resample from 24kHz to 48kHz for WebRTC
-                                pcm_data.resample(target_sample_rate=48000)
-                                
-                                # Emit audio output event
-                                audio_event = RealtimeAudioOutputEvent(
-                                    plugin_name="gemini",
-                                    audio_data=data,
-                                    sample_rate=24000
-                                )
-                                self.events.send(audio_event)
-                                
-                                await self.output_track.write(data) # original 24khz here
-                            elif hasattr(part, 'function_call') and part.function_call:
-                                # Handle function calls from Gemini Live
-                                self.logger.info(f"Received function call: {part.function_call.name}")
-                                await self._handle_function_call(part.function_call)
-                            else:
-                                self.logger.debug("Unrecognized part type: %s", part)
+                                    self.events.send(audio_event)
+                                    
+                                    await self.output_track.write(data) # original 24khz here
+                                elif hasattr(part_obj, 'function_call') and part_obj.function_call:
+                                    # Handle function calls from Gemini Live
+                                    self.logger.info(f"Received function call: {part_obj.function_call.name}")
+                                    await self._handle_function_call(part_obj.function_call)
+                                else:
+                                    self.logger.debug("Unrecognized part type: %s", part_obj)
                     elif is_turn_complete:
                         self.logger.info("is_turn_complete complete")
                     elif is_generation_complete:
