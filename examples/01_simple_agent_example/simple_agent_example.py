@@ -8,6 +8,7 @@ from stream_agents.core.edge.types import User
 from stream_agents.plugins import elevenlabs, deepgram, openai, getstream
 from stream_agents.core import agents, cli
 from stream_agents.core.events import CallSessionParticipantJoinedEvent
+from stream_agents.core.agents.events import AgentSayEvent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ async def start_agent() -> None:
 
     @agent.subscribe
     async def my_handler(event: CallSessionParticipantJoinedEvent):
-        await agent.say(f"Hello, {event.participant.user.name}")
+        agent.events.send(AgentSayEvent(text=f"Hello {event.participant.user.name}"))
 
     # Create a call
     call = agent.edge.client.video.call("default", str(uuid4()))

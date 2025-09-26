@@ -7,14 +7,9 @@ from typing import Optional, Dict, Any, Union, Iterator, AsyncIterator
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from stream_agents.core.events.manager import EventManager
-
-from .events import (
-    TTSAudioEvent,
-    TTSSynthesisStartEvent,
-    TTSSynthesisCompleteEvent,
-    TTSErrorEvent,
-)
 from stream_agents.core.events import PluginInitializedEvent, PluginClosedEvent
+
+from . import events
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +45,7 @@ class TTS(abc.ABC):
         self.session_id = str(uuid.uuid4())
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
+        self.events.register_events_from_module(events)
         self.events.send(PluginInitializedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
@@ -131,7 +127,7 @@ class TTS(abc.ABC):
                 "Starting text-to-speech synthesis", extra={"text_length": len(text)}
             )
 
-            self.events.send(TTSSynthesisStartEvent(
+            self.events.send(events.TTSSynthesisStartEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 text=text,
@@ -154,7 +150,7 @@ class TTS(abc.ABC):
                 audio_chunks = 1
                 await self._track.write(audio_data)
 
-                audio_event = TTSAudioEvent(
+                self.events.send(events.TTSAudioEvent(
                     session_id=self.session_id,
                     plugin_name=self.provider_name,
                     audio_data=audio_data,
@@ -162,8 +158,7 @@ class TTS(abc.ABC):
                     text_source=text,
                     user_metadata=user,
                     sample_rate=self._track.framerate if self._track else 16000,
-                )
-                self.events.send(audio_event)  # Structured event
+                ))
             elif inspect.isasyncgen(audio_data):
                 async for chunk in audio_data:
                     if isinstance(chunk, bytes):
@@ -171,8 +166,7 @@ class TTS(abc.ABC):
                         audio_chunks += 1
                         await self._track.write(chunk)
 
-                        # Emit structured audio event
-                        self.events.send(TTSAudioEvent(
+                        self.events.send(events.TTSAudioEvent(
                             session_id=self.session_id,
                             plugin_name=self.provider_name,
                             audio_data=chunk,
@@ -188,7 +182,7 @@ class TTS(abc.ABC):
                         audio_chunks += 1
                         await self._track.write(chunk.data)
 
-                        self.events.send(TTSAudioEvent(
+                        self.events.send(events.TTSAudioEvent(
                             session_id=self.session_id,
                             plugin_name=self.provider_name,
                             audio_data=chunk.data,
@@ -207,7 +201,7 @@ class TTS(abc.ABC):
                     audio_chunks += 1
                     await self._track.write(chunk)
 
-                    self.events.send(TTSAudioEvent(
+                    self.events.send(events.TTSAudioEvent(
                         session_id=self.session_id,
                         plugin_name=self.provider_name,
                         audio_data=chunk,
@@ -239,7 +233,7 @@ class TTS(abc.ABC):
                 else None
             )
 
-            self.events.send(TTSSynthesisCompleteEvent(
+            self.events.send(events.TTSSynthesisCompleteEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 synthesis_id=synthesis_id,
@@ -252,7 +246,7 @@ class TTS(abc.ABC):
                 real_time_factor=real_time_factor,
             ))
         except Exception as e:
-            self.events.send(TTSErrorEvent(
+            self.events.send(events.TTSErrorEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 error=e,
