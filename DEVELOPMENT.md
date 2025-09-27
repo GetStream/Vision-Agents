@@ -72,13 +72,29 @@ git tag -a v0.0.1 -m "Release 0.0.1" && git push --tags
 
 ## Architecture
 
-### TTS & STT flow
+To see how the agent work open up agents.py
 
-describe how audio flows
+### STT & TTS flow
+
+* The agent listens to AudioReceivedEvent and forwards that to STT.
+* STT then fires the STTPartialTranscriptEvent and STTTranscriptEvent event. 
+* The agent receives this event and calls agent.llm.simple_response.
+* The LLM triggers LLMResponseEvent, and the agent calls 
+* await self.tts.send(llm_response.text)
 
 ### Realtime STS flow
 
-describe this TODO
+** Audio **
+
+* The agent listens to AudioReceivedEvent and calls simple_audio_response
+* asyncio.create_task(self.llm.simple_audio_response(pcm_data))
+* The STS writes on agent.llm.audio_track
+
+** Video **
+
+* The agent receives the video track, and calls agent.llm._watch_video_track
+* The LLM uses the VideoForwarder to write the video to a websocket or webrtc connection
+* The STS writes the reply on agent.llm.audio_track and the RealtimeTranscriptEvent / RealtimePartialTranscriptEvent
 
 ## Dev / Contributor Guidelines
 
