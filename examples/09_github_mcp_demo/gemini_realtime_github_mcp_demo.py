@@ -15,7 +15,7 @@ from stream_agents.core.agents import Agent
 from stream_agents.core.mcp import MCPServerRemote
 from stream_agents.plugins.gemini.gemini_realtime import Realtime
 from stream_agents.plugins import getstream
-from stream_agents.core import cli
+from stream_agents.core import cli, logging_utils
 from stream_agents.core.events import CallSessionParticipantJoinedEvent
 from stream_agents.core.edge.types import User
 
@@ -23,7 +23,8 @@ from stream_agents.core.edge.types import User
 load_dotenv()
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
+logging_utils.initialize_logging_context()
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +53,9 @@ async def main():
         session_timeout=300.0
     )
     
+    call_id = str(uuid4())
+    token = logging_utils.set_call_context(call_id)
+
     # Create Gemini Realtime LLM
     llm = Realtime(
         model="gemini-2.5-flash-native-audio-preview-09-2025",
@@ -89,7 +93,7 @@ async def main():
             await agent.simple_response(f"Hello {event.participant.user.name}! I'm your GitHub AI assistant powered by Gemini Live. I have access to {len(mcp_functions)} GitHub tools and can help you with repositories, issues, pull requests, and more through voice commands!")
         
         # Create a call
-        call = agent.edge.client.video.call("default", str(uuid4()))
+        call = agent.edge.client.video.call("default", call_id)
         
         # Open the demo UI
         logger.info("🌐 Opening browser with demo UI...")
@@ -119,6 +123,7 @@ async def main():
     # Clean up
     await agent.close()
     logger.info("Demo completed!")
+    logging_utils.clear_call_context(token)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from uuid import uuid4
 
@@ -10,7 +11,12 @@ from stream_agents.core.agents.agents import Agent
 from stream_agents.core.edge.edge_transport import StreamEdge
 from stream_agents.core.cli import start_dispatcher
 from stream_agents.core.utils import open_demo
+from stream_agents.core import logging_utils
 from getstream import Stream
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
+logging_utils.initialize_logging_context()
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -27,6 +33,9 @@ async def start_agent() -> None:
 
     if not tavus_api_key:
         raise ValueError("TAVUS_KEY environment variable is required")
+
+    call_id = str(uuid4())
+    token = logging_utils.set_call_context(call_id)
 
     # create a stream client and a user object
     client = Stream.from_env()
@@ -67,7 +76,7 @@ async def start_agent() -> None:
     )
 
     # Create a call
-    call = client.video.call("default", str(uuid4()))
+    call = client.video.call("default", call_id)
 
     # Open the demo UI
     open_demo(call)
@@ -87,6 +96,7 @@ async def start_agent() -> None:
         print("🧹 Cleaning up Tavus resources...")
         await tavus_processor.cleanup()
         print("✅ Cleanup completed!")
+        logging_utils.clear_call_context(token)
 
 
 if __name__ == "__main__":
