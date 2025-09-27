@@ -1,10 +1,9 @@
 import asyncio
 import pytest
 import numpy as np
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import List, Any
+from unittest.mock import AsyncMock
+from typing import List
 
-import av
 from aiortc import VideoStreamTrack
 
 from stream_agents.plugins.gemini.queue import LatestNQueue

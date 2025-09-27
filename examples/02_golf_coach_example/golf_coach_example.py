@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import gemini, getstream, openai, ultralytics
+from stream_agents.plugins import gemini, getstream, ultralytics
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
 from getstream import Stream

@@ -1,9 +1,11 @@
 ## Overview
 
 ## To install:
+
 In the project root, run:
+
 ```bash
-uv venv --python 3.12.2
+uv venv --python 3.12.11
 uv sync --all-extras --dev
 ```
 
@@ -14,7 +16,7 @@ cp env.example .env
 
 ## Running
 ```bash
-uv run examples/01_simple_agent_example/01_simple_agent_example
+uv run examples/01_simple_agent_example/simple_agent_example.py
 ```
 
 ## Tests

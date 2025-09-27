@@ -3,7 +3,6 @@ import collections
 import types
 import typing
 import logging
-import dataclasses
 from typing import get_origin, Union, get_args
 from .base import ExceptionEvent, HealthCheckEvent, ConnectionOkEvent, ConnectionErrorEvent, ConnectionClosedEvent
 

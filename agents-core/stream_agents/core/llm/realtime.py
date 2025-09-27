@@ -2,10 +2,6 @@ from __future__ import annotations
 
 from typing import (
     Any,
-    Callable,
-    Generic,
-    List,
-    TypeVar,
 )
 
 from getstream.video.rtc.audio_track import AudioStreamTrack

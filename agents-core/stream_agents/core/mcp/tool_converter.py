@@ -1,7 +1,6 @@
 """Utility to convert MCP tools to function registry format."""
 
-import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 from mcp import types
 
 from ..llm.llm_types import ToolSchema

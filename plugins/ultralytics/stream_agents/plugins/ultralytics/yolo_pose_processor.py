@@ -9,7 +9,7 @@ import numpy as np
 import cv2
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, Any, Coroutine
+from typing import Optional, Dict, Any
 from PIL import Image
 from aiortc import VideoStreamTrack
 import av
@@ -105,7 +105,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
             av_frame.pts = pts
             av_frame.time_base = time_base
-        except Exception as e:
+        except Exception:
             import pdb; pdb.set_trace()
 
 
@@ -186,7 +186,7 @@ class YOLOPoseProcessor(
         self,
         incoming_track: aiortc.mediastreams.MediaStreamTrack, *args, **kwargs
     ):
-        logger.info(f"✅ process_video starting efg")
+        logger.info("✅ process_video starting efg")
 
         # forward the track, and run add_pose_to_ndarray
         self._video_forwarder = VideoForwarder(
@@ -210,7 +210,7 @@ class YOLOPoseProcessor(
             frame_array = frame.to_ndarray(format="rgb24")
             array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
             frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
-        except Exception as e:
+        except Exception:
             import pdb; pdb.set_trace()
 
         return frame_with_pose

@@ -1,12 +1,10 @@
-import asyncio
 import json
 from typing import Any, Optional, List, Dict
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from openai import AsyncOpenAI
 
 from stream_agents.core.llm import realtime
-from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
+from stream_agents.core.llm.llm_types import ToolSchema
 import logging
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData

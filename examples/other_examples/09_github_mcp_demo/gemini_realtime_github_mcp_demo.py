@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from stream_agents.core.agents import Agent
 from stream_agents.core.mcp import MCPServerRemote
 from stream_agents.plugins.gemini.gemini_realtime import Realtime
-from stream_agents.plugins import elevenlabs, deepgram, silero, getstream
+from stream_agents.plugins import getstream
 from stream_agents.core import cli
 from stream_agents.core.events import CallSessionParticipantJoinedEvent
 from stream_agents.core.edge.types import User
