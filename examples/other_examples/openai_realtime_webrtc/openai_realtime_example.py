@@ -8,7 +8,6 @@ real-time bidirectional audio streaming.
 
 import asyncio
 import logging
-from contextvars import ContextVar
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -16,28 +15,14 @@ from dotenv import load_dotenv
 from stream_agents.plugins import openai, getstream
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
+from stream_agents.core import logging_utils
 from getstream import Stream
-
-# Enable info-level logs to surface track subscription and forwarding diagnostics
-call_id_ctx: ContextVar[str] = ContextVar("call_id", default="-")
-
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s",
 )
-previous_factory = logging.getLogRecordFactory()
-
-
-def contextual_record_factory(*args, **kwargs) -> logging.LogRecord:
-    """Attach the call ID from context to every log record."""
-
-    record = previous_factory(*args, **kwargs)
-    record.call_id = call_id_ctx.get()
-    return record
-
-
-logging.setLogRecordFactory(contextual_record_factory)
+logging_utils.initialize_logging_context()
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -46,7 +31,7 @@ load_dotenv()
 async def start_agent() -> None:
     # Set the call ID here to be used in the logging
     call_id = str(uuid4())
-    token = call_id_ctx.set(call_id)
+    token = logging_utils.set_call_context(call_id)
     
     try:
         # create a stream client and a user object
@@ -94,7 +79,7 @@ You are a voice assistant.
 
             await agent.finish()  # run till the call ends
     finally:
-        call_id_ctx.reset(token)
+        logging_utils.clear_call_context(token)
 
 
 if __name__ == "__main__":
