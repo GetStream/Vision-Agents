@@ -1,6 +1,6 @@
 # Open Vision Agents by Stream
 
-Video/Vision AI agents running on [Stream's edge network](https://getstream.io/video/).
+Vision AI agents running on [Stream's edge network](https://getstream.io/video/).
 Open Agent library, adding support for other realtime video providers.
 
 -  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with realtime models
@@ -76,7 +76,6 @@ Processors make it easy to combine the video & LLM with additional state. Here a
 
 * YoloPose
 * YoloObjectDetection
-* YoloSpeedMeasurement
 * ImageCapture
 * BufferedVideoCapture
 * TavusAvatar
@@ -85,19 +84,11 @@ Processors make it easy to combine the video & LLM with additional state. Here a
 
 TODO Link to docs
 
+## Development
 
-## Competitors & Partners
+See DEVELOPMENT.md
 
-Reach out to nash@getstream.io, and we'll collaborate on getting you added
-We'd like to add support for and are reaching out to:
 
-* Mediasoup
-* Janus
-* Cloudflare
-* Twilio
-* AWS IVS
-* Vonage
-* And others.
 
 ## Awesome Video AI
 
@@ -119,6 +110,19 @@ Our favorite people & projects to follow for vision AI
 - Livekit Agents: Great syntax, Livekit only
 - Pipecat: Flexible, but more verbose. Open, we will add support for Stream
 - OpenAI Agents: Focused on openAI only, but we will try to add support
+
+## Competitors & Partners
+
+Reach out to nash@getstream.io, and we'll collaborate on getting you added
+We'd like to add support for and are reaching out to:
+
+* Mediasoup
+* Janus
+* Cloudflare
+* Twilio
+* AWS IVS
+* Vonage
+* And others.
 
 ## Stream Agents or Proxy
 
