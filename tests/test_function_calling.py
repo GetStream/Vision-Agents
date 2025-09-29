@@ -469,8 +469,11 @@ class TestConcurrentToolExecution:
         
         asyncio.run(run_test())
     
-    def test_tool_lifecycle_events(self):
+    @pytest.mark.asyncio
+    async def test_tool_lifecycle_events(self):
         """Test that tool lifecycle events are emitted."""
+        from stream_agents.core.llm.events import ToolStartEvent, ToolEndEvent
+        
         llm = LLM()
         
         @llm.register_function(description="Test function")
@@ -478,26 +481,28 @@ class TestConcurrentToolExecution:
             return x * 2
         
         # Track emitted events
-        events = []
+        start_events = []
+        end_events = []
         
-        def track_event(data):
-            # The event handler receives the data directly
-            events.append(data)
+        @llm.events.subscribe
+        async def track_start_event(event: ToolStartEvent):
+            start_events.append(event)
         
-        llm.on("tool.start", track_event)
-        llm.on("tool.end", track_event)
+        @llm.events.subscribe
+        async def track_end_event(event: ToolEndEvent):
+            end_events.append(event)
         
         # Execute a tool call
-        async def run_test():
-            await llm._run_one_tool({"id": "call1", "name": "test_func", "arguments_json": {"x": 5}}, 30.0)
-        
-        asyncio.run(run_test())
+        await llm._run_one_tool({"id": "call1", "name": "test_func", "arguments_json": {"x": 5}}, 30.0)
+        # Wait for events
+        await llm.events.wait(timeout=1.0)
         
         # Check that events were emitted
-        assert len(events) == 2
-        assert events[0]["name"] == "test_func"
-        assert events[1]["name"] == "test_func"
-        assert events[1]["ok"] is True
+        assert len(start_events) == 1
+        assert len(end_events) == 1
+        assert start_events[0].tool_name == "test_func"
+        assert end_events[0].tool_name == "test_func"
+        assert end_events[0].success is True
     
     def test_output_sanitization(self):
         """Test output sanitization for large responses."""
