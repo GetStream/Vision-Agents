@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from dotenv import load_dotenv
 import os
@@ -58,10 +59,12 @@ class TestXAILLM:
         llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
         streaming_works = False
 
-        @llm.on("standardized.output_text.delta")
-        def passed(event: StandardizedTextDeltaEvent):
+        @llm.events.subscribe
+        async def passed(event: StandardizedTextDeltaEvent):
             nonlocal streaming_works
             streaming_works = True
+        
+        await asyncio.sleep(0.01)
 
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
