@@ -6,11 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 
 from stream_agents.plugins import fal
+from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 from getstream.video.rtc.track_util import PcmData
 
 
 @pytest.fixture
-def stt():
+async def stt():
     """Provides a fal.STT instance with a mocked fal_client."""
     with patch("fal_client.AsyncClient") as mock_fal_client:
         stt_instance = fal.STT()
@@ -21,7 +22,8 @@ def stt():
 class TestfalSTT:
     """Test suite for the fal.STT class."""
 
-    def test_init(self):
+    @pytest.mark.asyncio
+    async def test_init(self):
         """Test that the __init__ method sets attributes correctly."""
         stt = fal.STT(task="translate", target_language="es", sample_rate=16000)
         assert stt.task == "translate"
@@ -52,7 +54,13 @@ class TestfalSTT:
         )
 
         transcript_handler = AsyncMock()
-        stt.on("transcript", transcript_handler)
+
+        @stt.events.subscribe
+        async def on_transcript(event: STTTranscriptEvent):
+            await transcript_handler(event)
+
+        # Allow event subscription to be processed
+        await asyncio.sleep(0.01)
 
         samples = (np.sin(np.linspace(0, 440 * 2 * np.pi, 480)) * 8191).astype(np.int16)
         pcm_data = PcmData(
@@ -68,7 +76,8 @@ class TestfalSTT:
             patch("os.unlink", new_callable=MagicMock) as mock_unlink,
         ):
             await stt._process_audio_impl(pcm_data, {"user": "test_user"})
-            await asyncio.sleep(0)  # Allow event loop to run
+            # Allow event loop to process the event emission
+            await asyncio.sleep(0.01)
 
             mock_temp_file.assert_called_once_with(suffix=".wav", delete=False)
             stt._fal_client.upload_file.assert_awaited_once()
@@ -127,7 +136,13 @@ class TestfalSTT:
         )  # No 'text' field
 
         transcript_handler = AsyncMock()
-        stt.on("transcript", transcript_handler)
+
+        @stt.events.subscribe
+        async def on_transcript(event: STTTranscriptEvent):
+            await transcript_handler(event)
+
+        # Allow event subscription to be processed
+        await asyncio.sleep(0.01)
 
         samples = (np.sin(np.linspace(0, 440 * 2 * np.pi, 480)) * 32767).astype(
             np.int16
@@ -154,7 +169,13 @@ class TestfalSTT:
         )  # Empty text
 
         transcript_handler = AsyncMock()
-        stt.on("transcript", transcript_handler)
+
+        @stt.events.subscribe
+        async def on_transcript(event: STTTranscriptEvent):
+            await transcript_handler(event)
+
+        # Allow event subscription to be processed
+        await asyncio.sleep(0.01)
 
         samples = (np.sin(np.linspace(0, 440 * 2 * np.pi, 480)) * 32767).astype(
             np.int16
@@ -176,7 +197,13 @@ class TestfalSTT:
         stt._fal_client.upload_file = AsyncMock(side_effect=Exception("API Error"))
 
         error_handler = AsyncMock()
-        stt.on("error", error_handler)
+
+        @stt.events.subscribe
+        async def on_error(event: STTErrorEvent):
+            await error_handler(event)
+
+        # Allow event subscription to be processed
+        await asyncio.sleep(0.01)
 
         samples = (np.sin(np.linspace(0, 440 * 2 * np.pi, 480)) * 32767).astype(
             np.int16
@@ -189,7 +216,8 @@ class TestfalSTT:
 
         with patch("tempfile.NamedTemporaryFile"), patch("os.unlink"):
             await stt._process_audio_impl(pcm_data)
-            await asyncio.sleep(0)  # Allow event loop to run
+            # Allow event loop to process the event emission
+            await asyncio.sleep(0.01)
 
         # Check that the error handler was called with an event object
         error_handler.assert_called_once()

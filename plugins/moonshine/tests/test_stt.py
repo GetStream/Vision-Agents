@@ -291,11 +291,11 @@ async def test_moonshine_process_audio_short_chunk(audio_data_16k):
         transcripts = []
         errors = []
 
-        @stt.on("transcript")
+        @stt.events.subscribe
         def on_transcript(text, user, metadata):
             transcripts.append((text, user, metadata))
 
-        @stt.on("error")
+        @stt.events.subscribe
         def on_error(error):
             errors.append(error)
 
@@ -327,11 +327,11 @@ async def test_moonshine_process_audio_sufficient_chunk(audio_data_16k):
         transcripts = []
         errors = []
 
-        @stt.on("transcript")
+        @stt.events.subscribe
         def on_transcript(text, user, metadata):
             transcripts.append((text, user, metadata))
 
-        @stt.on("error")
+        @stt.events.subscribe
         def on_error(error):
             errors.append(error)
 
@@ -370,7 +370,7 @@ async def test_moonshine_process_audio_with_resampling(audio_data_48k):
         # Track events
         transcripts = []
 
-        @stt.on("transcript")
+        @stt.events.subscribe
         def on_transcript(text, user, metadata):
             transcripts.append((text, user, metadata))
 
@@ -401,7 +401,7 @@ async def test_moonshine_flush_functionality(audio_data_16k):
         # Track events
         transcripts = []
 
-        @stt.on("transcript")
+        @stt.events.subscribe
         def on_transcript(text, user, metadata):
             transcripts.append((text, user, metadata))
 
@@ -443,7 +443,7 @@ async def test_moonshine_bytes_input():
         # Track events
         transcripts = []
 
-        @stt.on("transcript")
+        @stt.events.subscribe
         def on_transcript(text, user, metadata):
             transcripts.append((text, user, metadata))
 
@@ -478,7 +478,7 @@ async def test_moonshine_error_handling():
         # Track events
         errors = []
 
-        @stt.on("error")
+        @stt.events.subscribe
         def on_error(error):
             errors.append(error)
 
@@ -563,11 +563,11 @@ async def test_moonshine_with_mia_audio_mocked(mia_audio_data, mia_metadata):
         transcripts = []
         errors = []
 
-        @stt.on("transcript")
+        @stt.events.subscribe
         def on_transcript(text, user, metadata):
             transcripts.append((text, user, metadata))
 
-        @stt.on("error")
+        @stt.events.subscribe
         def on_error(error):
             errors.append(error)
 
@@ -660,11 +660,11 @@ async def test_moonshine_real_integration(mia_audio_data, mia_metadata):
     transcripts = []
     errors = []
 
-    @stt.on("transcript")
+    @stt.events.subscribe
     def on_transcript(text, user, metadata):
         transcripts.append((text, user, metadata))
 
-    @stt.on("error")
+    @stt.events.subscribe
     def on_error(error):
         errors.append(error)
 
