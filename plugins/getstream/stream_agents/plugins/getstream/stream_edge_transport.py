@@ -48,7 +48,7 @@ class StreamEdge(EdgeTransport):
         # Initialize Stream client
         super().__init__()
         version = get_stream_agents_version()
-        self.client = AsyncStream(user_agent=f"stream-agents/{version}")
+        self.client = AsyncStream(user_agent=f"stream-agents-{version}")
         self.logger = logging.getLogger(self.__class__.__name__)
         self.events = EventManager()
         self.events.register_events_from_module(events)
