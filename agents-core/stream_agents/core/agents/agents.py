@@ -548,8 +548,15 @@ class Agent:
 
         # If Realtime provider supports video, tell it to watch the video
         if self.realtime_mode:
-            await self.llm._watch_video_track(track)
-            self.logger.info("Forwarding video frames to Realtime provider")
+            # TODO: should we make this configurable? some use cases will want source, others processed track
+            track_to_watch = track
+            if self._video_track:
+                self.logger.info("Forwarding processed video frames to Realtime provider")
+                track_to_watch = self._video_track
+            else:
+                self.logger.info("Forwarding original video frames to Realtime provider")
+            await self.llm._watch_video_track(track_to_watch)
+
 
         hasImageProcessers = len(self.image_processors) > 0
 
