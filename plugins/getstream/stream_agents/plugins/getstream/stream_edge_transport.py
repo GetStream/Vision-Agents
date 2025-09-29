@@ -6,10 +6,12 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 import aiortc
-from getstream import Stream
-from getstream.chat.client import ChatClient
-from getstream.models import UserRequest, Call, ChannelInput
+from getstream import AsyncStream
+from getstream.chat.async_client import ChatClient
+from getstream.models import UserRequest, ChannelInput
 from getstream.video import rtc
+from getstream.chat.async_channel import Channel
+from getstream.video.async_call import Call
 from getstream.video.rtc import audio_track, ConnectionManager
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType, Participant
 from getstream.video.rtc.track_util import PcmData
@@ -39,20 +41,23 @@ class StreamEdge(EdgeTransport):
     StreamEdge uses getstream.io's edge network. To support multiple vendors, this means we expose
 
     """
-    client: Stream
+    client: AsyncStream
 
     def __init__(self, **kwargs):
         # Initialize Stream client
         super().__init__()
-        self.client = Stream.from_env()
+        self.client = AsyncStream()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.events = EventManager()
         self.events.register_events_from_module(events)
+        self.channel: Optional[Channel] = None
+        self.conversation: Optional[StreamConversation] = None
+        self.channel_type = "videocall"
 
-    def create_conversation(self, call: Call, user, instructions):
+    async def create_conversation(self, call: Call, user, instructions):
         chat_client: ChatClient = call.client.stream.chat
-        self.channel = chat_client.get_or_create_channel(
-            "videocall",
+        self.channel = await chat_client.get_or_create_channel(
+            self.channel_type,
             call.id,
             data=ChannelInput(created_by_id=user.id),
         )
@@ -62,7 +67,7 @@ class StreamEdge(EdgeTransport):
         return self.conversation
 
     async def create_user(self, user: User):
-        return self.client.create_user(name=user.name, id=user.id)
+        return await self.client.create_user(name=user.name, id=user.id)
 
     async def join(self, agent: "Agent", call: Call) -> StreamConnection:
         """

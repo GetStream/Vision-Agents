@@ -56,6 +56,8 @@ dev = [
     "pre-commit",
     "scalene>=1.5.54",
     "fastmcp>=2.12.3",
+    "opentelemetry-exporter-otlp>=1.37.0",
+    "pytest-timeout>=2.4.0",
 ]
 
 [tool.mypy]
