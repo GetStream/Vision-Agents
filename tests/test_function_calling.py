@@ -129,7 +129,8 @@ class TestGlobalRegistry:
 class TestLLMFunctionCalling:
     """Test LLM function calling functionality."""
     
-    def test_llm_function_registration(self):
+    @pytest.mark.asyncio
+    async def test_llm_function_registration(self):
         """Test that LLM can register functions."""
         llm = LLM()
         
@@ -142,7 +143,8 @@ class TestLLMFunctionCalling:
         assert len(functions) == 1
         assert functions[0]["name"] == "test_func"
     
-    def test_llm_get_available_functions(self):
+    @pytest.mark.asyncio
+    async def test_llm_get_available_functions(self):
         """Test getting available functions from LLM."""
         llm = LLM()
         
@@ -164,8 +166,9 @@ class TestLLMFunctionCalling:
 class TestOpenAIFunctionCalling:
     """Test OpenAI function calling functionality."""
     
+    @pytest.mark.asyncio
     @patch('stream_agents.plugins.openai.openai_llm.AsyncOpenAI')
-    def test_openai_function_calling_response(self, mock_openai):
+    async def test_openai_function_calling_response(self, mock_openai):
         """Test OpenAI function calling response."""
         # Mock the OpenAI client and response
         mock_client = Mock()
@@ -225,8 +228,9 @@ class TestOpenAIFunctionCalling:
 class TestClaudeFunctionCalling:
     """Test Claude function calling functionality."""
     
+    @pytest.mark.asyncio
     @patch('stream_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic')
-    def test_claude_function_calling_response(self, mock_anthropic):
+    async def test_claude_function_calling_response(self, mock_anthropic):
         """Test Claude function calling response."""
         # Mock the Anthropic client and response
         mock_client = Mock()
@@ -286,8 +290,9 @@ class TestClaudeFunctionCalling:
 class TestGeminiFunctionCalling:
     """Test Gemini function calling functionality."""
     
+    @pytest.mark.asyncio
     @patch('stream_agents.plugins.gemini.gemini_llm.genai')
-    def test_gemini_function_calling_response(self, mock_genai):
+    async def test_gemini_function_calling_response(self, mock_genai):
         """Test Gemini function calling response."""
         # Mock the Gemini client and response
         mock_client = Mock()
@@ -303,7 +308,7 @@ class TestGeminiFunctionCalling:
         ]
         mock_client.send_message_stream.return_value = [mock_response]
         
-        llm = GeminiLLM(api_key="test-key", model="gemini-2.0-flash")
+        llm = GeminiLLM(model="gemini-2.0-flash")
         
         # Register a test function
         @llm.register_function(description="Get weather for a location")
@@ -320,6 +325,7 @@ class TestGeminiFunctionCalling:
         result = llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
     
+    @pytest.mark.asyncio
     @patch('stream_agents.plugins.gemini.gemini_llm.genai')
     async def test_gemini_conversational_response(self, mock_genai):
         """Test Gemini conversational response generation."""
@@ -336,7 +342,7 @@ class TestGeminiFunctionCalling:
         ]
         mock_client.send_message_stream.return_value = [mock_response]
         
-        llm = GeminiLLM(api_key="test-key", model="gemini-2.0-flash")
+        llm = GeminiLLM(model="gemini-2.0-flash")
         
         # Register a test function
         @llm.register_function(description="Get weather for a location")
@@ -353,7 +359,8 @@ class TestGeminiFunctionCalling:
 class TestFunctionCallingIntegration:
     """Test function calling integration scenarios."""
     
-    def test_tool_call_processing(self):
+    @pytest.mark.asyncio
+    async def test_tool_call_processing(self):
         """Test processing tool calls with multiple functions."""
         llm = LLM()
         
@@ -376,7 +383,8 @@ class TestFunctionCallingIntegration:
         assert weather_result == "Weather in NYC: Sunny"
         assert sum_result == 8
     
-    def test_error_handling_in_function_calls(self):
+    @pytest.mark.asyncio
+    async def test_error_handling_in_function_calls(self):
         """Test error handling in function calls."""
         llm = LLM()
         
@@ -394,7 +402,8 @@ class TestFunctionCallingIntegration:
         with pytest.raises(ValueError):
             llm.call_function("error_function", {"x": -5})
     
-    def test_function_schema_generation(self):
+    @pytest.mark.asyncio
+    async def test_function_schema_generation(self):
         """Test that function schemas are generated correctly."""
         llm = LLM()
         
@@ -439,7 +448,8 @@ class TestFunctionCallingIntegration:
 class TestConcurrentToolExecution:
     """Test concurrent tool execution functionality."""
     
-    def test_dedup_and_execute(self):
+    @pytest.mark.asyncio
+    async def test_dedup_and_execute(self):
         """Test the _dedup_and_execute method."""
         llm = LLM()
         
@@ -455,19 +465,16 @@ class TestConcurrentToolExecution:
         ]
         
         # This should deduplicate and only execute call1 and call3
-        async def run_test():
-            triples, seen = await llm._dedup_and_execute(tool_calls)
-            # The deduplication should work, but let's check what actually happens
-            # The key is based on (id, name, arguments_json), so different IDs = different keys
-            assert len(triples) == 3  # All calls have different IDs, so all are executed
-            assert len(seen) == 3  # 3 unique keys in seen set
-            
-            # Check results
-            results = [result for _, result, _ in triples]
-            assert 10 in results  # 5 * 2 (appears twice)
-            assert 6 in results   # 3 * 2
+        triples, seen = await llm._dedup_and_execute(tool_calls)
+        # The deduplication should work, but let's check what actually happens
+        # The key is based on (id, name, arguments_json), so different IDs = different keys
+        assert len(triples) == 3  # All calls have different IDs, so all are executed
+        assert len(seen) == 3  # 3 unique keys in seen set
         
-        asyncio.run(run_test())
+        # Check results
+        results = [result for _, result, _ in triples]
+        assert 10 in results  # 5 * 2 (appears twice)
+        assert 6 in results   # 3 * 2
     
     @pytest.mark.asyncio
     async def test_tool_lifecycle_events(self):
@@ -504,7 +511,8 @@ class TestConcurrentToolExecution:
         assert end_events[0].tool_name == "test_func"
         assert end_events[0].success is True
     
-    def test_output_sanitization(self):
+    @pytest.mark.asyncio
+    async def test_output_sanitization(self):
         """Test output sanitization for large responses."""
         llm = LLM()
         
