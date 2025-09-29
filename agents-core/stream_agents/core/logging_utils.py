@@ -2,10 +2,12 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 import logging
 
+logger = logging.getLogger(__name__)
+
 call_id_ctx: ContextVar[str | None] = ContextVar("call_id", default=None)
 _CURRENT_CALL_ID: str | None = None
 _ORIGINAL_FACTORY = logging.getLogRecordFactory()
-
+_CALL_ID_ENABLED = True
 
 @dataclass(slots=True)
 class CallContextToken:
@@ -17,6 +19,8 @@ class CallContextToken:
 
 def _contextual_record_factory(*args, **kwargs) -> logging.LogRecord:
     """Attach the call ID from context to every log record."""
+    if not _CALL_ID_ENABLED:
+        return _ORIGINAL_FACTORY(*args, **kwargs)
 
     record = _ORIGINAL_FACTORY(*args, **kwargs)
     call_id = call_id_ctx.get()
@@ -59,3 +63,11 @@ def clear_call_context(token: CallContextToken) -> None:
 
     call_id_ctx.reset(token.context_token)
     _CURRENT_CALL_ID = token.previous_global
+
+
+def configure_call_id_logging(enabled: bool) -> None:
+    """Configure whether call ID logging is enabled."""
+
+    logger.info(f"Configuring call ID logging to {enabled}")
+    global _CALL_ID_ENABLED
+    _CALL_ID_ENABLED = enabled

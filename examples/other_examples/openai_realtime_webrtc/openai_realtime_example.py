@@ -16,6 +16,7 @@ from stream_agents.plugins import openai, getstream
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
 from getstream import Stream
+from stream_agents.core.logging_utils import configure_call_id_logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
