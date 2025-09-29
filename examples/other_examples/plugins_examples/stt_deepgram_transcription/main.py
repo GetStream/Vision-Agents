@@ -40,13 +40,13 @@ async def main():
 
     # Subscribe to transcript events
     @agent.subscribe
-    async def on_transcript(event: STTTranscriptEvent):
+    async def on_my_transcript(event: STTTranscriptEvent):
         # Extract user info from user_metadata
         user_info = "unknown"
-        if event.user_metadata and "user" in event.user_metadata:
-            user = event.user_metadata["user"]
-            user_info = user.name if hasattr(user, "name") else str(user)
-        
+        if event.user_metadata:
+            user = event.user_metadata
+            user_info = user.name if user.name else str(user)
+
         print(f"[{event.timestamp}] {user_info}: {event.text}")
         if event.confidence:
             print(f"    └─ confidence: {event.confidence:.2%}")

@@ -3,15 +3,11 @@ import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Union
 from types import FunctionType
 from dataclasses_json import DataClassJsonMixin
 
-if TYPE_CHECKING:
-    from ..edge.types import Participant
-else:
-    Participant = Any
-
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
 class ConnectionState(Enum):
     """Connection states for streaming plugins."""
@@ -40,7 +36,7 @@ class BaseEvent(DataClassJsonMixin):
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     session_id: Optional[str] = None
-    user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None
+    user_metadata: Optional[Participant] = None
 
 
 @dataclass
