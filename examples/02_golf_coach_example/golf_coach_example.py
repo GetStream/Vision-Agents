@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import gemini, getstream, openai, ultralytics
+from stream_agents.plugins import gemini, getstream, ultralytics
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
 from getstream import Stream
@@ -26,7 +26,7 @@ async def start_agent() -> None:
         agent_user=agent_user,
         instructions="Read @golf_coach.md",
         llm=gemini.Realtime(fps=1),
-        #llm=openai.Realtime(fps=1), # Careful with FPS can get expensive
+        #llm=openai.Realtime(fps=5), # Careful with FPS can get expensive
         processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")],
     )
 

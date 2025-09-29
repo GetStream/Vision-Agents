@@ -9,7 +9,7 @@ import numpy as np
 import cv2
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, Any, Coroutine
+from typing import Optional, Dict, Any
 from PIL import Image
 from aiortc import VideoStreamTrack
 import av
@@ -63,7 +63,6 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
     async def add_frame(self, frame : av.VideoFrame):
         # Resize the image and stick it on the queue
-        logger.info("YPV: add frame")
         if self._stopped:
             return
 
@@ -106,7 +105,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
             av_frame.pts = pts
             av_frame.time_base = time_base
-        except Exception as e:
+        except Exception:
             import pdb; pdb.set_trace()
 
 
@@ -136,7 +135,8 @@ class YOLOPoseProcessor(
         conf_threshold: float = 0.5,
         imgsz: int = 512,
         device: str = "cpu",
-        max_workers: int = 2,
+        max_workers: int = 24,
+        fps: int = 30,
         interval: int = 0,
         enable_hand_tracking: bool = True,
         enable_wrist_highlights: bool = True,
@@ -146,6 +146,7 @@ class YOLOPoseProcessor(
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
 
         self.model_path = model_path
+        self.fps = fps
         self.conf_threshold = conf_threshold
         self.imgsz = imgsz
         self.device = device
@@ -185,12 +186,14 @@ class YOLOPoseProcessor(
         self,
         incoming_track: aiortc.mediastreams.MediaStreamTrack, *args, **kwargs
     ):
-        logger.info(f"✅ process_video starting efg")
+        logger.info("✅ process_video starting efg")
 
         # forward the track, and run add_pose_to_ndarray
         self._video_forwarder = VideoForwarder(
             incoming_track,
             max_buffer=30, # 1 second
+            fps=self.fps,
+            name="yolo_forwarder",
         )
 
         # Start the forwarder
@@ -198,7 +201,6 @@ class YOLOPoseProcessor(
         await self._video_forwarder.start_event_consumer(self._add_pose_and_add_frame)
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
-        logger.info("YPV: add frame")
         frame_with_pose = await self.add_pose_to_frame(frame)
         await self._video_track.add_frame(frame_with_pose)
 
@@ -208,7 +210,7 @@ class YOLOPoseProcessor(
             frame_array = frame.to_ndarray(format="rgb24")
             array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
             frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
-        except Exception as e:
+        except Exception:
             import pdb; pdb.set_trace()
 
         return frame_with_pose

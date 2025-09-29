@@ -2,7 +2,6 @@
 Tests for the ultralytics plugin.
 """
 
-import asyncio
 from pathlib import Path
 from typing import Iterator
 
@@ -13,7 +12,6 @@ import av
 
 from stream_agents.plugins.ultralytics import YOLOPoseProcessor
 import sys
-from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 from tests.base_test import BaseTest
 import logging

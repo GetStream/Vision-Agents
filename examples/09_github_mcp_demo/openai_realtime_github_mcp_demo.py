@@ -1,8 +1,8 @@
-"""Gemini Realtime GitHub MCP Demo - Demonstrate function calling with Gemini Live and GitHub MCP.
+"""OpenAI Realtime GitHub MCP Demo - Demonstrate function calling with OpenAI Realtime and GitHub MCP.
 
-This demo shows how Gemini Realtime can use GitHub MCP tools for real-time function calling
+This demo shows how OpenAI Realtime can use GitHub MCP tools for real-time function calling
 during live conversations. The agent can interact with GitHub repositories, issues, and more
-using voice commands through the Gemini Live API.
+using voice commands through the OpenAI Realtime API.
 """
 
 import asyncio
@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from stream_agents.core.agents import Agent
 from stream_agents.core.mcp import MCPServerRemote
-from stream_agents.plugins.gemini.gemini_realtime import Realtime
+from stream_agents.plugins.openai.openai_realtime import Realtime
 from stream_agents.plugins import getstream
 from stream_agents.core import cli
 from stream_agents.core.events import CallSessionParticipantJoinedEvent
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    """Demonstrate Gemini Realtime with GitHub MCP server integration."""
+    """Demonstrate OpenAI Realtime with GitHub MCP server integration."""
     
     # Get GitHub PAT from environment
     github_pat = os.getenv("GITHUB_PAT")
@@ -37,11 +37,11 @@ async def main():
         logger.error("Please set GITHUB_PAT in your .env file or environment")
         return
     
-    # Get Google API key from environment
-    google_api_key = os.getenv("GOOGLE_API_KEY")
-    if not google_api_key:
-        logger.error("GOOGLE_API_KEY environment variable not found!")
-        logger.error("Please set GOOGLE_API_KEY in your .env file or environment")
+    # Get OpenAI API key from environment
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        logger.error("OPENAI_API_KEY environment variable not found!")
+        logger.error("Please set OPENAI_API_KEY in your .env file or environment")
         return
     
     # Create GitHub MCP server
@@ -52,17 +52,17 @@ async def main():
         session_timeout=300.0
     )
     
-    # Create Gemini Realtime LLM
+    # Create OpenAI Realtime LLM
     llm = Realtime(
-        model="gemini-2.5-flash-native-audio-preview-09-2025",
-        api_key=google_api_key
+        model="gpt-realtime",
+        voice="marin"
     )
     
     # Create real edge transport and agent user
     edge = getstream.Edge()
     agent_user = User(name="GitHub AI Assistant", id="github-agent")
     
-    # Create agent with GitHub MCP server and Gemini Realtime LLM
+    # Create agent with GitHub MCP server and OpenAI Realtime LLM
     agent = Agent(
         edge=edge,
         llm=llm,
@@ -72,7 +72,7 @@ async def main():
         mcp_servers=[github_server],
     )
     
-    logger.info("Agent created with Gemini Realtime and GitHub MCP server")
+    logger.info("Agent created with OpenAI Realtime and GitHub MCP server")
     logger.info(f"GitHub server: {github_server}")
     
     try:
@@ -86,7 +86,7 @@ async def main():
             available_functions = agent.llm.get_available_functions()
             mcp_functions = [f for f in available_functions if f['name'].startswith('mcp_')]
             logger.info(f"✅ Found {len(mcp_functions)} MCP tools available for function calling")
-            await agent.simple_response(f"Hello {event.participant.user.name}! I'm your GitHub AI assistant powered by Gemini Live. I have access to {len(mcp_functions)} GitHub tools and can help you with repositories, issues, pull requests, and more through voice commands!")
+            await agent.simple_response(f"Hello {event.participant.user.name}! I'm your GitHub AI assistant powered by OpenAI Realtime. I have access to {len(mcp_functions)} GitHub tools and can help you with repositories, issues, pull requests, and more through voice commands!")
         
         # Create a call
         call = agent.edge.client.video.call("default", str(uuid4()))
@@ -98,21 +98,23 @@ async def main():
         # Have the agent join the call/room
         logger.info("🎤 Agent joining call...")
         with await agent.join(call):
-            logger.info("✅ Agent is now live with Gemini Realtime! You can talk to it in the browser.")
+            logger.info("✅ Agent is now live with OpenAI Realtime! You can talk to it in the browser.")
             logger.info("Try asking:")
             logger.info("  - 'What repositories do I have?'")
             logger.info("  - 'Create a new issue in my repository'")
             logger.info("  - 'Search for issues with the label bug'")
             logger.info("  - 'Show me recent pull requests'")
+            logger.info("  - 'List my starred repositories'")
+            logger.info("  - 'Get details about a specific repository'")
             logger.info("")
-            logger.info("The agent will use Gemini Live's real-time function calling to interact with GitHub!")
+            logger.info("The agent will use OpenAI Realtime's function calling to interact with GitHub!")
             
             # Run until the call ends
             await agent.finish()
         
     except Exception as e:
-        logger.error(f"Error with Gemini Realtime GitHub MCP demo: {e}")
-        logger.error("Make sure your GITHUB_PAT and GOOGLE_API_KEY are valid")
+        logger.error(f"Error with OpenAI Realtime GitHub MCP demo: {e}")
+        logger.error("Make sure your GITHUB_PAT and OPENAI_API_KEY are valid")
         import traceback
         traceback.print_exc()
     
