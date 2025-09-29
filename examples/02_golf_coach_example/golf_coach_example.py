@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from stream_agents.plugins import gemini, getstream, ultralytics
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
-from getstream import Stream
+from getstream import Stream, AsyncStream
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,8 +16,8 @@ load_dotenv()
 
 
 async def start_agent() -> None:
-    client = Stream.from_env()
-    agent_user = client.create_user(name="AI golf coach")
+    client = AsyncStream()
+    agent_user = await client.create_user(name="AI golf coach")
 
     agent = Agent(
         edge=getstream.Edge(),
