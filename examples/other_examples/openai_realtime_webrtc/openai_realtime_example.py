@@ -15,8 +15,7 @@ from dotenv import load_dotenv
 from stream_agents.plugins import openai, getstream
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
-from getstream import Stream
-from stream_agents.core.logging_utils import configure_call_id_logging
+from getstream import AsyncStream
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,8 +28,8 @@ async def start_agent() -> None:
     call_id = str(uuid4())
     
     # create a stream client and a user object
-    client = Stream.from_env()
-    agent_user = client.create_user(name="My happy AI friend")
+    client = AsyncStream()
+    agent_user = await client.create_user(name="My happy AI friend")
 
     # Create the agent
     agent = Agent(
@@ -55,7 +54,7 @@ You are a voice assistant.
     # Create a call
     call = client.video.call("default", call_id)
     # Ensure the call exists server-side before joining
-    call.get_or_create(data={"created_by_id": agent.agent_user.id})
+    await call.get_or_create(data={"created_by_id": agent.agent_user.id})
 
     logger.info("🤖 Starting OpenAI Realtime Agent...")
 

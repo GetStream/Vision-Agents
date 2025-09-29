@@ -12,7 +12,7 @@ dynamic = ["version"]
 requires-python = ">=3.10"
 dependencies = [
     # getstream[webrtc] currently comes from the latest commit on the webrtc branch in git
-    "getstream[webrtc] @ git+https://github.com/GetStream/stream-py.git@77e86ca47025ba386c5b8c6781cc1edd15d34b9e#egg=getstream",
+    "getstream[webrtct,telemetry]>=2.4.2",
     "python-dotenv>=1.1.1",
     "pillow>=11.3.0",
     "aiortc>=1.13.0",

@@ -46,7 +46,7 @@ async def start_agent() -> None:
 
     @agent.subscribe
     async def my_handler(event: CallSessionParticipantJoinedEvent):
-        await agent.say(f"Hello, {event.participant.user.name}")
+        await agent.simple_response(f"Hello, {event.participant.user.name}")
 
     # Create a call
     call = agent.edge.client.video.call("default", call_id)

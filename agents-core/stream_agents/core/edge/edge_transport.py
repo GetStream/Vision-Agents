@@ -51,7 +51,7 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def create_conversation(self, call: Any, user: User, instructions):
+    async def create_conversation(self, call: Any, user: User, instructions):
         pass
 
     @abc.abstractmethod

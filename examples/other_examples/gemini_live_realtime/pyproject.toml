@@ -10,6 +10,7 @@ dependencies = [
   "stream-agents-plugins-getstream",
   "stream-agents",
   "google-genai>=1.33.0",
+  "opentelemetry-exporter-otlp>=1.37.0",
 ]
 
 [tool.uv.sources]

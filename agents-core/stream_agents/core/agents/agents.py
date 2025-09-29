@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import time
+from opentelemetry import trace
+from opentelemetry.trace import Tracer
 from typing import Optional, List, Any
 from uuid import uuid4
 
@@ -93,10 +95,15 @@ class Agent:
         processors: Optional[List[Processor]] = None,
         # MCP servers for external tool and resource access
         mcp_servers: Optional[List[MCPBaseServer]] = None,
+        tracer: Tracer = trace.get_tracer("agents"),
     ):
         self.instructions = instructions
         self.edge = edge
         self.agent_user = agent_user
+
+        # only needed in case we spin threads
+        self._root_span = trace.get_current_span()
+        self.tracer = tracer
 
         self.logger = logging.getLogger(f"Agent[{self.agent_user.id}]")
 
@@ -159,9 +166,13 @@ class Agent:
         """
         Overwrite simple_response if you want to change how the Agent class calls the LLM
         """
-        await self.llm.simple_response(
-            text=text, processors=self.processors, participant=participant
-        )
+        with self.tracer.start_as_current_span("simple_response") as span:
+            response = await self.llm.simple_response(
+                text=text, processors=self.processors, participant=participant
+            )
+            span.set_attribute("text", text)
+            span.set_attribute("response.text", response.text)
+            span.set_attribute("response.original", response.original)
 
     def subscribe(self, function):
         """Subscribe a callback to the agent-wide event bus.
@@ -179,12 +190,13 @@ class Agent:
 
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
-        # validation. join can only be called once
-        if self._is_running:
-            raise RuntimeError("Agent is already running")
+        # TODO: validation. join can only be called once
+        with self.tracer.start_as_current_span("join") as span:
+            if self._is_running:
+                raise RuntimeError("Agent is already running")
 
-        self.call = call
-        self.conversation = None
+            self.call = call
+            self.conversation = None
 
         # Ensure all subsequent logs include the call context.
         self._set_call_logging_context(call.id)
@@ -192,7 +204,9 @@ class Agent:
         try:
             # Connect to MCP servers if manager is available
             if self.mcp_manager:
-                await self.mcp_manager.connect_all()
+                with self.tracer.start_as_current_span("mcp_manager.connect_all"):
+                    await self.mcp_manager.connect_all()
+
 
             # Setup chat and connect it to transcript events
             self.conversation = self.edge.create_conversation(
@@ -206,7 +220,8 @@ class Agent:
             if isinstance(self.llm, Realtime):
                 await self.llm.connect()
 
-            connection = await self.edge.join(self, call)
+            with self.tracer.start_as_current_span("edge.join"):
+                connection = await self.edge.join(self, call)
         except Exception:
             self._clear_call_logging_context()
             raise
@@ -225,7 +240,8 @@ class Agent:
         video_track = self._video_track if self.publish_video else None
 
         if audio_track or video_track:
-            await self.edge.publish_tracks(audio_track, video_track)
+            with self.tracer.start_as_current_span("edge.publish_tracks"):
+                await self.edge.publish_tracks(audio_track, video_track)
             await self._listen_to_audio_and_video()
 
         from .agent_session import AgentSessionContextManager
@@ -345,8 +361,8 @@ class Agent:
         Returns:
             Provider-specific user creation response.
         """
-        response = await self.edge.create_user(self.agent_user)
-        return response
+        with self.tracer.start_as_current_span("edge.create_user"):
+            return await self.edge.create_user(self.agent_user)
 
     async def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
         """Handle partial LLM response text deltas."""

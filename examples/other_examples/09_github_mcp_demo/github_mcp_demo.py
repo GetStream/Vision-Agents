@@ -103,7 +103,8 @@ async def main():
         
         # Create a call
         call = agent.edge.client.video.call("default", str(uuid4()))
-        
+        await call.get_or_create()
+
         # Open the demo UI
         logger.info("🌐 Opening browser with demo UI...")
         agent.edge.open_demo(call)
