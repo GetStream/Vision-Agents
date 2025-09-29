@@ -189,28 +189,28 @@ class Agent:
         # Ensure all subsequent logs include the call context.
         self._set_call_logging_context(call.id)
 
-        # Connect to MCP servers if manager is available
-        if self.mcp_manager:
-            await self.mcp_manager.connect_all()
-
-        # Setup chat and connect it to transcript events
-        self.conversation = self.edge.create_conversation(
-            call, self.agent_user, self.instructions
-        )
-        self.events.subscribe(self._on_transcript)
-        self.events.subscribe(self._on_partial_transcript)
-
-        # Ensure Realtime providers are ready before proceeding (they manage their own connection)
-        self.logger.info(f"🤖 Agent joining call: {call.id}")
-        if isinstance(self.llm, Realtime):
-            await self.llm.connect()
-
-
         try:
+            # Connect to MCP servers if manager is available
+            if self.mcp_manager:
+                await self.mcp_manager.connect_all()
+
+            # Setup chat and connect it to transcript events
+            self.conversation = self.edge.create_conversation(
+                call, self.agent_user, self.instructions
+            )
+            self.events.subscribe(self._on_transcript)
+            self.events.subscribe(self._on_partial_transcript)
+
+            # Ensure Realtime providers are ready before proceeding (they manage their own connection)
+            self.logger.info(f"🤖 Agent joining call: {call.id}")
+            if isinstance(self.llm, Realtime):
+                await self.llm.connect()
+
             connection = await self.edge.join(self, call)
         except Exception:
             self._clear_call_logging_context()
             raise
+
         self._connection = connection
         self._is_running = True
 
@@ -225,7 +225,6 @@ class Agent:
         video_track = self._video_track if self.publish_video else None
 
         if audio_track or video_track:
-
             await self.edge.publish_tracks(audio_track, video_track)
             await self._listen_to_audio_and_video()
 
