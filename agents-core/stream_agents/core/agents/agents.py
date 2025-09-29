@@ -19,6 +19,7 @@ from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
 from ..mcp import MCPBaseServer, MCPManager
+from ..logging_utils import CallContextToken, set_call_context, clear_call_context
 
 
 from .conversation import StreamHandle, Message, Conversation
@@ -110,6 +111,7 @@ class Agent:
         self.vad = vad
         self.processors = processors or []
         self.mcp_servers = mcp_servers or []
+        self._call_context_token: CallContextToken | None = None
         
         # Initialize MCP manager if servers are provided
         self.mcp_manager = MCPManager(self.mcp_servers, self.llm, self.logger) if self.mcp_servers else None
@@ -184,6 +186,9 @@ class Agent:
         self.call = call
         self.conversation = None
 
+        # Ensure all subsequent logs include the call context.
+        self._set_call_logging_context(call.id)
+
         # Connect to MCP servers if manager is available
         if self.mcp_manager:
             await self.mcp_manager.connect_all()
@@ -201,7 +206,11 @@ class Agent:
             await self.llm.connect()
 
 
-        connection = await self.edge.join(self, call)
+        try:
+            connection = await self.edge.join(self, call)
+        except Exception:
+            self._clear_call_logging_context()
+            raise
         self._connection = connection
         self._is_running = True
 
@@ -261,6 +270,7 @@ class Agent:
         self._is_running = False
         self._user_conversation_handle = None
         self._agent_conversation_handle = None
+        self._clear_call_logging_context()
 
         # Disconnect from MCP servers
         if self.mcp_manager:
@@ -312,6 +322,23 @@ class Agent:
 
         # Close edge transport
         self.edge.close()
+
+    # ------------------------------------------------------------------
+    # Logging context helpers
+    # ------------------------------------------------------------------
+    def _set_call_logging_context(self, call_id: str) -> None:
+        """Apply the call id to the logging context for the agent lifecycle."""
+
+        if self._call_context_token is not None:
+            self._clear_call_logging_context()
+        self._call_context_token = set_call_context(call_id)
+
+    def _clear_call_logging_context(self) -> None:
+        """Remove the call id from the logging context if present."""
+
+        if self._call_context_token is not None:
+            clear_call_context(self._call_context_token)
+            self._call_context_token = None
 
     async def create_user(self):
         """Create the agent user in the edge provider, if required.
