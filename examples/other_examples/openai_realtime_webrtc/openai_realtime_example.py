@@ -17,7 +17,6 @@ from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
 from getstream import AsyncStream
 
-# Enable info-level logs to surface track subscription and forwarding diagnostics
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -25,6 +24,9 @@ load_dotenv()
 
 
 async def start_agent() -> None:
+    # Set the call ID here to be used in the logging
+    call_id = str(uuid4())
+    
     # create a stream client and a user object
     client = AsyncStream()
     agent_user = await client.create_user(name="My happy AI friend")
@@ -43,14 +45,14 @@ You are a voice assistant.
 - Only respond to clear audio or text.
 - If the user's audio is not clear (e.g., ambiguous input/background noise/silent/unintelligible) or you didn't fully understand, ask for clarification.
 """
-        ),
-        # Enable video input and set a conservative default frame rate for realtime responsiveness
+            ),
+            # Enable video input and set a conservative default frame rate for realtime responsiveness
         llm=openai.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
 
     # Create a call
-    call = client.video.call("default", str(uuid4()))
+    call = client.video.call("default", call_id)
     # Ensure the call exists server-side before joining
     await call.get_or_create(data={"created_by_id": agent.agent_user.id})
 
@@ -58,15 +60,15 @@ You are a voice assistant.
 
     # Have the agent join the call/room
     with await agent.join(call):
-        print("Joining call")
+        logger.info("Joining call")
         agent.edge.open_demo(call)
-        print("LLM ready")
+        logger.info("LLM ready")
         #await agent.llm.request_session_info()
-        print("Requested session info")
+        logger.info("Requested session info")
         # Wait for a human to join the call before greeting
-        print("Waiting for human to join the call")
+        logger.info("Waiting for human to join the call")
         await agent.llm.simple_response(text="Please greet the user.")
-        print("Greeted the user")
+        logger.info("Greeted the user")
 
         await agent.finish()  # run till the call ends
 

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -10,10 +11,15 @@ from stream_agents.core.cli import start_dispatcher
 from stream_agents.core.utils import open_demo
 from getstream import Stream
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 
 async def start_agent() -> None:
+    call_id = str(uuid4())
+
     # create a stream client and a user object
     client = Stream.from_env()
     agent_user = client.create_user(name="My happy AI friend")
@@ -35,7 +41,7 @@ async def start_agent() -> None:
     )
 
     # Create a call
-    call = client.video.call("default", str(uuid4()))
+    call = client.video.call("default", call_id)
 
     # Open the demo UI
     open_demo(call)

@@ -91,11 +91,15 @@ class StreamEdge(EdgeTransport):
             default=self._get_subscription_config()
         )
 
-        # Open RTC connection and keep it alive for the duration of the returned context manager
-        connection = await rtc.join(
-            call, agent.agent_user.id, subscription_config=subscription_config
-        )
-        await connection.__aenter__() # TODO: weird API? there should be a manual version
+        try:
+            # Open RTC connection and keep it alive for the duration of the returned context manager
+            connection = await rtc.join(
+                call, agent.agent_user.id, subscription_config=subscription_config
+            )
+            await connection.__aenter__() # TODO: weird API? there should be a manual version
+        except Exception:
+            raise
+
         self._connection = connection
 
         @self._connection.on("audio")
@@ -157,7 +161,7 @@ class StreamEdge(EdgeTransport):
         )
 
     def close(self):
-        pass
+        super().close()
 
     def open_demo(self, call: Call) -> str:
         client = call.client.stream

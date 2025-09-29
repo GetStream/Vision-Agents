@@ -7,17 +7,18 @@ from dotenv import load_dotenv
 from stream_agents.plugins import gemini, getstream, ultralytics, openai
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
-from getstream import Stream, AsyncStream
+from getstream import AsyncStream
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 
 async def start_agent() -> None:
+    call_id = str(uuid4())
     client = AsyncStream()
-    agent_user = await client.create_user(name="AI golf coach")
+    agent_user = client.create_user(name="AI golf coach")
 
     agent = Agent(
         edge=getstream.Edge(),
@@ -28,7 +29,7 @@ async def start_agent() -> None:
         processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")],
     )
 
-    call = client.video.call("default", str(uuid4()))
+    call = client.video.call("default", call_id)
 
     agent.edge.open_demo(call)
 
