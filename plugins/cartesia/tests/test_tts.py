@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from stream_agents.plugins import cartesia
+from stream_agents.core.tts.events import TTSAudioEvent
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 
@@ -104,11 +105,17 @@ async def test_cartesia_send_writes_to_track_and_emits_event():
 
     received = []
 
-    @tts.on("audio")
-    def _on_audio(event):
+    @tts.events.subscribe
+    async def _on_audio(event: TTSAudioEvent):
         received.append(event.audio_data)
 
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
+
     await tts.send("Hello world")
+
+    # Allow events to be processed
+    await asyncio.sleep(0.01)
 
     # Data should be forwarded to track
     assert len(track.written_data) == 2
@@ -154,9 +161,12 @@ async def test_cartesia_with_real_api():
     # Wait until we either receive audio or hit a timeout
     audio_received = asyncio.Event()
 
-    @tts.on("audio")
-    def _on_audio(event):
+    @tts.events.subscribe
+    async def _on_audio(event: TTSAudioEvent):
         audio_received.set()
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
 
     try:
         await asyncio.wait_for(tts.send("Hello from Cartesia!"), timeout=30)

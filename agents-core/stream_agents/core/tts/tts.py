@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, Union, Iterator, AsyncIterator
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from stream_agents.core.events.manager import EventManager
 
+from . import events
 from .events import (
     TTSAudioEvent,
     TTSSynthesisStartEvent,
@@ -50,6 +51,7 @@ class TTS(abc.ABC):
         self.session_id = str(uuid.uuid4())
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
+        self.events.register_events_from_module(events, ignore_not_compatible=True)
         self.events.send(PluginInitializedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,

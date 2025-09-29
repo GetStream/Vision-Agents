@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from stream_agents.plugins import kokoro
+from stream_agents.core.tts.events import TTSAudioEvent
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 
@@ -72,15 +73,21 @@ async def test_kokoro_send_writes_and_emits():
 
     received = []
 
-    @tts.on("audio")
-    def _on_audio(event):
+    @tts.events.subscribe
+    async def _on_audio(event: TTSAudioEvent):
         # Extract the audio data from the event
         if hasattr(event, "audio_data") and event.audio_data is not None:
             received.append(event.audio_data)
         else:
             received.append(b"")
 
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
+
     await tts.send("Hello world")
+
+    # Allow events to be processed
+    await asyncio.sleep(0.01)
 
     assert len(track.written_data) == 2
     assert track.written_data == received
