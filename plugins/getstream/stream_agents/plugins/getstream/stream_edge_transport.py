@@ -22,6 +22,7 @@ from stream_agents.core.edge import EdgeTransport
 from stream_agents.core.edge.types import Connection, User
 from stream_agents.core.events.manager import EventManager
 from stream_agents.core.edge import events
+from stream_agents.core.utils import get_stream_agents_version
 
 if TYPE_CHECKING:
     from stream_agents.core.agents.agents import Agent
@@ -46,7 +47,8 @@ class StreamEdge(EdgeTransport):
     def __init__(self, **kwargs):
         # Initialize Stream client
         super().__init__()
-        self.client = AsyncStream()
+        version = get_stream_agents_version()
+        self.client = AsyncStream(user_agent=f"stream-agents-{version}")
         self.logger = logging.getLogger(self.__class__.__name__)
         self.events = EventManager()
         self.events.register_events_from_module(events)

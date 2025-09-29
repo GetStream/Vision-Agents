@@ -1485,7 +1485,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.4.1"
+version = "2.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1498,7 +1498,7 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/b8/a5a953d747e29e16dfb1a1169fb9f41e1ebdefebe4b8e5efacf20f161ebb/getstream-2.4.1-py3-none-any.whl", hash = "sha256:d4897a26099f501e1b126bc9f9ce94d0f4550c4cdca4c53bdb6b661cfe50db1b", size = 229253 },
+    { url = "https://files.pythonhosted.org/packages/27/35/36a3b85aacf25f2311d2f831e55725e49976d18c4e02e7c6879d07ec98be/getstream-2.4.2-py3-none-any.whl", hash = "sha256:a10527346d6b34d6f4ba42f44d37a1fe0b5e5091adc5311da3bcdeb6c3fb9b04", size = 229857 },
 ]
 
 [package.optional-dependencies]
@@ -4872,7 +4872,7 @@ requires-dist = [
     { name = "daily-python", specifier = ">=0.19.8" },
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
-    { name = "getstream", extras = ["telemetry", "webrtct"], specifier = ">=2.4.1" },
+    { name = "getstream", extras = ["telemetry", "webrtct"], specifier = ">=2.4.2" },
     { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },

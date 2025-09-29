@@ -3,6 +3,7 @@ import logging
 import numpy as np
 import re
 import os
+import importlib.metadata
 from dataclasses import dataclass
 from typing import Dict, Optional
 from PIL import Image
@@ -115,4 +116,16 @@ def frame_to_png_bytes(frame) -> bytes:
         logger.error(f"Error converting frame to PNG: {e}")
         return b""
 
+
+def get_stream_agents_version() -> str:
+    """
+    Get the installed stream-agents package version.
+    
+    Returns:
+        Version string, or "unknown" if not available.
+    """
+    try:
+        return importlib.metadata.version("stream-agents")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
