@@ -66,16 +66,16 @@ class RealtimeAudioTrack(AudioStreamTrack):
             if arr.ndim == 1:
                 samples = arr.reshape(1, -1)
             else:
-                samples = arr[:1, :]
+                samples = arr[:1, :]  # type: ignore[assignment]
             # Pad or truncate to exactly one 20 ms frame
             # TODO: why do we have this? this is handled by the audio track queue
             needed = samples_per_frame
             have = samples.shape[1]
             if have < needed:
                 pad = np.zeros((1, needed - have), dtype=np.int16)
-                samples = np.concatenate([samples, pad], axis=1)
+                samples = np.concatenate([samples, pad], axis=1)  # type: ignore[assignment]
             elif have > needed:
-                samples = samples[:, :needed]
+                samples = samples[:, :needed]  # type: ignore[assignment]
         else:
             cached = self._silence_cache.get(sr)
             if cached is None:
@@ -126,7 +126,7 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         if self._started:
             return
         # Create VideoForwarder with the input source track and start it once
-        self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)
+        self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)  # type: ignore[arg-type]
         await self._forwarder.start()
         self._started = True
 
@@ -281,7 +281,7 @@ class RTCManager:
         }
         # TODO: replace with regular openai client SDK when support for this endpoint is added
         # TODO: voice is not the right param or typing is wrong here
-        payload: RealtimeSessionCreateRequestParam = {"model": self.model, "voice": self.voice, "type": "realtime"}
+        payload: RealtimeSessionCreateRequestParam = {"model": self.model, "voice": self.voice, "type": "realtime"}  # type: ignore[typeddict-unknown-key]
         if self.instructions:
             payload["instructions"] = self.instructions
 

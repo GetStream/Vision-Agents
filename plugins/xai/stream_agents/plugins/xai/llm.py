@@ -139,7 +139,7 @@ class XAILLM(LLM):
             self.xai_chat.append(response)
 
         self.events.send(AfterLLMResponseEvent(
-            llm_response=llm_response
+            llm_response=llm_response  # type: ignore[arg-type]
         ))
 
         return llm_response or LLMResponseEvent[Response](
@@ -189,7 +189,7 @@ class XAILLM(LLM):
             # This is the final chunk, return the complete response
             llm_response = LLMResponseEvent[Response](response, response.content)
             self.events.send(StandardizedResponseCompletedEvent(
-                llm_response=llm_response
+                llm_response=llm_response  # type: ignore[arg-type]
             ))
             return llm_response
 

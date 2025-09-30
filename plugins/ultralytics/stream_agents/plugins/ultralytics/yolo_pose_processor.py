@@ -17,7 +17,8 @@ from numpy import ndarray
 
 from stream_agents.core.processors.base_processor import (
     VideoProcessorMixin,
-    VideoPublisherMixin, Processor,
+    VideoPublisherMixin,
+    AudioVideoProcessor,
 )
 from stream_agents.core.utils.queue import LatestNQueue
 from stream_agents.core.utils.video_forwarder import VideoForwarder
@@ -119,7 +120,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
 
 class YOLOPoseProcessor(
-    Processor, VideoProcessorMixin, VideoPublisherMixin
+    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
 ):
     """
     Yolo pose detection processor.
@@ -183,13 +184,14 @@ class YOLOPoseProcessor(
 
     async def process_video(
         self,
-        incoming_track: aiortc.mediastreams.MediaStreamTrack, *args, **kwargs
+        incoming_track: aiortc.mediastreams.MediaStreamTrack,
+        participant: Any,
     ):
         logger.info("✅ process_video starting efg")
 
         # forward the track, and run add_pose_to_ndarray
         self._video_forwarder = VideoForwarder(
-            incoming_track,
+            incoming_track,  # type: ignore[arg-type]
             max_buffer=30, # 1 second
             fps=self.fps,
             name="yolo_forwarder",

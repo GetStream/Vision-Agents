@@ -59,7 +59,7 @@ class ClaudeLLM(LLM):
         super().__init__()
         self.events.register_events_from_module(events)
         self.model = model
-        self._pending_tool_uses_by_index = {}  # index -> {id, name, parts: []}
+        self._pending_tool_uses_by_index: Dict[int, Dict[str, Any]] = {}  # index -> {id, name, parts: []}
 
         if client is not None:
             self.client = client
@@ -129,12 +129,12 @@ class ClaudeLLM(LLM):
                 messages = kwargs["messages"][:]
                 MAX_ROUNDS = 3
                 rounds = 0
-                seen = set()
+                seen: set[tuple[str, str, str]] = set()
                 current_calls = function_calls
                 
                 while current_calls and rounds < MAX_ROUNDS:
                     # Execute calls concurrently with dedup
-                    triples, seen = await self._dedup_and_execute(current_calls, seen=seen, max_concurrency=8, timeout_s=30)
+                    triples, seen = await self._dedup_and_execute(current_calls, seen=seen, max_concurrency=8, timeout_s=30)  # type: ignore[arg-type]
                     
                     if not triples:
                         break
@@ -213,7 +213,7 @@ class ClaudeLLM(LLM):
             last_followup_stream = None
             while accumulated_calls and rounds < MAX_ROUNDS:
                 # Execute calls concurrently with dedup
-                triples, seen = await self._dedup_and_execute(accumulated_calls, seen=seen, max_concurrency=8, timeout_s=30)
+                triples, seen = await self._dedup_and_execute(accumulated_calls, seen=seen, max_concurrency=8, timeout_s=30)  # type: ignore[arg-type]
 
                 # Build tool_result user message
                 # Also reconstruct the assistant tool_use message that triggered these calls
@@ -280,7 +280,7 @@ class ClaudeLLM(LLM):
                     stream=True,
                     max_tokens=1000
                 )
-                final_text_parts = []
+                final_text_parts: List[str] = []
                 async for ev in final_stream:
                     last_followup_stream = ev
                     llm_response_optional = self._standardize_and_emit_event(ev, final_text_parts)
@@ -291,11 +291,11 @@ class ClaudeLLM(LLM):
 
             # 4) Done -> return all collected text
             total_text = "".join(text_parts)
-            llm_response = LLMResponseEvent(last_followup_stream or original, total_text)
+            llm_response = LLMResponseEvent(last_followup_stream or original, total_text)  # type: ignore[arg-type]
 
         self.events.send(AfterLLMResponseEvent(
             plugin_name="anthropic",
-            llm_response=llm_response
+            llm_response=llm_response  # type: ignore[arg-type]
         ))
 
         return llm_response
@@ -392,16 +392,17 @@ class ClaudeLLM(LLM):
         if hasattr(response, 'content') and response.content:
             for content_block in response.content:
                 if hasattr(content_block, 'type') and content_block.type == "tool_use":
-                    tool_calls.append({
+                    tool_call: NormalizedToolCallItem = {
                         "type": "tool_call",
                         "id": content_block.id,  # Critical: capture the id for tool_result
                         "name": content_block.name,
                         "arguments_json": content_block.input or {}  # normalize to arguments_json
-                    })
+                    }
+                    tool_calls.append(tool_call)
         
         return tool_calls
 
-    def _extract_tool_calls_from_stream_chunk(self, chunk: Any, current_tool_call: Optional[NormalizedToolCallItem] = None) -> tuple[List[NormalizedToolCallItem], Optional[NormalizedToolCallItem]]:
+    def _extract_tool_calls_from_stream_chunk(self, chunk: Any, current_tool_call: Optional[NormalizedToolCallItem] = None) -> tuple[List[NormalizedToolCallItem], Optional[NormalizedToolCallItem]]:  # type: ignore[override]
         """
         Extract tool calls from Anthropic streaming chunk using index-keyed accumulation.
         
@@ -418,11 +419,12 @@ class ClaudeLLM(LLM):
         if t == "content_block_start":
             cb = getattr(chunk, 'content_block', None)
             if getattr(cb, 'type', None) == "tool_use":
-                self._pending_tool_uses_by_index[chunk.index] = {
-                    "id": cb.id,
-                    "name": cb.name,
-                    "parts": []
-                }
+                if cb is not None:
+                    self._pending_tool_uses_by_index[chunk.index] = {
+                        "id": cb.id,
+                        "name": cb.name,
+                        "parts": []
+                    }
 
         elif t == "content_block_delta":
             d = getattr(chunk, 'delta', None)
@@ -440,12 +442,13 @@ class ClaudeLLM(LLM):
                     args = json.loads(buf)
                 except Exception:
                     args = {}
-                tool_calls.append({
+                tool_call_item: NormalizedToolCallItem = {
                     "type": "tool_call",
                     "id": pending["id"],
                     "name": pending["name"],
                     "arguments_json": args
-                })
+                }
+                tool_calls.append(tool_call_item)
         
         return tool_calls, None
 

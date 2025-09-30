@@ -161,7 +161,8 @@ class StreamEdge(EdgeTransport):
         )
 
     def close(self):
-        super().close()
+        # Note: Not calling super().close() as it's an abstract method with trivial body
+        pass
 
     def open_demo(self, call: Call) -> str:
         client = call.client.stream

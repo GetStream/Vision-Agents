@@ -282,21 +282,22 @@ class Realtime(realtime.Realtime):
         except Exception as e:
             logger.error(f"Failed to send tool response: {e}")
 
-    def _sanitize_tool_output(self, output: Any) -> str:
+    def _sanitize_tool_output(self, value: Any, max_chars: int = 60_000) -> str:
         """Sanitize tool output for OpenAI realtime.
         
         Args:
-            output: The tool output to sanitize
+            value: The tool output to sanitize
+            max_chars: Maximum characters allowed (not used in realtime mode)
             
         Returns:
             Sanitized string output
         """
-        if isinstance(output, str):
-            return output
-        elif isinstance(output, dict):
-            return json.dumps(output, ensure_ascii=False)
+        if isinstance(value, str):
+            return value
+        elif isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
         else:
-            return str(output)
+            return str(value)
 
     def _convert_tools_to_openai_realtime_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
         """Convert ToolSchema objects to OpenAI realtime format.
