@@ -389,6 +389,9 @@ class Agent:
         if self.conversation is None:
             return
 
+        if event.llm_response is None:
+            return
+        
         if self._agent_conversation_handle is None:
             message = Message(
                 content=event.llm_response.text,
@@ -401,7 +404,7 @@ class Agent:
             self._agent_conversation_handle = None
 
         # Trigger TTS directly instead of through event system
-        if event.llm_response.text and event.llm_response.text.strip():
+        if self.tts and event.llm_response.text and event.llm_response.text.strip():
             await self.tts.send(event.llm_response.text)
 
     def _on_vad_audio(self, event: VADAudioEvent):
@@ -462,7 +465,6 @@ class Agent:
                     plugin_name="agent",
                     text=event.text,
                     user_id=event.user_id,
-                    error_message=str(e),
                     error=e,
                 )
             )
@@ -489,6 +491,9 @@ class Agent:
         async def on_audio_received(event: AudioReceivedEvent):
             pcm = event.pcm_data
             participant = event.participant
+            if not pcm or not participant:
+                return
+            
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
@@ -500,6 +505,9 @@ class Agent:
             track_id = event.track_id
             track_type = event.track_type
             user = event.user
+            if not track_id or not track_type:
+                return
+            
             task = asyncio.create_task(self._process_track(track_id, track_type, user))
             self._track_tasks[track_id] = task
             task.add_done_callback(_log_task_exception)
@@ -555,7 +563,9 @@ class Agent:
                 track_to_watch = self._video_track
             else:
                 self.logger.info("Forwarding original video frames to Realtime provider")
-            await self.llm._watch_video_track(track_to_watch)
+
+            if isinstance(self.llm, Realtime):
+                await self.llm._watch_video_track(track_to_watch)
 
 
         hasImageProcessers = len(self.image_processors) > 0
@@ -655,8 +665,13 @@ class Agent:
         self.logger.info(f"🎤 [STT transcript]: {event.text}")
 
         # if the agent is in realtime mode than we dont need to process the transcription
+        if not event.text:
+            return
+        
         if not self.realtime_mode:
-            await self.simple_response(event.text, event.user_metadata)
+            # Only pass user_metadata if it's a Participant
+            participant = event.user_metadata if isinstance(event.user_metadata, Participant) else None
+            await self.simple_response(event.text, participant)
 
         if self.conversation is None:
             return
