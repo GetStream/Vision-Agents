@@ -5,13 +5,12 @@ from dotenv import load_dotenv
 from stream_agents.plugins.gemini import Realtime
 from stream_agents.core.llm.events import RealtimeAudioOutputEvent
 from stream_agents.core.utils.utils import frame_to_png_bytes
-from tests.base_test import BaseTest
 
 # Load environment variables
 load_dotenv()
 
 
-class TestGeminiRealtime(BaseTest):
+class TestGeminiRealtime:
     """Integration tests for Realtime2 connect flow"""
 
     @pytest.fixture
