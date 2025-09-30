@@ -150,11 +150,11 @@ class Realtime(realtime.Realtime):
         """
         et = event.get("type")
         if et == "response.audio_transcript.done":
-            event: ResponseAudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent.model_validate(event)
-            self._emit_transcript_event(text=event.transcript, user_metadata={"role": "assistant", "source": "openai"})
-            self._emit_response_event(text=event.transcript, response_id=event.response_id, is_complete=True, conversation_item_id=event.item_id)
+            transcript_event: ResponseAudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent.model_validate(event)
+            self._emit_transcript_event(text=transcript_event.transcript, user_metadata={"role": "assistant", "source": "openai"})
+            self._emit_response_event(text=transcript_event.transcript, response_id=transcript_event.response_id, is_complete=True, conversation_item_id=transcript_event.item_id)
         elif et == "input_audio_buffer.speech_started":
-            event: InputAudioBufferSpeechStartedEvent = InputAudioBufferSpeechStartedEvent.model_validate(event)
+            speech_event: InputAudioBufferSpeechStartedEvent = InputAudioBufferSpeechStartedEvent.model_validate(event)
             await self.output_track.flush()
         elif et == "response.output_item.added":
             # Check if this is a function call

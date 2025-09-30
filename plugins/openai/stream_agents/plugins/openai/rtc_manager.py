@@ -31,6 +31,8 @@ class RealtimeAudioTrack(AudioStreamTrack):
     - Generates 20 ms mono PCM16 silence by default
     - Accepts optional push-based PCM via set_input(bytes, sample_rate)
     - Drops old input if new input arrives (no buffering)
+
+    TODO: why do we need this instead of forwarding from 1 AudioStreamTrack to another?
     """
 
     kind = "audio"
@@ -66,6 +68,7 @@ class RealtimeAudioTrack(AudioStreamTrack):
             else:
                 samples = arr[:1, :]
             # Pad or truncate to exactly one 20 ms frame
+            # TODO: why do we have this? this is handled by the audio track queue
             needed = samples_per_frame
             have = samples.shape[1]
             if have < needed:
@@ -89,7 +92,9 @@ class RealtimeAudioTrack(AudioStreamTrack):
 
 
 class StreamVideoForwardingTrack(VideoStreamTrack):
-    """Track that forwards frames from Stream Video to OpenAI."""
+    """Track that forwards frames from Stream Video to OpenAI.
+    TODO: why do we have this forwarding track, when there is the video_forwarder
+    """
     
     kind = "video"
     
@@ -275,6 +280,7 @@ class RTCManager:
             "Content-Type": "application/json",
         }
         # TODO: replace with regular openai client SDK when support for this endpoint is added
+        # TODO: voice is not the right param or typing is wrong here
         payload: RealtimeSessionCreateRequestParam = {"model": self.model, "voice": self.voice, "type": "realtime"}
         if self.instructions:
             payload["instructions"] = self.instructions
