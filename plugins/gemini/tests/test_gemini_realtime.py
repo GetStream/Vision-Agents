@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 from stream_agents.plugins.gemini import Realtime
 from stream_agents.core.llm.events import RealtimeAudioOutputEvent
+from stream_agents.core.utils.utils import frame_to_png_bytes
 from tests.base_test import BaseTest
 
 # Load environment variables
@@ -12,6 +13,17 @@ load_dotenv()
 
 class TestGeminiRealtime(BaseTest):
     """Integration tests for Realtime2 connect flow"""
+
+    @pytest.fixture
+    async def realtime(self):
+        """Create and manage Realtime connection lifecycle"""
+        realtime = Realtime(
+            model="gemini-2.0-flash-exp",
+        )
+        try:
+            yield realtime
+        finally:
+            await realtime.close()
 
     @pytest.fixture
     async def realtime2(self):
@@ -88,10 +100,10 @@ class TestGeminiRealtime(BaseTest):
         assert len(events) > 0
 
     async def test_frame_to_png_bytes_with_bunny_video(self, bunny_video_track):
-        """Test that _frame_to_png_bytes works with real bunny video frames"""
+        """Test that frame_to_png_bytes works with real bunny video frames"""
         # Get a frame from the bunny video track
         frame = await bunny_video_track.recv()
-        png_bytes = Realtime._frame_to_png_bytes(frame)
+        png_bytes = frame_to_png_bytes(frame)
         
         # Verify we got PNG data
         assert isinstance(png_bytes, bytes)

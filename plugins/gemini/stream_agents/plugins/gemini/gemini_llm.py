@@ -6,7 +6,7 @@ from google.genai.types import GenerateContentResponse
 
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent, AfterLLMResponseEvent
 from . import events
 
 from stream_agents.core.processors import Processor
@@ -167,7 +167,7 @@ class GeminiLLM(LLM):
             total_text = "".join(text_parts)
             llm_response = LLMResponseEvent(final_chunk, total_text)
 
-        self.events.send(events.AfterLLMResponseEvent(
+        self.events.send(AfterLLMResponseEvent(
             plugin_name="gemini",
             llm_response=llm_response
         ))
@@ -208,17 +208,14 @@ class GeminiLLM(LLM):
         # Check if response has text content
         if hasattr(chunk, 'text') and chunk.text:
             standardized_event = StandardizedTextDeltaEvent(
+                plugin_name="gemini",
                 content_index=0,
                 item_id="",
                 output_index=0,
                 sequence_number=0,
-                type="response.output_text.delta",
                 delta=chunk.text,
             )
-            self.events.send(events.StandardizedTextDeltaEvent(
-                plugin_name="gemini",
-                standardized_event=standardized_event
-            ))
+            self.events.send(standardized_event)
 
             text_parts.append(chunk.text)
 
