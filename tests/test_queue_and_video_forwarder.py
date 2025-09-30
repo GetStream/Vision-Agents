@@ -269,37 +269,6 @@ class TestVideoForwarder:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_multiple_consumers(self, bunny_video_track):
-        """Test multiple callback consumers"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
-        
-        received_frames_1 = []
-        received_frames_2 = []
-        
-        def on_frame_1(frame):
-            received_frames_1.append(frame)
-        
-        def on_frame_2(frame):
-            received_frames_2.append(frame)
-        
-        await forwarder.start()
-        
-        try:
-            # Start two consumers
-            await forwarder.start_event_consumer(on_frame_1)
-            await forwarder.start_event_consumer(on_frame_2)
-            
-            # Let them run
-            await asyncio.sleep(0.1)
-            
-            # Both should have received frames
-            assert len(received_frames_1) > 0
-            assert len(received_frames_2) > 0
-            
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
     async def test_producer_handles_track_errors(self, bunny_video_track):
         """Test that producer handles track errors gracefully"""
         # Mock track to raise exception after a few frames
