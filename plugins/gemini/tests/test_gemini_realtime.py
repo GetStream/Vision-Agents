@@ -17,9 +17,7 @@ class TestGeminiRealtime(BaseTest):
     @pytest.fixture
     async def realtime(self):
         """Create and manage Realtime connection lifecycle"""
-        realtime = Realtime(
-            model="gemini-2.0-flash-exp",
-        )
+        realtime = Realtime()
         try:
             yield realtime
         finally:

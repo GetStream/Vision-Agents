@@ -21,15 +21,15 @@ uv run examples/01_simple_agent_example/simple_agent_example.py
 
 ## Tests
 
-Integration test. (requires secrets in place)
-```
-uv run py.test -m "integration"
-```
-
-Everything other than integration
+Everything other than integration tests
 
 ```
-uv run py.test -m "not integration"
+uv run py.test -m "not integration" -n auto
+```
+
+Integration test. (requires secrets in place, see .env setup)
+```
+uv run py.test -m "integration" -n auto
 ```
 
 Plugin tests (TODO: not quite right. uv env is different for each plugin)
@@ -60,8 +60,7 @@ uv run mypy --install-types --non-interactive -p stream_agents
 ```
 
 ```
-uv run mypy --install-types --non-interactive --explicit-package-bases plugins
-uv run mypy --install-types --non-interactive --explicit-package-bases plugins/xai
+uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
 ```
 
 ## Release
