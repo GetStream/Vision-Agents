@@ -866,48 +866,38 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.3.1"
-source = { git = "https://github.com/GetStream/stream-py.git?rev=77e86ca47025ba386c5b8c6781cc1edd15d34b9e#77e86ca47025ba386c5b8c6781cc1edd15d34b9e" }
+version = "2.4.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohttp" },
-    { name = "aiortc" },
-    { name = "cartesia" },
     { name = "dataclasses-json" },
-    { name = "deepgram-sdk" },
-    { name = "elevenlabs" },
-    { name = "fal-client" },
-    { name = "google-genai" },
     { name = "httpx" },
     { name = "marshmallow" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyee" },
+    { name = "pyjwt" },
+    { name = "python-dateutil" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/35/36a3b85aacf25f2311d2f831e55725e49976d18c4e02e7c6879d07ec98be/getstream-2.4.2-py3-none-any.whl", hash = "sha256:a10527346d6b34d6f4ba42f44d37a1fe0b5e5091adc5311da3bcdeb6c3fb9b04", size = 229857, upload-time = "2025-09-29T20:39:03.189Z" },
+]
+
+[package.optional-dependencies]
+telemetry = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+]
+webrtc = [
+    { name = "aiohttp" },
+    { name = "aiortc" },
     { name = "numpy" },
     { name = "ping3" },
     { name = "protobuf" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pyjwt" },
-    { name = "pytest-timeout" },
     { name = "python-dateutil" },
     { name = "scipy" },
     { name = "soundfile" },
     { name = "structlog" },
     { name = "tenacity" },
-    { name = "torch" },
-    { name = "torchaudio" },
-    { name = "twirp" },
-    { name = "websocket-client" },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-webrtc = [
-    { name = "aiortc" },
-    { name = "numpy" },
-    { name = "protobuf" },
-    { name = "pyee" },
-    { name = "python-dateutil" },
-    { name = "scipy" },
-    { name = "soundfile" },
-    { name = "structlog" },
     { name = "torch" },
     { name = "torchaudio" },
     { name = "twirp" },
@@ -1115,15 +1105,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/76/66/650a33bd90f786193e4de4b3ad86ea60b53c89b669a5c7be931fac31cdb0/importlib_metadata-8.7.0.tar.gz", hash = "sha256:d13b81ad223b890aa16c5471f2ac3056cf76c5f10f82d6f9292f0b415f389000", size = 56641, upload-time = "2025-04-27T15:29:01.736Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/20/b0/36bd937216ec521246249be3bf9855081de4c5e06a0c9b4219dbeda50373/importlib_metadata-8.7.0-py3-none-any.whl", hash = "sha256:e5dd1551894c77868a30651cef00984d50e1002d06942a7101d34870c5f02afd", size = 27656, upload-time = "2025-04-27T15:29:00.214Z" },
-]
-
-[[package]]
-name = "iniconfig"
-version = "2.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f2/97/ebf4da567aa6827c909642694d71c9fcf53e5b504f2d96afea02718862f3/iniconfig-2.1.0.tar.gz", hash = "sha256:3abbd2e30b36733fee78f9c7f7308f2d0050e88f0087fd25c2645f63c773e1c7", size = 4793, upload-time = "2025-03-19T20:09:59.721Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/e1/e6716421ea10d38022b952c159d5161ca1193197fb744506875fbb87ea7b/iniconfig-2.1.0-py3-none-any.whl", hash = "sha256:9deba5723312380e77435581c6bf4935c94cbfab9b1ed33ef8d238ea168eb760", size = 6050, upload-time = "2025-03-19T20:10:01.071Z" },
 ]
 
 [[package]]
@@ -2044,15 +2025,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pluggy"
-version = "1.6.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
-]
-
-[[package]]
 name = "polars"
 version = "1.33.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2331,34 +2303,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0f/49/4cea918a08f02817aabae639e3d0ac046fef9f9180518a3ad394e22da148/pyreadline3-3.5.4.tar.gz", hash = "sha256:8d57d53039a1c75adba8e50dd3d992b28143480816187ea5efbd5c78e6c885b7", size = 99839, upload-time = "2024-09-19T02:40:10.062Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/dc/491b7661614ab97483abf2056be1deee4dc2490ecbf7bff9ab5cdbac86e1/pyreadline3-3.5.4-py3-none-any.whl", hash = "sha256:eaf8e6cc3c49bcccf145fc6067ba8643d1df34d604a1ec0eccbf7a18e6d3fae6", size = 83178, upload-time = "2024-09-19T02:40:08.598Z" },
-]
-
-[[package]]
-name = "pytest"
-version = "8.4.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "iniconfig" },
-    { name = "packaging" },
-    { name = "pluggy" },
-    { name = "pygments" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/5c/00a0e072241553e1a7496d638deababa67c5058571567b92a7eaa258397c/pytest-8.4.2.tar.gz", hash = "sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01", size = 1519618, upload-time = "2025-09-04T14:34:22.711Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl", hash = "sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79", size = 365750, upload-time = "2025-09-04T14:34:20.226Z" },
-]
-
-[[package]]
-name = "pytest-timeout"
-version = "2.4.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pytest" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/82/4c9ecabab13363e72d880f2fb504c5f750433b2b6f16e99f4ec21ada284c/pytest_timeout-2.4.0.tar.gz", hash = "sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a", size = 17973, upload-time = "2025-05-05T19:44:34.99Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/b6/3127540ecdf1464a00e5a01ee60a1b09175f6913f0644ac748494d9c4b21/pytest_timeout-2.4.0-py3-none-any.whl", hash = "sha256:c42667e5cdadb151aeb5b26d114aff6bdf5a907f176a007a30b940d3d865b5c2", size = 14382, upload-time = "2025-05-05T19:44:33.502Z" },
 ]
 
 [[package]]
@@ -2935,7 +2879,7 @@ dependencies = [
     { name = "aiortc" },
     { name = "click" },
     { name = "daily-python" },
-    { name = "getstream", extra = ["webrtc"] },
+    { name = "getstream", extra = ["telemetry"] },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
@@ -2968,7 +2912,7 @@ requires-dist = [
     { name = "daily-python", specifier = ">=0.19.8" },
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
-    { name = "getstream", extras = ["webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=77e86ca47025ba386c5b8c6781cc1edd15d34b9e" },
+    { name = "getstream", extras = ["telemetry", "webrtct"], specifier = ">=2.4.2" },
     { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },

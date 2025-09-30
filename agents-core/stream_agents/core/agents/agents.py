@@ -16,7 +16,7 @@ from ..llm.events import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..llm.events import RealtimeTranscriptEvent, LLMResponseEvent
+from ..llm.events import RealtimeTranscriptEvent, LLMResponseEvent, AfterLLMResponseEvent
 from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
@@ -209,7 +209,7 @@ class Agent:
 
 
             # Setup chat and connect it to transcript events
-            self.conversation = self.edge.create_conversation(
+            self.conversation = await self.edge.create_conversation(
                 call, self.agent_user, self.instructions
             )
             self.events.subscribe(self._on_transcript)
@@ -385,13 +385,13 @@ class Agent:
                 self._agent_conversation_handle, event.delta
             )
 
-    async def _handle_after_response(self, llm_response: LLMResponseEvent):
+    async def _handle_after_response(self, event: AfterLLMResponseEvent):
         if self.conversation is None:
             return
 
         if self._agent_conversation_handle is None:
             message = Message(
-                content=llm_response.text,
+                content=event.llm_response.text,
                 role="assistant",
                 user_id=self.agent_user.id,
             )
@@ -401,8 +401,8 @@ class Agent:
             self._agent_conversation_handle = None
 
         # Trigger TTS directly instead of through event system
-        if llm_response.text and llm_response.text.strip():
-            await self.tts.send(llm_response.text)
+        if event.llm_response.text and event.llm_response.text.strip():
+            await self.tts.send(event.llm_response.text)
 
     def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
