@@ -14,7 +14,7 @@ from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent
 from stream_agents.core.processors import Processor
 from . import events
 
@@ -115,7 +115,7 @@ class ClaudeLLM(LLM):
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
 
-        self.events.send(self._normalize_message(kwargs["messages"]))
+        # Note: Message history is tracked in _conversation, no need to emit as event here
 
         original = await self.client.messages.create(*args, **kwargs)
         if isinstance(original, ClaudeMessage):

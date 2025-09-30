@@ -6,13 +6,12 @@ import warnings
 import time
 from typing import Dict, Any, Optional
 from stream_agents.core import vad
+from stream_agents.core.vad.events import VADSpeechStartEvent
 
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
 
 from stream_agents.core.events import AudioFormat
-
-from . import events
 
 
 try:
@@ -438,7 +437,7 @@ class VAD(vad.VAD):
             # Calculate average speech probability during this segment
             avg_speech_prob = self._get_avg_speech_probability()
 
-            self.events.send(events.SileroVADAudioEvent(
+            self.events.send(vad.events.VADAudioEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 audio_data=speech_data.tobytes(),
@@ -451,10 +450,10 @@ class VAD(vad.VAD):
                 user_metadata=user,
             ))
 
-        # Emit enhanced speech end event if we were actively detecting speech
+        # Emit speech end event if we were actively detecting speech
         if self.is_speech_active and self._speech_start_time:
             total_speech_duration = (time.time() - self._speech_start_time) * 1000
-            self.events.send(events.SileroVADEndEvent(
+            self.events.send(vad.events.VADSpeechEndEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 speech_probability=self._speech_end_probability,
@@ -528,7 +527,7 @@ class VAD(vad.VAD):
             self._speech_start_probability = speech_prob
             self._speech_probabilities = [speech_prob]  # Reset probability tracking
 
-            self.events.send(vad.VADSpeechStartEvent(
+            self.events.send(VADSpeechStartEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 speech_probability=speech_prob,
@@ -566,7 +565,7 @@ class VAD(vad.VAD):
                 # Calculate current duration
                 current_duration_ms = (len(current_samples) / self.sample_rate) * 1000
 
-                self.events.send(events.SileroVADPartialEvent(
+                self.events.send(vad.events.VADPartialEvent(
                     session_id=self.session_id,
                     plugin_name=self.provider_name,
                     audio_data=current_bytes,

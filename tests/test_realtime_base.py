@@ -1,3 +1,29 @@
+"""
+Tests for Realtime base class functionality.
+
+TODO: These tests need refactoring for new Agent API
+------------------------------------------------------
+The Agent class API has changed significantly:
+- Now requires 'edge' parameter (StreamEdge instance) in __init__
+- 'rtc.join' no longer exists at module level (was refactored)
+- Connection management has been restructured into AgentSessionContextManager
+- Event wiring and conversation setup happens in agent.join()
+
+These tests use old mocking patterns that assume:
+- rtc.join() exists as a module-level function
+- Agent can be instantiated without an edge parameter
+- StreamConversation is directly patchable
+
+Required Changes:
+- Create StreamEdge instance
+- Update to match new agent.join() flow
+- Update AgentSessionContextManager mocking
+- Fix event subscription patterns to match new EventManager
+
+This is tracked as technical debt and should be addressed in a separate PR.
+Until fixed, these tests document expected behavior but will fail.
+"""
+
 import asyncio
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -8,7 +34,8 @@ from pyee.asyncio import AsyncIOEventEmitter
 
 from stream_agents.core.agents import Agent
 from stream_agents.core.llm import realtime as base_rt
-from stream_agents.core.llm.realtime import RealtimeResponse
+from stream_agents.core.llm.llm import LLMResponseEvent
+from stream_agents.core.llm.events import RealtimeDisconnectedEvent
 
 
 class FakeConversation:
@@ -151,12 +178,12 @@ async def test_simple_response_aggregates_and_returns_realtimeresponse():
 
     # Capture before/after callbacks
     seen_before = {}
-    seen_after: list[RealtimeResponse] = []
+    seen_after: list[LLMResponseEvent] = []
 
     def _before(msgs):
         seen_before["count"] = len(msgs)
 
-    async def _after(resp: RealtimeResponse):
+    async def _after(resp: LLMResponseEvent):
         seen_after.append(resp)
 
     rt.set_before_response_listener(_before)
@@ -164,7 +191,7 @@ async def test_simple_response_aggregates_and_returns_realtimeresponse():
 
     result = await rt.simple_response(text="start")
 
-    assert isinstance(result, RealtimeResponse)
+    assert isinstance(result, LLMResponseEvent)
     assert result.text == "Hi there!"
     assert seen_before.get("count") == 1
     assert len(seen_after) == 1 and seen_after[0].text == "Hi there!"
@@ -181,13 +208,18 @@ async def test_close_emits_disconnected_event():
     rt = FakeRealtime()
     observed = {"disconnected": False}
 
-    @rt.on("disconnected")  # type: ignore[arg-type]
-    async def _on_disc(_):
+    @rt.events.subscribe
+    async def _on_disc(event: RealtimeDisconnectedEvent):
         observed["disconnected"] = True
 
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
+
     await rt.close()
-    # Allow async event handlers to run
-    await asyncio.sleep(0)
+    
+    # Wait for all events in queue to be processed
+    await rt.events.wait(timeout=1.0)
+    
     assert observed["disconnected"] is True
 
 
@@ -234,5 +266,5 @@ async def test_native_response_aggregates_and_returns_realtimeresponse():
     rt = FakeRealtimeNative()
 
     result = await rt.native_response(text="x")
-    assert isinstance(result, RealtimeResponse)
+    assert isinstance(result, LLMResponseEvent)
     assert result.text == "foobar"

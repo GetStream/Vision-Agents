@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import patch, MagicMock
 
 from stream_agents.plugins import deepgram
+from stream_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent
 from getstream.video.rtc.track_util import PcmData
 
 
@@ -111,19 +112,22 @@ async def test_real_time_transcript_emission():
     error_events = []
 
     # Register event handlers
-    @stt.on("transcript")
-    def on_transcript(event):
+    @stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
         transcript_events.append((event.text, event.user_metadata, {"is_final": True}))
 
-    @stt.on("partial_transcript")
-    def on_partial_transcript(event):
+    @stt.events.subscribe
+    async def on_partial_transcript(event: STTPartialTranscriptEvent):
         partial_transcript_events.append(
             (event.text, event.user_metadata, {"is_final": False})
         )
 
-    @stt.on("error")
-    def on_error(event):
+    @stt.events.subscribe
+    async def on_error(event: STTErrorEvent):
         error_events.append(event.error)
+
+    # Allow event subscriptions to be processed
+    await asyncio.sleep(0.01)
 
     # Send some audio data to ensure the connection is active
     pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
@@ -165,15 +169,18 @@ async def test_real_time_partial_transcript_emission():
     partial_transcript_events = []
 
     # Register event handlers
-    @stt.on("transcript")
-    def on_transcript(event):
+    @stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
         transcript_events.append((event.text, event.user_metadata, {"is_final": True}))
 
-    @stt.on("partial_transcript")
-    def on_partial_transcript(event):
+    @stt.events.subscribe
+    async def on_partial_transcript(event: STTPartialTranscriptEvent):
         partial_transcript_events.append(
             (event.text, event.user_metadata, {"is_final": False})
         )
+
+    # Allow event subscriptions to be processed
+    await asyncio.sleep(0.01)
 
     # Send some audio data to ensure the connection is active
     pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
@@ -232,9 +239,12 @@ async def test_real_time_error_emission():
     error_events = []
 
     # Register event handler
-    @stt.on("error")
-    def on_error(error):
-        error_events.append(error)
+    @stt.events.subscribe
+    async def on_error(event: STTErrorEvent):
+        error_events.append(event)
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
 
     # Send some audio data to ensure the connection is active
     pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
@@ -275,9 +285,12 @@ async def test_close_cleanup():
     # Try to emit a transcript after closing (should not crash)
     transcript_events = []
 
-    @stt.on("transcript")
-    def on_transcript(event):
+    @stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
         transcript_events.append((event.text, event.user_metadata, {"is_final": True}))
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
 
     # Process audio after close should be ignored
     pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
@@ -308,9 +321,12 @@ async def test_asynchronous_mode_behavior():
     transcript_events = []
 
     # Register event handler
-    @stt.on("transcript")
-    def on_transcript(event):
+    @stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
         transcript_events.append((event.text, event.user_metadata, {"is_final": True}))
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
 
     # Send some audio data
     pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")

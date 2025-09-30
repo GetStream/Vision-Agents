@@ -5,12 +5,14 @@ This module provides tests for benchmarking the Silero VAD implementation,
 processing 10 seconds of audio and reporting RTF (Real-Time Factor) and other metrics.
 """
 
+import asyncio
 import time
 import numpy as np
 import logging
 import pytest
 import soundfile as sf
 from stream_agents.plugins import silero
+from stream_agents.core.vad.events import VADAudioEvent
 from getstream.video.rtc.track_util import PcmData
 from plugins.plugin_test_utils import get_audio_asset
 
@@ -77,9 +79,12 @@ async def benchmark_vad(use_onnx=False, device="cpu"):
     # Capture detected speech segments
     detected_speech = []
 
-    @vad.on("audio")
-    def on_audio(event, user=None):
+    @vad.events.subscribe
+    async def on_audio(event: VADAudioEvent, user=None):
         detected_speech.append(event)
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
 
     # Measure processing time
     start_time = time.time()

@@ -1,13 +1,15 @@
+import asyncio
 import pytest
 from dotenv import load_dotenv
 
 
 from stream_agents.core.agents.conversation import InMemoryConversation, Message
 
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent
 from stream_agents.plugins.gemini.gemini_llm import GeminiLLM
 
 load_dotenv()
+
 
 
 class TestGeminiLLM:
@@ -25,8 +27,8 @@ class TestGeminiLLM:
         assert messages2[0].original is not None
 
     @pytest.fixture
-    def llm(self) -> GeminiLLM:
-        llm = GeminiLLM(model="gemini-1.5-flash")
+    async def llm(self) -> GeminiLLM:
+        llm = GeminiLLM(model="gemini-2.0-flash-exp")
         llm._conversation = InMemoryConversation("be friendly", [])
         return llm
 
@@ -46,12 +48,19 @@ class TestGeminiLLM:
     @pytest.mark.integration
     async def test_stream(self, llm: GeminiLLM):
         streamingWorks = False
-        @llm.on('standardized.output_text.delta')
-        def passed(event: StandardizedTextDeltaEvent):
+        
+        @llm.events.subscribe
+        async def passed(event: StandardizedTextDeltaEvent):
             nonlocal streamingWorks
             streamingWorks = True
-
+        
+        # Allow event subscription to be processed
+        await asyncio.sleep(0.01)
+        
         await llm.simple_response("Explain magma to a 5 year old")
+        
+        # Wait for all events in queue to be processed
+        await llm.events.wait(timeout=1.0)
 
         assert streamingWorks
 

@@ -74,11 +74,11 @@ def get_asset_path(file_name: str) -> str:
     Returns:
         The full path to the asset file
     """
-    # Find the project root (where tests/assets is located)
+    # Find the project root (where tests/test_assets is located)
     project_root = _find_project_root()
 
     # Return the path to the asset
-    return os.path.join(project_root, "plugins", "test_assets", file_name)
+    return os.path.join(project_root, "tests", "test_assets", file_name)
 
 
 def get_audio_asset(file_name: str) -> str:
@@ -111,7 +111,7 @@ def get_json_metadata(file_name: str) -> Dict[str, Any]:
 
 def _find_project_root() -> str:
     """
-    Find the project root directory by looking for the 'plugins/test_assets' directory.
+    Find the project root directory by looking for the 'tests/test_assets' directory.
 
     Returns:
         The path to the project root directory
@@ -121,8 +121,8 @@ def _find_project_root() -> str:
 
     # Walk up the directory tree until we find the project root
     while current_dir != os.path.dirname(current_dir):  # Stop at filesystem root
-        # Check if tests/assets exists in this directory
-        if os.path.isdir(os.path.join(current_dir, "plugins", "test_assets")):
+        # Check if tests/test_assets exists in this directory
+        if os.path.isdir(os.path.join(current_dir, "tests", "test_assets")):
             return current_dir
 
         # Not found, go up one level
@@ -132,19 +132,17 @@ def _find_project_root() -> str:
         current_dir = parent_dir
 
     # If not found by walking up, try a fixed path from the current file
-    # This assumes the module is at getstream/plugins/test_utils.py
-    possible_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    if os.path.isdir(os.path.join(possible_root, "tests", "assets")):
+    # This assumes the module is at plugins/plugin_test_utils.py
+    possible_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.isdir(os.path.join(possible_root, "tests", "test_assets")):
         return possible_root
 
     # Last resort: try to locate from the current working directory
     cwd = os.getcwd()
-    if os.path.isdir(os.path.join(cwd, "tests", "assets")):
+    if os.path.isdir(os.path.join(cwd, "tests", "test_assets")):
         return cwd
 
     raise FileNotFoundError(
-        "Could not find the project root directory with 'tests/assets'. "
+        "Could not find the project root directory with 'tests/test_assets'. "
         "Make sure you're running tests from the project root or a subdirectory."
     )

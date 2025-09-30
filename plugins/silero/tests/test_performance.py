@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from stream_agents.plugins import silero
+from stream_agents.core.vad.events import VADAudioEvent
 from getstream.video.rtc.track_util import PcmData
 
 
@@ -55,9 +56,12 @@ async def test_performance():
     # Counter for audio events
     audio_events = []
 
-    @vad.on("audio")
-    def on_audio(event):
+    @vad.events.subscribe
+    async def on_audio(event: VADAudioEvent):
         audio_events.append(event)
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
 
     # Measure CPU time
     start_time = time.time()

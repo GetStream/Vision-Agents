@@ -17,8 +17,8 @@ MarkdownFileContents = Dict[str, str]
 class Instructions:
     """Container for parsed instructions with input text and markdown files."""
     input_text: str
-    base_dir: str
     markdown_contents: MarkdownFileContents  # Maps filename to file content
+    base_dir: str = ""  # Base directory for file search, defaults to empty string
 
 
 def to_mono(samples: np.ndarray, num_channels: int) -> np.ndarray:
@@ -57,7 +57,6 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
         >>> result.markdown_contents
         {"file1.md": "# File 1 content...", "file2.md": "# File 2 content..."}
     """
-    import __main__
     # Find all @ mentions that look like markdown files
     # Pattern matches @ followed by filename with .md extension
     markdown_pattern = r'@([^\s@]+\.md)'
@@ -68,7 +67,7 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
     
     # Set base directory for file search
     if base_dir is None:
-        base_dir = os.path.dirname(__main__.__file__)
+        base_dir = os.getcwd()
     
     for match in matches:
         # Try to read the markdown file content
@@ -86,8 +85,8 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
     
     return Instructions(
         input_text=text,
-        base_dir=base_dir,
-        markdown_contents=markdown_contents
+        markdown_contents=markdown_contents,
+        base_dir=base_dir
     )
 
 

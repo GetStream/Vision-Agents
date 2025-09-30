@@ -1,0 +1,15 @@
+{
+  "filename": "mia.mp3",
+  "duration": 10.0,
+  "sample_rate": 48000,
+  "channels": 1,
+  "format": "mp3",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 10.0,
+      "text": "Test audio transcript"
+    }
+  ],
+  "transcript": "Test audio transcript"
+}

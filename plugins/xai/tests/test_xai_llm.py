@@ -1,8 +1,9 @@
+import asyncio
 import pytest
 from dotenv import load_dotenv
 import os
 
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent
 from stream_agents.core.agents.conversation import Message
 from stream_agents.plugins.xai.llm import XAILLM
 
@@ -58,14 +59,20 @@ class TestXAILLM:
         llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
         streaming_works = False
 
-        @llm.on("standardized.output_text.delta")
-        def passed(event: StandardizedTextDeltaEvent):
+        @llm.events.subscribe
+        async def passed(event: StandardizedTextDeltaEvent):
             nonlocal streaming_works
             streaming_works = True
+        
+        await asyncio.sleep(0.01)
 
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
+        
+        # Wait for all events in queue to be processed
+        await llm.events.wait(timeout=1.0)
+        
         print(response.text)
 
         assert response.text

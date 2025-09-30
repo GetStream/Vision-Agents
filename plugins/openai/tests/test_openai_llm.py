@@ -1,8 +1,8 @@
-
+import asyncio
 import pytest
 from dotenv import load_dotenv
 
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent
 from stream_agents.core.agents.conversation import Message
 from stream_agents.plugins.openai.openai_llm import OpenAILLM
 
@@ -35,7 +35,7 @@ class TestOpenAILLM:
         assert messages2[0].original is not None
 
     @pytest.fixture
-    def llm(self) -> OpenAILLM:
+    async def llm(self) -> OpenAILLM:
         llm = OpenAILLM(model="gpt-4o")
         return llm
 
@@ -64,15 +64,23 @@ class TestOpenAILLM:
     async def test_streaming(self, llm: OpenAILLM):
 
         streamingWorks = False
-        @llm.on('standardized.output_text.delta')
-        def passed(event: StandardizedTextDeltaEvent):
+        
+        @llm.events.subscribe
+        async def passed(event: StandardizedTextDeltaEvent):
             nonlocal streamingWorks
             streamingWorks = True
+        
+        # Allow event subscription to be processed
+        await asyncio.sleep(0.01)
+        
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
+        
+        # Wait for all events in queue to be processed
+        await llm.events.wait(timeout=1.0)
+        
         print(response.text)
-
 
         assert response.text
         assert streamingWorks
@@ -91,9 +99,6 @@ class TestOpenAILLM:
     async def test_native_memory(self, llm: OpenAILLM):
         await llm.create_response(
             input="There are 2 dogs in the room",
-        )
-        await llm.create_response(
-            input=0,
         )
         response = await llm.create_response(
             input="How many paws are there in the room?",

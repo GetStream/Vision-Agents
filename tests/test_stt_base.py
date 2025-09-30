@@ -5,6 +5,7 @@ Test the base STT class consistency improvements.
 import pytest
 from unittest.mock import Mock
 from stream_agents.core.stt.stt import STT
+from stream_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent
 from getstream.video.rtc.track_util import PcmData
 import numpy as np
 
@@ -26,7 +27,8 @@ class MockSTT(STT):
 
 
 @pytest.fixture
-def mock_stt():
+async def mock_stt():
+    """Create MockSTT instance in async context."""
     return MockSTT()
 
 
@@ -37,17 +39,20 @@ def valid_pcm_data():
     return PcmData(samples=samples, sample_rate=16000, format="s16")
 
 
-def test_validate_pcm_data_valid(mock_stt, valid_pcm_data):
+@pytest.mark.asyncio
+async def test_validate_pcm_data_valid(mock_stt, valid_pcm_data):
     """Test that valid PCM data passes validation."""
     assert mock_stt._validate_pcm_data(valid_pcm_data) is True
 
 
-def test_validate_pcm_data_none(mock_stt):
+@pytest.mark.asyncio
+async def test_validate_pcm_data_none(mock_stt):
     """Test that None PCM data fails validation."""
     assert mock_stt._validate_pcm_data(None) is False
 
 
-def test_validate_pcm_data_no_samples(mock_stt):
+@pytest.mark.asyncio
+async def test_validate_pcm_data_no_samples(mock_stt):
     """Test that PCM data without samples fails validation."""
     pcm_data = Mock()
     pcm_data.samples = None
@@ -55,7 +60,8 @@ def test_validate_pcm_data_no_samples(mock_stt):
     assert mock_stt._validate_pcm_data(pcm_data) is False
 
 
-def test_validate_pcm_data_invalid_sample_rate(mock_stt):
+@pytest.mark.asyncio
+async def test_validate_pcm_data_invalid_sample_rate(mock_stt):
     """Test that PCM data with invalid sample rate fails validation."""
     pcm_data = Mock()
     pcm_data.samples = np.array([1, 2, 3])
@@ -63,7 +69,8 @@ def test_validate_pcm_data_invalid_sample_rate(mock_stt):
     assert mock_stt._validate_pcm_data(pcm_data) is False
 
 
-def test_validate_pcm_data_empty_samples(mock_stt):
+@pytest.mark.asyncio
+async def test_validate_pcm_data_empty_samples(mock_stt):
     """Test that PCM data with empty samples fails validation."""
     pcm_data = Mock()
     pcm_data.samples = np.array([])
@@ -77,10 +84,9 @@ async def test_emit_transcript_event(mock_stt):
     # Set up event listener
     transcript_events = []
 
-    def on_transcript(event):
+    @mock_stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
         transcript_events.append(event)
-
-    mock_stt.on("transcript", on_transcript)
 
     # Emit a transcript event
     text = "Hello world"
@@ -88,6 +94,9 @@ async def test_emit_transcript_event(mock_stt):
     metadata = {"confidence": 0.95, "processing_time_ms": 100}
 
     mock_stt._emit_transcript_event(text, user_metadata, metadata)
+    
+    # Wait for event processing
+    await mock_stt.events.wait(timeout=1.0)
 
     # Verify event was emitted
     assert len(transcript_events) == 1
@@ -104,10 +113,9 @@ async def test_emit_partial_transcript_event(mock_stt):
     # Set up event listener
     partial_events = []
 
-    def on_partial_transcript(event):
+    @mock_stt.events.subscribe
+    async def on_partial_transcript(event: STTPartialTranscriptEvent):
         partial_events.append(event)
-
-    mock_stt.on("partial_transcript", on_partial_transcript)
 
     # Emit a partial transcript event
     text = "Hello"
@@ -115,6 +123,9 @@ async def test_emit_partial_transcript_event(mock_stt):
     metadata = {"confidence": 0.8}
 
     mock_stt._emit_partial_transcript_event(text, user_metadata, metadata)
+    
+    # Wait for event processing
+    await mock_stt.events.wait(timeout=1.0)
 
     # Verify event was emitted
     assert len(partial_events) == 1
@@ -130,14 +141,16 @@ async def test_emit_error_event(mock_stt):
     # Set up event listener
     error_events = []
 
-    def on_error(event):
+    @mock_stt.events.subscribe
+    async def on_error(event: STTErrorEvent):
         error_events.append(event)
-
-    mock_stt.on("error", on_error)
 
     # Emit an error event
     test_error = Exception("Test error")
     mock_stt._emit_error_event(test_error, "test context")
+    
+    # Wait for event processing
+    await mock_stt.events.wait(timeout=1.0)
 
     # Verify event was emitted
     assert len(error_events) == 1
@@ -165,14 +178,16 @@ async def test_process_audio_with_valid_data(mock_stt, valid_pcm_data):
     # Set up event listener
     transcript_events = []
 
-    def on_transcript(event):
+    @mock_stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
         transcript_events.append(event)
-
-    mock_stt.on("transcript", on_transcript)
 
     # Process audio
     user_metadata = {"user_id": "123"}
     await mock_stt.process_audio(valid_pcm_data, user_metadata)
+    
+    # Wait for event processing
+    await mock_stt.events.wait(timeout=1.0)
 
     # Verify that _process_audio_impl was called
     assert mock_stt.process_audio_impl_called is True
@@ -213,13 +228,15 @@ async def test_process_audio_handles_exceptions(mock_stt, valid_pcm_data):
     # Set up error event listener
     error_events = []
 
-    def on_error(error):
-        error_events.append(error)
-
-    mock_stt_with_exception.on("error", on_error)
+    @mock_stt_with_exception.events.subscribe
+    async def on_error(event: STTErrorEvent):
+        error_events.append(event)
 
     # Process audio (should not raise exception)
     await mock_stt_with_exception.process_audio(valid_pcm_data)
+    
+    # Wait for event processing
+    await mock_stt_with_exception.events.wait(timeout=1.0)
 
     # Verify that error event was emitted
     assert len(error_events) == 1

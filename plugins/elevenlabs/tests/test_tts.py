@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import patch, MagicMock
 
 from stream_agents.plugins import elevenlabs
+from stream_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 
@@ -99,13 +100,19 @@ async def test_elevenlabs_tts_send():
     # Track emitted audio events
     emitted_audio = []
 
-    @tts.on("audio")
-    def on_audio(event):
+    @tts.events.subscribe
+    async def on_audio(event: TTSAudioEvent):
         emitted_audio.append(event.audio_data)
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
 
     # Send text to the TTS
     text = "Hello, world!"
     await tts.send(text)
+
+    # Allow events to be processed
+    await asyncio.sleep(0.01)
 
     # Check that audio was written to the track
     assert len(track.written_data) > 0
@@ -230,18 +237,21 @@ async def test_elevenlabs_with_real_api():
     audio_received = asyncio.Event()
     received_chunks = []
 
-    @tts.on("audio")
-    def on_audio(audio_data, user):
-        received_chunks.append(audio_data)
+    @tts.events.subscribe
+    async def on_audio(event: TTSAudioEvent):
+        received_chunks.append(event.audio_data)
         audio_received.set()
 
     # Track API errors
     api_errors = []
 
-    @tts.on("error")
-    def on_error(error):
-        api_errors.append(error)
+    @tts.events.subscribe
+    async def on_error(event: TTSErrorEvent):
+        api_errors.append(event.error)
         audio_received.set()  # Unblock the waiting
+
+    # Allow event subscriptions to be processed
+    await asyncio.sleep(0.01)
 
     try:
         # Use a short text to minimize API usage
@@ -273,7 +283,5 @@ async def test_elevenlabs_with_real_api():
     except Exception as e:
         pytest.skip(f"Unexpected error in ElevenLabs test: {e}")
     finally:
-        # Always clean up event handlers
-        # This is important to avoid memory leaks from persistent event handlers
-        tts.remove_all_listeners("audio")
-        tts.remove_all_listeners("error")
+        # Event handlers are automatically cleaned up when the TTS instance is destroyed
+        pass

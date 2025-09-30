@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from dotenv import load_dotenv
 
@@ -5,7 +6,7 @@ from dotenv import load_dotenv
 from stream_agents.core.agents.conversation import InMemoryConversation
 
 from stream_agents.core.agents.conversation import Message
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent
 from stream_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
 
 load_dotenv()
@@ -15,20 +16,22 @@ class TestClaudeLLM:
     """Test suite for ClaudeLLM class with real API calls."""
 
     @pytest.fixture
-    def llm(self) -> ClaudeLLM:
+    async def llm(self) -> ClaudeLLM:
         """Test ClaudeLLM initialization with a provided client."""
         llm = ClaudeLLM(model="claude-3-5-sonnet-20241022")
         llm._conversation = InMemoryConversation("be friendly", [])
         return llm
 
-    def test_message(self, llm: ClaudeLLM):
+    @pytest.mark.asyncio
+    async def test_message(self, llm: ClaudeLLM):
         messages = ClaudeLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
         message = messages[0]
         assert message.original is not None
         assert message.content == "say hi"
 
-    def test_advanced_message(self, llm: ClaudeLLM):
+    @pytest.mark.asyncio
+    async def test_advanced_message(self, llm: ClaudeLLM):
         advanced = {
             "role": "user",
             "content": "Explain quantum entanglement in simple terms.",
@@ -56,12 +59,20 @@ class TestClaudeLLM:
     @pytest.mark.integration
     async def test_stream(self, llm: ClaudeLLM):
         streamingWorks = False
-        @llm.on('standardized.output_text.delta')
-        def passed(event: StandardizedTextDeltaEvent):
+        
+        @llm.events.subscribe
+        async def passed(event: StandardizedTextDeltaEvent):
             nonlocal streamingWorks
             streamingWorks = True
-
+        
+        # Allow event subscription to be processed
+        await asyncio.sleep(0.01)
+        
         response = await llm.simple_response("Explain magma to a 5 year old")
+        
+        # Wait for all events in queue to be processed
+        await llm.events.wait(timeout=1.0)
+        
         print(response)
 
         assert streamingWorks
