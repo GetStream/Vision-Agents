@@ -346,7 +346,7 @@ class Realtime(realtime.Realtime):
             realtime_input_config=RealtimeInputConfigDict(
                 turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
             ),
-            enable_affective_dialog=True,
+            enable_affective_dialog=False,
             context_window_compression=ContextWindowCompressionConfigDict(
                 trigger_tokens=25600,
                 sliding_window=SlidingWindowDict(target_tokens=12800),
