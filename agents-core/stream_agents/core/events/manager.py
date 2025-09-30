@@ -400,6 +400,7 @@ class EventManager:
         for event in events:
             event = self._prepare_event(event)
             if event:
+                logger.info(f"🎯 EventManager.send: {event.__class__.__name__} - {event.type}")
                 self._queue.append(event)
         
     async def wait(self, timeout: float = 10.0):
