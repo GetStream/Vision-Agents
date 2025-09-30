@@ -16,7 +16,7 @@ from ..llm.events import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..llm.events import RealtimeTranscriptEvent, LLMResponseEvent, AfterLLMResponseEvent
+from ..llm.events import RealtimeTranscriptEvent, AfterLLMResponseEvent
 from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
@@ -191,7 +191,7 @@ class Agent:
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         # TODO: validation. join can only be called once
-        with self.tracer.start_as_current_span("join") as span:
+        with self.tracer.start_as_current_span("join"):
             if self._is_running:
                 raise RuntimeError("Agent is already running")
 
@@ -524,7 +524,7 @@ class Agent:
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.realtime_mode and isinstance(self.llm, Realtime):
                 # TODO: this behaviour should be easy to change in the agent class
-                task = asyncio.create_task(self.llm.simple_audio_response(pcm_data))
+                asyncio.create_task(self.llm.simple_audio_response(pcm_data))
                 #task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
             else:
                 # Process audio through STT
@@ -571,14 +571,9 @@ class Agent:
 
         while True:
             try:
-                # Track frame processing timing
-                frame_request_start = time.monotonic()
-
                 # TODO: evaluate if this makes sense or not...
                 #video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=current_timeout)
                 video_frame = await track.recv()
-                frame_request_end = time.monotonic()
-                frame_request_duration = frame_request_end - frame_request_start
 
                 if video_frame:
                     # Reset error counts on successful frame processing

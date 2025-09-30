@@ -13,6 +13,13 @@ from getstream.audio.pcm_utils import pcm_to_numpy_array, numpy_array_to_bytes
 from ..edge.types import Participant
 
 from . import events
+from .events import (
+    VADPartialEvent,
+    VADSpeechStartEvent,
+    VADAudioEvent,
+    VADSpeechEndEvent,
+    VADErrorEvent,
+)
 from stream_agents.core.events import (
     PluginInitializedEvent,
     PluginClosedEvent,
@@ -248,7 +255,7 @@ class VAD(abc.ABC):
 
                 # If silence exceeds padding duration, emit audio and reset
                 if self.silence_counter >= speech_pad_frames:
-                    await self._flush_speech_buffer(user)
+                    await self._flush_speech_buffer(participant)
 
             # Calculate max speech frames based on ms
             max_speech_frames = int(
@@ -257,7 +264,7 @@ class VAD(abc.ABC):
 
             # Force flush if speech duration exceeds maximum
             if self.total_speech_frames >= max_speech_frames:
-                await self._flush_speech_buffer(user)
+                await self._flush_speech_buffer(participant)
 
         # Start collecting speech when detected
         elif is_speech:

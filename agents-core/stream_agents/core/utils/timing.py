@@ -2,6 +2,7 @@
 Timing utilities for performance monitoring and latency tracking.
 """
 
+import asyncio
 import time
 import logging
 from functools import wraps
@@ -77,14 +78,6 @@ def timing_decorator(method_name: Optional[str] = None, threshold: float = 0.1, 
                 result = await func(*args, **kwargs)
                 end_time = time.monotonic()
                 duration = end_time - start_time
-                
-                # Create timing data
-                timing_data = TimingData(
-                    start_time=start_time,
-                    end_time=end_time,
-                    duration=duration,
-                    method_name=name
-                )
                 
                 # Log timing based on level
                 if log_level == "info":

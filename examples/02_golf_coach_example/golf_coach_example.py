@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import gemini, getstream, ultralytics, openai
+from stream_agents.plugins import getstream, ultralytics, openai
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
 from getstream import AsyncStream
@@ -18,7 +18,7 @@ load_dotenv()
 async def start_agent() -> None:
     call_id = str(uuid4())
     client = AsyncStream()
-    agent_user = client.create_user(name="AI golf coach")
+    agent_user = await client.create_user(name="AI golf coach")
 
     agent = Agent(
         edge=getstream.Edge(),

@@ -157,7 +157,7 @@ class TestInMemoryConversation:
         """Test updating a non-existent message creates a new one."""
         initial_count = len(conversation.messages)
         
-        result = conversation.update_message(
+        conversation.update_message(
             message_id="non-existent-id",
             input_text="New message content",
             user_id="user2",
@@ -385,7 +385,7 @@ class TestStreamConversation:
     def test_update_message_existing(self, stream_conversation, mock_chat_client):
         """Test updating an existing message by appending content."""
         # Update existing message by appending (replace_content=False, completed=False)
-        result = stream_conversation.update_message(
+        stream_conversation.update_message(
             message_id="msg-0",
             input_text=" additional text",
             user_id="user1",
@@ -412,7 +412,7 @@ class TestStreamConversation:
         # Mock update_message_partial for completed messages
         mock_chat_client.update_message_partial = Mock(return_value=Mock())
         
-        result = stream_conversation.update_message(
+        stream_conversation.update_message(
             message_id="msg-0",
             input_text="Replaced content",
             user_id="user1",
@@ -439,7 +439,7 @@ class TestStreamConversation:
         # Reset the send_message mock for this test
         mock_chat_client.send_message.reset_mock()
         
-        result = stream_conversation.update_message(
+        stream_conversation.update_message(
             message_id="non-existent-id",
             input_text="New message content",
             user_id="user2",
@@ -516,7 +516,7 @@ class TestStreamConversation:
         stream_conversation.messages.append(new_msg)
         
         # Try to update it by appending
-        result = stream_conversation.update_message(
+        stream_conversation.update_message(
             message_id="unmapped-msg",
             input_text=" updated",
             user_id="user3",

@@ -3,7 +3,6 @@ Tests for function calling functionality.
 """
 
 import pytest
-import asyncio
 from unittest.mock import Mock, patch
 
 from stream_agents.core.llm import FunctionRegistry, function_registry

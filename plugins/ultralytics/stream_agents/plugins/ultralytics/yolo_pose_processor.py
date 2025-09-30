@@ -81,13 +81,11 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
         if self._stopped:
             raise Exception("Track stopped")
 
-        frame_received = False
         try:
             # Try to get a frame from queue with short timeout
             frame = await asyncio.wait_for(self.frame_queue.get(), timeout=0.02)
             if frame:
                 self.last_frame = frame
-                frame_received = True
                 logger.debug(f"📥 Got new frame from queue: {frame}")
         except asyncio.TimeoutError:
             pass
@@ -106,7 +104,8 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
             av_frame.pts = pts
             av_frame.time_base = time_base
         except Exception:
-            import pdb; pdb.set_trace()
+            import pdb
+            pdb.set_trace()
 
 
         #if frame_received:
@@ -211,7 +210,8 @@ class YOLOPoseProcessor(
             array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
             frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
         except Exception:
-            import pdb; pdb.set_trace()
+            import pdb
+            pdb.set_trace()
 
         return frame_with_pose
 

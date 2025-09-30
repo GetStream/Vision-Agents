@@ -41,7 +41,6 @@ class AgentSayErrorEvent(PluginBaseEvent):
     type: str = field(default='agent.say_error', init=False)
     text: str = ""
     user_id: Optional[str] = None
-    error_message: Optional[str] = None
     error: Optional[Exception] = None
 
     @property

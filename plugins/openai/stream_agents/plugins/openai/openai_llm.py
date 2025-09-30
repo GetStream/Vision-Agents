@@ -420,13 +420,6 @@ class OpenAILLM(LLM):
         elif event.type == "response.output_text.delta":
             # standardize the delta event
             delta_event: ResponseTextDeltaEvent = event
-            standardized_event = StandardizedTextDeltaEvent(
-                content_index=delta_event.content_index,
-                item_id=delta_event.item_id,
-                output_index=delta_event.output_index,
-                sequence_number=delta_event.sequence_number,
-                delta=delta_event.delta,
-            )
             self.events.send(StandardizedTextDeltaEvent(
                 plugin_name="openai",
                 content_index=delta_event.content_index,

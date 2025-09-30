@@ -4,6 +4,7 @@ from typing import Optional, Callable, Any
 
 import av
 from aiortc import VideoStreamTrack
+from av.frame import Frame
 
 from stream_agents.core.utils.queue import LatestNQueue
 
@@ -19,7 +20,7 @@ class VideoForwarder:
     """
     def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = 30, name: str = "video-forwarder"):
         self.input_track = input_track
-        self.queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=max_buffer)
+        self.queue: LatestNQueue[Frame] = LatestNQueue(maxlen=max_buffer)
         self.fps = fps  # None = unlimited, else forward at ~fps
         self._tasks: set[asyncio.Task] = set()
         self._stopped = asyncio.Event()
@@ -48,7 +49,7 @@ class VideoForwarder:
     async def _producer(self):
         try:
             while not self._stopped.is_set():
-                frame = await self.input_track.recv()
+                frame : Frame = await self.input_track.recv()
                 await self.queue.put_latest(frame)
         except asyncio.CancelledError:
             raise
@@ -103,8 +104,8 @@ class VideoForwarder:
                     frame = await self.next_frame()
                     # track latest resolution for summary logs
                     try:
-                        last_width = int(getattr(frame, "width", None)) or last_width
-                        last_height = int(getattr(frame, "height", None)) or last_height
+                        last_width = int(getattr(frame, "width", 0)) or last_width
+                        last_height = int(getattr(frame, "height", 0)) or last_height
                     except Exception:
                         # ignore resolution extraction errors
                         pass

@@ -5,6 +5,7 @@ from typing import (
 )
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
+from stream_agents.core.edge.types import PcmData
 
 
 import abc

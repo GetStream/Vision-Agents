@@ -147,8 +147,6 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         if not self._started:
             await self.start()
 
-        frame_start_time = time.monotonic()
-
         if not self._is_active:
             # Rate limit warnings to avoid spam
             now = time.monotonic()
@@ -190,9 +188,6 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
             frame.time_base = Fraction(1, self._fps)
             self._ts += 1
             self._last_frame_time = time.monotonic()
-
-            # Optional detailed timing log
-            total_duration = time.monotonic() - frame_start_time
 
             return frame
 

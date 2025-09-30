@@ -11,7 +11,7 @@ from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict
     ContextWindowCompressionConfigDict, SlidingWindowDict, HttpOptions, LiveServerMessage, Blob, Part, \
     SessionResumptionConfig
 
-from stream_agents.core.edge.types import Participant, PcmData
+from stream_agents.core.edge.types import Participant
 from stream_agents.core.llm import realtime
 from stream_agents.core.llm.events import RealtimeAudioOutputEvent, StandardizedTextDeltaEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
@@ -214,10 +214,6 @@ class Realtime(realtime.Realtime):
                                     self.events.send(event)
                             elif part.inline_data:
                                 data = part.inline_data.data
-                                # Convert bytes to PcmData at 24kHz (Gemini's output rate)
-                                pcm_data = PcmData.from_bytes(data, sample_rate=24000, format="s16")
-                                # Resample from 24kHz to 48kHz for WebRTC
-                                resampled_pcm = pcm_data.resample(target_sample_rate=48000)
                                 
                                 # Emit audio output event
                                 audio_event = RealtimeAudioOutputEvent(
