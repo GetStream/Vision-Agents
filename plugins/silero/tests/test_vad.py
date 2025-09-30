@@ -882,6 +882,9 @@ class TestSileroVAD:
         async def on_audio(event: VADAudioEvent, user=None):
             detected_speech.append({"event": event, "from_flush": flush_triggered})
 
+        # Allow event handler to register
+        await asyncio.sleep(0.01)
+
         # Process half the audio to get speech started but not completed
         await vad.process_audio(
             PcmData(samples=half_audio, sample_rate=sample_rate, format="s16")
@@ -892,6 +895,9 @@ class TestSileroVAD:
 
         # Flush to force emission of the current speech
         await vad.flush()
+
+        # Wait for all events to be processed
+        await vad.events.wait(timeout=1.0)
 
         # Verify that at least one speech segment was emitted due to the flush
         assert len(detected_speech) > 0, "No speech segments detected after flush"
