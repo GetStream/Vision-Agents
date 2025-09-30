@@ -80,7 +80,7 @@ class Realtime(LLM, abc.ABC):
         self._is_connected = True
         # Mark ready when connected if provider uses base emitter
         try:
-            self._ready_event.set()
+            self._ready_event.set()  # type: ignore[attr-defined]
         except Exception:
             pass
         event = events.RealtimeConnectedEvent(

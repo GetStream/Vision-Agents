@@ -32,9 +32,9 @@ class MCPServerRemote(MCPBaseServer):
         self.url = url
         self.headers = headers or {}
         self.timeout = timeout
-        self._client_context = None
-        self._session_context = None
-        self._get_session_id_cb: Optional[Callable[[], str]] = None
+        self._client_context: Optional[object] = None  # AsyncGeneratorContextManager
+        self._session_context: Optional[object] = None  # ClientSession context manager
+        self._get_session_id_cb: Optional[Callable[[], Optional[str]]] = None
         
         # Validate URL
         parsed = urlparse(url)
@@ -51,20 +51,20 @@ class MCPServerRemote(MCPBaseServer):
             self.logger.info(f"Connecting to remote MCP server at {self.url}")
             
             # Create the HTTP client context
-            self._client_context = streamablehttp_client(
+            self._client_context = streamablehttp_client(  # type: ignore[assignment]
                 self.url,
                 headers=self.headers,
                 timeout=timedelta(seconds=self.timeout)
             )
             
             # Enter the context to get the read/write streams and session ID callback
-            read, write, self._get_session_id_cb = await self._client_context.__aenter__()
+            read, write, self._get_session_id_cb = await self._client_context.__aenter__()  # type: ignore[attr-defined]
             
             # Create the client session context manager
-            self._session_context = ClientSession(read, write)
+            self._session_context = ClientSession(read, write)  # type: ignore[assignment]
             
             # Enter the session context and get the actual session
-            self._session = await self._session_context.__aenter__()
+            self._session = await self._session_context.__aenter__()  # type: ignore[attr-defined]
             
             # Initialize the connection
             await self._session.initialize()
@@ -74,7 +74,7 @@ class MCPServerRemote(MCPBaseServer):
             await self._start_timeout_monitor()
             
             # Log session ID if available
-            if self._get_session_id_cb:
+            if self._get_session_id_cb is not None:
                 try:
                     session_id = self._get_session_id_cb()
                     self.logger.info(f"Successfully connected to remote MCP server at {self.url} (session: {session_id})")
@@ -115,7 +115,7 @@ class MCPServerRemote(MCPBaseServer):
         # Close the session context
         if self._session_context:
             try:
-                await self._session_context.__aexit__(None, None, None)
+                await self._session_context.__aexit__(None, None, None)  # type: ignore[attr-defined]
             except Exception as e:
                 self.logger.warning(f"Error closing MCP session context: {e}")
             self._session_context = None
@@ -123,7 +123,7 @@ class MCPServerRemote(MCPBaseServer):
         # Close the client context
         if self._client_context:
             try:
-                await self._client_context.__aexit__(None, None, None)
+                await self._client_context.__aexit__(None, None, None)  # type: ignore[attr-defined]
             except Exception as e:
                 self.logger.warning(f"Error closing MCP client context: {e}")
             self._client_context = None

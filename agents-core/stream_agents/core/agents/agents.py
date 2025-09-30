@@ -300,7 +300,7 @@ class Agent:
         self._realtime_connection = None
 
         # shutdown task processing
-        for _, track in self._track_tasks:
+        for _, track in self._track_tasks.items():
             track.cancel()
 
         # Close RTC connection
@@ -378,11 +378,11 @@ class Agent:
             self._agent_conversation_handle = self.conversation.start_streaming_message(
                 role="assistant",
                 user_id=self.agent_user.id,
-                initial_content=event.delta,
+                initial_content=event.delta or "",
             )
         else:
             self.conversation.append_to_message(
-                self._agent_conversation_handle, event.delta
+                self._agent_conversation_handle, event.delta or ""
             )
 
     async def _handle_after_response(self, event: AfterLLMResponseEvent):

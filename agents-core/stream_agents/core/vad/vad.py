@@ -2,7 +2,7 @@ import abc
 import logging
 import time
 import uuid
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 
 import numpy as np
 
@@ -290,7 +290,7 @@ class VAD(abc.ABC):
             frame_bytes = numpy_array_to_bytes(frame.samples)
             self.speech_buffer.extend(frame_bytes)
 
-    async def _flush_speech_buffer(self, user: Optional[Dict[str, Any]] = None) -> None:
+    async def _flush_speech_buffer(self, user: Optional[Union[Dict[str, Any], Participant]] = None) -> None:
         """
         Flush the accumulated speech buffer if it meets minimum length requirements.
 

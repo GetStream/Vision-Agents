@@ -20,7 +20,7 @@ class MCPBaseServer(ABC):
         self.logger = logging.getLogger(f"{self.__class__.__name__}")
         self._session: Optional[ClientSession] = None
         self._is_connected = False
-        self._last_activity = None
+        self._last_activity: Optional[float] = None
         self._timeout_task: Optional[asyncio.Task] = None
         
     @abstractmethod
@@ -121,7 +121,8 @@ class MCPBaseServer(ABC):
             raise RuntimeError("Not connected to MCP server")
             
         await self._update_activity()
-        return await self._session.read_resource(uri)
+        from mcp.types import AnyUrl
+        return await self._session.read_resource(AnyUrl(uri))
         
     async def _list_prompts_impl(self) -> List[types.Prompt]:
         """Internal implementation of list_prompts without retry logic."""
