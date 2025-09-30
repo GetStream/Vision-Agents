@@ -11,20 +11,18 @@ from PIL import Image
 import av
 
 from stream_agents.plugins.ultralytics import YOLOPoseProcessor
-import sys
-sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-from tests.base_test import BaseTest
 import logging
 
 logger = logging.getLogger(__name__)
 
-class TestYOLOPoseProcessor(BaseTest):
+
+class TestYOLOPoseProcessor:
     """Test cases for YOLOPoseProcessor."""
 
     @pytest.fixture(scope="session")
-    def golf_image(self) -> Iterator[Image.Image]:
+    def golf_image(self, assets_dir) -> Iterator[Image.Image]:
         """Load the local golf swing test image from tests/test_assets."""
-        asset_path = Path(self.assets_dir) / "golf_swing.png"
+        asset_path = Path(assets_dir) / "golf_swing.png"
         with Image.open(asset_path) as img:
             yield img.convert("RGB")
 
