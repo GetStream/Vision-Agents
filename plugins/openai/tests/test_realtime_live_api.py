@@ -13,7 +13,7 @@ from stream_agents.core.llm.events import (
 )
 
 from dotenv import load_dotenv
-from getstream.video.rtc.track_util import PcmData
+from stream_agents.core.edge.types import PcmData
 import os
 import wave
 import numpy as np

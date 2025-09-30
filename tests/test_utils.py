@@ -92,17 +92,29 @@ class TestParseInstructions:
     
     def test_parse_instructions_case_sensitivity(self):
         """Test that parsing is case sensitive."""
-        text = "Check @README.md and @readme.md for information."
-        result = parse_instructions(text)
-        
-        assert result.input_text == text
-        # Should treat as different files due to case sensitivity
-        # Both files exist in the current directory, so they should have content
-        assert "README.md" in result.markdown_contents
-        assert "readme.md" in result.markdown_contents
-        # Content should not be empty since these files exist
-        assert len(result.markdown_contents["README.md"]) > 0
-        assert len(result.markdown_contents["readme.md"]) > 0
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create test files with different cases
+            upper_path = os.path.join(temp_dir, "README.md")
+            lower_path = os.path.join(temp_dir, "readme.md")
+            
+            with open(upper_path, 'w', encoding='utf-8') as f:
+                f.write("# UPPER CASE README")
+            
+            with open(lower_path, 'w', encoding='utf-8') as f:
+                f.write("# lower case readme")
+            
+            text = "Check @README.md and @readme.md for information."
+            result = parse_instructions(text, base_dir=temp_dir)
+            
+            assert result.input_text == text
+            # Should treat as different files due to case sensitivity
+            assert "README.md" in result.markdown_contents
+            assert "readme.md" in result.markdown_contents
+            # Content should not be empty since these files exist
+            assert len(result.markdown_contents["README.md"]) > 0
+            assert len(result.markdown_contents["readme.md"]) > 0
+            assert result.markdown_contents["README.md"] == "# UPPER CASE readme"
+            assert result.markdown_contents["readme.md"] == "# lower case readme"
     
     def test_parse_instructions_special_characters(self):
         """Test parsing with special characters in filenames."""
@@ -252,14 +264,29 @@ class TestParseInstructionsFileReading:
     
     def test_parse_instructions_default_base_dir(self):
         """Test that default base directory is current working directory."""
-        # This test verifies that when no base_dir is provided, it uses os.getcwd()
-        text = "Read @readme.md for information."
-        result = parse_instructions(text)  # No base_dir provided
-        
-        assert result.input_text == text
-        # Content will not be empty since readme.md exists in current directory
-        assert "readme.md" in result.markdown_contents
-        assert len(result.markdown_contents["readme.md"]) > 0
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create a test file
+            file_path = os.path.join(temp_dir, "readme.md")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write("# Test readme content")
+            
+            # Change to temp directory to test default base_dir
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(temp_dir)
+                
+                # This test verifies that when no base_dir is provided, it uses os.getcwd()
+                text = "Read @readme.md for information."
+                result = parse_instructions(text)  # No base_dir provided
+                
+                assert result.input_text == text
+                # Content will not be empty since readme.md exists in current directory
+                assert "readme.md" in result.markdown_contents
+                assert len(result.markdown_contents["readme.md"]) > 0
+                assert result.markdown_contents["readme.md"] == "# Test readme content"
+            finally:
+                # Always restore original directory
+                os.chdir(original_cwd)
 
 
 class TestPcmDataMethods:
