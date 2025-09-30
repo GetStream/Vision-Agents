@@ -3,7 +3,6 @@ import pytest
 
 from stream_agents.core.utils.queue import LatestNQueue
 from stream_agents.core.utils.video_forwarder import VideoForwarder
-from tests.base_test import BaseTest
 
 class TestLatestNQueue:
     """Test suite for LatestNQueue"""
@@ -111,7 +110,7 @@ class TestLatestNQueue:
         assert obj3.value == 3
 
 
-class TestVideoForwarder(BaseTest):
+class TestVideoForwarder:
     """Test suite for VideoForwarder using real video data"""
     
     @pytest.mark.asyncio
@@ -425,7 +424,7 @@ class TestVideoForwarder(BaseTest):
             await forwarder.stop()
 
 
-class TestVideoForwarderIntegration(BaseTest):
+class TestVideoForwarderIntegration:
     """Integration tests for VideoForwarder with real video data"""
     
     @pytest.mark.asyncio

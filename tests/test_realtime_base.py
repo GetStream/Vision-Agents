@@ -88,7 +88,7 @@ class FakeRealtime(base_rt.Realtime):
         """Resume playback (no-op for fake)."""
         pass
 
-@pytest.skip(reason="Conversation class has not fully been wired into Agent yet")
+@pytest.mark.skip(reason="Conversation class has not fully been wired into Agent yet")
 @pytest.mark.asyncio
 async def test_agent_conversation_updates_with_realtime():
     """Test that Agent wires Realtime events to conversation updates."""
