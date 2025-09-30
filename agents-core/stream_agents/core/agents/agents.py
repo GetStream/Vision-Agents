@@ -16,11 +16,12 @@ from ..llm.events import StandardizedTextDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..llm.events import RealtimeTranscriptEvent, LLMResponseEvent
+from ..llm.events import RealtimeTranscriptEvent, LLMResponseEvent, AfterLLMResponseEvent
 from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
 from ..mcp import MCPBaseServer, MCPManager
+from ..logging_utils import CallContextToken, set_call_context, clear_call_context
 
 
 from .conversation import StreamHandle, Message, Conversation
@@ -117,6 +118,7 @@ class Agent:
         self.vad = vad
         self.processors = processors or []
         self.mcp_servers = mcp_servers or []
+        self._call_context_token: CallContextToken | None = None
         
         # Initialize MCP manager if servers are provided
         self.mcp_manager = MCPManager(self.mcp_servers, self.llm, self.logger) if self.mcp_servers else None
@@ -196,10 +198,15 @@ class Agent:
             self.call = call
             self.conversation = None
 
+        # Ensure all subsequent logs include the call context.
+        self._set_call_logging_context(call.id)
+
+        try:
             # Connect to MCP servers if manager is available
             if self.mcp_manager:
                 with self.tracer.start_as_current_span("mcp_manager.connect_all"):
                     await self.mcp_manager.connect_all()
+
 
             # Setup chat and connect it to transcript events
             self.conversation = await self.edge.create_conversation(
@@ -215,28 +222,31 @@ class Agent:
 
             with self.tracer.start_as_current_span("edge.join"):
                 connection = await self.edge.join(self, call)
+        except Exception:
+            self._clear_call_logging_context()
+            raise
 
-            self._connection = connection
-            self._is_running = True
+        self._connection = connection
+        self._is_running = True
 
-            connection._connection._coordinator_ws_client.on_wildcard(
-                "*", lambda event_name, event: self.events.send(event)
-            )
+        connection._connection._coordinator_ws_client.on_wildcard(
+            "*", lambda event_name, event: self.events.send(event)
+        )
 
-            self.logger.info(f"🤖 Agent joined call: {call.id}")
+        self.logger.info(f"🤖 Agent joined call: {call.id}")
 
-            # Set up audio and video tracks together to avoid SDP issues
-            audio_track = self._audio_track if self.publish_audio else None
-            video_track = self._video_track if self.publish_video else None
+        # Set up audio and video tracks together to avoid SDP issues
+        audio_track = self._audio_track if self.publish_audio else None
+        video_track = self._video_track if self.publish_video else None
 
-            if audio_track or video_track:
-                with self.tracer.start_as_current_span("edge.publish_tracks"):
-                    await self.edge.publish_tracks(audio_track, video_track)
-                await self._listen_to_audio_and_video()
+        if audio_track or video_track:
+            with self.tracer.start_as_current_span("edge.publish_tracks"):
+                await self.edge.publish_tracks(audio_track, video_track)
+            await self._listen_to_audio_and_video()
 
-            from .agent_session import AgentSessionContextManager
+        from .agent_session import AgentSessionContextManager
 
-            return AgentSessionContextManager(self, self._connection)
+        return AgentSessionContextManager(self, self._connection)
 
     async def finish(self):
         """Wait for the call to end gracefully.
@@ -275,6 +285,7 @@ class Agent:
         self._is_running = False
         self._user_conversation_handle = None
         self._agent_conversation_handle = None
+        self._clear_call_logging_context()
 
         # Disconnect from MCP servers
         if self.mcp_manager:
@@ -327,6 +338,23 @@ class Agent:
         # Close edge transport
         self.edge.close()
 
+    # ------------------------------------------------------------------
+    # Logging context helpers
+    # ------------------------------------------------------------------
+    def _set_call_logging_context(self, call_id: str) -> None:
+        """Apply the call id to the logging context for the agent lifecycle."""
+
+        if self._call_context_token is not None:
+            self._clear_call_logging_context()
+        self._call_context_token = set_call_context(call_id)
+
+    def _clear_call_logging_context(self) -> None:
+        """Remove the call id from the logging context if present."""
+
+        if self._call_context_token is not None:
+            clear_call_context(self._call_context_token)
+            self._call_context_token = None
+
     async def create_user(self):
         """Create the agent user in the edge provider, if required.
 
@@ -357,13 +385,13 @@ class Agent:
                 self._agent_conversation_handle, event.delta
             )
 
-    async def _handle_after_response(self, llm_response: LLMResponseEvent):
+    async def _handle_after_response(self, event: AfterLLMResponseEvent):
         if self.conversation is None:
             return
 
         if self._agent_conversation_handle is None:
             message = Message(
-                content=llm_response.text,
+                content=event.llm_response.text,
                 role="assistant",
                 user_id=self.agent_user.id,
             )
@@ -373,8 +401,8 @@ class Agent:
             self._agent_conversation_handle = None
 
         # Trigger TTS directly instead of through event system
-        if llm_response.text and llm_response.text.strip():
-            await self.tts.send(llm_response.text)
+        if event.llm_response.text and event.llm_response.text.strip():
+            await self.tts.send(event.llm_response.text)
 
     def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
@@ -520,8 +548,15 @@ class Agent:
 
         # If Realtime provider supports video, tell it to watch the video
         if self.realtime_mode:
-            await self.llm._watch_video_track(track)
-            self.logger.info("Forwarding video frames to Realtime provider")
+            # TODO: should we make this configurable? some use cases will want source, others processed track
+            track_to_watch = track
+            if self._video_track:
+                self.logger.info("Forwarding processed video frames to Realtime provider")
+                track_to_watch = self._video_track
+            else:
+                self.logger.info("Forwarding original video frames to Realtime provider")
+            await self.llm._watch_video_track(track_to_watch)
+
 
         hasImageProcessers = len(self.image_processors) > 0
 

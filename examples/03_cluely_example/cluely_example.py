@@ -12,11 +12,16 @@ from stream_agents.core import edge, agents, cli
 # 1. API endpoints to create a sessions, end session
 # 2. Generate 2 - 4 sentiments for new chat messages
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 
 async def main() -> None:
     """Create a simple agent and join a call."""
+    call_id = str(uuid4())
+
     agent_user = UserRequest(id=str(uuid4()), name="My happy AI friend")
     client = Stream.from_env()
     client.upsert_users(UserRequest(id=agent_user.id, name=agent_user.name))
@@ -38,8 +43,8 @@ async def main() -> None:
     )
 
     try:
-        # Join the call - thisc is the main functionality we're demonstrating
-        call = client.video.call("default", str(uuid4()))
+        # Join the call - this is the main functionality we're demonstrating
+        call = client.video.call("default", call_id)
         # Open the demo env
         agent.edge.open_demo(call)
 

@@ -28,6 +28,8 @@ async def start_agent() -> None:
     if not tavus_api_key:
         raise ValueError("TAVUS_KEY environment variable is required")
 
+    call_id = str(uuid4())
+
     # create a stream client and a user object
     client = Stream.from_env()
     agent_user = client.create_user(name="Tavus AI Avatar Agent")
@@ -67,7 +69,7 @@ async def start_agent() -> None:
     )
 
     # Create a call
-    call = client.video.call("default", str(uuid4()))
+    call = client.video.call("default", call_id)
 
     # Open the demo UI
     open_demo(call)

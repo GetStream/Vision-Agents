@@ -9,7 +9,10 @@ from stream_agents.plugins import elevenlabs, deepgram, openai, getstream
 from stream_agents.core import agents, cli
 from stream_agents.core.events import CallSessionParticipantJoinedEvent
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -20,6 +23,8 @@ TODO:
 '''
 
 async def start_agent() -> None:
+
+    call_id = str(uuid4())
 
     llm = openai.LLM(model="gpt-4o-mini")
     # create an agent to run with Stream's edge, openAI llm
@@ -44,7 +49,7 @@ async def start_agent() -> None:
         await agent.simple_response(f"Hello, {event.participant.user.name}")
 
     # Create a call
-    call = agent.edge.client.video.call("default", str(uuid4()))
+    call = agent.edge.client.video.call("default", call_id)
 
     # Open the demo UI
     agent.edge.open_demo(call)
