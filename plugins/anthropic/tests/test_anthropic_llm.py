@@ -69,6 +69,10 @@ class TestClaudeLLM:
         await asyncio.sleep(0.01)
         
         response = await llm.simple_response("Explain magma to a 5 year old")
+        
+        # Wait for all events in queue to be processed
+        await llm.events.wait(timeout=1.0)
+        
         print(response)
 
         assert streamingWorks

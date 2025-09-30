@@ -76,8 +76,11 @@ class TestOpenAILLM:
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
+        
+        # Wait for all events in queue to be processed
+        await llm.events.wait(timeout=1.0)
+        
         print(response.text)
-
 
         assert response.text
         assert streamingWorks

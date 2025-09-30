@@ -186,9 +186,14 @@ async def test_close_emits_disconnected_event():
     async def _on_disc(event: RealtimeDisconnectedEvent):
         observed["disconnected"] = True
 
-    await rt.close()
-    # Allow async event handlers to run
+    # Allow event subscription to be processed
     await asyncio.sleep(0.01)
+
+    await rt.close()
+    
+    # Wait for all events in queue to be processed
+    await rt.events.wait(timeout=1.0)
+    
     assert observed["disconnected"] is True
 
 
