@@ -3,7 +3,7 @@ import pytest
 from dotenv import load_dotenv
 import os
 
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent
 from stream_agents.core.agents.conversation import Message
 from stream_agents.plugins.xai.llm import XAILLM
 
@@ -69,6 +69,10 @@ class TestXAILLM:
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
+        
+        # Wait for all events in queue to be processed
+        await llm.events.wait(timeout=1.0)
+        
         print(response.text)
 
         assert response.text
