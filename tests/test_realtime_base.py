@@ -1,3 +1,29 @@
+"""
+Tests for Realtime base class functionality.
+
+TODO: These tests need refactoring for new Agent API
+------------------------------------------------------
+The Agent class API has changed significantly:
+- Now requires 'edge' parameter (StreamEdge instance) in __init__
+- 'rtc.join' no longer exists at module level (was refactored)
+- Connection management has been restructured into AgentSessionContextManager
+- Event wiring and conversation setup happens in agent.join()
+
+These tests use old mocking patterns that assume:
+- rtc.join() exists as a module-level function
+- Agent can be instantiated without an edge parameter
+- StreamConversation is directly patchable
+
+Required Changes:
+- Create StreamEdge instance
+- Update to match new agent.join() flow
+- Update AgentSessionContextManager mocking
+- Fix event subscription patterns to match new EventManager
+
+This is tracked as technical debt and should be addressed in a separate PR.
+Until fixed, these tests document expected behavior but will fail.
+"""
+
 import asyncio
 from types import SimpleNamespace
 from typing import Any, Optional
