@@ -1,5 +1,5 @@
 from typing import Optional, List, TYPE_CHECKING, Any, Dict
-
+import json
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
 from anthropic.types import (
@@ -14,7 +14,7 @@ from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
-from stream_agents.core.llm.events import StandardizedTextDeltaEvent, AfterLLMResponseEvent
+from stream_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
 from stream_agents.core.processors import Processor
 from . import events
 
@@ -291,12 +291,9 @@ class ClaudeLLM(LLM):
 
             # 4) Done -> return all collected text
             total_text = "".join(text_parts)
-            llm_response = LLMResponseEvent(last_followup_stream or original, total_text)  # type: ignore[arg-type]
+            llm_response = LLMResponseCompletedEvent(original=last_followup_stream or original, text=total_text, plugin_name="anthropic")
 
-        self.events.send(AfterLLMResponseEvent(
-            plugin_name="anthropic",
-            llm_response=llm_response  # type: ignore[arg-type]
-        ))
+        self.events.send(llm_response)
 
         return llm_response
 
@@ -318,7 +315,8 @@ class ClaudeLLM(LLM):
             if hasattr(delta_event.delta, "text") and delta_event.delta.text:
                 text_parts.append(delta_event.delta.text)
 
-                self.events.send(StandardizedTextDeltaEvent(
+                self.events.send(LLMResponseChunkEvent(
+                    plugin_name="antrhopic",
                     content_index=delta_event.index,
                     item_id="",
                     output_index=0,
@@ -405,11 +403,9 @@ class ClaudeLLM(LLM):
     def _extract_tool_calls_from_stream_chunk(self, chunk: Any, current_tool_call: Optional[NormalizedToolCallItem] = None) -> tuple[List[NormalizedToolCallItem], Optional[NormalizedToolCallItem]]:  # type: ignore[override]
         """
         Extract tool calls from Anthropic streaming chunk using index-keyed accumulation.
-        
         Args:
             chunk: Anthropic streaming event
             current_tool_call: Currently accumulating tool call (unused in this implementation)
-            
         Returns:
             Tuple of (completed tool calls, current tool call being accumulated)
         """
@@ -436,7 +432,6 @@ class ClaudeLLM(LLM):
         elif t == "content_block_stop":
             pending = self._pending_tool_uses_by_index.pop(chunk.index, None)
             if pending:
-                import json
                 buf = "".join(pending["parts"]).strip() or "{}"
                 try:
                     args = json.loads(buf)
@@ -449,22 +444,16 @@ class ClaudeLLM(LLM):
                     "arguments_json": args
                 }
                 tool_calls.append(tool_call_item)
-        
         return tool_calls, None
 
     def _create_tool_result_message(self, tool_calls: List[NormalizedToolCallItem], results: List[Any]) -> List[Dict[str, Any]]:
         """
         Create tool result messages for Anthropic.
-        
-        Args:
             tool_calls: List of tool calls that were executed
             results: List of results from function execution
-            
         Returns:
             List of tool result messages in Anthropic format
         """
-        import json
-        
         # Create a single user message with tool_result blocks
         blocks = []
         for tool_call, result in zip(tool_calls, results):
@@ -473,13 +462,11 @@ class ClaudeLLM(LLM):
                 payload = str(result)
             else:
                 payload = json.dumps(result)
-            
             blocks.append({
                 "type": "tool_result",
                 "tool_use_id": tool_call["id"],  # Critical: must match tool_use.id
                 "content": payload
             })
-        
         return [{"role": "user", "content": blocks}]
 
     def _concat_text_blocks(self, content):

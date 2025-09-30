@@ -9,7 +9,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-from stream_agents.core.llm.events import StandardizedTextDeltaEvent, StandardizedResponseCompletedEvent, AfterLLMResponseEvent
+from stream_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
 from . import events
 
 from stream_agents.core.processors import Processor
@@ -354,7 +354,6 @@ class OpenAILLM(LLM):
         Returns:
             List of normalized tool call items
         """
-        import json
         calls = []
         for item in getattr(response, "output", []) or []:
             if getattr(item, "type", None) == "function_call":
@@ -424,7 +423,7 @@ class OpenAILLM(LLM):
         elif event.type == "response.output_text.delta":
             # standardize the delta event
             delta_event: ResponseTextDeltaEvent = event
-            self.events.send(StandardizedTextDeltaEvent(
+            self.events.send(LLMResponseChunkEvent(
                 plugin_name="openai",
                 content_index=delta_event.content_index,
                 item_id=delta_event.item_id,
@@ -436,9 +435,10 @@ class OpenAILLM(LLM):
             # standardize the response event and return the llm response
             completed_event: ResponseCompletedEvent = event
             llm_response = LLMResponseEvent[OpenAIResponse](completed_event.response, completed_event.response.output_text)
-            self.events.send(StandardizedResponseCompletedEvent(
+            self.events.send(LLMResponseCompletedEvent(
                 plugin_name="openai",
-                llm_response=llm_response  # type: ignore[arg-type]
+                original=llm_response.original,
+                text=llm_response.text
             ))
             return llm_response
         return None

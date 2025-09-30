@@ -10,7 +10,7 @@ All LLM plugins should inherit from `stream_agents.core.llm.llm.LLM`:
 
 ```python
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.types import LLMTextResponseDeltaEvent
 from . import events
 
 class MyLLM(LLM):
@@ -29,8 +29,8 @@ LLM plugins emit and receive events to communicate with other components in the 
 
 **Response Events:**
 - `LLMResponseEvent` - Complete LLM responses
-- `StandardizedTextDeltaEvent` - Streaming text chunks
-- `StandardizedResponseCompletedEvent` - Response completion
+- `LLMTextResponseDeltaEvent` - Streaming text chunks
+- `LLMTextResponseCompletedEvent` - Response completion
 
 **Custom Plugin Events:**
 - `OpenAIStreamEvent` - OpenAI-specific streaming events
@@ -62,9 +62,9 @@ LLM plugins emit and receive events to communicate with other components in the 
 # Typical LLM event flow
 STTTranscriptEvent → LLM Plugin → LLMResponseEvent → TTS Plugin
                          ↓
-                   StandardizedTextDeltaEvent → Agent
+                   LLMTextResponseDeltaEvent → Agent
                          ↓
-                   StandardizedResponseCompletedEvent → Agent
+                   LLMTextResponseCompletedEvent → Agent
 ```
 
 ### Event Integration Patterns
@@ -103,7 +103,7 @@ class MyAdvancedLLM(LLM):
         
         async for chunk in self._stream_api(text):
             # Emit delta events
-            self.events.send(StandardizedTextDeltaEvent(
+            self.events.send(LLMTextResponseDeltaEvent(
                 plugin_name="myllm",
                 delta=chunk.text
             ))
@@ -203,7 +203,7 @@ Here's a complete example of an LLM plugin:
 # myllm/stream_agents/plugins/myllm/llm.py
 from typing import Optional, List, Any
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
-from stream_agents.core.llm.types import StandardizedTextDeltaEvent
+from stream_agents.core.llm.types import LLMTextResponseDeltaEvent
 from stream_agents.core.processors import Processor
 from . import events
 

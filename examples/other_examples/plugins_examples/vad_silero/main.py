@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
-from stream_agents.core.vad.events import VADAudioEvent
+from stream_agents.core.vad.events import VADAudioEvent, VADErrorEvent
 from stream_agents.plugins import silero, openai, getstream
 
 load_dotenv()
@@ -36,14 +36,21 @@ async def main():
 
     # Subscribe to VAD events
     @agent.subscribe
-    async def on_speech_detected(event: VADAudioEvent):
+    async def handle_speech_detected(event: VADAudioEvent):
         # Extract user info from user_metadata
         user_info = "unknown"
-        if event.user_metadata and "user" in event.user_metadata:
-            user = event.user_metadata["user"]
-            user_info = user.name if hasattr(user, "name") else str(user)
+        if event.user_metadata:
+            user = event.user_metadata
+            user_info = user.name if user.name else str(user)
         
         print(f"Speech detected from user: {user_info} - duration: {event.duration_ms:.2f}ms")
+
+    # Subscribe to VAD error events
+    @agent.subscribe
+    async def handle_vad_error(event: VADErrorEvent):
+        print(f"\n❌ VAD Error: {event.error_message}")
+        if event.context:
+            print(f"    └─ context: {event.context}")
 
     # Create call and open demo
     call = agent.edge.client.video.call("default", str(uuid4()))

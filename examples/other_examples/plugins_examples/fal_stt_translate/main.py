@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Example: Real-time Call Transcription with Deepgram STT
+Example: Real-time Call Transcription with FAL.ai STT
 
 This example demonstrates how to:
-1. Join a Stream video call
-2. Transcribe audio in real-time using Deepgram
-3. Open a browser link for users to join the call
+1. Create an Agent with STT capabilities for translation
+2. Join a Stream video call
+3. Transcribe audio in real-time using FAL.ai STT
+4. Open a browser link for users to join the call
 
 Usage:
     python main.py
 
 Requirements:
-    - Create a .env file with your Stream and Deepgram credentials (see env.example)
+    - Create a .env file with your Stream and FAL.ai credentials (see env.example)
     - Install dependencies: pip install -e .
 """
 
@@ -27,9 +28,11 @@ from dotenv import load_dotenv
 
 from getstream.models import UserRequest
 from getstream.stream import Stream
-from getstream.video import rtc
-from getstream.video.rtc.track_util import PcmData
-from stream_agents.plugins import fal, silero
+from stream_agents.core.agents import Agent
+from stream_agents.core.edge.types import User
+from stream_agents.plugins import fal, silero, getstream, openai
+from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+from stream_agents.core.vad.events import VADAudioEvent, VADErrorEvent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -97,15 +100,6 @@ async def main():
     user_token = client.create_token(user_id, expiration=3600)
     logging.info("🔑 Created token for user: %s", user_id)
 
-    bot_user_id = f"transcription-bot-{uuid.uuid4()}"
-    create_user(client, bot_user_id, "Transcription Bot")
-    logging.info("🤖 Created bot user: %s", bot_user_id)
-
-    # Create the call
-    call = client.video.call("default", call_id)
-    call.get_or_create(data={"created_by_id": bot_user_id})
-    print(f"📞 Call created: {call_id}")
-
     # Open browser for users to join with the user token
     open_browser(client.api_key, user_token, call_id)
 
@@ -116,60 +110,72 @@ async def main():
     print("Join the call in your browser and speak to see transcriptions appear here!")
     print("\nPress Ctrl+C to stop the transcription bot.\n")
 
-    # Initialize FAL.ai STT (api_key comes from .env)
-    stt = fal.STT(target_language="fr")
-    vad = silero.VAD()
+    # Create agent with STT and VAD for transcription
+    agent = Agent(
+        edge=getstream.Edge(),
+        agent_user=User(name="Transcription Bot", id="transcription-bot"),
+        instructions="I transcribe speech and translate it to French.",
+        llm=openai.LLM(model="gpt-4o-mini"),
+        stt=fal.STT(target_language="fr"),
+        vad=silero.VAD(),
+    )
+
+    # Subscribe to VAD events for speech detection
+    @agent.subscribe
+    async def handle_speech_detected(event: VADAudioEvent):
+        user_info = "unknown"
+        if event.user_metadata:
+            user = event.user_metadata
+            user_info = user.name if user.name else str(user)
+        print(f"{time.time()} Speech detected from user: {user_info} duration {event.duration_ms:.2f}ms")
+
+    # Subscribe to transcript events
+    @agent.subscribe
+    async def handle_transcript(event: STTTranscriptEvent):
+        timestamp = time.strftime("%H:%M:%S")
+        user_info = "unknown"
+        if event.user_metadata:
+            user = event.user_metadata
+            user_info = user.name if user.name else str(user)
+        
+        print(f"[{timestamp}] {user_info}: {event.text}")
+        if event.confidence:
+            print(f"    └─ confidence: {event.confidence:.2%}")
+        if event.processing_time_ms:
+            print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
+
+    # Subscribe to STT error events
+    @agent.subscribe
+    async def handle_stt_error(event: STTErrorEvent):
+        print(f"\n❌ STT Error: {event.error_message}")
+        if event.context:
+            print(f"    └─ context: {event.context}")
+
+    # Subscribe to VAD error events
+    @agent.subscribe
+    async def handle_vad_error(event: VADErrorEvent):
+        print(f"\n❌ VAD Error: {event.error_message}")
+        if event.context:
+            print(f"    └─ context: {event.context}")
+
+    # Create call and open demo
+    call = agent.edge.client.video.call("default", call_id)
+    call.get_or_create(data={"created_by_id": "transcription-bot"})
+    agent.edge.open_demo(call)
 
     try:
-        async with await rtc.join(call, bot_user_id) as connection:
-            # Forward audio frames to the VAD engine
-            @connection.on("audio")
-            async def _on_pcm(pcm: PcmData, user):
-                await vad.process_audio(pcm, user)
-
-            # Complete speech turns
-            @vad.on("audio")  # type: ignore[arg-type]
-            async def on_speech_detected(pcm: PcmData, user):
-                print(
-                    f"{time.time()} Speech detected from user: {user} duration {pcm.duration}"
-                )
-                # Process audio through FAL.ai STT with user metadata
-                user_metadata = {"user": user} if user else None
-                await stt.process_audio(pcm, user_metadata)
-
-            @stt.on("transcript")
-            async def on_transcript(event):
-                timestamp = time.strftime("%H:%M:%S")
-                user_info = "unknown"
-                if event.user_metadata and "user" in event.user_metadata:
-                    user = event.user_metadata["user"]
-                    user_info = user.name if hasattr(user, "name") else str(user)
-                print(f"[{timestamp}] {user_info}: {event.text}")
-                if hasattr(event, "confidence") and event.confidence:
-                    print(f"    └─ confidence: {event.confidence:.2%}")
-                if hasattr(event, "processing_time_ms") and event.processing_time_ms:
-                    print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
-
-            @stt.on("error")
-            async def on_stt_error(event):
-                print(f"\n❌ STT Error: {event.error_message}")
-                if hasattr(event, "context") and event.context:
-                    print(f"    └─ context: {event.context}")
-
-            # Keep the connection alive and wait for audio
+        # Join call and start transcription
+        with await agent.join(call):
             print("🎧 Listening for audio... (Press Ctrl+C to stop)")
-            await connection.wait()
-
+            await agent.finish()
     except asyncio.CancelledError:
         print("\n⏹️  Stopping transcription bot...")
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
-
         traceback.print_exc()
     finally:
-        await stt.close()
-        client.delete_users([user_id, bot_user_id])
+        client.delete_users([user_id])
         print("🧹 Cleanup completed")
 
 

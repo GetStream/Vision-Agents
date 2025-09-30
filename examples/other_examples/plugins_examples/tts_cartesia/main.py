@@ -23,8 +23,9 @@ from dotenv import load_dotenv
 
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
-from stream_agents.plugins import cartesia, getstream
+from stream_agents.plugins import cartesia, getstream, openai
 from stream_agents.core.events import CallSessionParticipantJoinedEvent
+from stream_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
 
 load_dotenv()
 
@@ -34,13 +35,26 @@ async def main():
         edge=getstream.Edge(),
         agent_user=User(name="TTS Bot", id="tts-bot"),
         instructions="I'm a TTS bot that greets users when they join.",
+        llm=openai.LLM(model="gpt-4o-mini"),
         tts=cartesia.TTS(),
     )
 
     # Subscribe to participant joined events
     @agent.subscribe
-    async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
+    async def handle_participant_joined(event: CallSessionParticipantJoinedEvent):
         await agent.simple_response(f"Hello {event.participant.user.name}! Welcome to the call.")
+
+    # Subscribe to TTS events
+    @agent.subscribe
+    async def handle_tts_audio(event: TTSAudioEvent):
+        print(f"TTS audio generated: {event.chunk_index} chunks, final: {event.is_final_chunk}")
+
+    # Subscribe to TTS error events
+    @agent.subscribe
+    async def handle_tts_error(event: TTSErrorEvent):
+        print(f"\n❌ TTS Error: {event.error_message}")
+        if event.context:
+            print(f"    └─ context: {event.context}")
 
     # Create call and open demo
     call = agent.edge.client.video.call("default", str(uuid4()))

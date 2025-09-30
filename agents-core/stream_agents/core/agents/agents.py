@@ -3,7 +3,7 @@ import logging
 import time
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from typing import Optional, List, Any
+from typing import Optional, List, Any, TYPE_CHECKING
 from uuid import uuid4
 
 import aiortc
@@ -12,7 +12,7 @@ from aiortc import VideoStreamTrack
 from ..edge.types import Participant, PcmData, Connection, TrackType, User
 from ..llm.events import RealtimePartialTranscriptEvent
 from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
-from ..llm.events import StandardizedTextDeltaEvent
+from ..llm.events import LLMTextResponseDeltaEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
@@ -31,7 +31,6 @@ from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, Processor
 from . import events
 from ..turn_detection import TurnEventData, BaseTurnDetector
-from typing import TYPE_CHECKING, Dict
 
 import getstream.models
 
@@ -364,7 +363,7 @@ class Agent:
         with self.tracer.start_as_current_span("edge.create_user"):
             return await self.edge.create_user(self.agent_user)
 
-    async def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
+    async def _handle_output_text_delta(self, event: LLMTextResponseDeltaEvent):
         """Handle partial LLM response text deltas."""
 
         if self.conversation is None:
@@ -470,6 +469,23 @@ class Agent:
             )
             self.logger.error(f"Error in agent say: {e}")
 
+    async def say(self, text: str, user_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None):
+        """
+        Make the agent say something using TTS.
+        
+        This is a convenience method that sends an AgentSayEvent to trigger TTS synthesis.
+        
+        Args:
+            text: The text for the agent to say
+            user_id: Optional user ID for the speech
+            metadata: Optional metadata to include with the speech
+        """
+        self.events.send(events.AgentSayEvent(
+            plugin_name="agent",
+            text=text,
+            user_id=user_id or self.agent_user.id,
+            metadata=metadata
+        ))
 
     def _setup_turn_detection(self):
         if self.turn_detection:
@@ -664,14 +680,8 @@ class Agent:
     async def _on_transcript(self, event: STTTranscriptEvent | RealtimeTranscriptEvent):
         self.logger.info(f"🎤 [STT transcript]: {event.text}")
 
-        # if the agent is in realtime mode than we dont need to process the transcription
         if not event.text:
             return
-        
-        if not self.realtime_mode:
-            # Only pass user_metadata if it's a Participant
-            participant = event.user_metadata if isinstance(event.user_metadata, Participant) else None
-            await self.simple_response(event.text, participant)
 
         if self.conversation is None:
             return

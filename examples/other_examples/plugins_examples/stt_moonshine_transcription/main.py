@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
 from stream_agents.plugins import moonshine, openai, getstream
-from stream_agents.core.stt.events import STTTranscriptEvent
+from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 
 load_dotenv()
 
@@ -39,18 +39,25 @@ async def main():
 
     # Subscribe to transcript events
     @agent.subscribe
-    async def on_transcript(event: STTTranscriptEvent):
+    async def handle_transcript(event: STTTranscriptEvent):
         # Extract user info from user_metadata
         user_info = "unknown"
-        if event.user_metadata and "user" in event.user_metadata:
-            user = event.user_metadata["user"]
-            user_info = user.name if hasattr(user, "name") else str(user)
+        if event.user_metadata:
+            user = event.user_metadata
+            user_info = user.name if user.name else str(user)
         
         print(f"[{event.timestamp}] {user_info}: {event.text}")
         if event.confidence:
             print(f"    └─ confidence: {event.confidence:.2%}")
         if event.processing_time_ms:
             print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
+
+    # Subscribe to STT error events
+    @agent.subscribe
+    async def handle_stt_error(event: STTErrorEvent):
+        print(f"\n❌ STT Error: {event.error_message}")
+        if event.context:
+            print(f"    └─ context: {event.context}")
 
     # Create call and open demo
     call = agent.edge.client.video.call("default", str(uuid4()))

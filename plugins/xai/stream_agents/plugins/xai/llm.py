@@ -4,8 +4,8 @@ from xai_sdk.chat import system, user, Response, Chunk
 from xai_sdk.proto import chat_pb2
 
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
-from stream_agents.core.llm.events import StandardizedTextDeltaEvent, StandardizedResponseCompletedEvent, AfterLLMResponseEvent
 from stream_agents.core.processors import Processor
+from stream_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
 from . import events
 
 if TYPE_CHECKING:
@@ -175,21 +175,23 @@ class XAILLM(LLM):
 
         # Emit standardized delta events for content
         if chunk.content:
-            standardized_event = StandardizedTextDeltaEvent(
+            self.events.send(LLMResponseChunkEvent(
                 content_index=0,  # xAI doesn't have content_index
                 item_id=chunk.proto.id if hasattr(chunk.proto, "id") else "",
                 output_index=0,  # xAI doesn't have output_index
                 sequence_number=0,  # xAI doesn't have sequence_number
                 delta=chunk.content,
-            )
-            self.events.send(standardized_event)
+                plugin_name="xai",
+            ))
 
         # Check if this is the final chunk (finish_reason indicates completion)
         if chunk.choices and chunk.choices[0].finish_reason:
             # This is the final chunk, return the complete response
             llm_response = LLMResponseEvent[Response](response, response.content)
-            self.events.send(StandardizedResponseCompletedEvent(
-                llm_response=llm_response  # type: ignore[arg-type]
+            self.events.send(LLMResponseCompletedEvent(
+                plugin_name="xai",
+                text=llm_response.text,
+                original=llm_response.original
             ))
             return llm_response
 
