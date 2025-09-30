@@ -69,7 +69,7 @@ def audio_data(mia_wav_path):
 
 
 @pytest.fixture
-def vad_setup():
+async def vad_setup():
     """Create a Silero VAD instance with standard test configuration."""
     vad = silero.VAD(
         sample_rate=16000,  # Use the model's native sample rate
@@ -174,6 +174,9 @@ async def process_audio_in_chunks(
             logger.info(
                 f"Partial speech data: {duration:.2f} seconds ({len(samples)} bytes)"
             )
+
+    # Allow event handlers to register before processing audio
+    await asyncio.sleep(0.01)
 
     # Resample if needed
     if original_sample_rate != vad.sample_rate:
