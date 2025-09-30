@@ -82,9 +82,11 @@ class Realtime(realtime.Realtime):
             framerate=24000, stereo=False, format="s16"
         )
         self._video_forwarder: Optional[VideoForwarder] = None
-        self._session_context = None
+        self._session_context: Optional[Any] = None
         self._session: Optional[AsyncSession] = None
-        self._receive_task = None
+        self._receive_task: Optional[asyncio.Task[Any]] = None
+
+
 
     async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
                               participant: Optional[Participant] = None):
@@ -119,14 +121,14 @@ class Realtime(realtime.Realtime):
         mime = f"audio/pcm;rate={pcm.sample_rate}"
         blob = Blob(data=audio_bytes, mime_type=mime)
 
-        await self._session.send_realtime_input(audio=blob)
+        await self._require_session().send_realtime_input(audio=blob)
 
     async def send_realtime_input(self, *args, **kwargs):
         """
         send_realtime_input wraps the native send_realtime_input
         """
         try:
-            await self._session.send_realtime_input(
+            await self._require_session().send_realtime_input(
                 *args, **kwargs
             )
         except Exception as e:
@@ -142,7 +144,7 @@ class Realtime(realtime.Realtime):
         """
         Don't use send client content, it can cause bugs when combined with send_realtime_input
         """
-        await self._session.send_client_content(
+        await self._require_session().send_client_content(
             *args, **kwargs
         )
 
@@ -171,75 +173,78 @@ class Realtime(realtime.Realtime):
         """
         try:
             while True:
-                async for response in self._session.receive():
-                    response: LiveServerMessage = response
+                async for response in self._require_session().receive():
+                    server_message: LiveServerMessage = response
 
-                    is_input_transcript = response and response.server_content and response.server_content.input_transcription
-                    is_output_transcript = response and response.server_content and response.server_content.output_transcription
-                    is_response = response and response.server_content and response.server_content.model_turn
-                    is_interrupt = response and response.server_content and response.server_content.interrupted
-                    is_turn_complete = response and response.server_content and response.server_content.turn_complete
-                    is_generation_complete = response and response.server_content and response.server_content.generation_complete
+                    is_input_transcript = server_message and server_message.server_content and server_message.server_content.input_transcription
+                    is_output_transcript = server_message and server_message.server_content and server_message.server_content.output_transcription
+                    is_response = server_message and server_message.server_content and server_message.server_content.model_turn
+                    is_interrupt = server_message and server_message.server_content and server_message.server_content.interrupted
+                    is_turn_complete = server_message and server_message.server_content and server_message.server_content.turn_complete
+                    is_generation_complete = server_message and server_message.server_content and server_message.server_content.generation_complete
 
                     if is_input_transcript:
                         # TODO: what to do with this? check with Tommaso
-
-                        self.logger.info("input: %s", response.server_content.input_transcription.text)
+                        if server_message.server_content and server_message.server_content.input_transcription:
+                            self.logger.info("input: %s", server_message.server_content.input_transcription.text)
                     elif is_output_transcript:
                         # TODO: what to do with this?
-
-                        self.logger.info("output: %s", response.server_content.output_transcription.text)
+                        if server_message.server_content and server_message.server_content.output_transcription:
+                            self.logger.info("output: %s", server_message.server_content.output_transcription.text)
                     elif is_interrupt:
-                        self.logger.info("interrupted: %s", response.server_content.interrupted)
+                        if server_message.server_content and server_message.server_content.interrupted:
+                            self.logger.info("interrupted: %s", server_message.server_content.interrupted)
                     elif is_response:
                         # Store the resumption id so we can resume a broken connection
-                        if response.session_resumption_update:
-                            update = response.session_resumption_update
+                        if server_message.session_resumption_update:
+                            update = server_message.session_resumption_update
                             if update.resumable and update.new_handle:
                                 self.session_resumption_id = update.new_handle
 
-                        parts = response.server_content.model_turn.parts
+                        if server_message.server_content and server_message.server_content.model_turn:
+                            parts = server_message.server_content.model_turn.parts
 
-                        for part in parts:
-                            part: Part = part
-                            if part.text:
-                                if part.thought:
-                                    self.logger.info("Gemini thought %s", part.text)
-                                else:
-                                    self.logger.info("output: %s", part.text)
-                                    event = StandardizedTextDeltaEvent(
-                                        plugin_name="gemini",
-                                        delta=part.text
-                                    )
-                                    self.events.send(event)
-                            elif part.inline_data:
-                                data = part.inline_data.data
-                                
-                                # Emit audio output event
-                                audio_event = RealtimeAudioOutputEvent(
-                                    plugin_name="gemini",
-                                    audio_data=data,
-                                    sample_rate=24000
-                                )
-                                self.events.send(audio_event)
-                                
-                                await self.output_track.write(data) # original 24khz here
-                            elif hasattr(part, 'function_call') and part.function_call:
-                                # Handle function calls from Gemini Live
-                                self.logger.info(f"Received function call: {part.function_call.name}")
-                                await self._handle_function_call(part.function_call)
-                            else:
-                                self.logger.debug("Unrecognized part type: %s", part)
+                            if parts:
+                                for current_part in parts:
+                                    typed_part: Part = current_part
+                                    if typed_part.text:
+                                        if typed_part.thought:
+                                            self.logger.info("Gemini thought %s", typed_part.text)
+                                        else:
+                                            self.logger.info("output: %s", typed_part.text)
+                                            event = StandardizedTextDeltaEvent(
+                                                plugin_name="gemini",
+                                                delta=typed_part.text
+                                            )
+                                            self.events.send(event)
+                                    elif typed_part.inline_data:
+                                        data = typed_part.inline_data.data
+                                        
+                                        # Emit audio output event
+                                        audio_event = RealtimeAudioOutputEvent(
+                                            plugin_name="gemini",
+                                            audio_data=data,
+                                            sample_rate=24000
+                                        )
+                                        self.events.send(audio_event)
+                                        
+                                        await self.output_track.write(data) # original 24khz here
+                                    elif hasattr(typed_part, 'function_call') and typed_part.function_call:
+                                        # Handle function calls from Gemini Live
+                                        self.logger.info(f"Received function call: {typed_part.function_call.name}")
+                                        await self._handle_function_call(typed_part.function_call)
+                                    else:
+                                        self.logger.debug("Unrecognized part type: %s", typed_part)
                     elif is_turn_complete:
                         self.logger.info("is_turn_complete complete")
                     elif is_generation_complete:
                         self.logger.info("is_generation_complete complete")
-                    elif response.tool_call:
+                    elif server_message.tool_call:
                         # Handle tool calls from Gemini Live
-                        self.logger.info(f"Received tool call: {response.tool_call}")
-                        await self._handle_tool_call(response.tool_call)
+                        self.logger.info(f"Received tool call: {server_message.tool_call}")
+                        await self._handle_tool_call(server_message.tool_call)
                     else:
-                        self.logger.warning("Unrecognized event structure for gemini %s", response)
+                        self.logger.warning("Unrecognized event structure for gemini %s", server_message)
 
         except asyncio.CancelledError:
             self.logger.info("_receive_loop cancelled")
@@ -284,7 +289,7 @@ class Realtime(realtime.Realtime):
             self._session = None
 
 
-    async def _watch_video_track(self, input_track: MediaStreamTrack, **kwargs) -> None:
+    async def _watch_video_track(self, track: Any, **kwargs) -> None:
         """
         Start sending video frames to Gemini using VideoForwarder.
         We follow the on_track from Stream. If video is turned on or off this gets forwarded.
@@ -295,7 +300,7 @@ class Realtime(realtime.Realtime):
         
         # Create VideoForwarder with the input track
         self._video_forwarder = VideoForwarder(
-            input_track,  # type: ignore[arg-type]
+            track,  # type: ignore[arg-type]
             max_buffer=5,
             fps=float(self.fps),
             name="gemini_forwarder",
@@ -325,7 +330,7 @@ class Realtime(realtime.Realtime):
         try:
             png_bytes = frame_to_png_bytes(frame)
             blob = Blob(data=png_bytes, mime_type="image/png")
-            await self._session.send_realtime_input(media=blob)
+            await self._require_session().send_realtime_input(media=blob)
         except Exception as e:
             self.logger.error(f"Error sending video frame: {e}")
 
@@ -358,7 +363,8 @@ class Realtime(realtime.Realtime):
         
         if config is not None:
             for k, v in config.items():
-                default_config[k] = v
+                if k in default_config:
+                    default_config[k] = v  # type: ignore[literal-required]
         return default_config
 
     def _get_config_with_resumption(self) -> LiveConnectConfigDict:
@@ -368,7 +374,9 @@ class Realtime(realtime.Realtime):
         config = self.config.copy()
         # resume if we have a session resumption id/handle
         if self.session_resumption_id:
-            config["session_resumption"] = SessionResumptionConfig(handle=self.session_resumption_id)
+            from google.genai.types import SessionResumptionConfigDict
+            resumption_config: SessionResumptionConfigDict = {"handle": self.session_resumption_id}  # type: ignore[typeddict-item]
+            config["session_resumption"] = resumption_config  # type: ignore[typeddict-item]
         # set the instructions
         # TODO: potentially we can share the markdown as files/parts.. might do better TBD
         config["system_instruction"] = self._build_enhanced_instructions()
@@ -379,7 +387,7 @@ class Realtime(realtime.Realtime):
             conv_tools = self._convert_tools_to_provider_format(tools_spec)
             # Add tools to the live config
             # Note: The exact key name may need adjustment based on Gemini Live API documentation
-            config["tools"] = conv_tools
+            config["tools"] = conv_tools  # type: ignore[typeddict-item]
             self.logger.info(f"Added {len(tools_spec)} tools to Gemini Live config")
         else:
             self.logger.debug("No tools available - function calling will not work")
@@ -426,12 +434,12 @@ class Realtime(realtime.Realtime):
                     parts = response.server_content.model_turn.parts
                     for part in parts:
                         if hasattr(part, 'function_call') and part.function_call:
-                            calls.append({
+                            call_item: NormalizedToolCallItem = {
                                 "type": "tool_call",
                                 "name": getattr(part.function_call, "name", "unknown"),
-                                "arguments_json": getattr(part.function_call, "args", {}),
-                                "id": getattr(part.function_call, "id", None)
-                            })
+                                "arguments_json": getattr(part.function_call, "args", {})
+                            }
+                            calls.append(call_item)
         except Exception as e:
             self.logger.debug(f"Error extracting tool calls from response: {e}")
         
@@ -481,7 +489,12 @@ class Realtime(realtime.Realtime):
                 self.logger.info(f"Function call {tool_call['name']} succeeded: {response_data}")
             
             # Send function response back to Gemini Live session
-            await self._send_function_response(tool_call["name"], response_data, tool_call.get("id"))
+            call_id_val = tool_call.get("id")
+            await self._send_function_response(
+                str(tool_call["name"]), 
+                response_data, 
+                str(call_id_val) if call_id_val else None
+            )
             
         except Exception as e:
             self.logger.error(f"Error handling function call: {e}")
@@ -513,10 +526,13 @@ class Realtime(realtime.Realtime):
             
             # Send the function response using the correct method
             # The Gemini Live API uses send_tool_response for function responses
-            await self._session.send_tool_response(function_responses=[function_response])
+            await self._require_session().send_tool_response(function_responses=[function_response])
             self.logger.debug(f"Sent function response for {function_name}: {response_data}")
             
         except Exception as e:
             self.logger.error(f"Error sending function response for {function_name}: {e}")
 
-
+    def _require_session(self) -> AsyncSession:
+        if not self._session:
+            raise Exception("Session must be established")
+        return self._session

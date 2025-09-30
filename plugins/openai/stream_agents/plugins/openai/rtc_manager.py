@@ -233,11 +233,11 @@ class RTCManager:
         self.api_key = getenv("OPENAI_API_KEY")
         self.model = model
         self.voice = voice
-        self.token = None
+        self.token = ""
         self.session_info: Optional[dict] = None  # Store session information
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
-        self._mic_track: RealtimeAudioTrack = None
+        self._mic_track: RealtimeAudioTrack = RealtimeAudioTrack(48000)
         self._audio_callback: Optional[Callable[[bytes], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
@@ -291,7 +291,7 @@ class RTCManager:
                     resp = await client.post(url, headers=headers, json=payload, timeout=15)
                     resp.raise_for_status()
                     data: dict = resp.json()
-                    secret = data.get("client_secret")
+                    secret = data.get("client_secret", {})
                     return secret.get("value")
                 except Exception as e:
                     if attempt == 0:
@@ -332,7 +332,6 @@ class RTCManager:
                 logger.error(f"Failed to decode message: {e}")
 
     async def _set_audio_track(self) -> None:
-        self._mic_track = RealtimeAudioTrack(48000)
         self.pc.addTrack(self._mic_track)
 
     async def _set_video_track(self) -> None:
@@ -701,7 +700,6 @@ class RTCManager:
                     self._mic_track.stop()
                 except Exception:
                     pass
-                self._mic_track = None
             await self.pc.close()
         except Exception as e:
             logger.debug(f"RTCManager close error: {e}")

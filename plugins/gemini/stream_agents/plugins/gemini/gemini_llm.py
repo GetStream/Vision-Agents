@@ -90,7 +90,7 @@ class GeminiLLM(LLM):
             cfg = kwargs.get("config")
             if not isinstance(cfg, types.GenerateContentConfig):
                 cfg = types.GenerateContentConfig()
-            cfg.tools = conv_tools
+            cfg.tools = conv_tools  # type: ignore[assignment]
             kwargs["config"] = cfg
 
         # Generate content using the client
@@ -120,10 +120,10 @@ class GeminiLLM(LLM):
             current_calls = pending_calls
             cfg_with_tools = kwargs.get("config")
             
-            seen = set()
+            seen: set[str] = set()
             while current_calls and rounds < MAX_ROUNDS:
                 # Execute tools concurrently with deduplication
-                triples, seen = await self._dedup_and_execute(current_calls, max_concurrency=8, timeout_s=30, seen=seen)
+                triples, seen = await self._dedup_and_execute(current_calls, max_concurrency=8, timeout_s=30, seen=seen)  # type: ignore[arg-type]
                 
                 executed = []
                 parts = []
@@ -139,9 +139,9 @@ class GeminiLLM(LLM):
                     parts.append(types.Part.from_function_response(name=tc["name"], response=sanitized_res))
                 
                 # Send function responses with tools config
-                follow_up_iter = self.chat.send_message_stream(parts, config=cfg_with_tools)
+                follow_up_iter = self.chat.send_message_stream(parts, config=cfg_with_tools)  # type: ignore[arg-type]
                 
-                follow_up_text_parts = []
+                follow_up_text_parts: List[str] = []
                 follow_up_last = None
                 next_calls = []
                 
@@ -169,7 +169,7 @@ class GeminiLLM(LLM):
 
         self.events.send(AfterLLMResponseEvent(
             plugin_name="gemini",
-            llm_response=llm_response
+            llm_response=llm_response  # type: ignore[arg-type]
         ))
 
         # Return the LLM response
@@ -319,5 +319,5 @@ class GeminiLLM(LLM):
                 parts.append(types.Part.from_function_response(name=tc["name"], response=response_data))
             except Exception:
                 # Fallback: create a simple text part
-                parts.append(types.Part.from_text(f"Function {tc['name']} returned: {res}"))
+                parts.append(types.Part(text=f"Function {tc['name']} returned: {res}"))
         return parts
