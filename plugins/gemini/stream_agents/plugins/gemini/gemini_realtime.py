@@ -1,15 +1,13 @@
 import asyncio
 import logging
 from typing import Optional, List, Dict, Any
-from aiortc import MediaStreamTrack
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
 from google.genai.live import AsyncSession
 from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict, VoiceConfigDict, \
     PrebuiltVoiceConfigDict, AudioTranscriptionConfigDict, RealtimeInputConfigDict, TurnCoverage, \
-    ContextWindowCompressionConfigDict, SlidingWindowDict, HttpOptions, LiveServerMessage, Blob, Part, \
-    SessionResumptionConfig
+    ContextWindowCompressionConfigDict, SlidingWindowDict, HttpOptions, LiveServerMessage, Blob, Part
 
 from stream_agents.core.edge.types import Participant
 from stream_agents.core.llm import realtime

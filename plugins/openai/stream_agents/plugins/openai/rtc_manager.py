@@ -4,7 +4,6 @@ import time
 from typing import Any, Optional, Callable, cast
 from os import getenv
 
-import openai
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
 from httpx import AsyncClient, HTTPStatusError
 import logging

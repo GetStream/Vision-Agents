@@ -94,7 +94,6 @@ async def test_agent_conversation_updates_with_realtime():
     """Test that Agent wires Realtime events to conversation updates."""
     from stream_agents.core.edge import EdgeTransport
     from stream_agents.core.edge.types import User, Connection
-    from stream_agents.core.agents.conversation import Message
     
     # ===================================================================
     # Mock Connection - mimics the structure Agent expects
@@ -187,7 +186,7 @@ async def test_agent_conversation_updates_with_realtime():
     # ===================================================================
     # Join call (registers event handlers)
     # ===================================================================
-    session = await agent.join(call)
+    await agent.join(call)
     
     # ===================================================================
     # Trigger events through FakeRealtime

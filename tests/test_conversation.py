@@ -1,16 +1,13 @@
-import pytest
-
-# Skip entire module - StreamConversation class has been removed from codebase
-# TODO: Update tests to use new conversation architecture
-pytestmark = pytest.mark.skip(reason="StreamConversation class removed - tests need migration to new architecture")
-
 import datetime
-import uuid
-import time
+import os
 import threading
-
+import time
+import uuid
 from unittest.mock import Mock
 
+import pytest
+from dotenv import load_dotenv
+from getstream import Stream
 from getstream.chat.client import ChatClient
 from getstream.models import MessageRequest, ChannelResponse, ChannelInput
 
@@ -21,9 +18,10 @@ from stream_agents.core.agents.conversation import (
     # StreamConversation,  # Removed from codebase
     StreamHandle
 )
-import os
-from getstream import Stream
-from dotenv import load_dotenv
+
+# Skip entire module - StreamConversation class has been removed from codebase
+# TODO: Update tests to use new conversation architecture
+pytestmark = pytest.mark.skip(reason="StreamConversation class removed - tests need migration to new architecture")
 
 class TestConversation:
     """Test suite for the abstract Conversation class."""
@@ -275,7 +273,7 @@ class TestStreamConversation:
         for i, msg in enumerate(messages):
             msg.id = f"msg-{i}"
             
-        conversation = StreamConversation(
+        conversation = StreamConversation(  # noqa: F821
             instructions=instructions,
             messages=messages,
             channel=mock_channel,
@@ -704,7 +702,7 @@ class TestStreamConversation:
     def test_shutdown_worker_thread(self, mock_chat_client, mock_channel):
         """Test that shutdown properly stops the worker thread."""
         # Create a fresh conversation without using the fixture to avoid double shutdown
-        conversation = StreamConversation(
+        conversation = StreamConversation(  # noqa: F821
             instructions="Test",
             messages=[],
             channel=mock_channel,
@@ -762,7 +760,7 @@ def test_stream_conversation_integration():
     channel = client.chat.get_or_create_channel("messaging", str(uuid.uuid4()), data=ChannelInput(created_by_id=user.id)).data.channel
 
     # Create conversation
-    conversation = StreamConversation(
+    conversation = StreamConversation(  # noqa: F821
         instructions="Test assistant",
         messages=[],
         channel=channel,

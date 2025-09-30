@@ -6,6 +6,7 @@ using voice commands through the Gemini Live API.
 """
 
 import asyncio
+import logging
 import os
 from uuid import uuid4
 from dotenv import load_dotenv
