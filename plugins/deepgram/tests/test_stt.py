@@ -79,8 +79,9 @@ class MockDeepgramConnection:
 
 
 class MockDeepgramClient:
-    def __init__(self, api_key=None):
+    def __init__(self, api_key=None, config=None):
         self.api_key = api_key
+        self.config = config
         self.listen = MagicMock()
         self.listen.websocket = MagicMock()
         self.listen.websocket.v = MagicMock(return_value=MockDeepgramConnection())
@@ -170,8 +171,9 @@ class MockDeepgramConnectionWithKeepAlive:
 
 
 class MockDeepgramClientWithKeepAlive:
-    def __init__(self, api_key=None):
+    def __init__(self, api_key=None, config=None):
         self.api_key = api_key
+        self.config = config
         self.listen = MagicMock()
         self.listen.websocket = MagicMock()
         self.listen.websocket.v = MagicMock(

@@ -337,8 +337,8 @@ class TestPcmDataMethods:
         assert resampled.pts == 1000
         assert resampled.dts == 950
         assert resampled.time_base == 0.001
-        assert resampled.pts_seconds == 1.0
-        assert resampled.dts_seconds == 0.95
+        assert abs(resampled.pts_seconds - 1.0) < 0.0001
+        assert abs(resampled.dts_seconds - 0.95) < 0.0001
     
     def test_pcm_data_resample_handles_1d_array(self):
         """Test that resampling handles 1D arrays correctly (fixes ndim error)."""
