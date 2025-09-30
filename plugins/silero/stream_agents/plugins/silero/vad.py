@@ -6,6 +6,7 @@ import warnings
 import time
 from typing import Dict, Any, Optional
 from stream_agents.core import vad
+from stream_agents.core.vad.events import VADSpeechStartEvent
 
 from getstream.video.rtc.track_util import PcmData
 from getstream.audio.utils import resample_audio
@@ -528,7 +529,7 @@ class VAD(vad.VAD):
             self._speech_start_probability = speech_prob
             self._speech_probabilities = [speech_prob]  # Reset probability tracking
 
-            self.events.send(vad.VADSpeechStartEvent(
+            self.events.send(VADSpeechStartEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 speech_probability=speech_prob,

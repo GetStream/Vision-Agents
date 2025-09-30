@@ -5,6 +5,7 @@ This module provides tests for benchmarking the Silero VAD implementation,
 processing 10 seconds of audio and reporting RTF (Real-Time Factor) and other metrics.
 """
 
+import asyncio
 import time
 import numpy as np
 import logging
