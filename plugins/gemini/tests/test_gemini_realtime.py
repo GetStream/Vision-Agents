@@ -68,7 +68,7 @@ class TestGeminiRealtime:
         
         await realtime2.simple_response("Listen to the following story, what is Mia looking for?")
         await asyncio.sleep(10.0)
-        await realtime2.send_audio_pcm(mia_audio_16khz)
+        await realtime2.simple_audio_response(mia_audio_16khz)
 
         # Wait a moment to ensure processing
         await asyncio.sleep(10.0)
