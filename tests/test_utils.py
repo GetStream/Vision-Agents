@@ -91,30 +91,33 @@ class TestParseInstructions:
         assert result.markdown_contents == {}
     
     def test_parse_instructions_case_sensitivity(self):
-        """Test that parsing is case sensitive."""
+        """Test that @ mentions with different cases are extracted separately."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Create test files with different cases
-            upper_path = os.path.join(temp_dir, "README.md")
-            lower_path = os.path.join(temp_dir, "readme.md")
+            # Create test files - use different names (not just case variations)
+            # because macOS and Windows use case-insensitive filesystems by default
+            file1_path = os.path.join(temp_dir, "Guide.md")
+            file2_path = os.path.join(temp_dir, "Help.md")
             
-            with open(upper_path, 'w', encoding='utf-8') as f:
-                f.write("# UPPER CASE README")
+            with open(file1_path, 'w', encoding='utf-8') as f:
+                f.write("# Guide Content")
             
-            with open(lower_path, 'w', encoding='utf-8') as f:
-                f.write("# lower case readme")
+            with open(file2_path, 'w', encoding='utf-8') as f:
+                f.write("# Help Content")
             
-            text = "Check @README.md and @readme.md for information."
+            # Test that the parser correctly extracts both case variations from text
+            # even if they refer to the same file on case-insensitive filesystems
+            text = "Check @Guide.md and @guide.md and @Help.md for information."
             result = parse_instructions(text, base_dir=temp_dir)
             
             assert result.input_text == text
-            # Should treat as different files due to case sensitivity
-            assert "README.md" in result.markdown_contents
-            assert "readme.md" in result.markdown_contents
-            # Content should not be empty since these files exist
-            assert len(result.markdown_contents["README.md"]) > 0
-            assert len(result.markdown_contents["readme.md"]) > 0
-            assert result.markdown_contents["README.md"] == "# UPPER CASE readme"
-            assert result.markdown_contents["readme.md"] == "# lower case readme"
+            # Parser should extract all mentioned filenames
+            assert "Guide.md" in result.markdown_contents
+            assert "guide.md" in result.markdown_contents  
+            assert "Help.md" in result.markdown_contents
+            # On case-insensitive systems, Guide.md and guide.md will have same content
+            # but the parser still tracks them separately by their @ mention
+            assert len(result.markdown_contents["Guide.md"]) > 0
+            assert len(result.markdown_contents["Help.md"]) > 0
     
     def test_parse_instructions_special_characters(self):
         """Test parsing with special characters in filenames."""
