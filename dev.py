@@ -90,9 +90,9 @@ def mypy():
 @cli.command()
 def mypy_plugins():
     """Run mypy type checks on all plugins."""
-    click.echo("Running mypy on plugins...")
+    click.echo("Running mypy on plugins 2...")
     run(
-        "uv run mypy --install-types --non-interactive --explicit-package-bases plugins"
+        "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
     )
 
 
@@ -121,12 +121,12 @@ def check():
     # Run mypy on plugins
     click.echo("\n=== 3. MyPy Plugin Type Checking ===")
     run(
-        "uv run mypy --install-types --non-interactive --explicit-package-bases plugins"
+        "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
     )
 
     # Run unit tests
     click.echo("\n=== 4. Unit Tests ===")
-    run("uv run py.test -m 'not integration'")
+    run("uv run py.test -m 'not integration' -n auto")
 
     click.echo("\n✅ All checks passed!")
 

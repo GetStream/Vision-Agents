@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+
+from stream_agents.core.edge.types import PcmData
 from stream_agents.core.events import PluginBaseEvent
 from typing import Optional, Any
 
@@ -7,7 +9,7 @@ from typing import Optional, Any
 class AudioReceivedEvent(PluginBaseEvent):
     """Event emitted when audio is received from a participant."""
     type: str = field(default='plugin.edge.audio_received', init=False)
-    pcm_data: Optional[Any] = None
+    pcm_data: Optional[PcmData] = None
     participant: Optional[Any] = None
 
 

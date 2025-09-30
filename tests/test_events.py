@@ -67,7 +67,7 @@ async def test_subscribe_with_multiple_events_different():
     with pytest.raises(RuntimeError):
         @manager.subscribe
         async def multi_event_handler(event1: ValidEvent, event2: AnotherEvent):
-            value += 1
+            pass
 
 
 @pytest.mark.asyncio

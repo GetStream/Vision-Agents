@@ -2,7 +2,7 @@ import abc
 import logging
 import time
 import uuid
-from typing import Optional, Dict, Any, Tuple, List
+from typing import Optional, Dict, Any, Tuple, List, Union
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
@@ -101,7 +101,7 @@ class STT(abc.ABC):
     def _emit_transcript_event(
         self,
         text: str,
-        user_metadata: Optional[Dict[str, Any]],
+        user_metadata: Optional[Union[Dict[str, Any], Participant]],
         metadata: Dict[str, Any],
     ):
         """
@@ -128,7 +128,7 @@ class STT(abc.ABC):
     def _emit_partial_transcript_event(
         self,
         text: str,
-        user_metadata: Optional[Dict[str, Any]],
+        user_metadata: Optional[Union[Dict[str, Any], Participant]],
         metadata: Dict[str, Any],
     ):
         """
@@ -156,7 +156,7 @@ class STT(abc.ABC):
         self,
         error: Exception,
         context: str = "",
-        user_metadata: Optional[Dict[str, Any]] = None,
+        user_metadata: Optional[Union[Dict[str, Any], Participant]] = None,
     ):
         """
         Emit an error event with structured data.
@@ -240,7 +240,7 @@ class STT(abc.ABC):
 
     @abc.abstractmethod
     async def _process_audio_impl(
-        self, pcm_data: PcmData, user_metadata: Optional[Dict[str, Any]] = None
+        self, pcm_data: PcmData, user_metadata: Optional[Union[Dict[str, Any], Participant]] = None
     ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
         """
         Implementation-specific method to process audio data.

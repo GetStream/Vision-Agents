@@ -28,9 +28,9 @@ class MCPServerLocal(MCPBaseServer):
         self.command = command
         self.env = env or {}
         self._server_params: Optional[StdioServerParameters] = None
-        self._client_context = None
-        self._session_context = None
-        self._get_session_id_cb: Optional[Callable[[], str]] = None
+        self._client_context: Optional[object] = None  # AsyncGeneratorContextManager
+        self._session_context: Optional[object] = None  # ClientSession context manager
+        self._get_session_id_cb: Optional[Callable[[], Optional[str]]] = None
         
         # Parse command into executable and arguments
         self._parse_command()
@@ -61,17 +61,17 @@ class MCPServerLocal(MCPBaseServer):
             )
             
             # Create the stdio client context
-            self._client_context = stdio_client(self._server_params)
+            self._client_context = stdio_client(self._server_params)  # type: ignore[assignment]
             
             # Enter the context to get the read/write streams
             # Note: stdio_client only returns (read, write), no session ID callback
-            read, write = await self._client_context.__aenter__()
+            read, write = await self._client_context.__aenter__()  # type: ignore[attr-defined]
             
             # Create the client session context manager
-            self._session_context = ClientSession(read, write)
+            self._session_context = ClientSession(read, write)  # type: ignore[assignment]
             
             # Enter the session context and get the actual session
-            self._session = await self._session_context.__aenter__()
+            self._session = await self._session_context.__aenter__()  # type: ignore[attr-defined]
             
             # Initialize the connection
             await self._session.initialize()
@@ -114,7 +114,7 @@ class MCPServerLocal(MCPBaseServer):
         # Close the session context
         if self._session_context:
             try:
-                await self._session_context.__aexit__(None, None, None)
+                await self._session_context.__aexit__(None, None, None)  # type: ignore[attr-defined]
             except Exception as e:
                 self.logger.warning(f"Error closing MCP session context: {e}")
             self._session_context = None
@@ -122,7 +122,7 @@ class MCPServerLocal(MCPBaseServer):
         # Close the client context
         if self._client_context:
             try:
-                await self._client_context.__aexit__(None, None, None)
+                await self._client_context.__aexit__(None, None, None)  # type: ignore[attr-defined]
             except Exception as e:
                 self.logger.warning(f"Error closing MCP client context: {e}")
             self._client_context = None

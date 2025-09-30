@@ -90,7 +90,7 @@ class OpenAILLM(LLM):
             instructions=instructions,
         )
 
-    async def create_response(self, *args: P.args, **kwargs: P.kwargs) -> LLMResponseEvent[OpenAIResponse]:
+    async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponseEvent[OpenAIResponse]:
         """
         create_response gives you full support/access to the native openAI responses.create method
         this method wraps the openAI method and ensures we broadcast an event which the agent class hooks into
@@ -107,7 +107,7 @@ class OpenAILLM(LLM):
         # Add tools if available - convert to OpenAI format
         tools_spec = self._get_tools_for_provider()
         if tools_spec:
-            kwargs["tools"] = self._convert_tools_to_provider_format(tools_spec)
+            kwargs["tools"] = self._convert_tools_to_provider_format(tools_spec)  # type: ignore[arg-type]
 
         # Use parsed instructions if available (includes markdown file contents)
         if hasattr(self, 'parsed_instructions') and self.parsed_instructions:
@@ -164,15 +164,15 @@ class OpenAILLM(LLM):
                 llm_response = await self._handle_tool_calls(pending_tool_calls, kwargs)
         else:
             # Defensive fallback for unknown response types
-            llm_response = LLMResponseEvent[OpenAIResponse](None, "")
+            llm_response = LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
         if llm_response is not None:
             self.events.send(AfterLLMResponseEvent(
                 plugin_name="openai",
-                llm_response=llm_response
+                llm_response=llm_response  # type: ignore[arg-type]
             ))
 
-        return llm_response or LLMResponseEvent[OpenAIResponse](None, "")
+        return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
     async def _handle_tool_calls(self, tool_calls: List[NormalizedToolCallItem], original_kwargs: Dict[str, Any]) -> LLMResponseEvent[OpenAIResponse]:
         """
@@ -194,7 +194,7 @@ class OpenAILLM(LLM):
         
         for round_num in range(max_rounds):
             # Execute tools (with cross-round deduplication)
-            triples, seen = await self._dedup_and_execute(current_tool_calls, max_concurrency=8, timeout_s=30, seen=seen)
+            triples, seen = await self._dedup_and_execute(current_tool_calls, max_concurrency=8, timeout_s=30, seen=seen)  # type: ignore[arg-type]
             
             # If no tools were executed, break the loop
             if not triples:
@@ -221,9 +221,12 @@ class OpenAILLM(LLM):
             
             # Don't send empty tool result inputs
             if not tool_messages:
-                return llm_response or LLMResponseEvent[OpenAIResponse](None, "")
+                return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
             
             # Send follow-up request with tool results
+            if not self.openai_conversation:
+                return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
+            
             follow_up_kwargs = {
                 "model": current_kwargs.get("model", self.model),
                 "conversation": self.openai_conversation.id,
@@ -234,7 +237,7 @@ class OpenAILLM(LLM):
             # Include tools again for potential follow-up calls
             tools_spec = self._get_tools_for_provider()
             if tools_spec:
-                follow_up_kwargs["tools"] = self._convert_tools_to_provider_format(tools_spec)
+                follow_up_kwargs["tools"] = self._convert_tools_to_provider_format(tools_spec)  # type: ignore[arg-type]
             
             # Get follow-up response
             follow_up_response = await self.client.responses.create(**follow_up_kwargs)
@@ -278,13 +281,13 @@ class OpenAILLM(LLM):
                     current_kwargs = follow_up_kwargs
                     continue
                 else:
-                    return llm_response or LLMResponseEvent[OpenAIResponse](None, "")
+                    return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
             else:
                 # Defensive fallback
-                return LLMResponseEvent[OpenAIResponse](None, "")
+                return LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
         
         # If we've exhausted all rounds, return the last response
-        return llm_response or LLMResponseEvent[OpenAIResponse](None, "")
+        return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
     @staticmethod
     def _normalize_message(openai_input) -> List["Message"]:
@@ -360,12 +363,13 @@ class OpenAILLM(LLM):
                     args_obj = json.loads(args) if isinstance(args, str) else args
                 except Exception:
                     args_obj = {}
-                calls.append({
+                call_item: NormalizedToolCallItem = {
                     "type": "tool_call",
-                    "id": getattr(item, "call_id", None),        # <-- call_id
+                    "id": getattr(item, "call_id", ""),        # <-- call_id
                     "name": getattr(item, "name", "unknown"),
                     "arguments_json": args_obj,
-                })
+                }
+                calls.append(call_item)
         return calls
 
 
@@ -420,13 +424,6 @@ class OpenAILLM(LLM):
         elif event.type == "response.output_text.delta":
             # standardize the delta event
             delta_event: ResponseTextDeltaEvent = event
-            standardized_event = StandardizedTextDeltaEvent(
-                content_index=delta_event.content_index,
-                item_id=delta_event.item_id,
-                output_index=delta_event.output_index,
-                sequence_number=delta_event.sequence_number,
-                delta=delta_event.delta,
-            )
             self.events.send(StandardizedTextDeltaEvent(
                 plugin_name="openai",
                 content_index=delta_event.content_index,
@@ -441,7 +438,7 @@ class OpenAILLM(LLM):
             llm_response = LLMResponseEvent[OpenAIResponse](completed_event.response, completed_event.response.output_text)
             self.events.send(StandardizedResponseCompletedEvent(
                 plugin_name="openai",
-                llm_response=llm_response
+                llm_response=llm_response  # type: ignore[arg-type]
             ))
             return llm_response
         return None

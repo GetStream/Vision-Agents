@@ -108,6 +108,7 @@ class NormalizedToolCallItem(TypedDict, total=False):
     type: Literal["tool_call"]
     name: str
     arguments_json: Dict[str, Any]
+    id: NotRequired[str]  # Provider-specific tool call ID (e.g., for OpenAI, Anthropic)
 
 
 class NormalizedToolResultItem(TypedDict, total=False):

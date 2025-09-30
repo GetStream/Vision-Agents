@@ -1,6 +1,6 @@
 """Utility to convert MCP tools to function registry format."""
 
-from typing import Any, Dict
+from typing import Any, Dict, Callable
 from mcp import types
 
 from ..llm.llm_types import ToolSchema
@@ -56,7 +56,7 @@ class MCPToolConverter:
         return schema
     
     @staticmethod
-    def create_mcp_tool_wrapper(server_index: int, tool_name: str, agent_ref) -> callable:
+    def create_mcp_tool_wrapper(server_index: int, tool_name: str, agent_ref) -> "Callable":
         """Create a wrapper function for calling MCP tools.
         
         Args:

@@ -2,6 +2,8 @@ import json
 from typing import Any, Optional, List, Dict
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
+from openai.types.realtime import RealtimeSessionCreateRequestParam, ResponseAudioTranscriptDoneEvent, \
+    InputAudioBufferSpeechStartedEvent
 
 from stream_agents.core.llm import realtime
 from stream_agents.core.llm.llm_types import ToolSchema
@@ -9,7 +11,6 @@ import logging
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from .rtc_manager import RTCManager
-from openai.types.realtime import *
 
 from stream_agents.core.edge.types import Participant
 from stream_agents.core.processors import Processor
@@ -89,7 +90,7 @@ class Realtime(realtime.Realtime):
         )
 
     async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
-      participant: Participant = None):
+      participant: Optional[Participant] = None):
         """Send a simple text input to the OpenAI Realtime session.
 
         This is a convenience wrapper that forwards a text prompt upstream via
@@ -149,11 +150,12 @@ class Realtime(realtime.Realtime):
         """
         et = event.get("type")
         if et == "response.audio_transcript.done":
-            event: ResponseAudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent.model_validate(event)
-            self._emit_transcript_event(text=event.transcript, user_metadata={"role": "assistant", "source": "openai"})
-            self._emit_response_event(text=event.transcript, response_id=event.response_id, is_complete=True, conversation_item_id=event.item_id)
+            transcript_event: ResponseAudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent.model_validate(event)
+            self._emit_transcript_event(text=transcript_event.transcript, user_metadata={"role": "assistant", "source": "openai"})
+            self._emit_response_event(text=transcript_event.transcript, response_id=transcript_event.response_id, is_complete=True, conversation_item_id=transcript_event.item_id)
         elif et == "input_audio_buffer.speech_started":
-            event: InputAudioBufferSpeechStartedEvent = InputAudioBufferSpeechStartedEvent.model_validate(event)
+            # Validate event but don't need to store it
+            InputAudioBufferSpeechStartedEvent.model_validate(event)
             await self.output_track.flush()
         elif et == "response.output_item.added":
             # Check if this is a function call
@@ -281,21 +283,22 @@ class Realtime(realtime.Realtime):
         except Exception as e:
             logger.error(f"Failed to send tool response: {e}")
 
-    def _sanitize_tool_output(self, output: Any) -> str:
+    def _sanitize_tool_output(self, value: Any, max_chars: int = 60_000) -> str:
         """Sanitize tool output for OpenAI realtime.
         
         Args:
-            output: The tool output to sanitize
+            value: The tool output to sanitize
+            max_chars: Maximum characters allowed (not used in realtime mode)
             
         Returns:
             Sanitized string output
         """
-        if isinstance(output, str):
-            return output
-        elif isinstance(output, dict):
-            return json.dumps(output, ensure_ascii=False)
+        if isinstance(value, str):
+            return value
+        elif isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
         else:
-            return str(output)
+            return str(value)
 
     def _convert_tools_to_openai_realtime_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
         """Convert ToolSchema objects to OpenAI realtime format.

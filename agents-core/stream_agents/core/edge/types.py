@@ -1,12 +1,15 @@
 #from __future__ import annotations
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Optional, NamedTuple
+import logging
 
 import numpy as np
 from numpy._typing import NDArray
 from pyee.asyncio import AsyncIOEventEmitter
 import av
 
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -20,9 +23,6 @@ class User:
 class Participant:
     original: Any
     user_id: str
-
-
-from enum import StrEnum
 
 
 class TrackType(StrEnum):

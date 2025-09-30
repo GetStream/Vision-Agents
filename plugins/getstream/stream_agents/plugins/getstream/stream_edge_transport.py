@@ -133,7 +133,7 @@ class StreamEdge(EdgeTransport):
         return standardize_connection
 
     def create_audio_track(self):
-        return audio_track.AudioStreamTrack(framerate=16000)
+        return audio_track.AudioStreamTrack(framerate=48000, stereo=True) # default to webrtc framerate
 
     def create_video_track(self):
         return aiortc.VideoStreamTrack()
@@ -161,7 +161,8 @@ class StreamEdge(EdgeTransport):
         )
 
     def close(self):
-        super().close()
+        # Note: Not calling super().close() as it's an abstract method with trivial body
+        pass
 
     def open_demo(self, call: Call) -> str:
         client = call.client.stream

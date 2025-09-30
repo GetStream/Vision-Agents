@@ -225,10 +225,6 @@ class TTS(abc.ABC):
                     f"Unsupported return type from synthesize: {type(audio_data)}"
                 )
 
-            # Log completion with timing information
-            end_time = time.time()
-            total_time = end_time - start_time
-
             # Estimate audio duration - this is approximate without knowing format details
             # Use track framerate if available, otherwise assume 16kHz
             sample_rate = self._track.framerate if self._track else 16000

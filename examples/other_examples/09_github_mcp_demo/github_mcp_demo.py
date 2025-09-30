@@ -6,6 +6,7 @@ by the LLM without any manual registration required.
 """
 
 import asyncio
+import logging
 import os
 from uuid import uuid4
 from dotenv import load_dotenv

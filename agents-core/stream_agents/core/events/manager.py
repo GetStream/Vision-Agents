@@ -3,7 +3,7 @@ import collections
 import types
 import typing
 import logging
-from typing import get_origin, Union, get_args
+from typing import get_origin, Union, get_args, Deque, Dict, Any, Optional
 from .base import ExceptionEvent, HealthCheckEvent, ConnectionOkEvent, ConnectionErrorEvent, ConnectionClosedEvent
 
 
@@ -126,12 +126,12 @@ class EventManager:
             ignore_unknown_events (bool): If True, unknown events are ignored rather than raising errors.
                 Defaults to True.
         """
-        self._queue = collections.deque([])
-        self._events = {}
-        self._handlers = {}
-        self._modules = {}
+        self._queue: Deque[Any] = collections.deque([])
+        self._events: Dict[str, type] = {}
+        self._handlers: Dict[type, typing.List[typing.Callable]] = {}
+        self._modules: Dict[str, typing.List[type]] = {}
         self._ignore_unknown_events = ignore_unknown_events
-        self._processing_task = None
+        self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
 
         self.register(ExceptionEvent)
@@ -236,14 +236,14 @@ class EventManager:
 
     def _generate_import_file(self):
         import_file = []
-        for module, events in self._modules.items():
-            import_file.append(f"from {module.__name__} import (")
+        for module_name, events in self._modules.items():
+            import_file.append(f"from {module_name} import (")
             for event in events:
                 import_file.append(f"    {event.__name__},")
             import_file.append(")")
         import_file.append("")
         import_file.append("__all__ = [")
-        for module, events in self._modules.items():
+        for module_name, events in self._modules.items():
             for event in events:
                 import_file.append(f'    "{event.__name__}",')
         import_file.append("]")
@@ -271,7 +271,7 @@ class EventManager:
             function: The function to unsubscribe from all event types.
         """
         # NOTE: not the efficient but will delete proper pointer to fucntion
-        for funcs in self._events.values():
+        for funcs in self._handlers.values():
             try:
                 funcs.remove(function)
             except ValueError:
@@ -314,10 +314,10 @@ class EventManager:
 
         for name, event_class in annotations.items():
             origin = get_origin(event_class)
-            events = []
+            events: typing.List[type] = []
 
             if origin is Union or isinstance(event_class, types.UnionType):
-                events = get_args(event_class)
+                events = list(get_args(event_class))
                 is_union = True
             else:
                 events = [event_class]
@@ -345,7 +345,7 @@ class EventManager:
             event_type = event.get('type', '')
             try:
                 event_class = self._events[event_type]
-                event = event_class.from_dict(event, infer_missing=True)
+                event = event_class.from_dict(event, infer_missing=True)  # type: ignore[attr-defined]
             except Exception:
                 logger.exception(f"Can't convert dict {event} to event class, skipping")
                 return
@@ -400,7 +400,7 @@ class EventManager:
         for event in events:
             event = self._prepare_event(event)
             if event:
-                logger.info(f"🎯 EventManager.send: {event.__class__.__name__} - {event.type}")
+                #logger.info(f"🎯 EventManager.send: {event.__class__.__name__} - {event.type}")
                 self._queue.append(event)
         
     async def wait(self, timeout: float = 10.0):
@@ -451,7 +451,7 @@ class EventManager:
                 #logger.info(f"Called handler {handler.__name__} from {module_name} for event {event.__class__.__name__}")
                 await handler(event)
             except Exception as exc:
-                self._queue.appendleft(ExceptionEvent(exc, handler))
+                self._queue.appendleft(ExceptionEvent(exc, handler))  # type: ignore[arg-type]
                 module_name = getattr(handler, '__module__', 'unknown')
                 logger.exception(f"Error calling handler {handler.__name__} from {module_name} for event {event.__class__.__name__}")
 

@@ -1,12 +1,12 @@
 import asyncio
 import json
 import time
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, cast
 from os import getenv
+
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
 from httpx import AsyncClient, HTTPStatusError
 import logging
-from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 
 from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamTrack
@@ -16,23 +16,6 @@ from av import AudioFrame, VideoFrame
 from openai.types.realtime import RealtimeSessionCreateRequestParam
 
 from stream_agents.core.utils.video_forwarder import VideoForwarder
-
-# Import timing utilities
-try:
-    from stream_agents.core.utils.timing import timing_decorator, frame_timing_decorator
-except ImportError:
-    # Fallback if timing module not available
-    def timing_decorator(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-    
-    def frame_timing_decorator(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +30,8 @@ class RealtimeAudioTrack(AudioStreamTrack):
     - Generates 20 ms mono PCM16 silence by default
     - Accepts optional push-based PCM via set_input(bytes, sample_rate)
     - Drops old input if new input arrives (no buffering)
+
+    TODO: why do we need this instead of forwarding from 1 AudioStreamTrack to another?
     """
 
     kind = "audio"
@@ -80,15 +65,16 @@ class RealtimeAudioTrack(AudioStreamTrack):
             if arr.ndim == 1:
                 samples = arr.reshape(1, -1)
             else:
-                samples = arr[:1, :]
+                samples = arr[:1, :]  # type: ignore[assignment]
             # Pad or truncate to exactly one 20 ms frame
+            # TODO: why do we have this? this is handled by the audio track queue
             needed = samples_per_frame
             have = samples.shape[1]
             if have < needed:
                 pad = np.zeros((1, needed - have), dtype=np.int16)
-                samples = np.concatenate([samples, pad], axis=1)
+                samples = np.concatenate([samples, pad], axis=1)  # type: ignore[assignment]
             elif have > needed:
-                samples = samples[:, :needed]
+                samples = samples[:, :needed]  # type: ignore[assignment]
         else:
             cached = self._silence_cache.get(sr)
             if cached is None:
@@ -105,7 +91,9 @@ class RealtimeAudioTrack(AudioStreamTrack):
 
 
 class StreamVideoForwardingTrack(VideoStreamTrack):
-    """Track that forwards frames from Stream Video to OpenAI."""
+    """Track that forwards frames from Stream Video to OpenAI.
+    TODO: why do we have this forwarding track, when there is the video_forwarder
+    """
     
     kind = "video"
     
@@ -115,7 +103,7 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         self._fps = max(1, fps)
         self._interval = 1.0 / self._fps
         self._ts = 0
-        self._last_frame_time = 0
+        self._last_frame_time = 0.
         self._frame_count = 0
         self._error_count = 0
         self._consecutive_errors = 0
@@ -128,7 +116,7 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         self._started: bool = False
 
         # Rate limiting for inactive track warnings
-        self._last_inactive_warning = 0
+        self._last_inactive_warning = 0.
         self._inactive_warning_interval = 30.0  # Only warn every 30 seconds
         
         logger.info(f"🎥 StreamVideoForwardingTrack initialized: fps={fps}, interval={self._interval:.3f}s (frame limiting DISABLED for performance)")
@@ -137,17 +125,14 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         if self._started:
             return
         # Create VideoForwarder with the input source track and start it once
-        self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)
+        self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)  # type: ignore[arg-type]
         await self._forwarder.start()
         self._started = True
 
-    @frame_timing_decorator(threshold=0.1)
     async def recv(self):
         """Pull latest frame from forwarder's latest-N buffer and return it to WebRTC."""
         if not self._started:
             await self.start()
-
-        frame_start_time = time.monotonic()
 
         if not self._is_active:
             # Rate limit warnings to avoid spam
@@ -190,9 +175,6 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
             frame.time_base = Fraction(1, self._fps)
             self._ts += 1
             self._last_frame_time = time.monotonic()
-
-            # Optional detailed timing log
-            total_duration = time.monotonic() - frame_start_time
 
             return frame
 
@@ -250,11 +232,11 @@ class RTCManager:
         self.api_key = getenv("OPENAI_API_KEY")
         self.model = model
         self.voice = voice
-        self.token = None
+        self.token = ""
         self.session_info: Optional[dict] = None  # Store session information
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
-        self._mic_track: RealtimeAudioTrack = None
+        self._mic_track: RealtimeAudioTrack = RealtimeAudioTrack(48000)
         self._audio_callback: Optional[Callable[[bytes], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
@@ -290,13 +272,15 @@ class RTCManager:
         logger.info("Remote description set; WebRTC established")
 
 
-    async def _get_session_token(self) -> str | None:
+    async def _get_session_token(self) -> str:
         url = OPENAI_SESSIONS_URL
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload: RealtimeSessionCreateRequestParam = {"model": self.model, "voice": self.voice, "type": "realtime"}
+        # TODO: replace with regular openai client SDK when support for this endpoint is added
+        # TODO: voice is not the right param or typing is wrong here
+        payload: RealtimeSessionCreateRequestParam = {"model": self.model, "voice": self.voice, "type": "realtime"}  # type: ignore[typeddict-unknown-key]
         if self.instructions:
             payload["instructions"] = self.instructions
 
@@ -306,15 +290,15 @@ class RTCManager:
                     resp = await client.post(url, headers=headers, json=payload, timeout=15)
                     resp.raise_for_status()
                     data: dict = resp.json()
-                    secret = data.get("client_secret")
+                    secret = data.get("client_secret", {})
                     return secret.get("value")
                 except Exception as e:
                     if attempt == 0:
                         await asyncio.sleep(1.0)
                         continue
                     logger.error(f"Failed to get OpenAI Realtime session token: {e}")
-                    return None
-            return None
+                    raise
+            raise Exception("Failed to get OpenAI Realtime session token")
 
     async def _add_data_channel(self) -> None:
         # Add data channel
@@ -347,7 +331,6 @@ class RTCManager:
                 logger.error(f"Failed to decode message: {e}")
 
     async def _set_audio_track(self) -> None:
-        self._mic_track = RealtimeAudioTrack(48000)
         self.pc.addTrack(self._mic_track)
 
     async def _set_video_track(self) -> None:
@@ -581,7 +564,7 @@ class RTCManager:
             async def _reader():
                 while True:
                     try:
-                        frame = await asyncio.wait_for(track.recv(), timeout=1.0)
+                        frame: AudioFrame = cast(AudioFrame, await asyncio.wait_for(track.recv(), timeout=1.0))
                     except asyncio.TimeoutError:
                         continue
                     except Exception as e:
@@ -589,6 +572,8 @@ class RTCManager:
                         break
 
                     try:
+                        # TODO: why not use the utility methods for this on PcmData?
+                        # TODO: why do we even need this, audio tracks automatically handle it in some cases
                         samples = frame.to_ndarray()
                         if samples.ndim == 2 and samples.shape[0] > 1:
                             samples = samples.mean(axis=0)
@@ -663,7 +648,7 @@ class RTCManager:
                 try:
                     # Read frame from user's video track
                     logger.debug(f"🎥 Attempting to read frame #{frame_count + 1} from user track...")
-                    frame = await asyncio.wait_for(source_track.recv(), timeout=1.0)
+                    frame: VideoFrame = cast(VideoFrame, await asyncio.wait_for(source_track.recv(), timeout=1.0))
                     frame_count += 1
                     
                     # Log frame details
@@ -714,7 +699,6 @@ class RTCManager:
                     self._mic_track.stop()
                 except Exception:
                     pass
-                self._mic_track = None
             await self.pc.close()
         except Exception as e:
             logger.debug(f"RTCManager close error: {e}")

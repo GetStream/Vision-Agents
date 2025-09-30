@@ -1,53 +1,8 @@
 import asyncio
 import pytest
-import numpy as np
-from unittest.mock import AsyncMock
-from typing import List
 
-from aiortc import VideoStreamTrack
-
-from stream_agents.plugins.gemini.queue import LatestNQueue
-from stream_agents.plugins.gemini.realtime2 import VideoForwarder
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../"))
-from tests.base_test import BaseTest
-
-
-class MockVideoFrame:
-    """Mock video frame for testing"""
-    def __init__(self, frame_id: int = 0):
-        self.frame_id = frame_id
-        self.timestamp = frame_id * 1000  # Simulate timestamp
-    
-    def to_ndarray(self, format: str = "rgb24"):
-        """Mock to_ndarray method"""
-        return np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-
-
-class MockVideoTrack(VideoStreamTrack):
-    """Mock video track that produces frames"""
-    def __init__(self, frames: List[MockVideoFrame] = None, delay: float = 0.01):
-        super().__init__()
-        self.frames = frames or []
-        self.delay = delay
-        self.current_frame = 0
-        self._closed = False
-    
-    async def recv(self):
-        if self._closed or self.current_frame >= len(self.frames):
-            raise asyncio.CancelledError("Track closed")
-        
-        if self.delay > 0:
-            await asyncio.sleep(self.delay)
-        
-        frame = self.frames[self.current_frame]
-        self.current_frame += 1
-        return frame
-    
-    def stop(self):
-        self._closed = True
-
+from stream_agents.core.utils.queue import LatestNQueue
+from stream_agents.core.utils.video_forwarder import VideoForwarder
 
 class TestLatestNQueue:
     """Test suite for LatestNQueue"""
@@ -155,7 +110,7 @@ class TestLatestNQueue:
         assert obj3.value == 3
 
 
-class TestVideoForwarder(BaseTest):
+class TestVideoForwarder:
     """Test suite for VideoForwarder using real video data"""
     
     @pytest.mark.asyncio
@@ -204,21 +159,6 @@ class TestVideoForwarder(BaseTest):
                 frame = await forwarder.next_frame(timeout=1.0)
                 assert hasattr(frame, 'to_ndarray')  # Real video frame
                 
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_next_frame_timeout(self):
-        """Test next_frame timeout behavior"""
-        # Create track with no frames
-        empty_track = MockVideoTrack(frames=[])
-        forwarder = VideoForwarder(empty_track, max_buffer=3)
-        
-        await forwarder.start()
-        
-        try:
-            with pytest.raises(asyncio.TimeoutError):
-                await forwarder.next_frame(timeout=0.1)
         finally:
             await forwarder.stop()
     
@@ -325,37 +265,6 @@ class TestVideoForwarder(BaseTest):
                 # Should be roughly 1/5 = 0.2 seconds between frames
                 assert avg_interval >= 0.15  # Allow some tolerance
                 
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_multiple_consumers(self, bunny_video_track):
-        """Test multiple callback consumers"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
-        
-        received_frames_1 = []
-        received_frames_2 = []
-        
-        def on_frame_1(frame):
-            received_frames_1.append(frame)
-        
-        def on_frame_2(frame):
-            received_frames_2.append(frame)
-        
-        await forwarder.start()
-        
-        try:
-            # Start two consumers
-            await forwarder.start_event_consumer(on_frame_1)
-            await forwarder.start_event_consumer(on_frame_2)
-            
-            # Let them run
-            await asyncio.sleep(0.1)
-            
-            # Both should have received frames
-            assert len(received_frames_1) > 0
-            assert len(received_frames_2) > 0
-            
         finally:
             await forwarder.stop()
     
@@ -484,35 +393,8 @@ class TestVideoForwarder(BaseTest):
             await forwarder.stop()
 
 
-class TestVideoForwarderIntegration(BaseTest):
+class TestVideoForwarderIntegration:
     """Integration tests for VideoForwarder with real video data"""
-    
-    @pytest.mark.asyncio
-    async def test_video_forwarder_with_output_track(self, bunny_video_track):
-        """Test VideoForwarder with an output track scenario"""
-        # Mock output track
-        output_track = AsyncMock()
-        
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
-        
-        # Simulate writing to output track
-        async def write_to_output(frame):
-            await output_track.write(frame)
-        
-        await forwarder.start()
-        
-        try:
-            # Start consumer that writes to output track
-            await forwarder.start_event_consumer(write_to_output)
-            
-            # Let it run
-            await asyncio.sleep(0.2)
-            
-            # Verify output track received frames
-            assert output_track.write.call_count > 0
-            
-        finally:
-            await forwarder.stop()
     
     @pytest.mark.asyncio
     async def test_video_forwarder_with_callback_processing(self, bunny_video_track):

@@ -5,6 +5,7 @@ from typing import (
 )
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
+from stream_agents.core.edge.types import PcmData
 
 
 import abc
@@ -79,7 +80,7 @@ class Realtime(LLM, abc.ABC):
         self._is_connected = True
         # Mark ready when connected if provider uses base emitter
         try:
-            self._ready_event.set()
+            self._ready_event.set()  # type: ignore[attr-defined]
         except Exception:
             pass
         event = events.RealtimeConnectedEvent(

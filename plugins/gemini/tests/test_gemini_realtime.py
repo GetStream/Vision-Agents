@@ -5,13 +5,12 @@ from dotenv import load_dotenv
 from stream_agents.plugins.gemini import Realtime
 from stream_agents.core.llm.events import RealtimeAudioOutputEvent
 from stream_agents.core.utils.utils import frame_to_png_bytes
-from tests.base_test import BaseTest
 
 # Load environment variables
 load_dotenv()
 
 
-class TestGeminiRealtime(BaseTest):
+class TestGeminiRealtime:
     """Integration tests for Realtime2 connect flow"""
 
     @pytest.fixture
@@ -69,7 +68,7 @@ class TestGeminiRealtime(BaseTest):
         
         await realtime2.simple_response("Listen to the following story, what is Mia looking for?")
         await asyncio.sleep(10.0)
-        await realtime2.send_audio_pcm(mia_audio_16khz)
+        await realtime2.simple_audio_response(mia_audio_16khz)
 
         # Wait a moment to ensure processing
         await asyncio.sleep(10.0)

@@ -36,6 +36,9 @@ class Processor(Protocol):
     def input(self) -> Any:
         pass
 
+    def close(self):
+        pass
+
 
 class IntervalProcessor(Processor):
     # TODO: add interval loop

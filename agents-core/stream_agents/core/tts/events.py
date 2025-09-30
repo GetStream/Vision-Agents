@@ -1,4 +1,4 @@
-
+import uuid
 from stream_agents.core.events import (
     PluginBaseEvent, AudioFormat, ConnectionState
 )
