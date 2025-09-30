@@ -14,7 +14,7 @@ from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
-from stream_agents.core.llm.events import StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import StandardizedTextDeltaEvent, AfterLLMResponseEvent
 from stream_agents.core.processors import Processor
 from . import events
 
@@ -293,10 +293,7 @@ class ClaudeLLM(LLM):
             total_text = "".join(text_parts)
             llm_response = LLMResponseEvent(last_followup_stream or original, total_text)
 
-        class AfterLLMResponseEventEvent:
-            pass
-
-        self.events.send(events.AfterLLMResponseEvent(
+        self.events.send(AfterLLMResponseEvent(
             plugin_name="anthropic",
             llm_response=llm_response
         ))
@@ -321,17 +318,12 @@ class ClaudeLLM(LLM):
             if hasattr(delta_event.delta, "text") and delta_event.delta.text:
                 text_parts.append(delta_event.delta.text)
 
-                standardized_event = StandardizedTextDeltaEvent(
+                self.events.send(StandardizedTextDeltaEvent(
                     content_index=delta_event.index,
                     item_id="",
                     output_index=0,
                     sequence_number=0,
-                    type="response.output_text.delta",
                     delta=delta_event.delta.text,
-                )
-                self.events.send(events.StandardizedTextDeltaEvent(
-                    plugin_name="anthropic",
-                    standardized_event=standardized_event
                 ))
         elif event.type == "message_stop":
             stop_event: RawMessageStopEvent = event
