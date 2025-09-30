@@ -29,7 +29,10 @@ import tempfile
 import time
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from stream_agents.core.edge.types import Participant
 import wave
 
 import fal_client
@@ -96,7 +99,7 @@ class STT(stt.STT):
         return wav_buffer.read()
 
     async def _process_audio_impl(
-        self, pcm_data: PcmData, user_metadata: Optional[Dict[str, Any]] = None
+        self, pcm_data: PcmData, user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None
     ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
         """
         Process accumulated speech audio through fal-ai/wizper.

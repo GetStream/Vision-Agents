@@ -165,7 +165,7 @@ class StreamConversation(InMemoryConversation):
             max_wait = 5.0
             start_time = time.time()
             while time.time() - start_time < max_wait:
-                stream_id = self.internal_ids_to_stream_ids.get(message.id)
+                stream_id = self.internal_ids_to_stream_ids.get(message.id if message.id else "")
                 if stream_id:
                     update_op = {
                         "type": "update_message_partial" if completed else "ephemeral_message_update",

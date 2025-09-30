@@ -90,7 +90,7 @@ class Realtime(realtime.Realtime):
         )
 
     async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
-      participant: Participant = None):
+      participant: Optional[Participant] = None):
         """Send a simple text input to the OpenAI Realtime session.
 
         This is a convenience wrapper that forwards a text prompt upstream via

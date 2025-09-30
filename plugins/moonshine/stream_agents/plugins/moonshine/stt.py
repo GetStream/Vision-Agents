@@ -1,7 +1,10 @@
 import os
 import logging
 import time
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from stream_agents.core.edge.types import Participant
 import numpy as np
 import soundfile as sf
 
@@ -260,7 +263,7 @@ class STT(stt.STT):
             return None
 
     async def _process_audio_impl(
-        self, pcm_data: PcmData, user_metadata: Optional[Dict[str, Any]] = None
+        self, pcm_data: PcmData, user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None
     ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
         """
         Process audio data through Moonshine for transcription.
@@ -282,7 +285,7 @@ class STT(stt.STT):
             return None
 
         # Store the current user context
-        self._current_user = user_metadata
+        self._current_user = user_metadata  # type: ignore[assignment]
 
         try:
             # Log incoming audio details for debugging using shared utility

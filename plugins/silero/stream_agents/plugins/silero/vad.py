@@ -4,7 +4,10 @@ import torch
 import numpy as np
 import warnings
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from stream_agents.core.edge.types import Participant
 from stream_agents.core import vad
 from stream_agents.core.vad.events import VADSpeechStartEvent
 
@@ -411,7 +414,7 @@ class VAD(vad.VAD):
             # On error, return low probability
             return 0.0
 
-    async def _flush_speech_buffer(self, user: Optional[Dict[str, Any]] = None) -> None:
+    async def _flush_speech_buffer(self, user: Optional[Union[Dict[str, Any], "Participant"]] = None) -> None:
         """
         Flush the accumulated speech buffer if it meets minimum length requirements.
 
@@ -497,7 +500,7 @@ class VAD(vad.VAD):
         return (self.silence_counter * self.frame_size / self.sample_rate) * 1000
 
     async def _process_frame(
-        self, frame: PcmData, user: Optional[Dict[str, Any]] = None
+        self, frame: PcmData, user: Optional["Participant"] = None
     ) -> None:
         """
         Process a single audio frame with enhanced Silero-specific event data.

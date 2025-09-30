@@ -87,7 +87,7 @@ class Realtime(realtime.Realtime):
         self._receive_task = None
 
     async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
-                              participant: Participant = None):
+                              participant: Optional[Participant] = None):
         """
         Simple response standardizes how to send a text instruction to this LLM.
 

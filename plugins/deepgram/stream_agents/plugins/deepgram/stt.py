@@ -1,6 +1,9 @@
 import json
 import logging
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from stream_agents.core.edge.types import Participant
 import numpy as np
 import os
 import time
@@ -201,7 +204,7 @@ class STT(stt.STT):
             self._emit_error_event(e, "Deepgram connection setup")
 
     async def _process_audio_impl(
-        self, pcm_data: PcmData, user_metadata: Optional[Dict[str, Any]] = None
+        self, pcm_data: PcmData, user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None
     ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
         """
         Process audio data through Deepgram for transcription.
@@ -219,7 +222,7 @@ class STT(stt.STT):
             return None
 
         # Store the current user context for transcript events
-        self._current_user = user_metadata
+        self._current_user = user_metadata  # type: ignore[assignment]
 
         # Check if the input sample rate matches the expected sample rate
         if pcm_data.sample_rate != self.sample_rate:
