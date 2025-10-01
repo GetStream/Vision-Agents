@@ -7,7 +7,7 @@ from google.genai.types import GenerateContentResponse
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
-from stream_agents.core.llm.events import LLMResponseCompletedEvent, LLMTextResponseChunkEvent
+from stream_agents.core.llm.events import LLMResponseCompletedEvent, LLMResponseChunkEvent
 
 from . import events
 
@@ -210,7 +210,7 @@ class GeminiLLM(LLM):
 
         # Check if response has text content
         if hasattr(chunk, 'text') and chunk.text:
-            self.events.send(LLMTextResponseChunkEvent(
+            self.events.send(LLMResponseChunkEvent(
                 plugin_name="gemini",
                 content_index=0,
                 item_id="",
