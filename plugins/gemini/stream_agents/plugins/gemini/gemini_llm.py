@@ -198,7 +198,7 @@ class GeminiLLM(LLM):
 
         return messages
 
-    def _standardize_and_emit_event(self, chunk: GenerateContentResponse, text_parts: List[str]) -> None:
+    def _standardize_and_emit_event(self, chunk: GenerateContentResponse, text_parts: List[str]) -> Optional[LLMResponseEvent[Any]]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """

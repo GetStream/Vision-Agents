@@ -1,4 +1,4 @@
-from typing import Optional, List, TYPE_CHECKING, Any, Dict
+from typing import Optional, List, TYPE_CHECKING, Any, Dict, cast
 import json
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
@@ -88,7 +88,7 @@ class ClaudeLLM(LLM):
             messages=[{"role": "user", "content": text}], max_tokens=1000
         )
 
-    async def create_message(self, *args, **kwargs) -> LLMResponseEvent:
+    async def create_message(self, *args, **kwargs) -> LLMResponseEvent[Any]:
         """
         create_message gives you full support/access to the native Claude message.create method
         this method wraps the Claude method and ensures we broadcast an event which the agent class hooks into
@@ -291,15 +291,14 @@ class ClaudeLLM(LLM):
 
             # 4) Done -> return all collected text
             total_text = "".join(text_parts)
-            llm_response = LLMResponseCompletedEvent(original=last_followup_stream or original, text=total_text, plugin_name="anthropic")
-
-        self.events.send(llm_response)
+            llm_response = LLMResponseEvent(last_followup_stream or original, total_text) # type: ignore
+            self.events.send(LLMResponseCompletedEvent(original=last_followup_stream or original, text=total_text, plugin_name="anthropic"))
 
         return llm_response
 
     def _standardize_and_emit_event(
         self, event: RawMessageStreamEvent, text_parts: List[str]
-    ) -> Optional[LLMResponseEvent]:
+    ) -> Optional[LLMResponseEvent[Any]]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
