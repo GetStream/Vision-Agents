@@ -3,7 +3,7 @@ import logging
 import time
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from typing import Optional, List, Any, TYPE_CHECKING
+from typing import Optional, List, Any, Dict, TYPE_CHECKING
 from uuid import uuid4
 
 import aiortc
@@ -12,11 +12,11 @@ from aiortc import VideoStreamTrack
 from ..edge.types import Participant, PcmData, Connection, TrackType, User
 from ..llm.events import RealtimePartialTranscriptEvent
 from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
-from ..llm.events import LLMTextResponseDeltaEvent
+from ..llm.events import LLMResponseChunkEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..llm.events import RealtimeTranscriptEvent, AfterLLMResponseEvent
+from ..llm.events import RealtimeTranscriptEvent, LLMResponseCompletedEvent
 from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
@@ -363,7 +363,7 @@ class Agent:
         with self.tracer.start_as_current_span("edge.create_user"):
             return await self.edge.create_user(self.agent_user)
 
-    async def _handle_output_text_delta(self, event: LLMTextResponseDeltaEvent):
+    async def _handle_output_text_delta(self, event: LLMResponseChunkEvent):
         """Handle partial LLM response text deltas."""
 
         if self.conversation is None:
@@ -384,16 +384,16 @@ class Agent:
                 self._agent_conversation_handle, event.delta or ""
             )
 
-    async def _handle_after_response(self, event: AfterLLMResponseEvent):
+    async def _handle_after_response(self, event: LLMResponseCompletedEvent):
         if self.conversation is None:
             return
 
-        if event.llm_response is None:
+        if event.text is None or not event.text.strip():
             return
         
         if self._agent_conversation_handle is None:
             message = Message(
-                content=event.llm_response.text,
+                content=event.text,
                 role="assistant",
                 user_id=self.agent_user.id,
             )
@@ -403,8 +403,8 @@ class Agent:
             self._agent_conversation_handle = None
 
         # Trigger TTS directly instead of through event system
-        if self.tts and event.llm_response.text and event.llm_response.text.strip():
-            await self.tts.send(event.llm_response.text)
+        if self.tts and event.text and event.text.strip():
+            await self.tts.send(event.text)
 
     def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")

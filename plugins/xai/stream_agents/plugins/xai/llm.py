@@ -138,8 +138,9 @@ class XAILLM(LLM):
             assert self.xai_chat is not None
             self.xai_chat.append(response)
 
-        self.events.send(AfterLLMResponseEvent(
-            llm_response=llm_response  # type: ignore[arg-type]
+        self.events.send(LLMResponseCompletedEvent(
+            original=llm_response.original,
+            text=llm_response.text
         ))
 
         return llm_response or LLMResponseEvent[Response](

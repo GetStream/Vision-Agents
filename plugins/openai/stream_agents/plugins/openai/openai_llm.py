@@ -167,9 +167,9 @@ class OpenAILLM(LLM):
             llm_response = LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
         if llm_response is not None:
-            self.events.send(AfterLLMResponseEvent(
-                plugin_name="openai",
-                llm_response=llm_response  # type: ignore[arg-type]
+            self.events.send(LLMResponseCompletedEvent(
+                original=llm_response.original,
+                text=llm_response.text
             ))
 
         return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]

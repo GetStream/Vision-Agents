@@ -12,7 +12,7 @@ from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict
 
 from stream_agents.core.edge.types import Participant
 from stream_agents.core.llm import realtime
-from stream_agents.core.llm.events import RealtimeAudioOutputEvent, LLMTextResponseDeltaEvent
+from stream_agents.core.llm.events import RealtimeAudioOutputEvent, LLMResponseChunkEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.processors import Processor
 from stream_agents.core.utils.utils import frame_to_png_bytes
