@@ -3,9 +3,9 @@
 TODO: Image or video. Show code, image and demos
 
 Build Vision Agents quickly with any model or video provider.
-Created by Stream, use [Stream's edge network](https://getstream.io/video/) for ultra-low latency
+Created by Stream, use [Stream's edge network](https://getstream.io/video/) for ultra-low latency.
 
--  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with realtime models
+-  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with gemini/openai realtime models
 -  **Low Latency**: Join quickly (500ms) and low audio/video latency (30ms)
 -  **Open**: Built by Stream, but use any video edge network that you like
 -  **Native APIs**: Native SDK methods from OpenAI (create response), Gemini (generate) and Claude (create message). So you're never behind on the latest features
