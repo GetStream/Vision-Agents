@@ -120,6 +120,14 @@ class StreamEdge(EdgeTransport):
                 user=user
             ))
 
+            track = self._connection.subscriber_pc.track_map[track_id]
+            track.on("ended", lambda: self.events.send(events.TrackEndedEvent(
+                plugin_name="getstream",
+                track_id=track_id,
+                track_type=track_type,
+                user=user
+            )))
+
         @self._connection.on("call_ended")
         async def call_ended(*args, **kwargs):
             self.events.send(events.CallEndedEvent(

@@ -23,6 +23,15 @@ class TrackAddedEvent(PluginBaseEvent):
 
 
 @dataclass
+class TrackEndedEvent(PluginBaseEvent):
+    """Event emitted when a track ends."""
+    type: str = field(default='plugin.edge.track_ended', init=False)
+    track_id: Optional[str] = None
+    track_type: Optional[str] = None
+    user: Optional[Any] = None
+
+
+@dataclass
 class CallEndedEvent(PluginBaseEvent):
     """Event emitted when a call ends."""
     type: str = field(default='plugin.edge.call_ended', init=False)
