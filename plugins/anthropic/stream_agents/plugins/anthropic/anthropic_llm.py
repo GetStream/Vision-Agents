@@ -1,4 +1,4 @@
-from typing import Optional, List, TYPE_CHECKING, Any, Dict, cast
+from typing import Optional, List, TYPE_CHECKING, Any, Dict
 import json
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
