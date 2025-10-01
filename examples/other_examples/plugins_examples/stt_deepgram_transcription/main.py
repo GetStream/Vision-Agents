@@ -25,8 +25,6 @@ from stream_agents.core.agents import Agent
 from stream_agents.core.edge.types import User
 from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 from stream_agents.core.llm.events import LLMTextResponseCompletedEvent
-from stream_agents.core.agents.events import AgentSayEvent, AgentSayStartedEvent, AgentSayCompletedEvent
-from stream_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
 from stream_agents.plugins import deepgram, openai, getstream, elevenlabs
 
 load_dotenv()

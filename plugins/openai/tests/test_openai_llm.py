@@ -1,10 +1,9 @@
-import asyncio
 import pytest
 from dotenv import load_dotenv
 
 from stream_agents.core.agents.conversation import Message
 from stream_agents.plugins.openai.openai_llm import OpenAILLM
-from stream_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
+from stream_agents.core.llm.events import LLMResponseChunkEvent
 
 load_dotenv()
 

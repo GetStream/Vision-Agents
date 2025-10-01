@@ -209,8 +209,7 @@ class Realtime(realtime.Realtime):
                                             self.logger.info("Gemini thought %s", typed_part.text)
                                         else:
                                             self.logger.info("output: %s", typed_part.text)
-                                            event = StandardizedTextDeltaEvent(
-                                                plugin_name="gemini",
+                                            event = LLMResponseChunkEvent(
                                                 delta=typed_part.text
                                             )
                                             self.events.send(event)

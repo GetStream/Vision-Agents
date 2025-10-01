@@ -26,7 +26,6 @@ import uuid
 from dotenv import load_dotenv
 from uuid import uuid4
 
-from getstream.models import UserRequest
 from getstream.stream import Stream
 from getstream.models import CheckResponse, ModerationPayload
 from stream_agents.core.agents import Agent

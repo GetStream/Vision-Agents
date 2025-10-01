@@ -7,7 +7,7 @@ from google.genai.types import GenerateContentResponse
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
-from stream_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
+from stream_agents.core.llm.events import LLMResponseCompletedEvent, LLMTextResponseChunkEvent
 
 from . import events
 

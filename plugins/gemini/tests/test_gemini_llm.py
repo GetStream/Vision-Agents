@@ -1,4 +1,3 @@
-import asyncio
 import pytest
 from dotenv import load_dotenv
 
@@ -6,7 +5,7 @@ from dotenv import load_dotenv
 from stream_agents.core.agents.conversation import InMemoryConversation, Message
 
 from stream_agents.plugins.gemini.gemini_llm import GeminiLLM
-from stream_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
+from stream_agents.core.llm.events import LLMResponseChunkEvent
 
 load_dotenv()
 

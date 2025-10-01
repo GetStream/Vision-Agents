@@ -3,7 +3,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from types import FunctionType
 from dataclasses_json import DataClassJsonMixin
 
