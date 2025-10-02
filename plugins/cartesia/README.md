@@ -9,7 +9,7 @@ process speak PCM audio into a Stream call.
 Install from PyPI (installs both `getstream` and the Cartesia SDK):
 
 ```bash
-pip install "getstream-plugins-cartesia[webrtc]"
+pip install "getstream-plugins-cartesia[webrtc"]"
 ```
 
 If you already have the Stream SDK in your project just add the Cartesia plugin:

@@ -6,7 +6,9 @@ from google.genai.types import GenerateContentResponse
 
 from stream_agents.core.llm.llm import LLM, LLMResponseEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-from stream_agents.core.llm.events import StandardizedTextDeltaEvent, AfterLLMResponseEvent
+
+from stream_agents.core.llm.events import LLMResponseCompletedEvent, LLMResponseChunkEvent
+
 from . import events
 
 from stream_agents.core.processors import Processor
@@ -167,9 +169,10 @@ class GeminiLLM(LLM):
             total_text = "".join(text_parts)
             llm_response = LLMResponseEvent(final_chunk, total_text)
 
-        self.events.send(AfterLLMResponseEvent(
+        self.events.send(LLMResponseCompletedEvent(
             plugin_name="gemini",
-            llm_response=llm_response  # type: ignore[arg-type]
+            original=llm_response.original,
+            text=llm_response.text
         ))
 
         # Return the LLM response
@@ -204,31 +207,26 @@ class GeminiLLM(LLM):
             plugin_name="gemini",
             response_chunk=chunk
         ))
-        
+
         # Check if response has text content
         if hasattr(chunk, 'text') and chunk.text:
-            standardized_event = StandardizedTextDeltaEvent(
+            self.events.send(LLMResponseChunkEvent(
                 plugin_name="gemini",
                 content_index=0,
                 item_id="",
                 output_index=0,
                 sequence_number=0,
                 delta=chunk.text,
-            )
-            self.events.send(standardized_event)
-
+            ))
             text_parts.append(chunk.text)
-
 
         return None
 
     def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
         """
         Convert ToolSchema objects to Gemini format.
-        
         Args:
             tools: List of ToolSchema objects
-            
         Returns:
             List of tools in Gemini format
         """

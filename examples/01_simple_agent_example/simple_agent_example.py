@@ -46,13 +46,16 @@ async def start_agent() -> None:
 
     @agent.subscribe
     async def my_handler(event: CallSessionParticipantJoinedEvent):
-        await agent.simple_response(f"Hello, {event.participant.user.name}")
+        # Skip if the participant joining is the agent itself
+        if event.participant.user.id == "agent":
+            return
+        await agent.say(f"Hello, {event.participant.user.name}")
 
     # Create a call
     call = agent.edge.client.video.call("default", call_id)
 
     # Open the demo UI
-    agent.edge.open_demo(call)
+    await agent.edge.open_demo(call)
 
     # Have the agent join the call/room
     with await agent.join(call):

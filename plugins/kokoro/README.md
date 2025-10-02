@@ -22,7 +22,7 @@ await tts.send("Hello from Kokoro!")
 pip install getstream-plugins-kokoro
 ```
 
-This will pull in the required `kokoro`, `numpy` and `getstream[webrtc]` dependencies.  You also need `espeak-ng` **at runtime** for pronunciation fallback.  On macOS you can install it with Homebrew:
+This will pull in the required `kokoro`, `numpy` and `getstream[webrtc"]` dependencies.  You also need `espeak-ng` **at runtime** for pronunciation fallback.  On macOS you can install it with Homebrew:
 
 ```bash
 brew install espeak-ng

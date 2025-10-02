@@ -97,14 +97,13 @@ class RealtimeErrorEvent(PluginBaseEvent):
         return str(self.error) if self.error else "Unknown error"
 
 @dataclass
-class StandardizedTextDeltaEvent(PluginBaseEvent):
-    type: str = field(default='response.output_text.delta', init=False)
+class LLMResponseChunkEvent(PluginBaseEvent):
+    type: str = field(default='plugin.llm_response_chunk', init=False)
     content_index: int | None = None
     """The index of the content part that the text delta was added to."""
 
     delta: str | None = None
     """The text delta that was added."""
-
 
     item_id: Optional[str] = None
     """The ID of the output item that the text delta was added to."""
@@ -117,25 +116,11 @@ class StandardizedTextDeltaEvent(PluginBaseEvent):
 
 
 @dataclass
-class LLMResponseEvent(PluginBaseEvent):
+class LLMResponseCompletedEvent(PluginBaseEvent):
     """Event emitted after an LLM response is processed."""
-    type: str = field(default='llm.response', init=False)
+    type: str = field(default='plugin.llm_response_completed', init=False)
     original: Any = None
     text: str = ""
-
-
-@dataclass
-class AfterLLMResponseEvent(PluginBaseEvent):
-    """Event emitted after an LLM response is completed."""
-    type: str = field(default='llm.response.after', init=False)
-    llm_response: Optional[LLMResponseEvent] = None
-
-
-@dataclass
-class StandardizedResponseCompletedEvent(PluginBaseEvent):
-    """Event emitted when a standardized response is completed."""
-    type: str = field(default='response.completed', init=False)
-    llm_response: Optional[LLMResponseEvent] = None
 
 
 @dataclass

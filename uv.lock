@@ -4872,7 +4872,7 @@ requires-dist = [
     { name = "daily-python", specifier = ">=0.19.8" },
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
-    { name = "getstream", extras = ["telemetry", "webrtct"], specifier = ">=2.4.2" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.4.2" },
     { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
     { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },

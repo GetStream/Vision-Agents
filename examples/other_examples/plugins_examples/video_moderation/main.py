@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Example: Real-time Call Transcription with Deepgram STT
+Example: Real-time Call Video Moderation with Deepgram STT
 
 This example demonstrates how to:
-1. Join a Stream video call
-2. Transcribe audio in real-time using Deepgram
-3. Open a browser link for users to join the call
+1. Create an Agent with STT capabilities for video moderation
+2. Join a Stream video call
+3. Transcribe audio in real-time and moderate content
+4. Open a browser link for users to join the call
 
 Usage:
     python main.py
@@ -29,10 +30,11 @@ from dotenv import load_dotenv
 
 from getstream.models import UserRequest
 from getstream.stream import Stream
-from getstream.video import rtc
-from getstream.video.rtc.track_util import PcmData
 from getstream.models import CheckResponse, ModerationPayload
-from stream_agents.plugins import deepgram
+from stream_agents.core.agents import Agent
+from stream_agents.core.edge.types import User
+from stream_agents.plugins import deepgram, getstream, openai
+from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -100,7 +102,13 @@ def moderate(client: Stream, text: str, user_name: str) -> CheckResponse:
     ).data
 
 
-async def main(client: Stream):
+async def main():
+    # Load environment variables
+    load_dotenv()
+    
+    # Initialize Stream client from ENV
+    client = Stream.from_env()
+
     # Create a unique call ID for this session
     call_id = str(uuid.uuid4())
     print(f"📞 Call ID: {call_id}")
@@ -112,15 +120,6 @@ async def main(client: Stream):
     user_token = client.create_token(user_id, expiration=3600)
     logging.info("🔑 Created token for user: %s", user_id)
 
-    bot_user_id = f"moderation-bot-{uuid.uuid4()}"
-    create_user(client, bot_user_id, "Moderation Bot")
-    logging.info("🤖 Created bot user: %s", bot_user_id)
-
-    # Create the call
-    call = client.video.call("default", call_id)
-    call.get_or_create(data={"created_by_id": bot_user_id})
-    print(f"📞 Call created: {call_id}")
-
     # Open browser for users to join with the user token
     open_browser(client.api_key, user_token, call_id)
 
@@ -131,63 +130,63 @@ async def main(client: Stream):
     )
     print("\nPress Ctrl+C to stop the moderation bot.\n")
 
-    # Initialize Deepgram STT (api_key comes from .env)
-    stt = deepgram.STT(interim_results=True)
+    # Create agent with STT for moderation
+    agent = Agent(
+        edge=getstream.Edge(),
+        agent_user=User(name="Moderation Bot", id="moderation-bot"),
+        instructions="I moderate audio content in real-time.",
+        llm=openai.LLM(model="gpt-4o-mini"),
+        stt=deepgram.STT(interim_results=True),
+    )
+
+    # Subscribe to transcript events for moderation
+    @agent.subscribe
+    async def handle_transcript(event: STTTranscriptEvent):
+        timestamp = time.strftime("%H:%M:%S")
+        user_info = "unknown"
+        if event.user_metadata:
+            user = event.user_metadata
+            user_info = user.name if user.name else str(user)
+        
+        print(f"[{timestamp}] {user_info}: {event.text}")
+        if event.confidence:
+            print(f"    └─ confidence: {event.confidence:.2%}")
+        if event.processing_time_ms:
+            print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
+
+        # Moderation check (executed in a background thread to avoid blocking)
+        moderation = await asyncio.to_thread(
+            moderate, client, event.text, user_info
+        )
+        print(
+            f"    └─ moderation recommended action: {moderation.recommended_action} for transcript: {event.text}"
+        )
+
+    # Subscribe to STT error events
+    @agent.subscribe
+    async def handle_stt_error(event: STTErrorEvent):
+        print(f"\n❌ STT Error: {event.error_message}")
+        if event.context:
+            print(f"    └─ context: {event.context}")
+
+    # Create call and open demo
+    call = agent.edge.client.video.call("default", call_id)
+    call.get_or_create(data={"created_by_id": "moderation-bot"})
+    agent.edge.open_demo(call)
 
     try:
-        async with await rtc.join(call, bot_user_id) as connection:
-            print(f"✅ Bot joined call: {call_id}")
-
-            call.start_frame_recording()
-
-            # Set up transcription handler
-            @connection.on("audio")
-            async def on_audio(pcm: PcmData, user):
-                # Process audio through Deepgram STT with user metadata
-                user_metadata = {"user": user} if user else None
-                await stt.process_audio(pcm, user_metadata)
-
-            @stt.on("transcript")
-            async def on_transcript(event):
-                timestamp = time.strftime("%H:%M:%S")
-                user_info = "unknown"
-                if event.user_metadata and "user" in event.user_metadata:
-                    user = event.user_metadata["user"]
-                    user_info = user.name if hasattr(user, "name") else str(user)
-                print(f"[{timestamp}] {user_info}: {event.text}")
-                if hasattr(event, "confidence") and event.confidence:
-                    print(f"    └─ confidence: {event.confidence:.2%}")
-                if hasattr(event, "processing_time_ms") and event.processing_time_ms:
-                    print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
-
-                # Moderation check (executed in a background thread to avoid blocking)
-                moderation = await asyncio.to_thread(
-                    moderate, client, event.text, user_info
-                )
-                print(
-                    f"    └─ moderation recommended action: {moderation.recommended_action} for transcript: {event.text}"
-                )
-
-            @stt.on("error")
-            async def on_stt_error(event):
-                print(f"\n❌ STT Error: {event.error_message}")
-                if hasattr(event, "context") and event.context:
-                    print(f"    └─ context: {event.context}")
-
-            # Keep the connection alive and wait for audio
+        # Join call and start moderation
+        with await agent.join(call):
             print("🎧 Listening for audio... (Press Ctrl+C to stop)")
-            await connection.wait()
-
+            await agent.finish()
     except asyncio.CancelledError:
         print("\n⏹️  Stopping moderation bot...")
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
-
         traceback.print_exc()
     finally:
-        await stt.close()
-        client.delete_users([user_id, bot_user_id])
+        client.delete_users([user_id])
         print("🧹 Cleanup completed")
 
 
@@ -216,16 +215,13 @@ def setup_moderation_config(client: Stream):
 
 
 if __name__ == "__main__":
-    print("🎙️  Stream Real-time Audio Moderation Example")
+    print("🎙️  Stream Real-time Video Moderation Example")
     print("=" * 55)
 
-    # Load environment variables
-    load_dotenv()
-
     args = parse_args()
-    client = Stream.from_env()
-
+    
     if args.setup:
+        client = Stream.from_env()
         setup_moderation_config(client)
 
-    asyncio.run(main(client))
+    asyncio.run(main())

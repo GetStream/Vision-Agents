@@ -94,7 +94,7 @@ async def main():
 
         # Open the demo UI
         logger.info("🌐 Opening browser with demo UI...")
-        agent.edge.open_demo(call)
+        await agent.edge.open_demo(call)
         
         # Have the agent join the call/room
         logger.info("🎤 Agent joining call...")

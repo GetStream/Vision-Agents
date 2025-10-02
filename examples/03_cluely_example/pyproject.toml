@@ -1,5 +1,5 @@
 [project]
-name = "stream-agents-golf"
+name = "stream-agents-cluely"
 version = "0.0.0"
 requires-python = ">=3.13"
 
@@ -7,6 +7,11 @@ requires-python = ">=3.13"
 dependencies = [
   "python-dotenv>=1.0",
   "stream-agents",
+  "stream-agents-plugins-deepgram",
+  "stream-agents-plugins-elevenlabs", 
+  "stream-agents-plugins-getstream",
+  "stream-agents-plugins-openai",
+  "stream-agents-plugins-ultralytics",
   "ultralytics>=8.3.184",
   "av>=14.4.0",
   "fastapi>=0.116.1",
@@ -14,3 +19,8 @@ dependencies = [
 
 [tool.uv.sources]
 "stream-agents" = {path = "../../agents-core", editable=true}
+"stream-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
+"stream-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
+"stream-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
+"stream-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"stream-agents-plugins-ultralytics" = {path = "../../plugins/ultralytics", editable=true}

@@ -45,7 +45,7 @@ TTS plugins emit and receive events to handle audio synthesis and coordinate wit
 
 **From LLM:**
 - `LLMResponseEvent` - Text to synthesize
-- `StandardizedTextDeltaEvent` - Streaming text chunks
+- `LLMTextResponseDeltaEvent` - Streaming text chunks
 
 **From Agent:**
 - `AgentSayEvent` - Agent speech requests
