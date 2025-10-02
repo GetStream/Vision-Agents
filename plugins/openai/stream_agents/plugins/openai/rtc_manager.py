@@ -13,7 +13,7 @@ from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamT
 from fractions import Fraction
 import numpy as np
 from av import AudioFrame, VideoFrame
-from openai.types.realtime import RealtimeSessionCreateRequestParam
+from openai.types.beta.realtime import SessionCreateParams as RealtimeSessionCreateRequestParam
 
 from stream_agents.core.utils.video_forwarder import VideoForwarder
 

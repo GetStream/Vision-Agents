@@ -2799,7 +2799,7 @@ dependencies = [
     { name = "aiortc" },
     { name = "click" },
     { name = "daily-python" },
-    { name = "getstream", extra = ["telemetry"] },
+    { name = "getstream", extra = ["telemetry", "webrtc"] },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "krisp-audio", version = "1.4.0", source = { path = "../../agents-core/stream_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
@@ -2872,7 +2872,7 @@ requires-dist = [
 provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemini", "openai"]
 
 [[package]]
-name = "stream-agents-golf"
+name = "stream-agents-cluely"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
@@ -2880,6 +2880,11 @@ dependencies = [
     { name = "fastapi" },
     { name = "python-dotenv" },
     { name = "stream-agents" },
+    { name = "stream-agents-plugins-deepgram" },
+    { name = "stream-agents-plugins-elevenlabs" },
+    { name = "stream-agents-plugins-getstream" },
+    { name = "stream-agents-plugins-openai" },
+    { name = "stream-agents-plugins-ultralytics" },
     { name = "ultralytics" },
 ]
 
@@ -2889,6 +2894,11 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "stream-agents", editable = "../../agents-core" },
+    { name = "stream-agents-plugins-deepgram", editable = "../../plugins/deepgram" },
+    { name = "stream-agents-plugins-elevenlabs", editable = "../../plugins/elevenlabs" },
+    { name = "stream-agents-plugins-getstream", editable = "../../plugins/getstream" },
+    { name = "stream-agents-plugins-openai", editable = "../../plugins/openai" },
+    { name = "stream-agents-plugins-ultralytics", editable = "../../plugins/ultralytics" },
     { name = "ultralytics", specifier = ">=8.3.184" },
 ]
 
@@ -3028,6 +3038,23 @@ dev = [
 ]
 
 [[package]]
+name = "stream-agents-plugins-getstream"
+version = "0.1.0"
+source = { editable = "../../plugins/getstream" }
+dependencies = [
+    { name = "stream-agents" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "stream-agents", editable = "../../agents-core" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
 name = "stream-agents-plugins-kokoro"
 version = "0.1.0"
 source = { editable = "../../plugins/kokoro" }
@@ -3124,6 +3151,37 @@ dev = [
     { name = "scipy", specifier = ">=1.15.3,<1.16" },
     { name = "soundfile", specifier = ">=0.13.1" },
     { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "stream-agents-plugins-ultralytics"
+version = "0.1.0"
+source = { editable = "../../plugins/ultralytics" }
+dependencies = [
+    { name = "aiortc" },
+    { name = "av" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "stream-agents" },
+    { name = "ultralytics" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiortc", specifier = ">=1.6.0" },
+    { name = "av", specifier = ">=10.0.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "opencv-python", specifier = ">=4.8.0" },
+    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "stream-agents", editable = "../../agents-core" },
+    { name = "ultralytics", specifier = ">=8.0.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
