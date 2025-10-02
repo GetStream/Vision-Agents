@@ -73,6 +73,30 @@ class TTS(abc.ABC):
         """Get the current output track."""
         return self._track
 
+    def get_required_framerate(self) -> int:
+        """
+        Get the required framerate for the audio track.
+        
+        This method should be overridden by subclasses to return their specific
+        framerate requirement. Defaults to 16000 Hz.
+        
+        Returns:
+            The required framerate in Hz
+        """
+        return 16000
+
+    def get_required_stereo(self) -> bool:
+        """
+        Get whether the audio track should be stereo or mono.
+        
+        This method should be overridden by subclasses to return their specific
+        stereo requirement. Defaults to False (mono).
+        
+        Returns:
+            True if stereo is required, False for mono
+        """
+        return False
+
     @abc.abstractmethod
     async def stream_audio(
         self, text: str, *args, **kwargs

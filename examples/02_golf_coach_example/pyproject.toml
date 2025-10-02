@@ -16,3 +16,7 @@ dependencies = [
 
 [tool.uv.sources]
 "stream-agents" = {path = "../../agents-core", editable=true}
+"stream-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
+"stream-agents-plugins-ultralytics" = {path = "../../plugins/ultralytics", editable=true}
+"stream-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"stream-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}

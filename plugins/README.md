@@ -87,7 +87,7 @@ from getstream.plugins import STT, TTS, VAD
 See the [Plugin Development Guide](../../ai/instructions/ai-plugin.md) for detailed instructions on creating new plugins. The workspace setup makes plugin development straightforward:
 
 1. Create your plugin directory under the appropriate type folder
-2. Add a `pyproject.toml` with `getstream[webrtc]` as a dependency
+2. Add a `pyproject.toml` with `getstream[webrtc"]` as a dependency
 3. The workspace automatically makes it available for development
 4. Run tests from the project root
 

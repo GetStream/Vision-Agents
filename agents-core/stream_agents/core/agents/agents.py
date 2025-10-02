@@ -831,7 +831,14 @@ class Agent:
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
                 # TODO: what if we want to transform audio...
-                self._audio_track = self.edge.create_audio_track()
+                # Get the required framerate and stereo setting from TTS plugin, default to 48000 for WebRTC
+                if self.tts:
+                    framerate = self.tts.get_required_framerate()
+                    stereo = self.tts.get_required_stereo()
+                else:
+                    framerate = 48000
+                    stereo = True  # Default to stereo for WebRTC
+                self._audio_track = self.edge.create_audio_track(framerate=framerate, stereo=stereo)
                 if self.tts:
                     self.tts.set_output_track(self._audio_track)
 
