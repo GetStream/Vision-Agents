@@ -2,7 +2,7 @@ import json
 from typing import Any, Optional, List, Dict
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from openai.types.beta.realtime import SessionCreateParams as RealtimeSessionCreateRequestParam, ResponseAudioTranscriptDoneEvent, \
+from openai.types.realtime import RealtimeSessionCreateRequestParam, ResponseAudioTranscriptDoneEvent, \
     InputAudioBufferSpeechStartedEvent
 
 from stream_agents.core.llm import realtime
