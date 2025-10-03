@@ -1,41 +1,42 @@
 import asyncio
 import logging
 import time
-from opentelemetry import trace
-from opentelemetry.trace import Tracer
-from typing import Optional, List, Any, Dict, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
 import aiortc
+import getstream.models
 from aiortc import VideoStreamTrack
-
-from ..edge.types import Participant, PcmData, Connection, TrackType, User
-from ..llm.events import RealtimePartialTranscriptEvent
-from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
-from ..llm.events import LLMResponseChunkEvent
-from ..tts.tts import TTS
-from ..stt.stt import STT
-from ..vad import VAD
-from ..llm.events import RealtimeTranscriptEvent, LLMResponseCompletedEvent
-from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
-from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
-from ..mcp import MCPBaseServer, MCPManager
-from ..logging_utils import CallContextToken, set_call_context, clear_call_context
+from opentelemetry import trace
+from opentelemetry.trace import Tracer
 
-
-from .conversation import StreamHandle, Message, Conversation
+from ..edge.events import AudioReceivedEvent, CallEndedEvent, TrackAddedEvent
+from ..edge.types import Connection, Participant, PcmData, TrackType, User
 from ..events.manager import EventManager
+from ..llm.events import (
+    LLMResponseChunkEvent,
+    LLMResponseCompletedEvent,
+    RealtimePartialTranscriptEvent,
+    RealtimeTranscriptEvent,
+)
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
-from ..processors.base_processor import filter_processors, ProcessorType, Processor
+from ..logging_utils import CallContextToken, clear_call_context, set_call_context
+from ..mcp import MCPBaseServer, MCPManager
+from ..processors.base_processor import Processor, ProcessorType, filter_processors
+from ..stt.events import STTPartialTranscriptEvent, STTTranscriptEvent
+from ..stt.stt import STT
+from ..tts.tts import TTS
+from ..turn_detection import BaseTurnDetector, TurnEventData
+from ..vad import VAD
+from ..vad.events import VADAudioEvent
 from . import events
-from ..turn_detection import TurnEventData, BaseTurnDetector
-
-import getstream.models
+from .conversation import Conversation, Message, StreamHandle
 
 if TYPE_CHECKING:
     from stream_agents.plugins.getstream.stream_edge_transport import StreamEdge
+
     from .agent_session import AgentSessionContextManager
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,7 @@ class Agent:
         self.processors = processors or []
         self.mcp_servers = mcp_servers or []
         self._call_context_token: CallContextToken | None = None
-        
+
         # Initialize MCP manager if servers are provided
         self.mcp_manager = MCPManager(self.mcp_servers, self.llm, self.logger) if self.mcp_servers else None
 
@@ -241,6 +242,11 @@ class Agent:
         if audio_track or video_track:
             with self.tracer.start_as_current_span("edge.publish_tracks"):
                 await self.edge.publish_tracks(audio_track, video_track)
+
+        # Listen to incoming tracks if any component needs them
+        # This is independent of publishing - agents can listen without publishing
+        # (e.g., STT-only agents that respond via text chat)
+        if self._needs_audio_or_video_input():
             await self._listen_to_audio_and_video()
 
         from .agent_session import AgentSessionContextManager
@@ -390,7 +396,7 @@ class Agent:
 
         if event.text is None or not event.text.strip():
             return
-        
+
         if self._agent_conversation_handle is None:
             message = Message(
                 content=event.text,
@@ -509,7 +515,7 @@ class Agent:
             participant = event.participant
             if not pcm or not participant:
                 return
-            
+
             if self.turn_detection is not None:
                 await self.turn_detection.process_audio(pcm, participant.user_id)
 
@@ -523,7 +529,7 @@ class Agent:
             user = event.user
             if not track_id or not track_type:
                 return
-            
+
             task = asyncio.create_task(self._process_track(track_id, track_type, user))
             self._track_tasks[track_id] = task
             task.add_done_callback(_log_task_exception)
@@ -550,11 +556,10 @@ class Agent:
                 # TODO: this behaviour should be easy to change in the agent class
                 asyncio.create_task(self.llm.simple_audio_response(pcm_data))
                 #task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
-            else:
-                # Process audio through STT
-                if self.stt:
-                    self.logger.debug(f"🎵 Processing audio from {participant}")
-                    await self.stt.process_audio(pcm_data, participant)
+            # Process audio through STT
+            elif self.stt:
+                self.logger.debug(f"🎵 Processing audio from {participant}")
+                await self.stt.process_audio(pcm_data, participant)
 
     async def _process_track(self, track_id: str, track_type: str, participant):
         # TODO: handle CancelledError
@@ -625,7 +630,7 @@ class Agent:
                     # Reset error counts on successful frame processing
                     timeout_errors = 0
                     consecutive_errors = 0
-                    
+
                     if hasImageProcessers:
 
                         img = video_frame.to_image()
@@ -753,14 +758,44 @@ class Agent:
         """
         if self.tts is not None or self.realtime_mode:
             return True
-        else:
-            return False
+        return False
 
     @property
     def publish_video(self) -> bool:
         """Whether the agent should publish an outbound video track.
         """
         return len(self.video_publishers) > 0
+
+    def _needs_audio_or_video_input(self) -> bool:
+        """Check if agent needs to listen to incoming audio or video.
+
+        This determines whether the agent should register listeners for incoming
+        media tracks from other participants. This is independent of whether the
+        agent publishes its own tracks.
+
+        Returns:
+            True if any component needs audio/video input from other participants.
+
+        Examples:
+            - Agent with STT but no TTS: needs_audio=True (listen-only agent)
+            - Agent with audio processors: needs_audio=True (analysis agent)
+            - Agent with video processors: needs_video=True (frame analysis)
+            - Agent with only LLM and TTS: needs_audio=False (announcement bot)
+        """
+        # Audio input needed for:
+        # - STT (for transcription)
+        # - Audio processors (for audio analysis)
+        # Note: VAD and turn detection are helpers for STT/TTS, not standalone consumers
+        needs_audio = self.stt is not None or len(self.audio_processors) > 0
+
+        # Video input needed for:
+        # - Video processors (for frame analysis)
+        # - Realtime mode with video (multimodal LLMs)
+        needs_video = len(self.video_processors) > 0 or (
+            self.realtime_mode and isinstance(self.llm, Realtime)
+        )
+
+        return needs_audio or needs_video
 
     @property
     def audio_processors(self) -> List[Any]:
@@ -877,4 +912,3 @@ class Agent:
         if len(obj_str) > max_length:
             obj_str = obj_str[:max_length] + "... (truncated)"
         return obj_str
-
