@@ -1,12 +1,11 @@
-import asyncio
 import pytest
 from dotenv import load_dotenv
 
 
 from stream_agents.core.agents.conversation import InMemoryConversation, Message
 
-from stream_agents.core.llm.events import StandardizedTextDeltaEvent
 from stream_agents.plugins.gemini.gemini_llm import GeminiLLM
+from stream_agents.core.llm.events import LLMResponseChunkEvent
 
 load_dotenv()
 
@@ -50,17 +49,14 @@ class TestGeminiLLM:
         streamingWorks = False
         
         @llm.events.subscribe
-        async def passed(event: StandardizedTextDeltaEvent):
+        async def passed(event: LLMResponseChunkEvent):
             nonlocal streamingWorks
             streamingWorks = True
-        
-        # Allow event subscription to be processed
-        await asyncio.sleep(0.01)
         
         await llm.simple_response("Explain magma to a 5 year old")
         
         # Wait for all events in queue to be processed
-        await llm.events.wait(timeout=1.0)
+        await llm.events.wait()
 
         assert streamingWorks
 

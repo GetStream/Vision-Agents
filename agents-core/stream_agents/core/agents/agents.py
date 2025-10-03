@@ -3,7 +3,7 @@ import logging
 import time
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict, TYPE_CHECKING
 from uuid import uuid4
 
 import aiortc
@@ -12,11 +12,11 @@ from aiortc import VideoStreamTrack
 from ..edge.types import Participant, PcmData, Connection, TrackType, User
 from ..llm.events import RealtimePartialTranscriptEvent
 from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
-from ..llm.events import StandardizedTextDeltaEvent
+from ..llm.events import LLMResponseChunkEvent
 from ..tts.tts import TTS
 from ..stt.stt import STT
 from ..vad import VAD
-from ..llm.events import RealtimeTranscriptEvent, AfterLLMResponseEvent
+from ..llm.events import RealtimeTranscriptEvent, LLMResponseCompletedEvent
 from ..stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
 from ..vad.events import VADAudioEvent
 from getstream.video.rtc import Call
@@ -31,7 +31,6 @@ from ..llm.realtime import Realtime
 from ..processors.base_processor import filter_processors, ProcessorType, Processor
 from . import events
 from ..turn_detection import TurnEventData, BaseTurnDetector
-from typing import TYPE_CHECKING, Dict
 
 import getstream.models
 
@@ -364,7 +363,7 @@ class Agent:
         with self.tracer.start_as_current_span("edge.create_user"):
             return await self.edge.create_user(self.agent_user)
 
-    async def _handle_output_text_delta(self, event: StandardizedTextDeltaEvent):
+    async def _handle_output_text_delta(self, event: LLMResponseChunkEvent):
         """Handle partial LLM response text deltas."""
 
         if self.conversation is None:
@@ -385,16 +384,16 @@ class Agent:
                 self._agent_conversation_handle, event.delta or ""
             )
 
-    async def _handle_after_response(self, event: AfterLLMResponseEvent):
+    async def _handle_after_response(self, event: LLMResponseCompletedEvent):
         if self.conversation is None:
             return
 
-        if event.llm_response is None:
+        if event.text is None or not event.text.strip():
             return
         
         if self._agent_conversation_handle is None:
             message = Message(
-                content=event.llm_response.text,
+                content=event.text,
                 role="assistant",
                 user_id=self.agent_user.id,
             )
@@ -404,8 +403,8 @@ class Agent:
             self._agent_conversation_handle = None
 
         # Trigger TTS directly instead of through event system
-        if self.tts and event.llm_response.text and event.llm_response.text.strip():
-            await self.tts.send(event.llm_response.text)
+        if self.tts and event.text and event.text.strip():
+            await self.tts.send(event.text)
 
     def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
@@ -470,6 +469,23 @@ class Agent:
             )
             self.logger.error(f"Error in agent say: {e}")
 
+    async def say(self, text: str, user_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None):
+        """
+        Make the agent say something using TTS.
+        
+        This is a convenience method that sends an AgentSayEvent to trigger TTS synthesis.
+        
+        Args:
+            text: The text for the agent to say
+            user_id: Optional user ID for the speech
+            metadata: Optional metadata to include with the speech
+        """
+        self.events.send(events.AgentSayEvent(
+            plugin_name="agent",
+            text=text,
+            user_id=user_id or self.agent_user.id,
+            metadata=metadata
+        ))
 
     def _setup_turn_detection(self):
         if self.turn_detection:
@@ -664,14 +680,8 @@ class Agent:
     async def _on_transcript(self, event: STTTranscriptEvent | RealtimeTranscriptEvent):
         self.logger.info(f"🎤 [STT transcript]: {event.text}")
 
-        # if the agent is in realtime mode than we dont need to process the transcription
         if not event.text:
             return
-        
-        if not self.realtime_mode:
-            # Only pass user_metadata if it's a Participant
-            participant = event.user_metadata if isinstance(event.user_metadata, Participant) else None
-            await self.simple_response(event.text, participant)
 
         if self.conversation is None:
             return
@@ -821,7 +831,14 @@ class Agent:
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
                 # TODO: what if we want to transform audio...
-                self._audio_track = self.edge.create_audio_track()
+                # Get the required framerate and stereo setting from TTS plugin, default to 48000 for WebRTC
+                if self.tts:
+                    framerate = self.tts.get_required_framerate()
+                    stereo = self.tts.get_required_stereo()
+                else:
+                    framerate = 48000
+                    stereo = True  # Default to stereo for WebRTC
+                self._audio_track = self.edge.create_audio_track(framerate=framerate, stereo=stereo)
                 if self.tts:
                     self.tts.set_output_track(self._audio_track)
 

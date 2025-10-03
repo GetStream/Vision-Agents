@@ -3,10 +3,10 @@ import logging
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from getstream import Stream
+from getstream import AsyncStream
 from getstream.models import UserRequest
-from stream_agents.plugins import deepgram, elevenlabs, openai, ultralytics
-from stream_agents.core import edge, agents, cli
+from stream_agents.plugins import deepgram, elevenlabs, openai, ultralytics, getstream
+from stream_agents.core import agents, cli
 
 # Main feats:
 # 1. API endpoints to create a sessions, end session
@@ -21,20 +21,18 @@ load_dotenv()
 async def main() -> None:
     """Create a simple agent and join a call."""
     call_id = str(uuid4())
-
+    client = AsyncStream()
     agent_user = UserRequest(id=str(uuid4()), name="My happy AI friend")
-    client = Stream.from_env()
-    client.upsert_users(UserRequest(id=agent_user.id, name=agent_user.name))
+    await client.upsert_users(UserRequest(id=agent_user.id, name=agent_user.name))
 
     # TODO: LLM class
     agent = agents.Agent(
-        edge=edge.StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
+        edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user name etc for the agent
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         # tts, llm, stt more. see the realtime example for sts
         llm=openai.LLM(
             model="gpt-4o",
-
         ),
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
@@ -42,20 +40,12 @@ async def main() -> None:
         processors=[ultralytics.YOLOPoseProcessor()],
     )
 
-    try:
-        # Join the call - this is the main functionality we're demonstrating
-        call = client.video.call("default", call_id)
-        # Open the demo env
-        agent.edge.open_demo(call)
+    call = client.video.call("default", call_id)
 
-        # have the agent join a call/room
-        await agent.join(call)
-        logging.info("🤖 Agent has joined the call. Press Ctrl+C to exit.")
-
-        # run till the call is ended
-        await agent.finish()
-    finally:
-        await agent.close()
+    with await agent.join(call):
+        await agent.edge.open_demo(call)
+        await agent.llm.simple_response(text="Say hi. Explain what user shows with their hands")
+        await agent.finish()  
 
 
 if __name__ == "__main__":

@@ -44,6 +44,14 @@ class TTS(tts.TTS):
         self.sample_rate = sample_rate
         self.client = client if client is not None else self._pipeline
 
+    def get_required_framerate(self) -> int:
+        """Get the required framerate for Kokoro TTS."""
+        return self.sample_rate
+
+    def get_required_stereo(self) -> bool:
+        """Get whether Kokoro TTS requires stereo audio."""
+        return False  # Kokoro returns mono audio
+
     def set_output_track(self, track: AudioStreamTrack) -> None:  # noqa: D401
         if track.framerate != self.sample_rate:
             raise TypeError(

@@ -11,7 +11,7 @@ pip install getstream-plugins-gemini
 ### Requirements
 
 - **Python**: 3.10+
-- **Dependencies**: `getstream[webrtc]`, `getstream-plugins-common`, `google-genai`
+- **Dependencies**: `getstream[webrtc"]`, `getstream-plugins-common`, `google-genai`
 - **API key**: `GOOGLE_API_KEY` or `GEMINI_API_KEY` set in your environment
 
 ### Quick Start

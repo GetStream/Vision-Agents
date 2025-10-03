@@ -51,6 +51,14 @@ class TTS(tts.TTS):
         )
         self.sample_rate = sample_rate
 
+    def get_required_framerate(self) -> int:
+        """Get the required framerate for Cartesia TTS."""
+        return self.sample_rate
+
+    def get_required_stereo(self) -> bool:
+        """Get whether Cartesia TTS requires stereo audio."""
+        return False  # Cartesia returns mono audio
+
     def set_output_track(self, track: AudioStreamTrack) -> None:  # noqa: D401
         if track.framerate != self.sample_rate:
             raise TypeError(

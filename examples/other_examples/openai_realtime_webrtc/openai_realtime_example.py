@@ -61,7 +61,7 @@ You are a voice assistant.
     # Have the agent join the call/room
     with await agent.join(call):
         logger.info("Joining call")
-        agent.edge.open_demo(call)
+        await agent.edge.open_demo(call)
         logger.info("LLM ready")
         #await agent.llm.request_session_info()
         logger.info("Requested session info")

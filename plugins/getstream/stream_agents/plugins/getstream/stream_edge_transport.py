@@ -107,7 +107,8 @@ class StreamEdge(EdgeTransport):
             self.events.send(events.AudioReceivedEvent(
                 plugin_name="getstream",
                 pcm_data=pcm,
-                participant=participant
+                participant=participant,
+                user_metadata=participant
             ))
 
         @self._connection.on("track_added")
@@ -117,8 +118,18 @@ class StreamEdge(EdgeTransport):
                 plugin_name="getstream",
                 track_id=track_id,
                 track_type=track_type,
-                user=user
+                user=user,
+                user_metadata=user
             ))
+
+            _, track = self._connection.subscriber_pc.track_map[track_id]
+            track.on("ended", lambda: self.events.send(events.TrackEndedEvent(
+                plugin_name="getstream",
+                track_id=track_id,
+                track_type=track_type,
+                user=user,
+                user_metadata=user
+            )))
 
         @self._connection.on("call_ended")
         async def call_ended(*args, **kwargs):
@@ -132,8 +143,8 @@ class StreamEdge(EdgeTransport):
 
         return standardize_connection
 
-    def create_audio_track(self):
-        return audio_track.AudioStreamTrack(framerate=48000, stereo=True) # default to webrtc framerate
+    def create_audio_track(self, framerate: int = 48000, stereo: bool = True):
+        return audio_track.AudioStreamTrack(framerate=framerate, stereo=stereo) # default to webrtc framerate
 
     def create_video_track(self):
         return aiortc.VideoStreamTrack()
@@ -164,14 +175,15 @@ class StreamEdge(EdgeTransport):
         # Note: Not calling super().close() as it's an abstract method with trivial body
         pass
 
-    def open_demo(self, call: Call) -> str:
+    async def open_demo(self, call: Call) -> str:
         client = call.client.stream
 
         # Create a human user for testing
         human_id = f"user-{uuid4()}"
+        name = "Human User"
 
         # TODO: cleanup
-        client.upsert_users(UserRequest(id=human_id, name="Human User"))
+        await client.upsert_users(UserRequest(id=human_id, name=name))
 
         # Create user token for browser access
         token = client.create_token(human_id, expiration=3600)
@@ -184,6 +196,7 @@ class StreamEdge(EdgeTransport):
             "api_key": client.api_key,
             "token": token,
             "skip_lobby": "true",
+            "user_name": name,
             "video_encoder": "vp8",
             "bitrate": 12000000,
             "w": 1920,

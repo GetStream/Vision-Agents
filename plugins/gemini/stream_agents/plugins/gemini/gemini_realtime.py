@@ -5,13 +5,14 @@ from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
 from google.genai.live import AsyncSession
+from google.genai.types import SessionResumptionConfigDict
 from google.genai.types import LiveConnectConfigDict, Modality, SpeechConfigDict, VoiceConfigDict, \
     PrebuiltVoiceConfigDict, AudioTranscriptionConfigDict, RealtimeInputConfigDict, TurnCoverage, \
     ContextWindowCompressionConfigDict, SlidingWindowDict, HttpOptions, LiveServerMessage, Blob, Part
 
 from stream_agents.core.edge.types import Participant
 from stream_agents.core.llm import realtime
-from stream_agents.core.llm.events import RealtimeAudioOutputEvent, StandardizedTextDeltaEvent
+from stream_agents.core.llm.events import RealtimeAudioOutputEvent, LLMResponseChunkEvent
 from stream_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from stream_agents.core.processors import Processor
 from stream_agents.core.utils.utils import frame_to_png_bytes
@@ -83,8 +84,6 @@ class Realtime(realtime.Realtime):
         self._session_context: Optional[Any] = None
         self._session: Optional[AsyncSession] = None
         self._receive_task: Optional[asyncio.Task[Any]] = None
-
-
 
     async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
                               participant: Optional[Participant] = None):
@@ -210,8 +209,7 @@ class Realtime(realtime.Realtime):
                                             self.logger.info("Gemini thought %s", typed_part.text)
                                         else:
                                             self.logger.info("output: %s", typed_part.text)
-                                            event = StandardizedTextDeltaEvent(
-                                                plugin_name="gemini",
+                                            event = LLMResponseChunkEvent(
                                                 delta=typed_part.text
                                             )
                                             self.events.send(event)
@@ -372,7 +370,6 @@ class Realtime(realtime.Realtime):
         config = self.config.copy()
         # resume if we have a session resumption id/handle
         if self.session_resumption_id:
-            from google.genai.types import SessionResumptionConfigDict
             resumption_config: SessionResumptionConfigDict = {"handle": self.session_resumption_id}  # type: ignore[typeddict-item]
             config["session_resumption"] = resumption_config  # type: ignore[typeddict-item]
         # set the instructions

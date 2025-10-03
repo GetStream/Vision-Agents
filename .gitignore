@@ -10,6 +10,7 @@
 */cli/__pycache__
 */cli/__pycache__
 .env
+.venv
 .vscode/settings.json
 *.pyc
 dist/*

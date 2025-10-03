@@ -37,6 +37,14 @@ class TTS(tts.TTS):
         self.model_id = model_id
         self.output_format = "pcm_16000"
 
+    def get_required_framerate(self) -> int:
+        """Get the required framerate for ElevenLabs TTS."""
+        return 16000
+
+    def get_required_stereo(self) -> bool:
+        """Get whether ElevenLabs TTS requires stereo audio."""
+        return False  # ElevenLabs returns mono audio
+
     def set_output_track(self, track: AudioStreamTrack) -> None:
         if track.framerate != 16000:
             raise TypeError("Invalid framerate, audio track only supports 16000")

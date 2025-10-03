@@ -26,7 +26,7 @@ async def start_agent() -> None:
 
         call = client.video.call("default", str(uuid4()))
 
-        agent.edge.open_demo(call)
+        await agent.edge.open_demo(call)
 
         with await agent.join(call):
             await asyncio.sleep(5)
