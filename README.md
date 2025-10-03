@@ -3,7 +3,7 @@
 TODO: Image or video. Show code, image and demos
 
 Build Vision Agents quickly with any model or video provider.
-Created by Stream, use [Stream's edge network](https://getstream.io/video/) for ultra-low latency.
+Created by Stream, uses [Stream's edge network](https://getstream.io/video/) for ultra-low latency.
 
 -  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with gemini/openai realtime models
 -  **Low Latency**: Join quickly (500ms) and low audio/video latency (30ms)
@@ -24,13 +24,13 @@ TODO: Demo video
 ```python
 # partial example, full example: examples/03_golf_coach_example/golf_coach_example.py
 agent = Agent(
-    edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
+    edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
     agent_user=agent_user,  # the user object for the agent (name, image etc)
     instructions="Help users perfect their swing. Read @golf_coach.md",
     # openai realtime, no need to set tts, or sst (though that's also supported)
     llm=openai.Realtime(model="gpt-realtime"),
     processors=[
-        ultralytics.YOLOPoseProcessor()
+        ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
     ],  # processors can fetch extra data, check images/audio data or transform video
 )
 ```
@@ -38,7 +38,7 @@ agent = Agent(
 ### Cluely style Invisible Assistant
 
 Apps like Cluely offer realtime coaching via an invisible overlay. This example shows you how you can build your own invisible assistant.
-It combines Gemini realtime (to watch your screen and audio), and doesn't broadcast audio (only text). Again this approach
+It combines Gemini realtime (to watch your screen and audio), and doesn't broadcast audio (only text). This approach
 is quite versatile and can be used for: Sales coaching, job interview cheating, physical world/ on the job coaching with glasses
 
 Demo video
@@ -63,8 +63,12 @@ Processors make it easy to combine the video & LLM with additional state. Here a
 * BufferedVideoCapture
 
 ## Docs
+To get started with Vision Agents, check out our getting started guide at [VisionAgents.ai](https://visionagents.ai). 
 
-TODO Link to docs
+- Quickstart: [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents) 
+- Quickstart: [Building a Video AI app](https://visionagents.ai/introduction/video-agents) 
+- Tutorial: [Building realtime sports coaching](#) 
+- Tutorial: [Building a realtime meeting assistant](#) 
 
 ## Development
 
@@ -91,8 +95,7 @@ Our favorite people & projects to follow for vision AI
 - Pipecat: Flexible, but more verbose. Open, we will add support for Stream
 - OpenAI Agents: Focused on openAI only, but we will try to add support
 
-## Competitors & Partners
-
+## Open Platform 
 Reach out to nash@getstream.io, and we'll collaborate on getting you added
 We'd like to add support for and are reaching out to:
 
@@ -107,10 +110,14 @@ We'd like to add support for and are reaching out to:
 ## Roadmap
 
 **0.1 - First release**
+- Support for >10 out of the box [integrations](https://visionagents.ai/integrations/introduction-to-integrations)
+- Support for video processors 
+- Native Stream Chat integration for memory 
+- Support for MCP and function calling for Gemini and OpenAI 
+- Support for realtime WebRTC video and voice with GPT Realtime 
 
 **0.2 - Next release**
-
-- The python webrtc lib we use has some problems. This can cause sudden spikes and latency issues. We'll be pushing fixes for the project
+- The Python WebRTC lib we use has some problems. This can cause sudden spikes and latency issues. We'll be pushing fixes for the project
 - Hosting guidelines
 
 **Later**
