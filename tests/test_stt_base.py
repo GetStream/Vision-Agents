@@ -6,7 +6,6 @@ import asyncio
 import os
 import pytest
 from unittest.mock import Mock
-from uuid import uuid4
 
 from dotenv import load_dotenv
 
