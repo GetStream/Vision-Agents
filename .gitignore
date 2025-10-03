@@ -28,3 +28,4 @@ pyrightconfig.json
 *.egg
 *.pt
 *.kef
+.env.bak
