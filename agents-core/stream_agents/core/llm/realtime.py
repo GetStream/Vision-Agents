@@ -67,7 +67,7 @@ class Realtime(LLM, abc.ABC):
     async def simple_audio_response(self, pcm: PcmData): ...
 
 
-    async def _watch_video_track(self, track: Any) -> None:
+    async def _watch_video_track(self, track: Any, **kwargs) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 
