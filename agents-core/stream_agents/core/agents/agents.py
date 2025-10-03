@@ -610,7 +610,12 @@ class Agent:
                     f"Error in video processor {type(processor).__name__}: {e}"
                 )
 
-        # Use shared forwarder for image processors
+        # Use shared forwarder for image processors - only if there are image processors
+        if not hasImageProcessers:
+            # No image processors, just keep the connection alive
+            self.logger.info("No image processors, video processing handled by video processors only")
+            return
+        
         while True:
             try:
                 # Use the shared forwarder instead of competing for track.recv()
