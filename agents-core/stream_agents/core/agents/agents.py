@@ -570,6 +570,20 @@ class Agent:
             )
             return
 
+        # Import VideoForwarder
+        from ..utils.video_forwarder import VideoForwarder
+        
+        # Create a SHARED VideoForwarder that all consumers will subscribe to
+        # This prevents multiple recv() calls competing on the same track
+        shared_forwarder = VideoForwarder(
+            track,  # type: ignore[arg-type]
+            max_buffer=30,
+            fps=30,  # Max FPS for the producer (individual consumers can throttle down)
+            name="shared_video_forwarder",
+        )
+        await shared_forwarder.start()
+        self.logger.info("🎥 Created shared VideoForwarder for track %s", track_id)
+
         # If Realtime provider supports video, tell it to watch the video
         if self.realtime_mode:
             # TODO: should we make this configurable? some use cases will want source, others processed track
@@ -581,25 +595,31 @@ class Agent:
                 self.logger.info("Forwarding original video frames to Realtime provider")
 
             if isinstance(self.llm, Realtime):
-                await self.llm._watch_video_track(track_to_watch)
+                # Pass the shared forwarder to the realtime provider
+                await self.llm._watch_video_track(track_to_watch, shared_forwarder=shared_forwarder)
 
 
         hasImageProcessers = len(self.image_processors) > 0
 
-        # video processors
+        # video processors - pass the shared forwarder
         for processor in self.video_processors:
             try:
-                await processor.process_video(track, participant.user_id)
+                await processor.process_video(track, participant.user_id, shared_forwarder=shared_forwarder)
             except Exception as e:
                 self.logger.error(
                     f"Error in video processor {type(processor).__name__}: {e}"
                 )
 
+        # Use shared forwarder for image processors - only if there are image processors
+        if not hasImageProcessers:
+            # No image processors, just keep the connection alive
+            self.logger.info("No image processors, video processing handled by video processors only")
+            return
+        
         while True:
             try:
-                # TODO: evaluate if this makes sense or not...
-                #video_frame = await asyncio.wait_for(processing_branch.recv(), timeout=current_timeout)
-                video_frame = await track.recv()
+                # Use the shared forwarder instead of competing for track.recv()
+                video_frame = await shared_forwarder.next_frame(timeout=2.0)
 
                 if video_frame:
                     # Reset error counts on successful frame processing

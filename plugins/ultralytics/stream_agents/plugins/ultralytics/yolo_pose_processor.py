@@ -186,20 +186,31 @@ class YOLOPoseProcessor(
         self,
         incoming_track: aiortc.mediastreams.MediaStreamTrack,
         participant: Any,
+        shared_forwarder=None,
     ):
-        logger.info("✅ process_video starting efg")
+        logger.info("✅ process_video starting")
 
-        # forward the track, and run add_pose_to_ndarray
-        self._video_forwarder = VideoForwarder(
-            incoming_track,  # type: ignore[arg-type]
-            max_buffer=30, # 1 second
-            fps=self.fps,
-            name="yolo_forwarder",
-        )
+        if shared_forwarder is not None:
+            # Use the shared forwarder
+            self._video_forwarder = shared_forwarder
+            logger.info(f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS")
+            await self._video_forwarder.start_event_consumer(
+                self._add_pose_and_add_frame,
+                fps=float(self.fps),
+                consumer_name="yolo"
+            )
+        else:
+            # Create our own VideoForwarder (legacy behavior)
+            self._video_forwarder = VideoForwarder(
+                incoming_track,  # type: ignore[arg-type]
+                max_buffer=30, # 1 second
+                fps=self.fps,
+                name="yolo_forwarder",
+            )
 
-        # Start the forwarder
-        await self._video_forwarder.start()
-        await self._video_forwarder.start_event_consumer(self._add_pose_and_add_frame)
+            # Start the forwarder
+            await self._video_forwarder.start()
+            await self._video_forwarder.start_event_consumer(self._add_pose_and_add_frame)
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
         frame_with_pose = await self.add_pose_to_frame(frame)

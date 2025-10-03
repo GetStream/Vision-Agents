@@ -289,26 +289,42 @@ class Realtime(realtime.Realtime):
         """
         Start sending video frames to Gemini using VideoForwarder.
         We follow the on_track from Stream. If video is turned on or off this gets forwarded.
+        
+        Args:
+            track: Video track to watch
+            shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one
         """
-        if self._video_forwarder is not None:
+        shared_forwarder = kwargs.get('shared_forwarder')
+        
+        if self._video_forwarder is not None and shared_forwarder is None:
             self.logger.warning("Video sender already running, stopping previous one")
             await self._stop_watching_video_track()
         
-        # Create VideoForwarder with the input track
-        self._video_forwarder = VideoForwarder(
-            track,  # type: ignore[arg-type]
-            max_buffer=5,
-            fps=float(self.fps),
-            name="gemini_forwarder",
-        )
-        
-        # Start the forwarder
-        await self._video_forwarder.start()
-        
-        # Start the callback consumer that sends frames to Gemini
-        await self._video_forwarder.start_event_consumer(self._send_video_frame)
-        
-        self.logger.info(f"Started video forwarding with {self.fps} FPS")
+        if shared_forwarder is not None:
+            # Use the shared forwarder - just register as a consumer
+            self._video_forwarder = shared_forwarder
+            self.logger.info(f"🎥 Gemini subscribing to shared VideoForwarder at {self.fps} FPS")
+            await self._video_forwarder.start_event_consumer(
+                self._send_video_frame,
+                fps=float(self.fps),
+                consumer_name="gemini"
+            )
+        else:
+            # Create our own VideoForwarder with the input track (legacy behavior)
+            self._video_forwarder = VideoForwarder(
+                track,  # type: ignore[arg-type]
+                max_buffer=5,
+                fps=float(self.fps),
+                name="gemini_forwarder",
+            )
+            
+            # Start the forwarder
+            await self._video_forwarder.start()
+            
+            # Start the callback consumer that sends frames to Gemini
+            await self._video_forwarder.start_event_consumer(self._send_video_frame)
+            
+            self.logger.info(f"Started video forwarding with {self.fps} FPS")
 
     async def _stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:

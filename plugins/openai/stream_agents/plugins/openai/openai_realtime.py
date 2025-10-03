@@ -181,7 +181,8 @@ class Realtime(realtime.Realtime):
         await self.output_track.write(audio_bytes)
 
     async def _watch_video_track(self, track, **kwargs) -> None:
-        await self.rtc.start_video_sender(track, self.fps)
+        shared_forwarder = kwargs.get('shared_forwarder')
+        await self.rtc.start_video_sender(track, self.fps, shared_forwarder=shared_forwarder)
 
     async def _stop_watching_video_track(self) -> None:
         await self.rtc.stop_video_sender()

@@ -83,15 +83,27 @@ class VideoForwarder:
         self,
         on_frame: Callable[[av.VideoFrame], Any],  # async or sync
         *,
+        fps: Optional[float] = None,
         log_interval_seconds: float = 10.0,
+        consumer_name: Optional[str] = None,
     ) -> None:
         """
         Starts a task that calls `on_frame(latest_frame)` at ~fps.
         If fps is None, it forwards as fast as frames arrive (still coalescing).
+        
+        Args:
+            on_frame: Callback function to receive frames
+            fps: Frame rate for this consumer (overrides default). None = unlimited.
+            log_interval_seconds: How often to log consumer statistics
+            consumer_name: Optional name for this consumer (for logging)
         """
+        # Use consumer-specific fps if provided, otherwise fall back to forwarder's default fps
+        consumer_fps = fps if fps is not None else self.fps
+        consumer_label = consumer_name or "consumer"
+        
         async def _consumer():
             loop = asyncio.get_running_loop()
-            min_interval = (1.0 / self.fps) if (self.fps and self.fps > 0) else 0.0
+            min_interval = (1.0 / consumer_fps) if (consumer_fps and consumer_fps > 0) else 0.0
             last_ts = 0.0
             is_coro = asyncio.iscoroutinefunction(on_frame)
             frames_forwarded = 0
@@ -129,26 +141,29 @@ class VideoForwarder:
                         if (now_time - last_log) >= log_interval_seconds:
                             if last_width and last_height:
                                 logger.info(
-                                    "%s shared %d frames at %dx%d resolution in the last %.0f seconds target is %f fps",
+                                    "%s [%s] forwarded %d frames at %dx%d resolution in the last %.0f seconds (target: %.1f fps)",
                                     self.name,
+                                    consumer_label,
                                     frames_forwarded,
                                     last_width,
                                     last_height,
                                     log_interval_seconds,
-                                    self.fps,
+                                    consumer_fps or 0,
                                 )
                             else:
                                 logger.info(
-                                    "%s shared %d frames in the last %.0f seconds",
+                                    "%s [%s] forwarded %d frames in the last %.0f seconds (target: %.1f fps)",
                                     self.name,
+                                    consumer_label,
                                     frames_forwarded,
                                     log_interval_seconds,
+                                    consumer_fps or 0,
                                 )
                             frames_forwarded = 0
                             last_log = now_time
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("unexpected error in video forwarder consumer")
+                logger.exception("unexpected error in video forwarder consumer [%s]", consumer_label)
 
         self._tasks.add(asyncio.create_task(_consumer()))

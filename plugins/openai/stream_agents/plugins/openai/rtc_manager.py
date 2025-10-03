@@ -97,7 +97,7 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
     
     kind = "video"
     
-    def __init__(self, source_track: MediaStreamTrack, fps: int = 1):
+    def __init__(self, source_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None):
         super().__init__()
         self._source_track = source_track
         self._fps = max(1, fps)
@@ -113,20 +113,31 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
         self._health_check_interval = 10.0  # Check health every 10 seconds
         self._last_health_check = time.monotonic()
         self._forwarder: Optional[VideoForwarder] = None
+        self._shared_forwarder = shared_forwarder
         self._started: bool = False
 
         # Rate limiting for inactive track warnings
         self._last_inactive_warning = 0.
         self._inactive_warning_interval = 30.0  # Only warn every 30 seconds
         
-        logger.info(f"🎥 StreamVideoForwardingTrack initialized: fps={fps}, interval={self._interval:.3f}s (frame limiting DISABLED for performance)")
+        if shared_forwarder:
+            logger.info(f"🎥 StreamVideoForwardingTrack initialized with SHARED forwarder: fps={fps}, interval={self._interval:.3f}s")
+        else:
+            logger.info(f"🎥 StreamVideoForwardingTrack initialized: fps={fps}, interval={self._interval:.3f}s (frame limiting DISABLED for performance)")
     
     async def start(self) -> None:
         if self._started:
             return
-        # Create VideoForwarder with the input source track and start it once
-        self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)  # type: ignore[arg-type]
-        await self._forwarder.start()
+        
+        if self._shared_forwarder is not None:
+            # Use the shared forwarder
+            self._forwarder = self._shared_forwarder
+            logger.info(f"🎥 OpenAI using shared VideoForwarder at {self._fps} FPS")
+        else:
+            # Create our own VideoForwarder with the input source track (legacy behavior)
+            self._forwarder = VideoForwarder(self._source_track, max_buffer=5, fps=self._fps)  # type: ignore[arg-type]
+            await self._forwarder.start()
+        
         self._started = True
 
     async def recv(self):
@@ -431,7 +442,7 @@ class RTCManager:
         except Exception as e:
             logger.error(f"Failed to send event: {e}")
 
-    async def start_video_sender(self, stream_video_track: MediaStreamTrack, fps: int = 1) -> None:
+    async def start_video_sender(self, stream_video_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None) -> None:
         """Replace dummy video track with the actual Stream Video forwarding track.
 
         This creates a forwarding track that reads frames from the Stream Video track
@@ -440,6 +451,7 @@ class RTCManager:
         Args:
             stream_video_track: Video track to forward to OpenAI.
             fps: Target frames per second.
+            shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one.
         """
         
         try:
@@ -461,7 +473,7 @@ class RTCManager:
                 logger.info("🎥 Existing video sender task stopped")
             
             # Create forwarding track and start its forwarder
-            forwarding_track = StreamVideoForwardingTrack(stream_video_track, fps)
+            forwarding_track = StreamVideoForwardingTrack(stream_video_track, fps, shared_forwarder=shared_forwarder)
             await forwarding_track.start()
             
             # Replace the dummy track with the forwarding track
