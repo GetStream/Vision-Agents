@@ -2,7 +2,6 @@ from .turn_detection import (
     TurnEvent,
     TurnEventData,
     BaseTurnDetector,
-    TurnDetector,
     TurnDetection,
 )
 from .events import (
@@ -17,7 +16,6 @@ __all__ = [
     "TurnEvent",
     "TurnEventData",
     "BaseTurnDetector",
-    "TurnDetector",
     "TurnDetection",
     # Events
     "TurnStartedEvent",
