@@ -11,8 +11,8 @@ import numpy as np
 import logging
 import pytest
 import soundfile as sf
-from stream_agents.plugins import silero
-from stream_agents.core.vad.events import VADAudioEvent
+from vision_agents.plugins import silero
+from vision_agents.core.vad.events import VADAudioEvent
 from getstream.video.rtc.track_util import PcmData
 from plugins.plugin_test_utils import get_audio_asset
 

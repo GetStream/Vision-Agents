@@ -9,8 +9,8 @@ import soundfile as sf
 import torchaudio
 from typing import List, Dict, Any, Optional
 
-from stream_agents.plugins import silero
-from stream_agents.core.vad.events import VADAudioEvent, VADPartialEvent
+from vision_agents.plugins import silero
+from vision_agents.core.vad.events import VADAudioEvent, VADPartialEvent
 from plugins.plugin_test_utils import get_audio_asset, get_json_metadata
 from getstream.video.rtc.track_util import PcmData
 

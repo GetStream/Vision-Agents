@@ -10,7 +10,7 @@ import pytest
 from PIL import Image
 import av
 
-from stream_agents.plugins.ultralytics import YOLOPoseProcessor
+from vision_agents.plugins.ultralytics import YOLOPoseProcessor
 import logging
 
 logger = logging.getLogger(__name__)

@@ -2,9 +2,9 @@ import asyncio
 
 import pytest
 
-from stream_agents.core.llm.llm import LLMResponseEvent
-from stream_agents.plugins.openai.openai_realtime import Realtime  # Fixed import path
-from stream_agents.core.llm.events import (
+from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.plugins.openai.openai_realtime import Realtime  # Fixed import path
+from vision_agents.core.llm.events import (
     RealtimeConnectedEvent,
     RealtimeTranscriptEvent,
     RealtimeResponseEvent,
@@ -13,7 +13,7 @@ from stream_agents.core.llm.events import (
 )
 
 from dotenv import load_dotenv
-from stream_agents.core.edge.types import PcmData
+from vision_agents.core.edge.types import PcmData
 import os
 import wave
 import numpy as np

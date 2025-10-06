@@ -3,8 +3,8 @@ import pytest
 import asyncio
 from unittest.mock import patch, MagicMock
 
-from stream_agents.plugins import elevenlabs
-from stream_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
+from vision_agents.plugins import elevenlabs
+from vision_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 

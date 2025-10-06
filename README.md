@@ -3,13 +3,14 @@
 TODO: Image or video. Show code, image and demos
 
 Build Vision Agents quickly with any model or video provider.
-Created by Stream, uses [Stream's edge network](https://getstream.io/video/) for ultra-low latency.
 
--  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with gemini/openai realtime models
+-  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with gemini/openai realtime
 -  **Low Latency**: Join quickly (500ms) and low audio/video latency (30ms)
 -  **Open**: Built by Stream, but use any video edge network that you like
 -  **Native APIs**: Native SDK methods from OpenAI (create response), Gemini (generate) and Claude (create message). So you're never behind on the latest features
 -  **SDKs**: SDKs for React, Android, iOS, Flutter, React, React Native and Unity.
+
+Created by Stream, uses [Stream's edge network](https://getstream.io/video/) for ultra-low latency.
 
 ## Examples
 
@@ -22,16 +23,14 @@ For example: Drone fire detection. Sports/video game coaching. Physical therapy.
 TODO: Demo video
 
 ```python
-# partial example, full example: examples/03_golf_coach_example/golf_coach_example.py
+# partial example, full example: examples/02_golf_coach_example/golf_coach_example.py
 agent = Agent(
-    edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-    agent_user=agent_user,  # the user object for the agent (name, image etc)
-    instructions="Help users perfect their swing. Read @golf_coach.md",
-    # openai realtime, no need to set tts, or sst (though that's also supported)
-    llm=openai.Realtime(model="gpt-realtime"),
-    processors=[
-        ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
-    ],  # processors can fetch extra data, check images/audio data or transform video
+    edge=getstream.Edge(),
+    agent_user=agent_user,
+    instructions="Read @golf_coach.md",
+    llm=openai.Realtime(fps=10),
+    #llm=gemini.Realtime(fps=1), # Careful with FPS can get expensive
+    processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")],
 )
 ```
 
@@ -44,7 +43,7 @@ is quite versatile and can be used for: Sales coaching, job interview cheating, 
 Demo video
 
 ```python
-# partial example, full example: examples/...
+# partial example, full example: examples/03_cluely_example/cluely_example.py
 agent = Agent(
     edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
     agent_user=agent_user,  # the user object for the agent (name, image etc)

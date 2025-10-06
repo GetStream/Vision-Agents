@@ -8,8 +8,8 @@ import pytest
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
-from stream_agents.plugins import gemini
-from stream_agents.core.llm.events import RealtimeResponseEvent, RealtimeAudioOutputEvent
+from vision_agents.plugins import gemini
+from vision_agents.core.llm.events import RealtimeResponseEvent, RealtimeAudioOutputEvent
 
 # Load environment variables
 load_dotenv()

@@ -3,8 +3,8 @@ import pytest
 import asyncio
 from unittest.mock import patch, MagicMock
 
-from stream_agents.plugins import deepgram
-from stream_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent
+from vision_agents.plugins import deepgram
+from vision_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent
 from getstream.video.rtc.track_util import PcmData
 
 

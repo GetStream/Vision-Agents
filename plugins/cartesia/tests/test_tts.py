@@ -4,8 +4,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from stream_agents.plugins import cartesia
-from stream_agents.core.tts.events import TTSAudioEvent
+from vision_agents.plugins import cartesia
+from vision_agents.core.tts.events import TTSAudioEvent
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 

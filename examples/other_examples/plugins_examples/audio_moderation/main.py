@@ -28,10 +28,10 @@ from uuid import uuid4
 
 from getstream.stream import Stream
 from getstream.models import CheckResponse, ModerationPayload
-from stream_agents.core.agents import Agent
-from stream_agents.core.edge.types import User
-from stream_agents.plugins import deepgram, getstream, openai
-from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+from vision_agents.core.agents import Agent
+from vision_agents.core.edge.types import User
+from vision_agents.plugins import deepgram, getstream, openai
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
