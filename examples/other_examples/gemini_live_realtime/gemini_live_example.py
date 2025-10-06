@@ -3,12 +3,18 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
+from getstream.video.rtc.reconnection import ReconnectionStrategy
 from stream_agents.plugins import gemini, getstream
 from stream_agents.core.agents import Agent
 from stream_agents.core.cli import start_dispatcher
 from getstream import AsyncStream
 
 load_dotenv()
+
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
 
 async def start_agent() -> None:
     client = AsyncStream()
@@ -30,6 +36,7 @@ async def start_agent() -> None:
 
         with await agent.join(call):
             await asyncio.sleep(5)
+            asyncio.create_task(debug(agent))
             await agent.llm.simple_response(text="Describe what you see and say hi")
             await agent.finish()  # run till the call ends
 
@@ -53,3 +60,10 @@ if __name__ == "__main__":
     trace.set_tracer_provider(tp)
 
     asyncio.run(start_dispatcher(start_agent))
+
+async def debug(agent: Agent) -> None:
+    while True:
+        await asyncio.sleep(10)
+        logger.info("forcing reconnect for debugging")
+        #await agent.edge._connection._reconnector.reconnect(strategy=ReconnectionStrategy.REJOIN, reason="helloworld")
+        await agent.edge._connection._reconnector.reconnect(strategy=ReconnectionStrategy.FAST, reason="helloworld")
