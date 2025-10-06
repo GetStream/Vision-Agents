@@ -11,6 +11,8 @@ dependencies = [
   "stream-agents",
   "google-genai>=1.33.0",
   "opentelemetry-exporter-otlp>=1.37.0",
+  "opentelemetry-exporter-prometheus>=0.58b0",
+  "prometheus-client>=0.23.1",
 ]
 
 [tool.uv.sources]
