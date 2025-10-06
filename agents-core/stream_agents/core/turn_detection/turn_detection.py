@@ -2,15 +2,11 @@ from typing import Optional, Dict, Any, Union, Callable, Protocol
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-import logging
 import uuid
 from getstream.video.rtc.track_util import PcmData
 from stream_agents.core.events.manager import EventManager
 from stream_agents.core.events import PluginInitializedEvent, PluginClosedEvent
 from . import events
-
-
-logger = logging.getLogger(__name__)
 
 
 class TurnEvent(Enum):
