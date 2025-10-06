@@ -1,11 +1,11 @@
-from typing import Optional, Dict, Any, Union, Callable, Protocol
+from typing import Optional, Dict, Any, Callable, Protocol
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 import uuid
 from getstream.video.rtc.track_util import PcmData
 from stream_agents.core.events.manager import EventManager
-from stream_agents.core.events import PluginInitializedEvent, PluginClosedEvent
+from stream_agents.core.events import PluginInitializedEvent
 from . import events
 
 
