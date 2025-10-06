@@ -40,6 +40,7 @@ members = [
     "stream-agents-plugins-gemini",
     "stream-agents-plugins-getstream",
     "stream-agents-plugins-kokoro",
+    "stream-agents-plugins-krisp",
     "stream-agents-plugins-moonshine",
     "stream-agents-plugins-openai",
     "stream-agents-plugins-silero",
@@ -2123,66 +2124,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e8/48/88b8cdf28b068d070195c2817175549dee48e7682e3ab8994bee5f69217e/kokoro-0.9.4.tar.gz", hash = "sha256:fbf633262797f8cf46fdac3315cf9cade67dc8b762c0feccf334892772fb9ac4", size = 26215928, upload-time = "2025-04-05T22:01:35.294Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ea/cc/75f41633c75224ba820a4533163bc8b070b6bf25416014074c63284c2d4e/kokoro-0.9.4-py3-none-any.whl", hash = "sha256:a129dc6364a286bd6a92c396e9862459d3d3e45f2c15596ed5a94dcee5789efd", size = 32592, upload-time = "2025-04-05T22:01:23.018Z" },
-]
-
-[[package]]
-name = "krisp-audio"
-version = "1.4.0"
-source = { path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }
-resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-]
-wheels = [
-    { filename = "krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl", hash = "sha256:3790e227e80bc3d3cef3a88ae1b46ed20980e805fe52bc03f501032e9bd19211" },
-]
-
-[[package]]
-name = "krisp-audio"
-version = "1.4.0"
-source = { path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }
-resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version >= '4' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version == '3.11.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-]
-wheels = [
-    { filename = "krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", hash = "sha256:e24927328eb844644c829c6faf4928e6776b7b5891a88a788d2411257c756590" },
-]
-
-[[package]]
-name = "krisp-audio"
-version = "1.4.0"
-source = { path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }
-resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version >= '4' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-]
-wheels = [
-    { filename = "krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:24b0a4771adaef57543082cae26f272b1e234ce7eabf89b54d2d56a95a8126f0" },
-]
-
-[[package]]
-name = "krisp-audio"
-version = "1.4.0"
-source = { path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }
-resolution-markers = [
-    "python_full_version >= '3.13' and python_full_version < '4' and sys_platform == 'win32'",
-    "python_full_version >= '4' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
-    "python_full_version < '3.11' and sys_platform == 'win32'",
-]
-wheels = [
-    { filename = "krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", hash = "sha256:3f4b31daf5b32cebbacd59b3ca0634a55c71a83bfdb71c8a0ea21961dd7ba065" },
 ]
 
 [[package]]
@@ -4811,10 +4752,6 @@ dependencies = [
     { name = "click" },
     { name = "daily-python" },
     { name = "getstream", extra = ["telemetry", "webrtc"] },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
-    { name = "krisp-audio", version = "1.4.0", source = { path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" }, marker = "sys_platform == 'win32'" },
     { name = "mcp" },
     { name = "numpy" },
     { name = "opencv-python" },
@@ -4879,10 +4816,6 @@ requires-dist = [
     { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },
     { name = "google-genai", marker = "extra == 'all-plugins'", specifier = ">=0.3.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=0.3.0" },
-    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'", path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl" },
-    { name = "krisp-audio", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl" },
-    { name = "krisp-audio", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl" },
-    { name = "krisp-audio", marker = "sys_platform == 'win32'", path = "agents-core/vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl" },
     { name = "mcp", specifier = ">=1.14.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
@@ -5133,6 +5066,33 @@ requires-dist = [
     { name = "kokoro", specifier = ">=0.9.4" },
     { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "stream-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "stream-agents-plugins-krisp"
+version = "0.1.0"
+source = { editable = "plugins/krisp" }
+dependencies = [
+    { name = "numpy" },
+    { name = "stream-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.24.0" },
     { name = "stream-agents", editable = "agents-core" },
 ]
 
