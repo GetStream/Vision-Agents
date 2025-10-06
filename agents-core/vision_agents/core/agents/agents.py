@@ -28,7 +28,7 @@ from ..processors.base_processor import Processor, ProcessorType, filter_process
 from ..stt.events import STTPartialTranscriptEvent, STTTranscriptEvent
 from ..stt.stt import STT
 from ..tts.tts import TTS
-from ..turn_detection import BaseTurnDetector, TurnStartedEvent, TurnEndedEvent
+from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
