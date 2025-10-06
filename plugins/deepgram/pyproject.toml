@@ -3,23 +3,23 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-deepgram"
+name = "vision-agents-plugins-deepgram"
 version = "0.1.1"
 description = "Deepgram plugin for GetStream"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "deepgram-sdk>=4.5.0",
     "numpy>=2.2.6,<2.3",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = [".", "stream_agents"]
+packages = [".", "vision_agents"]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

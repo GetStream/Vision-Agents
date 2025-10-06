@@ -3,21 +3,21 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-getstream"
+name = "vision-agents-plugins-getstream"
 version = "0.1.0"
 description = "GetStream plugin for Stream Agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = [".", "stream_agents"]
+packages = [".", "vision_agents"]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

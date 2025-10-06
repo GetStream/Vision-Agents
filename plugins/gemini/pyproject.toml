@@ -3,26 +3,26 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-gemini"
+name = "vision-agents-plugins-gemini"
 version = "0.1.0"
 description = "Google Gemini plugin for GetStream"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "google-genai>=1.29.0",
     "numpy>=2.2.6",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["stream_agents"]
+packages = ["vision_agents"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/stream_agents"]
+include = ["/vision_agents"]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

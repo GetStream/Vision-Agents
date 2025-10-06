@@ -31,21 +31,21 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "stream-agents",
-    "stream-agents-plugins-anthropic",
-    "stream-agents-plugins-cartesia",
-    "stream-agents-plugins-deepgram",
-    "stream-agents-plugins-elevenlabs",
-    "stream-agents-plugins-fal",
-    "stream-agents-plugins-gemini",
-    "stream-agents-plugins-getstream",
-    "stream-agents-plugins-kokoro",
-    "stream-agents-plugins-krisp",
-    "stream-agents-plugins-moonshine",
-    "stream-agents-plugins-openai",
-    "stream-agents-plugins-silero",
-    "stream-agents-plugins-ultralytics",
-    "stream-agents-plugins-xai",
+    "vision-agents",
+    "vision-agents-plugins-anthropic",
+    "vision-agents-plugins-cartesia",
+    "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-fal",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-kokoro",
+    "vision-agents-plugins-krisp",
+    "vision-agents-plugins-moonshine",
+    "vision-agents-plugins-openai",
+    "vision-agents-plugins-silero",
+    "vision-agents-plugins-ultralytics",
+    "vision-agents-plugins-xai",
 ]
 
 [manifest.dependency-groups]
@@ -4745,506 +4745,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/52/45/cb417952940c71c78546b89e7959234de3507e69677b2f4895edeb91aae7/stratz-1.0.1.tar.gz", hash = "sha256:161f21d0ced966a82e8c0d2dec207db34763ec0c1d7d38c76b60af2e915daeae", size = 2383, upload-time = "2021-11-17T18:41:01.589Z" }
 
 [[package]]
-name = "stream-agents"
-source = { editable = "agents-core" }
-dependencies = [
-    { name = "aiortc" },
-    { name = "click" },
-    { name = "daily-python" },
-    { name = "getstream", extra = ["telemetry", "webrtc"] },
-    { name = "mcp" },
-    { name = "numpy" },
-    { name = "opencv-python" },
-    { name = "pillow" },
-    { name = "python-dotenv" },
-    { name = "stratz" },
-    { name = "stream-agents-plugins-anthropic" },
-    { name = "stream-agents-plugins-cartesia" },
-    { name = "stream-agents-plugins-deepgram" },
-    { name = "stream-agents-plugins-elevenlabs" },
-    { name = "stream-agents-plugins-fal" },
-    { name = "stream-agents-plugins-gemini" },
-    { name = "stream-agents-plugins-kokoro" },
-    { name = "stream-agents-plugins-moonshine" },
-    { name = "stream-agents-plugins-openai" },
-    { name = "stream-agents-plugins-silero" },
-    { name = "stream-agents-plugins-xai" },
-    { name = "ultralytics" },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-all-plugins = [
-    { name = "fal-client" },
-    { name = "google-genai" },
-    { name = "stream-agents-plugins-deepgram" },
-    { name = "stream-agents-plugins-elevenlabs" },
-    { name = "stream-agents-plugins-openai" },
-]
-deepgram = [
-    { name = "getstream-plugins-deepgram" },
-]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-elevenlabs = [
-    { name = "getstream-plugins-elevenlabs" },
-]
-fal = [
-    { name = "fal-client" },
-]
-gemini = [
-    { name = "google-genai" },
-]
-openai = [
-    { name = "getstream-plugins-openai" },
-    { name = "openai" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiortc", specifier = ">=1.13.0" },
-    { name = "click", specifier = ">=8.0.0" },
-    { name = "daily-python", specifier = ">=0.19.8" },
-    { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
-    { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.4.2" },
-    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
-    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
-    { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },
-    { name = "google-genai", marker = "extra == 'all-plugins'", specifier = ">=0.3.0" },
-    { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=0.3.0" },
-    { name = "mcp", specifier = ">=1.14.0" },
-    { name = "mypy", marker = "extra == 'dev'" },
-    { name = "numpy", specifier = ">=1.24.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = "==1.108.1" },
-    { name = "opencv-python", specifier = ">=4.8.0" },
-    { name = "pillow", specifier = ">=11.3.0" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-    { name = "ruff", marker = "extra == 'dev'" },
-    { name = "stratz", specifier = ">=1.0.0" },
-    { name = "stream-agents-plugins-anthropic", editable = "plugins/anthropic" },
-    { name = "stream-agents-plugins-cartesia", editable = "plugins/cartesia" },
-    { name = "stream-agents-plugins-deepgram", editable = "plugins/deepgram" },
-    { name = "stream-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
-    { name = "stream-agents-plugins-elevenlabs", editable = "plugins/elevenlabs" },
-    { name = "stream-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "plugins/elevenlabs" },
-    { name = "stream-agents-plugins-fal", editable = "plugins/fal" },
-    { name = "stream-agents-plugins-gemini", editable = "plugins/gemini" },
-    { name = "stream-agents-plugins-kokoro", editable = "plugins/kokoro" },
-    { name = "stream-agents-plugins-moonshine", editable = "plugins/moonshine" },
-    { name = "stream-agents-plugins-openai", editable = "plugins/openai" },
-    { name = "stream-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
-    { name = "stream-agents-plugins-silero", editable = "plugins/silero" },
-    { name = "stream-agents-plugins-xai", editable = "plugins/xai" },
-    { name = "ultralytics", specifier = ">=8.3.0" },
-    { name = "websockets", specifier = ">=12.0" },
-]
-provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemini", "openai"]
-
-[[package]]
-name = "stream-agents-plugins-anthropic"
-version = "0.1.1"
-source = { editable = "plugins/anthropic" }
-dependencies = [
-    { name = "anthropic" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-cartesia"
-version = "0.1.0"
-source = { editable = "plugins/cartesia" }
-dependencies = [
-    { name = "cartesia" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cartesia", specifier = ">=2.0.5" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-deepgram"
-version = "0.1.1"
-source = { editable = "plugins/deepgram" }
-dependencies = [
-    { name = "deepgram-sdk" },
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "scipy" },
-    { name = "soundfile" },
-    { name = "torchaudio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=4.5.0" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
-]
-
-[[package]]
-name = "stream-agents-plugins-elevenlabs"
-version = "0.1.0"
-source = { editable = "plugins/elevenlabs" }
-dependencies = [
-    { name = "elevenlabs" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "elevenlabs", specifier = ">=2.5.0" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-fal"
-version = "0.1.1"
-source = { editable = "plugins/fal" }
-dependencies = [
-    { name = "fal-client" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "numpy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fal-client", specifier = ">=0.7.0" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-gemini"
-version = "0.1.0"
-source = { editable = "plugins/gemini" }
-dependencies = [
-    { name = "google-genai" },
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "python-dotenv" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "google-genai", specifier = ">=1.29.0" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-]
-
-[[package]]
-name = "stream-agents-plugins-getstream"
-version = "0.1.0"
-source = { editable = "plugins/getstream" }
-dependencies = [
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "stream-agents", editable = "agents-core" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-kokoro"
-version = "0.1.0"
-source = { editable = "plugins/kokoro" }
-dependencies = [
-    { name = "kokoro" },
-    { name = "misaki", extra = ["en"] },
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "kokoro", specifier = ">=0.9.4" },
-    { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-krisp"
-version = "0.1.0"
-source = { editable = "plugins/krisp" }
-dependencies = [
-    { name = "numpy" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=1.24.0" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-moonshine"
-version = "0.1.1"
-source = { editable = "plugins/moonshine" }
-dependencies = [
-    { name = "numpy" },
-    { name = "onnxruntime" },
-    { name = "soundfile" },
-    { name = "stream-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "onnxruntime", specifier = ">=1.22.0" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "stream-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-openai"
-version = "0.1.1"
-source = { editable = "plugins/openai" }
-dependencies = [
-    { name = "getstream-plugins-common" },
-    { name = "openai", extra = ["realtime"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream-plugins-common" },
-    { name = "openai", extras = ["realtime"], specifier = ">=1.97.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-silero"
-version = "0.1.0"
-source = { editable = "plugins/silero" }
-dependencies = [
-    { name = "numpy" },
-    { name = "silero" },
-    { name = "stream-agents" },
-    { name = "torch" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "scipy" },
-    { name = "soundfile" },
-    { name = "torchaudio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "silero", specifier = ">=0.4.1" },
-    { name = "stream-agents", editable = "agents-core" },
-    { name = "torch", specifier = ">=2.7.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
-]
-
-[[package]]
-name = "stream-agents-plugins-ultralytics"
-version = "0.1.0"
-source = { editable = "plugins/ultralytics" }
-dependencies = [
-    { name = "aiortc" },
-    { name = "av" },
-    { name = "numpy" },
-    { name = "opencv-python" },
-    { name = "pillow" },
-    { name = "stream-agents" },
-    { name = "ultralytics" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiortc", specifier = ">=1.6.0" },
-    { name = "av", specifier = ">=10.0.0" },
-    { name = "numpy", specifier = ">=1.24.0" },
-    { name = "opencv-python", specifier = ">=4.8.0" },
-    { name = "pillow", specifier = ">=10.0.0" },
-    { name = "stream-agents", editable = "agents-core" },
-    { name = "ultralytics", specifier = ">=8.0.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "stream-agents-plugins-xai"
-source = { editable = "plugins/xai" }
-dependencies = [
-    { name = "xai-sdk" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "xai-sdk" }]
-
-[[package]]
 name = "structlog"
 version = "23.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5703,6 +5203,519 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/14/37fcdba2808a6c615681cd216fecae00413c9dab44fb2e57805ecf3eaee3/virtualenv-20.34.0.tar.gz", hash = "sha256:44815b2c9dee7ed86e387b842a84f20b93f7f417f95886ca1996a72a4138eb1a", size = 6003808, upload-time = "2025-08-13T14:24:07.464Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/06/04c8e804f813cf972e3262f3f8584c232de64f0cde9f703b46cf53a45090/virtualenv-20.34.0-py3-none-any.whl", hash = "sha256:341f5afa7eee943e4984a9207c025feedd768baff6753cd660c857ceb3e36026", size = 5983279, upload-time = "2025-08-13T14:24:05.111Z" },
+]
+
+[[package]]
+name = "vision-agents"
+source = { editable = "agents-core" }
+dependencies = [
+    { name = "aiortc" },
+    { name = "click" },
+    { name = "daily-python" },
+    { name = "getstream", extra = ["telemetry", "webrtc"] },
+    { name = "mcp" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "python-dotenv" },
+    { name = "stratz" },
+    { name = "ultralytics" },
+    { name = "vision-agents-plugins-anthropic" },
+    { name = "vision-agents-plugins-cartesia" },
+    { name = "vision-agents-plugins-deepgram" },
+    { name = "vision-agents-plugins-elevenlabs" },
+    { name = "vision-agents-plugins-fal" },
+    { name = "vision-agents-plugins-gemini" },
+    { name = "vision-agents-plugins-kokoro" },
+    { name = "vision-agents-plugins-moonshine" },
+    { name = "vision-agents-plugins-openai" },
+    { name = "vision-agents-plugins-silero" },
+    { name = "vision-agents-plugins-xai" },
+    { name = "websockets" },
+]
+
+[package.optional-dependencies]
+all-plugins = [
+    { name = "fal-client" },
+    { name = "google-genai" },
+    { name = "vision-agents-plugins-deepgram" },
+    { name = "vision-agents-plugins-elevenlabs" },
+    { name = "vision-agents-plugins-openai" },
+]
+deepgram = [
+    { name = "getstream-plugins-deepgram" },
+]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+elevenlabs = [
+    { name = "getstream-plugins-elevenlabs" },
+]
+fal = [
+    { name = "fal-client" },
+]
+gemini = [
+    { name = "google-genai" },
+]
+openai = [
+    { name = "getstream-plugins-openai" },
+    { name = "openai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiortc", specifier = ">=1.13.0" },
+    { name = "click", specifier = ">=8.0.0" },
+    { name = "daily-python", specifier = ">=0.19.8" },
+    { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
+    { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.4.2" },
+    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
+    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
+    { name = "getstream-plugins-openai", marker = "extra == 'openai'", specifier = ">=0.1.0" },
+    { name = "google-genai", marker = "extra == 'all-plugins'", specifier = ">=0.3.0" },
+    { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=0.3.0" },
+    { name = "mcp", specifier = ">=1.14.0" },
+    { name = "mypy", marker = "extra == 'dev'" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = "==1.108.1" },
+    { name = "opencv-python", specifier = ">=4.8.0" },
+    { name = "pillow", specifier = ">=11.3.0" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "ruff", marker = "extra == 'dev'" },
+    { name = "stratz", specifier = ">=1.0.0" },
+    { name = "ultralytics", specifier = ">=8.3.0" },
+    { name = "vision-agents-plugins-anthropic", editable = "plugins/anthropic" },
+    { name = "vision-agents-plugins-cartesia", editable = "plugins/cartesia" },
+    { name = "vision-agents-plugins-deepgram", editable = "plugins/deepgram" },
+    { name = "vision-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
+    { name = "vision-agents-plugins-elevenlabs", editable = "plugins/elevenlabs" },
+    { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "plugins/elevenlabs" },
+    { name = "vision-agents-plugins-fal", editable = "plugins/fal" },
+    { name = "vision-agents-plugins-gemini", editable = "plugins/gemini" },
+    { name = "vision-agents-plugins-kokoro", editable = "plugins/kokoro" },
+    { name = "vision-agents-plugins-moonshine", editable = "plugins/moonshine" },
+    { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
+    { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
+    { name = "vision-agents-plugins-silero", editable = "plugins/silero" },
+    { name = "vision-agents-plugins-xai", editable = "plugins/xai" },
+    { name = "websockets", specifier = ">=12.0" },
+]
+provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemini", "openai"]
+
+[[package]]
+name = "vision-agents-plugins-anthropic"
+version = "0.1.1"
+source = { editable = "plugins/anthropic" }
+dependencies = [
+    { name = "anthropic" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-cartesia"
+version = "0.1.0"
+source = { editable = "plugins/cartesia" }
+dependencies = [
+    { name = "cartesia" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cartesia", specifier = ">=2.0.5" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-deepgram"
+version = "0.1.1"
+source = { editable = "plugins/deepgram" }
+dependencies = [
+    { name = "deepgram-sdk" },
+    { name = "numpy" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "scipy" },
+    { name = "soundfile" },
+    { name = "torchaudio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "deepgram-sdk", specifier = ">=4.5.0" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "vision-agents-plugins-elevenlabs"
+version = "0.1.0"
+source = { editable = "plugins/elevenlabs" }
+dependencies = [
+    { name = "elevenlabs" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "elevenlabs", specifier = ">=2.5.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-fal"
+version = "0.1.1"
+source = { editable = "plugins/fal" }
+dependencies = [
+    { name = "fal-client" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "numpy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fal-client", specifier = ">=0.7.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-gemini"
+version = "0.1.0"
+source = { editable = "plugins/gemini" }
+dependencies = [
+    { name = "google-genai" },
+    { name = "numpy" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "python-dotenv" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "google-genai", specifier = ">=1.29.0" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "python-dotenv", specifier = ">=1.1.1" },
+]
+
+[[package]]
+name = "vision-agents-plugins-getstream"
+version = "0.1.0"
+source = { editable = "plugins/getstream" }
+dependencies = [
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "vision-agents", editable = "agents-core" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-kokoro"
+version = "0.1.0"
+source = { editable = "plugins/kokoro" }
+dependencies = [
+    { name = "kokoro" },
+    { name = "misaki", extra = ["en"] },
+    { name = "numpy" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "kokoro", specifier = ">=0.9.4" },
+    { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-krisp"
+version = "0.1.0"
+source = { editable = "plugins/krisp" }
+dependencies = [
+    { name = "numpy" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-moonshine"
+version = "0.1.1"
+source = { editable = "plugins/moonshine" }
+dependencies = [
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "soundfile" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "onnxruntime", specifier = ">=1.22.0" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-openai"
+version = "0.1.1"
+source = { editable = "plugins/openai" }
+dependencies = [
+    { name = "getstream-plugins-common" },
+    { name = "openai", extra = ["realtime"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "getstream-plugins-common" },
+    { name = "openai", extras = ["realtime"], specifier = ">=1.97.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-silero"
+version = "0.1.0"
+source = { editable = "plugins/silero" }
+dependencies = [
+    { name = "numpy" },
+    { name = "silero" },
+    { name = "torch" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "scipy" },
+    { name = "soundfile" },
+    { name = "torchaudio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "silero", specifier = ">=0.4.1" },
+    { name = "torch", specifier = ">=2.7.1" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "vision-agents-plugins-ultralytics"
+version = "0.1.0"
+source = { editable = "plugins/ultralytics" }
+dependencies = [
+    { name = "aiortc" },
+    { name = "av" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "ultralytics" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiortc", specifier = ">=1.6.0" },
+    { name = "av", specifier = ">=10.0.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "opencv-python", specifier = ">=4.8.0" },
+    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "ultralytics", specifier = ">=8.0.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-xai"
+version = "0.1.0"
+source = { editable = "plugins/xai" }
+dependencies = [
+    { name = "xai-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "xai-sdk" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]

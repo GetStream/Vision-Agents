@@ -3,7 +3,7 @@ requires = ["hatchling", "hatch-vcs", "setuptools-scm"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents"
+name = "vision-agents"
 description = "Open video agents. Build low latency video and voice agents on any realtime edge network."
 readme = "README.md"
 keywords = ["video AI", "AI", "voice AI", "video agents", "voice agents", "agents", "AI"]
@@ -24,17 +24,17 @@ dependencies = [
     "stratz>=1.0.0",
     "daily-python>=0.19.8",
     "mcp>=1.14.0",
-    "stream-agents-plugins-anthropic",
-    "stream-agents-plugins-cartesia",
-    "stream-agents-plugins-deepgram",
-    "stream-agents-plugins-elevenlabs",
-    "stream-agents-plugins-fal",
-    "stream-agents-plugins-gemini",
-    "stream-agents-plugins-kokoro",
-    "stream-agents-plugins-moonshine",
-    "stream-agents-plugins-openai",
-    "stream-agents-plugins-silero",
-    "stream-agents-plugins-xai"
+    "vision-agents-plugins-anthropic",
+    "vision-agents-plugins-cartesia",
+    "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-fal",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-kokoro",
+    "vision-agents-plugins-moonshine",
+    "vision-agents-plugins-openai",
+    "vision-agents-plugins-silero",
+    "vision-agents-plugins-xai"
 ]
 
 [project.urls]
@@ -50,9 +50,9 @@ elevenlabs = ["getstream-plugins-elevenlabs>=0.1.0"]
 fal = ["fal-client>=0.6.1"]
 gemini = ["google-genai>=0.3.0"]
 all-plugins = [
-  "stream-agents-plugins-openai>=0.1.0",
-  "stream-agents-plugins-deepgram>=0.1.0",
-  "stream-agents-plugins-elevenlabs>=0.1.0",
+  "vision-agents-plugins-openai>=0.1.0",
+  "vision-agents-plugins-deepgram>=0.1.0",
+  "vision-agents-plugins-elevenlabs>=0.1.0",
   "fal-client>=0.6.1",
   "google-genai>=0.3.0",
 ]

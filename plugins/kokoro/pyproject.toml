@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-kokoro"
+name = "vision-agents-plugins-kokoro"
 version = "0.1.0"
 description = "Kokoro TTS plugin for GetStream"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "kokoro>=0.9.4",
     "misaki[en]>=0.9.4",
     "numpy>=2.2.6,<2.3",
@@ -20,7 +20,7 @@ dependencies = [
 packages = ["."]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

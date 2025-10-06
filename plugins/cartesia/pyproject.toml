@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-cartesia"
+name = "vision-agents-plugins-cartesia"
 version = "0.1.0"
 description = "Cartesia plugin for GetStream"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "cartesia>=2.0.5",
 ]
 
@@ -18,7 +18,7 @@ dependencies = [
 packages = ["."]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

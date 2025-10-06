@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-moonshine"
+name = "vision-agents-plugins-moonshine"
 version = "0.1.1"
 description = "Moonshine plugin for GetStream"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "onnxruntime>=1.22.0",
     "numpy>=2.2.6,<2.3",
     "soundfile>=0.13.1",
@@ -23,7 +23,7 @@ packages = ["."]
 allow-direct-references = true
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

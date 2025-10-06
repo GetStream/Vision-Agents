@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-xai"
-dynamic = ["version"]
+name = "vision-agents-plugins-xai"
+version = "0.1.0"
 description = "XAI for stream agents"
 readme = "README.md"
 requires-python = ">=3.10.0"
@@ -17,7 +17,10 @@ dependencies = [
 packages = ["."]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
-[tool.hatch.version]
-path = "stream_agents/plugins/xai/version.py"
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+]

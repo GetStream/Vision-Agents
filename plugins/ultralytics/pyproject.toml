@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-ultralytics"
+name = "vision-agents-plugins-ultralytics"
 version = "0.1.0"
 description = "Ultralytics YOLO plugin for GetStream"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "ultralytics>=8.0.0",
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",
@@ -20,10 +20,10 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = [".", "stream_agents"]
+packages = [".", "vision_agents"]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

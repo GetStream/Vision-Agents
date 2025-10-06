@@ -10,15 +10,15 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "elevenlabs>=2.5.0",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = [".", "stream_agents"]
+packages = [".", "vision_agents"]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

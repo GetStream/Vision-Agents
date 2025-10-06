@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-krisp"
+name = "vision-agents-plugins-krisp"
 version = "0.1.0"
 description = "Krisp turn detection plugin for Vision Agents"
 readme = "README.md"
@@ -11,7 +11,7 @@ keywords = ["krisp", "turn detection", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = [
-    "stream-agents>=0.1.0",
+    "vision-agents>=0.1.0",
     "numpy>=1.24.0",
 ]
 
@@ -24,7 +24,7 @@ Source = "https://github.com/getstream/agents"
 packages = ["vision_agents"]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [
