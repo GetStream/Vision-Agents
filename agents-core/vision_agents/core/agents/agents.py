@@ -28,7 +28,7 @@ from ..processors.base_processor import Processor, ProcessorType, filter_process
 from ..stt.events import STTPartialTranscriptEvent, STTTranscriptEvent
 from ..stt.stt import STT
 from ..tts.tts import TTS
-from ..turn_detection import BaseTurnDetector, TurnEventData
+from ..turn_detection import TurnDetector, TurnEventData
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
@@ -86,7 +86,7 @@ class Agent:
         # setup stt, tts, and turn detection if not using a realtime llm
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
-        turn_detection: Optional[BaseTurnDetector] = None,
+        turn_detection: Optional[TurnDetector] = None,
         vad: Optional[VAD] = None,
         # for video gather data at an interval
         # - roboflow/ yolo typically run continuously

@@ -20,7 +20,7 @@ from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.utils.utils import to_mono
 
-from .turn_detection import BaseTurnDetector, TurnEvent, TurnEventData
+from .turn_detection import TurnDetector, TurnEvent, TurnEventData
 
 
 def _resample(samples: np.ndarray) -> np.ndarray:
@@ -28,7 +28,7 @@ def _resample(samples: np.ndarray) -> np.ndarray:
     return resample_audio(samples, 48000, 16000).astype(np.int16)
 
 
-class FalTurnDetection(BaseTurnDetector):
+class FalTurnDetection(TurnDetector):
     """
     Turn detection implementation using FAL AI's smart-turn model.
 

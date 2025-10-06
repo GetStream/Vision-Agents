@@ -10,7 +10,7 @@ Every plugin should follow this structure, an example for the plugin named eleve
 - pyproject.toml
 - README.md
 - py.typed
-- stream_agents/plugins/
+- vision_agents/plugins/
   - elevenlabs/
     - __init__.py
     - tts.py
@@ -18,14 +18,14 @@ Every plugin should follow this structure, an example for the plugin named eleve
     - tests/
 ```
 
-And the logic for the plugin should live in `/plugins/elevenlabs/stream_agents/plugins/...`
+And the logic for the plugin should live in `/plugins/elevenlabs/vision_agents/plugins/...`
 
 ## Naming
 
 When a plugin is imported it's used like:
 
 ```python
-from stream_agents.plugins import elevenlabs, anthropic
+from vision_agents.plugins import elevenlabs, anthropic
 
 tts = elevenlabs.TTS()
 llm = anthropic.LLM()

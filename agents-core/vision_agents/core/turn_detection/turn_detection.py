@@ -75,7 +75,7 @@ class TurnDetection(Protocol):
         ...
 
 
-class BaseTurnDetector(ABC, EventEmitter):
+class TurnDetector(ABC, EventEmitter):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(self, confidence_threshold: float = 0.5) -> None:
