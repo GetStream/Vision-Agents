@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from stream_agents.core.events.base import PluginBaseEvent
+from vision_agents.core.events.base import PluginBaseEvent
 
 
 @dataclass
