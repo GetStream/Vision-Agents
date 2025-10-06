@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, Callable, Protocol
+from typing import Optional, Dict, Any, Callable
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -31,43 +31,6 @@ class TurnEventData:
 
 # Type alias for event listener callbacks (deprecated)
 EventListener = Callable[[TurnEventData], None]
-
-
-class TurnDetection(Protocol):
-    """Turn Detection shape definition used by the Agent class"""
-
-    events: EventManager
-
-    def is_detecting(self) -> bool:
-        """Check if turn detection is currently active."""
-        ...
-
-    # --- Unified high-level interface used by Agent ---
-    def start(self) -> None:
-        """Start detection (convenience alias to start_detection)."""
-        ...
-
-    def stop(self) -> None:
-        """Stop detection (convenience alias to stop_detection)."""
-        ...
-
-    async def process_audio(
-        self,
-        audio_data: PcmData,
-        user_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Ingest PcmData audio for a user.
-
-        The implementation should track participants internally as audio comes in.
-        Use the event system (events.send) to notify when turns change.
-
-        Args:
-            audio_data: PcmData object containing audio samples from Stream
-            user_id: Identifier for the user providing the audio
-            metadata: Optional additional metadata about the audio
-        """
-        ...
 
 
 class BaseTurnDetector(ABC):
