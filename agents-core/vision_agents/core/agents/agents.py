@@ -28,7 +28,7 @@ from ..processors.base_processor import Processor, ProcessorType, filter_process
 from ..stt.events import STTPartialTranscriptEvent, STTTranscriptEvent
 from ..stt.stt import STT
 from ..tts.tts import TTS
-from ..turn_detection import TurnDetector, TurnEventData
+from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
@@ -495,11 +495,8 @@ class Agent:
 
     def _setup_turn_detection(self):
         if self.turn_detection:
-            # TODO: this subscriptions should be in plugin and just merged when
-            # plugin is registered, each plugin should have access to agent
             self.logger.info("🎙️ Setting up turn detection listeners")
-            self.events.subscribe(self._on_turn_started)
-            self.events.subscribe(self._on_turn_ended)
+            self.events.subscribe(self._on_turn_event)
             self.turn_detection.start()
 
     def _setup_stt(self):
@@ -664,19 +661,18 @@ class Agent:
         # Cleanup and logging
         self.logger.info(f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}")
 
-    def _on_turn_started(self, event: TurnEventData) -> None:
-        """Handle when a participant starts their turn."""
-        # TODO: Implement TTS pause/resume functionality
-        # For now, TTS will continue playing - this should be improved
-        self.logger.info(
-            f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
-        )
-
-    def _on_turn_ended(self, event: TurnEventData) -> None:
-        """Handle when a participant ends their turn."""
-        self.logger.info(
-            f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.confidence})"
-        )
+    async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
+        """Handle turn detection events."""
+        if isinstance(event, TurnStartedEvent):
+            # TODO: Implement TTS pause/resume functionality
+            # For now, TTS will continue playing - this should be improved
+            self.logger.info(
+                f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
+            )
+        elif isinstance(event, TurnEndedEvent):
+            self.logger.info(
+                f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.duration}, confidence: {event.confidence})"
+            )
 
     async def _on_partial_transcript(
         self, event: STTPartialTranscriptEvent | RealtimePartialTranscriptEvent

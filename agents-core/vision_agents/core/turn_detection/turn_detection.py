@@ -1,13 +1,16 @@
-from typing import Optional, Dict, Any, Union, Callable, Protocol
+from typing import Optional, Dict, Any, Callable, Protocol
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from pyee import EventEmitter
+import uuid
 from getstream.video.rtc.track_util import PcmData
+from stream_agents.core.events.manager import EventManager
+from stream_agents.core.events import PluginInitializedEvent
+from . import events
 
 
 class TurnEvent(Enum):
-    """Events that can occur during turn detection."""
+    """Events that can occur during turn detection (deprecated - use TurnStartedEvent/TurnEndedEvent)."""
 
     TURN_STARTED = "turn_started"
     TURN_ENDED = "turn_ended"
@@ -15,7 +18,7 @@ class TurnEvent(Enum):
 
 @dataclass
 class TurnEventData:
-    """Data associated with a turn detection event."""
+    """Data associated with a turn detection event (deprecated - use TurnStartedEvent/TurnEndedEvent)."""
 
     timestamp: float
     speaker_id: Optional[str] = (
@@ -26,25 +29,17 @@ class TurnEventData:
     custom: Optional[Dict[str, Any]] = None  # extensible custom data
 
 
-# Type alias for event listener callbacks
+# Type alias for event listener callbacks (deprecated)
 EventListener = Callable[[TurnEventData], None]
 
 
 class TurnDetection(Protocol):
     """Turn Detection shape definition used by the Agent class"""
 
+    events: EventManager
+
     def is_detecting(self) -> bool:
         """Check if turn detection is currently active."""
-        ...
-
-    def on(
-        self, event: str, listener: Optional[EventListener] = None
-    ) -> Union[None, Callable]:
-        """Add an event listener or use as decorator (from EventEmitter)."""
-        ...
-
-    def emit(self, event: str, *args: Any) -> bool:
-        """Emit an event (from EventEmitter)."""
         ...
 
     # --- Unified high-level interface used by Agent ---
@@ -65,7 +60,7 @@ class TurnDetection(Protocol):
         """Ingest PcmData audio for a user.
 
         The implementation should track participants internally as audio comes in.
-        Use the event system (emit/on) to notify when turns change.
+        Use the event system (events.send) to notify when turns change.
 
         Args:
             audio_data: PcmData object containing audio samples from Stream
@@ -75,13 +70,26 @@ class TurnDetection(Protocol):
         ...
 
 
-class TurnDetector(ABC, EventEmitter):
+class BaseTurnDetector(ABC):
     """Base implementation for turn detection with common functionality."""
 
-    def __init__(self, confidence_threshold: float = 0.5) -> None:
-        super().__init__()  # Initialize EventEmitter
+    def __init__(
+        self, 
+        confidence_threshold: float = 0.5,
+        provider_name: Optional[str] = None
+    ) -> None:
         self._confidence_threshold = confidence_threshold
         self._is_detecting = False
+        self.session_id = str(uuid.uuid4())
+        self.provider_name = provider_name or self.__class__.__name__
+        self.events = EventManager()
+        self.events.register_events_from_module(events, ignore_not_compatible=True)
+        self.events.send(PluginInitializedEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            plugin_type="TurnDetection",
+            provider=self.provider_name,
+        ))
 
     @abstractmethod
     def is_detecting(self) -> bool:
@@ -91,8 +99,31 @@ class TurnDetector(ABC, EventEmitter):
     def _emit_turn_event(
         self, event_type: TurnEvent, event_data: TurnEventData
     ) -> None:
-        """Emit a turn detection event."""
-        self.emit(event_type.value, event_data)
+        """
+        Emit a turn detection event using the new event system.
+        
+        Args:
+            event_type: The type of turn event (TURN_STARTED or TURN_ENDED)
+            event_data: Data associated with the event
+        """
+        if event_type == TurnEvent.TURN_STARTED:
+            self.events.send(events.TurnStartedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                speaker_id=event_data.speaker_id,
+                confidence=event_data.confidence,
+                duration=event_data.duration,
+                custom=event_data.custom,
+            ))
+        elif event_type == TurnEvent.TURN_ENDED:
+            self.events.send(events.TurnEndedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                speaker_id=event_data.speaker_id,
+                confidence=event_data.confidence,
+                duration=event_data.duration,
+                custom=event_data.custom,
+            ))
 
     @abstractmethod
     async def process_audio(

@@ -40,7 +40,10 @@ class KrispTurnDetection(BaseTurnDetector):
         frame_duration_ms: int = 15,
         confidence_threshold: float = 0.5,
     ):
-        super().__init__(confidence_threshold=confidence_threshold)
+        super().__init__(
+            confidence_threshold=confidence_threshold,
+            provider_name="KrispTurnDetection"
+        )
         self.logger = logging.getLogger("KrispTurnDetection")
         self.model_path = model_path
         self.frame_duration_ms = frame_duration_ms
