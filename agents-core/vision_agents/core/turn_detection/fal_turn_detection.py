@@ -58,7 +58,10 @@ class FalTurnDetection(TurnDetector):
             channels: Number of audio channels
         """
 
-        super().__init__(confidence_threshold=confidence_threshold)
+        super().__init__(
+            confidence_threshold=confidence_threshold,
+            provider_name="FalTurnDetection"
+        )
         self.logger = logging.getLogger("FalTurnDetection")
         self.api_key = api_key
         self.buffer_duration = buffer_duration
