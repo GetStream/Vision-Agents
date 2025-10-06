@@ -8,7 +8,13 @@ import krisp_audio
 import numpy as np
 from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
-from vision_agents.core.turn_detection import TurnDetector, TurnEvent, TurnEventData
+from vision_agents.core.turn_detection import (
+    BaseTurnDetector,
+    TurnStartedEvent,
+    TurnEndedEvent,
+    TurnEvent,
+    TurnEventData,
+)
 from vision_agents.core.utils.utils import to_mono
 
 
@@ -33,14 +39,17 @@ def log_callback(log_message, log_level):
     print(f"[{log_level}] {log_message}", flush=True)
 
 
-class TurnDetection(TurnDetector):
+class TurnDetection(BaseTurnDetector):
     def __init__(
         self,
         model_path: Optional[str] = os.getcwd() + "/krisp-viva-tt-v1.kef",
         frame_duration_ms: int = 15,
         confidence_threshold: float = 0.5,
     ):
-        super().__init__(confidence_threshold=confidence_threshold)
+        super().__init__(
+            confidence_threshold=confidence_threshold,
+            provider_name="KrispTurnDetection"
+        )
         self.logger = logging.getLogger("KrispTurnDetection")
         self.model_path = model_path
         self.frame_duration_ms = frame_duration_ms
@@ -175,6 +184,16 @@ class TurnDetection(TurnDetector):
             if score > 0.1:
                 if not self._turn_in_progress and score <= self.turn_start_threshold:
                     self._turn_in_progress = True
+                    # Emit new event
+                    event = TurnStartedEvent(
+                        session_id=self.session_id,
+                        plugin_name=self.provider_name,
+                        speaker_id=user_id,
+                        confidence=score,
+                        custom=metadata or {},
+                    )
+                    self.events.send(event)
+                    # Emit deprecated event for backward compatibility
                     event_data = TurnEventData(
                         timestamp=time.time(),
                         speaker_id=user_id,
@@ -184,6 +203,16 @@ class TurnDetection(TurnDetector):
                     self._emit_turn_event(TurnEvent.TURN_STARTED, event_data)
                 elif self._turn_in_progress and score > self.turn_end_threshold:
                     self._turn_in_progress = False
+                    # Emit new event
+                    event = TurnEndedEvent(
+                        session_id=self.session_id,
+                        plugin_name=self.provider_name,
+                        speaker_id=user_id,
+                        confidence=score,
+                        custom=metadata or {},
+                    )
+                    self.events.send(event)
+                    # Emit deprecated event for backward compatibility
                     event_data = TurnEventData(
                         timestamp=time.time(),
                         speaker_id=user_id,
