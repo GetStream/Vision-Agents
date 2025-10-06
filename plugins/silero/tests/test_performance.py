@@ -11,8 +11,8 @@ import numpy as np
 
 import pytest
 
-from stream_agents.plugins import silero
-from stream_agents.core.vad.events import VADAudioEvent
+from vision_agents.plugins import silero
+from vision_agents.core.vad.events import VADAudioEvent
 from getstream.video.rtc.track_util import PcmData
 
 

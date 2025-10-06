@@ -12,9 +12,9 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from stream_agents.plugins import openai, getstream
-from stream_agents.core.agents import Agent
-from stream_agents.core.cli import start_dispatcher
+from vision_agents.plugins import openai, getstream
+from vision_agents.core.agents import Agent
+from vision_agents.core.cli import start_dispatcher
 from getstream import AsyncStream
 
 logging.basicConfig(level=logging.INFO)

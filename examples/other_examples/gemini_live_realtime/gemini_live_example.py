@@ -4,9 +4,9 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from getstream.video.rtc.reconnection import ReconnectionStrategy
-from stream_agents.plugins import gemini, getstream
-from stream_agents.core.agents import Agent
-from stream_agents.core.cli import start_dispatcher
+from vision_agents.plugins import gemini, getstream
+from vision_agents.core.agents import Agent
+from vision_agents.core.cli import start_dispatcher
 from getstream import AsyncStream
 
 load_dotenv()

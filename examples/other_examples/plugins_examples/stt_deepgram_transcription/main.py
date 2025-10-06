@@ -21,11 +21,11 @@ import asyncio
 from uuid import uuid4
 from dotenv import load_dotenv
 
-from stream_agents.core.agents import Agent
-from stream_agents.core.edge.types import User
-from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
-from stream_agents.core.llm.events import LLMTextResponseCompletedEvent
-from stream_agents.plugins import deepgram, openai, getstream, elevenlabs
+from vision_agents.core.agents import Agent
+from vision_agents.core.edge.types import User
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+from vision_agents.core.llm.events import LLMTextResponseCompletedEvent
+from vision_agents.plugins import deepgram, openai, getstream, elevenlabs
 
 load_dotenv()
 

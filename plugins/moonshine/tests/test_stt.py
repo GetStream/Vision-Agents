@@ -3,7 +3,7 @@ import asyncio
 import numpy as np
 from unittest.mock import patch
 
-from stream_agents.plugins import moonshine
+from vision_agents.plugins import moonshine
 from getstream.video.rtc.track_util import PcmData
 from plugins.plugin_test_utils import get_audio_asset, get_json_metadata
 

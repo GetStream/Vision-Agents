@@ -4,7 +4,7 @@ Simple Claude function calling example.
 
 import asyncio
 from dotenv import load_dotenv
-from stream_agents.plugins import anthropic
+from vision_agents.plugins import anthropic
 
 load_dotenv()
 

@@ -20,10 +20,10 @@ import asyncio
 from uuid import uuid4
 from dotenv import load_dotenv
 
-from stream_agents.core.agents import Agent
-from stream_agents.core.edge.types import User
-from stream_agents.plugins import moonshine, openai, getstream
-from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+from vision_agents.core.agents import Agent
+from vision_agents.core.edge.types import User
+from vision_agents.plugins import moonshine, openai, getstream
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 
 load_dotenv()
 

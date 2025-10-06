@@ -28,11 +28,11 @@ from dotenv import load_dotenv
 
 from getstream.models import UserRequest
 from getstream.stream import Stream
-from stream_agents.core.agents import Agent
-from stream_agents.core.edge.types import User
-from stream_agents.plugins import fal, silero, getstream, openai
-from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
-from stream_agents.core.vad.events import VADAudioEvent, VADErrorEvent
+from vision_agents.core.agents import Agent
+from vision_agents.core.edge.types import User
+from vision_agents.plugins import fal, silero, getstream, openai
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+from vision_agents.core.vad.events import VADAudioEvent, VADErrorEvent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

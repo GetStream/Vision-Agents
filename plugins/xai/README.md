@@ -21,7 +21,7 @@ pip install stream-agents-plugins-xai
 
 ```python
 import asyncio
-from stream_agents.plugins import xai
+from vision_agents.plugins import xai
 
 async def main():
     # Initialize with your xAI API key
@@ -44,7 +44,7 @@ if __name__ == "__main__":
 ### Conversation with Memory
 
 ```python
-from stream_agents.plugins import xai
+from vision_agents.plugins import xai
 
 llm = xai.LLM(model="grok-4", api_key="your_api_key")
 

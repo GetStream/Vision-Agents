@@ -19,7 +19,7 @@ pip install stream-agents-plugins-ultralytics
 ## Usage
 
 ```python
-from stream_agents.plugins import ultralytics
+from vision_agents.plugins import ultralytics
 
 # Create a YOLO pose processor
 processor = ultralytics.YOLOPoseProcessor(

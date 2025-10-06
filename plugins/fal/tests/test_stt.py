@@ -5,8 +5,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 
-from stream_agents.plugins import fal
-from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+from vision_agents.plugins import fal
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 from getstream.video.rtc.track_util import PcmData
 
 

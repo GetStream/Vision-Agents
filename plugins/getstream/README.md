@@ -11,7 +11,7 @@ pip install stream-agents-plugins-getstream
 ## Usage
 
 ```python
-from stream_agents.plugins import getstream
+from vision_agents.plugins import getstream
 
 # Use the plugin
 ```

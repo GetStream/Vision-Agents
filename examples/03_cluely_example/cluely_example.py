@@ -5,8 +5,8 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from getstream import AsyncStream
 from getstream.models import UserRequest
-from stream_agents.plugins import deepgram, elevenlabs, openai, ultralytics, getstream
-from stream_agents.core import agents, cli
+from vision_agents.plugins import deepgram, elevenlabs, openai, ultralytics, getstream
+from vision_agents.core import agents, cli
 
 # Main feats:
 # 1. API endpoints to create a sessions, end session

@@ -2,9 +2,9 @@ import pytest
 from dotenv import load_dotenv
 import os
 
-from stream_agents.core.agents.conversation import Message
-from stream_agents.plugins.xai.llm import XAILLM
-from stream_agents.core.llm.events import LLMResponseChunkEvent
+from vision_agents.core.agents.conversation import Message
+from vision_agents.plugins.xai.llm import XAILLM
+from vision_agents.core.llm.events import LLMResponseChunkEvent
 
 load_dotenv()
 
