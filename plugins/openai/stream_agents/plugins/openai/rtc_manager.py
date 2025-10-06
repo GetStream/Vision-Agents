@@ -291,7 +291,8 @@ class RTCManager:
         }
         # TODO: replace with regular openai client SDK when support for this endpoint is added
         # TODO: voice is not the right param or typing is wrong here
-        payload: RealtimeSessionCreateRequestParam = {"model": self.model, "voice": self.voice, "type": "realtime"}  # type: ignore[typeddict-unknown-key]
+        # Not quite: RealtimeSessionCreateRequestParam
+        payload = {"model": self.model, "voice": self.voice}  # type: ignore[typeddict-unknown-key]
         if self.instructions:
             payload["instructions"] = self.instructions
 
