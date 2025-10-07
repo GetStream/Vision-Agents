@@ -1,11 +1,11 @@
 name: Integration (pre-release / release)
 on:
-  push:
-    tags:
-      - 'v*'          # run when you push a version tag like v1.2.3
   release:
-    types: [published] # run when a GitHub Release is published
-  workflow_dispatch: {}
+    types: [published] # Run after a Github publish
+
+permissions:
+  contents: read
+  id-token: write       # REQUIRED for PyPI Trusted Publishing (OIDC)
 
 jobs:
   integration:
@@ -26,7 +26,7 @@ jobs:
 
       - name: Build all distributions
         run: |
-          uv build --all -o dist
+          uv build --all
 
       - name: Extract package version (hatch via uv)
         id: get_version
@@ -35,13 +35,8 @@ jobs:
           VERSION=$(uv run -q hatch version)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-#      - name: Publish core to TestPyPI
-#        uses: pypa/gh-action-pypi-publish@release/v1
-#        with:
-#          repository-url: https://test.pypi.org/legacy/
-#          packages-dir: dist
-#        environment:
-#          name: testpypi
+      - name: Publish to PyPI (Trusted Publishing)
+        run: uv publish
 
   test-core-index:
     name: Verify Core from TestPyPI
@@ -54,10 +49,6 @@ jobs:
         uses: actions/checkout@v5
       - uses: ./.github/actions/python-uv-setup
 
-      - name: Install core from TestPyPI using uv
+      - name: Install core PyPI using uv
         run: |
-          uv pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple getstream==${{ needs.build-core.outputs.version }}
-
-      - name: Run core tests against TestPyPI artifact
-        run: |
-          UV_NO_SOURCES=1 uv run pytest tests/ --ignore=getstream/plugins
+          uv pip install vision-agents==${{ needs.build-core.outputs.version }}
