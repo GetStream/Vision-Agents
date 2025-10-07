@@ -794,7 +794,7 @@ class Agent:
             # Without turn detection: trigger LLM immediately on transcript completion
             # This is the traditional STT -> LLM flow
             if self.llm:
-                self.logger.info(f"🤖 Triggering LLM response immediately (no turn detection)")
+                self.logger.info("🤖 Triggering LLM response immediately (no turn detection)")
                 
                 # Get participant from event metadata
                 participant = None
