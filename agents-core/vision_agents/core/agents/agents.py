@@ -666,6 +666,10 @@ class Agent:
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
+        # In realtime mode, the LLM handles turn detection, interruption, and responses itself
+        if self.realtime_mode:
+            return
+        
         if isinstance(event, TurnStartedEvent):
             # Interrupt TTS when user starts speaking (barge-in)
             if event.speaker_id and event.speaker_id != self.agent_user.id:
@@ -690,10 +694,6 @@ class Agent:
             self.logger.info(
                 f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.duration}, confidence: {event.confidence})"
             )
-            
-            # In realtime mode, the LLM handles turn detection and responses itself
-            if self.realtime_mode:
-                return
             
             # When turn detection is enabled, trigger LLM response when user's turn ends
             # This is the signal that the user has finished speaking and expects a response
