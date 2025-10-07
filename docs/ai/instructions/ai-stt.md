@@ -2,15 +2,15 @@
 
 ## Overview
 
-STT (Speech-to-Text) plugins provide audio transcription functionality for the stream-agents framework. They convert audio streams into text transcripts that can be processed by other components.
+STT (Speech-to-Text) plugins provide audio transcription functionality for the vision-agents framework. They convert audio streams into text transcripts that can be processed by other components.
 
 ## Base Class
 
-All STT plugins should inherit from `stream_agents.core.stt.stt.STT`:
+All STT plugins should inherit from `vision_agents.core.stt.stt.STT`:
 
 ```python
-from stream_agents.core.stt.stt import STT
-from stream_agents.core.stt.events import STTTranscriptEvent, STTStartedEvent, STTEndedEvent
+from vision_agents.core.stt.stt import STT
+from vision_agents.core.stt.events import STTTranscriptEvent, STTStartedEvent, STTEndedEvent
 from . import events
 
 class MySTT(STT):
@@ -327,11 +327,11 @@ class MyVADIntegratedSTT(STT):
 Here's a complete example of an STT plugin:
 
 ```python
-# mystt/stream_agents/plugins/mystt/stt.py
+# mystt/vision_agents/plugins/mystt/stt.py
 import asyncio
 from typing import Optional, List, AsyncIterator
-from stream_agents.core.stt.stt import STT
-from stream_agents.core.stt.events import STTTranscriptEvent
+from vision_agents.core.stt.stt import STT
+from vision_agents.core.stt.events import STTTranscriptEvent
 from . import events
 
 class MySTT(STT):

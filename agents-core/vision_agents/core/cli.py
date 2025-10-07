@@ -30,7 +30,7 @@ def setup_logging(log_level: str) -> None:
     )
 
     # Set specific logger levels
-    logging.getLogger("stream_agents").setLevel(numeric_level)
+    logging.getLogger("vision_agents").setLevel(numeric_level)
     logging.getLogger("test123").setLevel(numeric_level)
 
 

@@ -5,7 +5,7 @@ This package contains various plugins for the GetStream SDK, organized by functi
 ## Directory Structure
 
 ```
-stream-agents/plugins/
+vision-agents/plugins/
 ├── stt/                # Speech-to-Text functionality
 │   ├── deepgram/       # Deepgram STT implementation
 │   └── ...             # Other STT implementations

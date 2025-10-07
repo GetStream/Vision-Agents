@@ -14,7 +14,7 @@ This package provides xAI (Grok) integration for the Stream Agents ecosystem, en
 ## Installation
 
 ```bash
-pip install stream-agents-plugins-xai
+pip install vision-agents-plugins-xai
 ```
 
 ## Quick Start
@@ -147,7 +147,7 @@ Create a response with full control over parameters.
 
 - Python 3.10+
 - `xai-sdk`
-- `stream-agents-core`
+- `vision-agents-core`
 
 ## License
 

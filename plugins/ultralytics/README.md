@@ -1,6 +1,6 @@
 # Ultralytics Plugin
 
-This plugin provides YOLO-based pose detection capabilities for stream-agents using the Ultralytics YOLO library.
+This plugin provides YOLO-based pose detection capabilities for vision-agents using the Ultralytics YOLO library.
 
 ## Features
 
@@ -13,7 +13,7 @@ This plugin provides YOLO-based pose detection capabilities for stream-agents us
 ## Installation
 
 ```bash
-pip install stream-agents-plugins-ultralytics
+pip install vision-agents-plugins-ultralytics
 ```
 
 ## Usage
