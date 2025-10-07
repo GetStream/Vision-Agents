@@ -14,26 +14,7 @@ dependencies = [
     "getstream[webrtc,telemetry]>=2.5.0",
     "python-dotenv>=1.1.1",
     "pillow>=11.3.0",
-    "aiortc>=1.13.0",
-    "websockets>=12.0",
     "numpy>=1.24.0",
-    "ultralytics>=8.3.0",
-    "opencv-python>=4.8.0",
-    "click>=8.0.0",
-    "stratz>=1.0.0",
-    "daily-python>=0.19.8",
-    "mcp>=1.14.0",
-    "vision-agents-plugins-anthropic",
-    "vision-agents-plugins-cartesia",
-    "vision-agents-plugins-deepgram",
-    "vision-agents-plugins-elevenlabs",
-    "vision-agents-plugins-fal",
-    "vision-agents-plugins-gemini",
-    "vision-agents-plugins-kokoro",
-    "vision-agents-plugins-moonshine",
-    "vision-agents-plugins-openai",
-    "vision-agents-plugins-silero",
-    "vision-agents-plugins-xai"
 ]
 
 [project.urls]
@@ -42,8 +23,8 @@ Website = "https://getstream.io/video/voice-agents/"
 Source = "https://github.com/getstream/agents"
 
 [project.optional-dependencies]
-dev = ["pytest", "mypy", "ruff"]
-openai = ["getstream-plugins-openai>=0.1.0", "openai==1.108.1"]
+dev = ["pytest", "mypy", "ruff", "click"]
+openai = ["getstream-plugins-openai"]
 deepgram = ["getstream-plugins-deepgram>=0.1.0"]
 elevenlabs = ["getstream-plugins-elevenlabs>=0.1.0"]
 fal = ["fal-client>=0.6.1"]

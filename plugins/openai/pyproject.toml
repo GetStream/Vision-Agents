@@ -5,14 +5,19 @@ build-backend = "hatchling.build"
 [project]
 name = "vision-agents-plugins-openai"
 dynamic = ["version"]
-description = "OpenAI plugin for GetStream"
+description = "OpenAI plugin for vision agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "getstream-plugins-common",
-    "openai[realtime]>=1.97.1",
+    "vision-agents",
+    "openai[realtime]>=2.2.0",
 ]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
 
 [tool.hatch.version]
 source = "vcs"

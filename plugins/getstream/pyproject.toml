@@ -11,13 +11,14 @@ keywords = ["getstream", "video", "realtime", "streaming", "AI", "voice agents",
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
+    "getstream[webrtc,telemetry]>=2.5.0",
     "vision-agents",
 ]
 
 [project.urls]
 Documentation = "https://visionagents.ai/"
-Website = "https://getstream.io/video/voice-agents/"
-Source = "https://github.com/getstream/agents"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
 
 [tool.hatch.version]
 source = "vcs"

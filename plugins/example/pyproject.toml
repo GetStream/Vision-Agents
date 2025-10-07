@@ -14,6 +14,11 @@ dependencies = [
     "elevenlabs>=2.5.0",
 ]
 
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
+
 [tool.hatch.version]
 source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }

@@ -17,8 +17,8 @@ dependencies = [
 
 [project.urls]
 Documentation = "https://visionagents.ai/"
-Website = "https://getstream.io/video/voice-agents/"
-Source = "https://github.com/getstream/agents"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
 
 [tool.hatch.version]
 source = "vcs"
