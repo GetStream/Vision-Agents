@@ -17,6 +17,7 @@ jobs:
   build-core:
     name: Build & Test Core SDK
     runs-on: ubuntu-latest
+    environment: pypi
     outputs:
       version: ${{ steps.get_version.outputs.version }}
     steps:
