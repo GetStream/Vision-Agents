@@ -8,7 +8,7 @@ from uuid import uuid4
 import aiortc
 from getstream import AsyncStream
 from getstream.chat.async_client import ChatClient
-from getstream.models import UserRequest, ChannelInput
+from getstream.models import ChannelInput
 from getstream.video import rtc
 from getstream.chat.async_channel import Channel
 from getstream.video.async_call import Call

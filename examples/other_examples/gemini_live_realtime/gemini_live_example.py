@@ -8,10 +8,11 @@ from vision_agents.plugins import gemini, getstream
 from vision_agents.core.agents import Agent
 from vision_agents.core.cli import start_dispatcher
 from getstream import AsyncStream
+import logging
+
 
 load_dotenv()
 
-import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
