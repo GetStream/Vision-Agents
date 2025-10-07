@@ -3,9 +3,9 @@ name = "openai-sts-example"
 version = "1.0.0"
 requires-python = ">=3.10"
 dependencies = [
-    "stream-agents",
-    "stream-agents-plugins-openai",
-    "stream-agents-plugins-getstream",
+    "vision-agents",
+    "vision-agents-plugins-openai",
+    "vision-agents-plugins-getstream",
     "python-dotenv",
     "asyncio",
     "aiortc",
@@ -13,6 +13,6 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-"stream-agents-plugins-openai" = {path = "../../../plugins/openai", editable=true}
-"stream-agents-plugins-getstream" = {path = "../../../plugins/getstream", editable=true}
-"stream-agents" = {path = "../../../agents-core", editable=true}
+"vision-agents-plugins-openai" = {path = "../../../plugins/openai", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../../plugins/getstream", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}

@@ -2,15 +2,15 @@
 
 ## Overview
 
-LLM plugins provide language model functionality for the stream-agents framework. They handle text generation, conversation management, and function calling capabilities.
+LLM plugins provide language model functionality for the vision-agents framework. They handle text generation, conversation management, and function calling capabilities.
 
 ## Base Class
 
-All LLM plugins should inherit from `stream_agents.core.llm.llm.LLM`:
+All LLM plugins should inherit from `vision_agents.core.llm.llm.LLM`:
 
 ```python
-from stream_agents.core.llm.llm import LLM, LLMResponseEvent
-from stream_agents.core.llm.types import LLMTextResponseDeltaEvent
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.types import LLMTextResponseDeltaEvent
 from . import events
 
 class MyLLM(LLM):
@@ -162,7 +162,7 @@ Implement function calling methods if supported:
 ```python
 def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
     """Convert tools to your provider's format."""
-    # Convert stream-agents ToolSchema to your provider's format
+    # Convert vision-agents ToolSchema to your provider's format
     return converted_tools
 
 def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToolCallItem]:
@@ -173,10 +173,10 @@ def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToo
 
 ## Realtime/STS Support
 
-For Speech-to-Speech (STS) functionality, inherit from `stream_agents.core.llm.realtime.Realtime`:
+For Speech-to-Speech (STS) functionality, inherit from `vision_agents.core.llm.realtime.Realtime`:
 
 ```python
-from stream_agents.core.llm.realtime import Realtime
+from vision_agents.core.llm.realtime import Realtime
 
 class MyRealtimeLLM(Realtime):
     def __init__(self, **kwargs):
@@ -200,11 +200,11 @@ class MyRealtimeLLM(Realtime):
 Here's a complete example of an LLM plugin:
 
 ```python
-# myllm/stream_agents/plugins/myllm/llm.py
+# myllm/vision_agents/plugins/myllm/llm.py
 from typing import Optional, List, Any
-from stream_agents.core.llm.llm import LLM, LLMResponseEvent
-from stream_agents.core.llm.types import LLMTextResponseDeltaEvent
-from stream_agents.core.processors import Processor
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.types import LLMTextResponseDeltaEvent
+from vision_agents.core.processors import Processor
 from . import events
 
 

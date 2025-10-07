@@ -57,6 +57,23 @@ wheels = [
 ]
 
 [[package]]
+name = "aenum"
+version = "3.1.16"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/52/6ad8f63ec8da1bf40f96996d25d5b650fdd38f5975f8c813732c47388f18/aenum-3.1.16-py3-none-any.whl", hash = "sha256:9035092855a98e41b66e3d0998bd7b96280e85ceb3a04cc035636138a1943eaf", size = 165627 },
+]
+
+[[package]]
+name = "aiofiles"
+version = "24.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/03/a88171e277e8caa88a4c77808c20ebb04ba74cc4681bf1e9416c862de237/aiofiles-24.1.0.tar.gz", hash = "sha256:22a075c9e5a3810f0c2e48f3008c94d68c65d763b9b03857924c99e57355166c", size = 30247 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/45/30bb92d442636f570cb5651bc661f52b610e2eec3f891a5dc3a4c3667db0/aiofiles-24.1.0-py3-none-any.whl", hash = "sha256:b4ec55f4195e3eb5d7abd1bf7e061763e864dd4954231fb8539a0ef8bb8260e5", size = 15896 },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1101,18 +1118,33 @@ wheels = [
 
 [[package]]
 name = "deepgram-sdk"
-version = "5.0.0"
+version = "4.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "aenum" },
+    { name = "aiofiles" },
+    { name = "aiohttp" },
+    { name = "dataclasses-json" },
+    { name = "deprecation" },
     { name = "httpx" },
-    { name = "pydantic" },
-    { name = "pydantic-core" },
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3b/6e/e341cf10d084023697785dd370eb34b10686cb2161dbd436ac1d6dd7825d/deepgram_sdk-5.0.0.tar.gz", hash = "sha256:d74f294373f2617de6c7dd43672e3c661b2642b3b3f45378d996c40a174af253", size = 134179 }
+sdist = { url = "https://files.pythonhosted.org/packages/e1/7a/420a885ddfc16b6142353414e8e529882a1e261fd4cfbae449ce84d59590/deepgram_sdk-4.8.1.tar.gz", hash = "sha256:aada4c34532096bb8c438ed23c6d182920e8cba9609bf1b1e40a7f30820cfa32", size = 100105 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/d8/6c78b4d2455bb5fcca725042ebb47b7ceb7cc841badff197fdaecff9a7a7/deepgram_sdk-5.0.0-py3-none-any.whl", hash = "sha256:983f8695173645ced90306d27fba7caa23ef72c4cf94c9f75f25ad0bdb99d920", size = 383623 },
+    { url = "https://files.pythonhosted.org/packages/7d/85/70151387088f110623ff066d6e27d1169f5dd130eaf8b2044f4de9d41034/deepgram_sdk-4.8.1-py3-none-any.whl", hash = "sha256:1af2a9fab57c858f2201bebd8f553fdfe9ef3d1b036e0ac588104b11ae3bc727", size = 157925 },
+]
+
+[[package]]
+name = "deprecation"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/d3/8ae2869247df154b64c1884d7346d412fed0c49df84db635aab2d1c40e62/deprecation-2.1.0.tar.gz", hash = "sha256:72b3bde64e5d778694b0cf68178aed03d15e15477116add3fb773e581f9518ff", size = 173788 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/c3/253a89ee03fc9b9682f1541728eb66db7db22148cd94f89ab22528cd1e1b/deprecation-2.1.0-py2.py3-none-any.whl", hash = "sha256:a10811591210e1fb0e768a8c25517cabeabcba6f0bf96564f8ff45189f90b14a", size = 11178 },
 ]
 
 [[package]]
@@ -5565,7 +5597,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=4.5.0" },
+    { name = "deepgram-sdk", specifier = "==4.8.1" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "vision-agents", editable = "agents-core" },
 ]

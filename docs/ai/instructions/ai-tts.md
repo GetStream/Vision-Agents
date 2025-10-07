@@ -2,15 +2,15 @@
 
 ## Overview
 
-TTS (Text-to-Speech) plugins provide audio synthesis functionality for the stream-agents framework. They convert text into audio streams that can be played to users.
+TTS (Text-to-Speech) plugins provide audio synthesis functionality for the vision-agents framework. They convert text into audio streams that can be played to users.
 
 ## Base Class
 
-All TTS plugins should inherit from `stream_agents.core.tts.tts.TTS`:
+All TTS plugins should inherit from `vision_agents.core.tts.tts.TTS`:
 
 ```python
-from stream_agents.core.tts.tts import TTS
-from stream_agents.core.tts.events import TTSAudioEvent, TTSStartedEvent, TTSEndedEvent
+from vision_agents.core.tts.tts import TTS
+from vision_agents.core.tts.events import TTSAudioEvent, TTSStartedEvent, TTSEndedEvent
 from . import events
 
 class MyTTS(TTS):
@@ -235,11 +235,11 @@ class MyRealtimeTTS(TTS):
 Here's a complete example of a TTS plugin:
 
 ```python
-# mytts/stream_agents/plugins/mytts/tts.py
+# mytts/vision_agents/plugins/mytts/tts.py
 import asyncio
 from typing import Optional, List, AsyncIterator
-from stream_agents.core.tts.tts import TTS
-from stream_agents.core.tts.events import TTSAudioEvent
+from vision_agents.core.tts.tts import TTS
+from vision_agents.core.tts.events import TTSAudioEvent
 from . import events
 
 class MyTTS(TTS):
