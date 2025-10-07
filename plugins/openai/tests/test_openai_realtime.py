@@ -2,22 +2,22 @@ import asyncio
 import pytest
 from dotenv import load_dotenv
 
-from vision_agents.plugins.gemini import Realtime
+from vision_agents.plugins.openai import Realtime
 from vision_agents.core.llm.events import RealtimeAudioOutputEvent
-from vision_agents.core.utils.utils import frame_to_png_bytes
 
 # Load environment variables
 load_dotenv()
 
 
-class TestGeminiRealtime:
-    """Integration tests for Realtime2 connect flow"""
+class TestOpenAIRealtime:
+    """Integration tests for OpenAI Realtime API"""
 
     @pytest.fixture
     async def realtime(self):
         """Create and manage Realtime connection lifecycle"""
         realtime = Realtime(
-            model="gemini-2.0-flash-exp",
+            model="gpt-realtime",
+            voice="alloy",
         )
         try:
             yield realtime
@@ -43,25 +43,47 @@ class TestGeminiRealtime:
         assert len(events) > 0
 
     @pytest.mark.integration
-    async def test_audio_sending_flow(self, realtime2, mia_audio_16khz):
+    async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
         """Test sending real audio data and verify connection remains stable"""
         events = []
         
-        @realtime2.events.subscribe
+        @realtime.events.subscribe
         async def on_audio(event: RealtimeAudioOutputEvent):
             events.append(event)
         
         await asyncio.sleep(0.01)
-        await realtime2.connect()
+        await realtime.connect()
         
-        await realtime2.simple_response("Listen to the following story, what is Mia looking for?")
-        await asyncio.sleep(10.0)
-        await realtime2.simple_audio_response(mia_audio_16khz)
+        # Wait for connection to be fully established
+        await asyncio.sleep(2.0)
+        
+        # Convert 16kHz audio to 48kHz for OpenAI realtime
+        # OpenAI expects 48kHz PCM audio
+        import numpy as np
+        from scipy import signal
+        from vision_agents.core.edge.types import PcmData
+        
+        # Resample from 16kHz to 48kHz
+        samples_16k = mia_audio_16khz.samples
+        num_samples_48k = int(len(samples_16k) * 48000 / 16000)
+        samples_48k = signal.resample(samples_16k, num_samples_48k).astype(np.int16)
+        
+        # Create new PcmData with 48kHz
+        audio_48khz = PcmData(
+            samples=samples_48k,
+            sample_rate=48000,
+            format="s16"
+        )
+        
+        await realtime.simple_response("Listen to the following audio and tell me what you hear")
+        await asyncio.sleep(5.0)
+        
+        # Send the resampled audio
+        await realtime.simple_audio_response(audio_48khz)
 
-        # Wait a moment to ensure processing
+        # Wait for response
         await asyncio.sleep(10.0)
         assert len(events) > 0
-
 
     @pytest.mark.integration
     async def test_video_sending_flow(self, realtime, bunny_video_track):
@@ -85,19 +107,4 @@ class TestGeminiRealtime:
         # Stop video sender
         await realtime._stop_watching_video_track()
         assert len(events) > 0
-
-    async def test_frame_to_png_bytes_with_bunny_video(self, bunny_video_track):
-        """Test that frame_to_png_bytes works with real bunny video frames"""
-        # Get a frame from the bunny video track
-        frame = await bunny_video_track.recv()
-        png_bytes = frame_to_png_bytes(frame)
-        
-        # Verify we got PNG data
-        assert isinstance(png_bytes, bytes)
-        assert len(png_bytes) > 0
-        
-        # Verify it's actually PNG data (PNG files start with specific bytes)
-        assert png_bytes.startswith(b'\x89PNG\r\n\x1a\n')
-        
-        print(f"Successfully converted bunny video frame to PNG: {len(png_bytes)} bytes")
 
