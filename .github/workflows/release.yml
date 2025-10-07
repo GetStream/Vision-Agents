@@ -32,14 +32,14 @@ jobs:
         id: get_version
         working-directory: agents-core
         run: |
-          VERSION=$(uv run -q hatch version)
+          VERSION=$(uvx -q hatch version)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Publish to PyPI (Trusted Publishing)
         run: uv publish
 
   test-core-index:
-    name: Verify Core from TestPyPI
+    name: Verify PIP install works
     needs: build-core
     runs-on: ubuntu-latest
     env:
