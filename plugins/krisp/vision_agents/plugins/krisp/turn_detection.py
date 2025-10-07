@@ -9,7 +9,7 @@ import numpy as np
 from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.turn_detection import (
-    BaseTurnDetector,
+    TurnDetector,
     TurnStartedEvent,
     TurnEndedEvent,
     TurnEvent,
@@ -39,7 +39,7 @@ def log_callback(log_message, log_level):
     print(f"[{log_level}] {log_message}", flush=True)
 
 
-class TurnDetection(BaseTurnDetector):
+class TurnDetection(TurnDetector):
     def __init__(
         self,
         model_path: Optional[str] = os.getcwd() + "/krisp-viva-tt-v1.kef",

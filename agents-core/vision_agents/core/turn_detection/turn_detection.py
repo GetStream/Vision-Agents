@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 import uuid
 from getstream.video.rtc.track_util import PcmData
-from stream_agents.core.events.manager import EventManager
-from stream_agents.core.events import PluginInitializedEvent
+from vision_agents.core.events.manager import EventManager
+from vision_agents.core.events import PluginInitializedEvent
 from . import events
 
 
@@ -70,7 +70,7 @@ class TurnDetection(Protocol):
         ...
 
 
-class BaseTurnDetector(ABC):
+class TurnDetector(ABC):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(
