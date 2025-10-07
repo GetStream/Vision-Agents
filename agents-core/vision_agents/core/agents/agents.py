@@ -767,6 +767,11 @@ class Agent:
             self.conversation.complete_message(self._user_conversation_handle)
             self._user_conversation_handle = None
         
+        # In realtime mode, the LLM handles everything itself (STT, turn detection, responses)
+        # Skip our manual LLM triggering logic
+        if self.realtime_mode:
+            return
+        
         # Determine how to handle LLM triggering based on turn detection
         if self.turn_detection is not None:
             # With turn detection: accumulate transcripts and wait for TurnEndedEvent
@@ -784,7 +789,7 @@ class Agent:
         else:
             # Without turn detection: trigger LLM immediately on transcript completion
             # This is the traditional STT -> LLM flow
-            if not self.realtime_mode and self.llm:
+            if self.llm:
                 self.logger.info(f"🤖 Triggering LLM response immediately (no turn detection)")
                 
                 # Get participant from event metadata
