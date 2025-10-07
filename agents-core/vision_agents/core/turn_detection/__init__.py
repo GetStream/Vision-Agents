@@ -1,7 +1,7 @@
 from .turn_detection import (
     TurnEvent,
     TurnEventData,
-    BaseTurnDetector,
+    TurnDetector,
     TurnDetector,
     TurnDetection,
 )
@@ -16,7 +16,7 @@ __all__ = [
     # Base classes and types
     "TurnEvent",
     "TurnEventData",
-    "BaseTurnDetector",
+    "TurnDetector",
     "TurnDetector",
     "TurnDetection",
     # Events

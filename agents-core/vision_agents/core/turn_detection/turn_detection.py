@@ -70,7 +70,7 @@ class TurnDetection(Protocol):
         ...
 
 
-class BaseTurnDetector(ABC):
+class TurnDetector(ABC):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(
