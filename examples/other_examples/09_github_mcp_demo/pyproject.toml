@@ -9,22 +9,22 @@ description = "GitHub MCP Demo for Stream Agents"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "python-dotenv>=1.1.1",
-    "stream-agents-plugins-deepgram",
-    "stream-agents-plugins-elevenlabs",
-    "stream-agents-plugins-silero",
-    "stream-agents-plugins-getstream",
-    "stream-agents-plugins-openai",
+    "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-silero",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-openai",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff"]
 
 [tool.uv.sources]
-"stream-agents" = {path = "../../agents-core", editable=true}
-"stream-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
-"stream-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
-"stream-agents-plugins-silero" = {path = "../../plugins/silero", editable=true}
-"stream-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
-"stream-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"vision-agents" = {path = "../../agents-core", editable=true}
+"vision-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
+"vision-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
+"vision-agents-plugins-silero" = {path = "../../plugins/silero", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
+"vision-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}

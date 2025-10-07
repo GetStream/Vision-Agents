@@ -1,5 +1,5 @@
 """
-Ultralytics plugin for stream-agents.
+Ultralytics plugin for vision-agents.
 
 This plugin provides YOLO-based pose detection capabilities using the Ultralytics YOLO library.
 """

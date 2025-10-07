@@ -22,7 +22,7 @@ from vision_agents.core.edge import EdgeTransport
 from vision_agents.core.edge.types import Connection, User
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.edge import events
-from vision_agents.core.utils import get_stream_agents_version
+from vision_agents.core.utils import get_vision_agents_version
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
@@ -47,8 +47,8 @@ class StreamEdge(EdgeTransport):
     def __init__(self, **kwargs):
         # Initialize Stream client
         super().__init__()
-        version = get_stream_agents_version()
-        self.client = AsyncStream(user_agent=f"stream-agents-{version}")
+        version = get_vision_agents_version()
+        self.client = AsyncStream(user_agent=f"vision-agents-{version}")
         self.logger = logging.getLogger(self.__class__.__name__)
         self.events = EventManager()
         self.events.register_events_from_module(events)
