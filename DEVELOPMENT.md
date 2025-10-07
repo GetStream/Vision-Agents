@@ -129,6 +129,92 @@ Integration tests run once a day to verify that changes to underlying APIs didn'
 - Metrics on performance of TTS, STT, LLM, Turn detection and connection to realtime edge.
 - Integration with external LLM observability solutions
 
+#### Example setup for tracing and Jaeger:
+
+**Step 1 - Install open telemetry OTLP exporter**
+
+```bash
+# with uv:
+uv install opentelemetry-sdk opentelemetry-exporter-otlp
+
+# or with pip:
+pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc
+`````
+
+**Step 2 - Setup tracing instrumentation in your code**
+
+Make sure to setup the instrumentation before you start the agent/server
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+resource = Resource.create(
+    {
+        "service.name": "agents",
+    }
+)
+tp = TracerProvider(resource=resource)
+exporter = OTLPSpanExporter(endpoint="localhost:4317", insecure=True)
+
+tp.add_span_processor(BatchSpanProcessor(exporter))
+trace.set_tracer_provider(tp)
+```
+
+**Step 3 - Run Jaeger**
+
+```bash
+docker run --rm -it \
+         -e COLLECTOR_OTLP_ENABLED=true \
+         -p 16686:16686 -p 4317:4317 -p 4318:4318 \
+         jaegertracing/all-in-one:1.51```
+```
+
+After this, you can run your code and see the traces in Jaeger at `http://localhost:16686`
+
+#### Example setup for metrics with Prometheus:
+
+**Step 1 - Install prometheus exporter**
+
+```bash
+# with uv:
+uv install opentelemetry-exporter-prometheus prometheus-client
+
+# or with pip:
+pip install opentelemetry-exporter-prometheus prometheus-client
+```
+
+**Step 2 - Setup metrics instrumentation in your code**
+
+Make sure to setup the instrumentation before you start the agent/server
+
+```python
+from opentelemetry import metrics
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from prometheus_client import start_http_server
+
+resource = Resource.create(
+    {
+        "service.name": "my-service-name",
+    }
+)
+
+reader = PrometheusMetricReader()
+metrics.set_meter_provider(
+    MeterProvider(resource=resource, metric_readers=[reader])
+)
+
+start_http_server(port=9464)
+```
+
+You can now see the metrics at `http://localhost:9464/metrics` (make sure that your Python program keeps running), after this you can setup your Prometheus server to scrape this endpoint.
+
+
 ### Queuing
 
 - Video: There is no reason to publish old video. So you want to cap the queue to x latest frames

@@ -198,60 +198,70 @@ class Agent:
             self.call = call
             self.conversation = None
 
-        # Ensure all subsequent logs include the call context.
-        self._set_call_logging_context(call.id)
+            # Ensure all subsequent logs include the call context.
+            self._set_call_logging_context(call.id)
 
-        try:
-            # Connect to MCP servers if manager is available
-            if self.mcp_manager:
-                with self.tracer.start_as_current_span("mcp_manager.connect_all"):
-                    await self.mcp_manager.connect_all()
+            try:
+                # Connect to MCP servers if manager is available
+                if self.mcp_manager:
+                    with self.tracer.start_as_current_span("mcp_manager.connect_all"):
+                        await self.mcp_manager.connect_all()
 
+                # Setup chat and connect it to transcript events
+                self.conversation = await self.edge.create_conversation(
+                    call, self.agent_user, self.instructions
+                )
+                self.events.subscribe(self._on_transcript)
+                self.events.subscribe(self._on_partial_transcript)
 
-            # Setup chat and connect it to transcript events
-            self.conversation = await self.edge.create_conversation(
-                call, self.agent_user, self.instructions
+                # Ensure Realtime providers are ready before proceeding (they manage their own connection)
+                self.logger.info(f"🤖 Agent joining call: {call.id}")
+                if isinstance(self.llm, Realtime):
+                    await self.llm.connect()
+
+                with self.tracer.start_as_current_span("edge.join"):
+                    connection = await self.edge.join(self, call)
+            except Exception:
+                self._clear_call_logging_context()
+                raise
+
+            self._connection = connection
+            self._is_running = True
+
+            connection._connection._coordinator_ws_client.on_wildcard(
+                "*", lambda event_name, event: self.events.send(event)
             )
-            self.events.subscribe(self._on_transcript)
-            self.events.subscribe(self._on_partial_transcript)
 
-            # Ensure Realtime providers are ready before proceeding (they manage their own connection)
-            self.logger.info(f"🤖 Agent joining call: {call.id}")
-            if isinstance(self.llm, Realtime):
-                await self.llm.connect()
+            self.logger.info(f"🤖 Agent joined call: {call.id}")
 
-            with self.tracer.start_as_current_span("edge.join"):
-                connection = await self.edge.join(self, call)
-        except Exception:
-            self._clear_call_logging_context()
-            raise
+            # Set up audio and video tracks together to avoid SDP issues
+            audio_track = self._audio_track if self.publish_audio else None
+            video_track = self._video_track if self.publish_video else None
 
-        self._connection = connection
-        self._is_running = True
+            if audio_track or video_track:
+                with self.tracer.start_as_current_span("edge.publish_tracks"):
+                    await self.edge.publish_tracks(audio_track, video_track)
+                await self._listen_to_audio_and_video()
 
-        connection._connection._coordinator_ws_client.on_wildcard(
-            "*", lambda event_name, event: self.events.send(event)
-        )
+            self.logger.info(f"🤖 Agent joined call: {call.id}")
 
-        self.logger.info(f"🤖 Agent joined call: {call.id}")
+            # Set up audio and video tracks together to avoid SDP issues
+            audio_track = self._audio_track if self.publish_audio else None
+            video_track = self._video_track if self.publish_video else None
 
-        # Set up audio and video tracks together to avoid SDP issues
-        audio_track = self._audio_track if self.publish_audio else None
-        video_track = self._video_track if self.publish_video else None
+            if audio_track or video_track:
+                with self.tracer.start_as_current_span("edge.publish_tracks"):
+                    await self.edge.publish_tracks(audio_track, video_track)
 
-        if audio_track or video_track:
-            with self.tracer.start_as_current_span("edge.publish_tracks"):
-                await self.edge.publish_tracks(audio_track, video_track)
+            # Listen to incoming tracks if any component needs them
+            # This is independent of publishing - agents can listen without publishing
+            # (e.g., STT-only agents that respond via text chat)
+            if self._needs_audio_or_video_input():
+                await self._listen_to_audio_and_video()
 
-        # Listen to incoming tracks if any component needs them
-        # This is independent of publishing - agents can listen without publishing
-        # (e.g., STT-only agents that respond via text chat)
-        if self._needs_audio_or_video_input():
-            await self._listen_to_audio_and_video()
+            from .agent_session import AgentSessionContextManager
 
-        from .agent_session import AgentSessionContextManager
-
-        return AgentSessionContextManager(self, self._connection)
+            return AgentSessionContextManager(self, self._connection)
 
     async def finish(self):
         """Wait for the call to end gracefully.

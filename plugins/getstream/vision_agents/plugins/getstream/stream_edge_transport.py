@@ -182,9 +182,6 @@ class StreamEdge(EdgeTransport):
         human_id = f"user-{uuid4()}"
         name = "Human User"
 
-        # TODO: cleanup
-        await client.upsert_users(UserRequest(id=human_id, name=name))
-
         # Create user token for browser access
         token = client.create_token(human_id, expiration=3600)
 
