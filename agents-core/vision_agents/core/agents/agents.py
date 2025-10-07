@@ -691,6 +691,10 @@ class Agent:
                 f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.duration}, confidence: {event.confidence})"
             )
             
+            # In realtime mode, the LLM handles turn detection and responses itself
+            if self.realtime_mode:
+                return
+            
             # When turn detection is enabled, trigger LLM response when user's turn ends
             # This is the signal that the user has finished speaking and expects a response
             if event.speaker_id and event.speaker_id != self.agent_user.id:
@@ -707,7 +711,7 @@ class Agent:
                         participant = event.custom.get('participant')
                     
                     # Trigger LLM response with the complete transcript
-                    if not self.realtime_mode and self.llm:
+                    if self.llm:
                         await self.simple_response(transcript, participant)
                     
                     # Clear the pending transcript for this speaker
