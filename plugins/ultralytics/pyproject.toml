@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "vision-agents-plugins-ultralytics"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Ultralytics YOLO plugin for GetStream"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,6 +18,10 @@ dependencies = [
     "aiortc>=1.6.0",
     "av>=10.0.0",
 ]
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
 packages = [".", "vision_agents"]

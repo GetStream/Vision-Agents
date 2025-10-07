@@ -5308,7 +5308,6 @@ provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemin
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
-version = "0.1.1"
 source = { editable = "plugins/anthropic" }
 dependencies = [
     { name = "anthropic" },
@@ -5335,7 +5334,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-cartesia"
-version = "0.1.0"
 source = { editable = "plugins/cartesia" }
 dependencies = [
     { name = "cartesia" },
@@ -5362,7 +5360,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-deepgram"
-version = "0.1.1"
 source = { editable = "plugins/deepgram" }
 dependencies = [
     { name = "deepgram-sdk" },
@@ -5397,7 +5394,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-elevenlabs"
-version = "0.1.0"
 source = { editable = "plugins/elevenlabs" }
 dependencies = [
     { name = "elevenlabs" },
@@ -5424,7 +5420,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-fal"
-version = "0.1.1"
 source = { editable = "plugins/fal" }
 dependencies = [
     { name = "fal-client" },
@@ -5453,7 +5448,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-gemini"
-version = "0.1.0"
 source = { editable = "plugins/gemini" }
 dependencies = [
     { name = "google-genai" },
@@ -5484,7 +5478,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-getstream"
-version = "0.1.0"
 source = { editable = "plugins/getstream" }
 dependencies = [
     { name = "vision-agents" },
@@ -5507,7 +5500,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-kokoro"
-version = "0.1.0"
 source = { editable = "plugins/kokoro" }
 dependencies = [
     { name = "kokoro" },
@@ -5538,7 +5530,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-krisp"
-version = "0.1.0"
 source = { editable = "plugins/krisp" }
 dependencies = [
     { name = "numpy" },
@@ -5565,7 +5556,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-moonshine"
-version = "0.1.1"
 source = { editable = "plugins/moonshine" }
 dependencies = [
     { name = "numpy" },
@@ -5596,7 +5586,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-openai"
-version = "0.1.1"
 source = { editable = "plugins/openai" }
 dependencies = [
     { name = "getstream-plugins-common" },
@@ -5623,7 +5612,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-silero"
-version = "0.1.0"
 source = { editable = "plugins/silero" }
 dependencies = [
     { name = "numpy" },
@@ -5660,7 +5648,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-ultralytics"
-version = "0.1.0"
 source = { editable = "plugins/ultralytics" }
 dependencies = [
     { name = "aiortc" },
@@ -5697,7 +5684,6 @@ dev = [
 
 [[package]]
 name = "vision-agents-plugins-xai"
-version = "0.1.0"
 source = { editable = "plugins/xai" }
 dependencies = [
     { name = "xai-sdk" },

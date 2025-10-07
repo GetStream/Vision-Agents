@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "vision-agents-plugins-xai"
-version = "0.1.0"
+dynamic = ["version"]
 description = "XAI for stream agents"
 readme = "README.md"
 requires-python = ">=3.10.0"
@@ -12,6 +12,10 @@ license = "Apache-2.0"
 dependencies = [
     "xai-sdk",
 ]
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]

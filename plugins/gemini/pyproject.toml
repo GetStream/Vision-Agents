@@ -1,12 +1,13 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "vision-agents-plugins-gemini"
-version = "0.1.0"
-description = "Google Gemini plugin for GetStream"
+dynamic = ["version"]
+description = "Google Gemini LLM integration for Vision Agents"
 readme = "README.md"
+keywords = ["gemini", "google", "LLM", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
@@ -14,6 +15,15 @@ dependencies = [
     "google-genai>=1.29.0",
     "numpy>=2.2.6",
 ]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://getstream.io/video/voice-agents/"
+Source = "https://github.com/getstream/agents"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["vision_agents"]
