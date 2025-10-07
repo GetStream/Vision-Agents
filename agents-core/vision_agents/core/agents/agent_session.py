@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 
 from vision_agents.core.agents import Agent
 
@@ -71,14 +72,12 @@ class AgentSessionContextManager:
         # Close the agent's own resources.
         # ------------------------------------------------------------------
         if hasattr(self, "agent") and self.agent is not None:
+            if getattr(self.agent, "_call_context_token", None) is not None:
+                self.agent._clear_call_logging_context()
             coro = self.agent.close()
             if asyncio.iscoroutine(coro):
-                # Shield the close coroutine so it runs to completion even if the loop is closing.
-                if loop.is_running():
-                    asyncio.shield(loop.create_task(coro))
-                else:
-                    # If we are outside the loop, we can block until done.
-                    loop.run_until_complete(coro)
+                ctx = contextvars.copy_context()
+                ctx.run(loop.create_task, coro)
 
         # ------------------------------------------------------------------
         # Handle any exception that caused the context manager to exit.

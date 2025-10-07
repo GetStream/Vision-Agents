@@ -102,6 +102,16 @@ class StreamEdge(EdgeTransport):
 
         self._connection = connection
 
+        original_on_subscriber_offer = self._connection._on_subscriber_offer  # type: ignore[attr-defined]
+
+        async def _safe_on_subscriber_offer(event):
+            if self._connection.subscriber_pc is None:  # type: ignore[attr-defined]
+                self.logger.debug("Ignoring subscriber offer after subscriber_pc teardown")
+                return
+            await original_on_subscriber_offer(event)
+
+        self._connection._on_subscriber_offer = _safe_on_subscriber_offer  # type: ignore[attr-defined]
+
         @self._connection.on("audio")
         async def on_audio_received(pcm: PcmData, participant: Participant):
             self.events.send(events.AudioReceivedEvent(
@@ -168,6 +178,8 @@ class StreamEdge(EdgeTransport):
             track_types=[
                 TrackType.TRACK_TYPE_VIDEO,
                 TrackType.TRACK_TYPE_AUDIO,
+                TrackType.TRACK_TYPE_SCREEN_SHARE,
+                TrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
             ]
         )
 
