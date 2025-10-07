@@ -244,17 +244,6 @@ class Agent:
             if audio_track or video_track:
                 with self.tracer.start_as_current_span("edge.publish_tracks"):
                     await self.edge.publish_tracks(audio_track, video_track)
-                await self._listen_to_audio_and_video()
-
-            self.logger.info(f"🤖 Agent joined call: {call.id}")
-
-            # Set up audio and video tracks together to avoid SDP issues
-            audio_track = self._audio_track if self.publish_audio else None
-            video_track = self._video_track if self.publish_video else None
-
-            if audio_track or video_track:
-                with self.tracer.start_as_current_span("edge.publish_tracks"):
-                    await self.edge.publish_tracks(audio_track, video_track)
 
             # Listen to incoming tracks if any component needs them
             # This is independent of publishing - agents can listen without publishing
@@ -631,6 +620,10 @@ class Agent:
             self.logger.info("No image processors, video processing handled by video processors only")
             return
         
+        # Initialize error tracking counters
+        timeout_errors = 0
+        consecutive_errors = 0
+        
         while True:
             try:
                 # Use the shared forwarder instead of competing for track.recv()
@@ -660,6 +653,7 @@ class Agent:
 
             except asyncio.TimeoutError:
                 # Exponential backoff for timeout errors
+                timeout_errors += 1
                 backoff_delay = min(2.0 ** min(timeout_errors, 5), 30.0)
                 self.logger.debug(
                     f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s"
