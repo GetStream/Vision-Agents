@@ -56,7 +56,7 @@ uv run ruff check --fix
 
 
 ```
-uv run mypy --install-types --non-interactive -p stream_agents
+uv run mypy --install-types --non-interactive -p vision_agents
 ```
 
 ```

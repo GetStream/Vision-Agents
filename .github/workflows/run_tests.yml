@@ -21,7 +21,7 @@ jobs:
       - name: Run Ruff
         run: uv run ruff check .
       - name: Mypy core
-        run: uv run mypy --install-types --non-interactive agents-core/stream_agents
+        run: uv run mypy --install-types --non-interactive agents-core/vision_agents
       - name: Mypy plugins
         run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
 

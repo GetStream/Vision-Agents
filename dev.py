@@ -83,25 +83,16 @@ def lint():
 @cli.command()
 def mypy():
     """Run mypy type checks on main package."""
-    click.echo("Running mypy on stream_agents...")
-    run("uv run mypy --install-types --non-interactive -p stream_agents")
+    click.echo("Running mypy on vision_agents...")
+    run("uv run mypy --install-types --non-interactive -p vision_agents")
 
 
 @cli.command()
 def mypy_plugins():
     """Run mypy type checks on all plugins."""
-    click.echo("Running mypy on plugins 2...")
+    click.echo("Running mypy on plugins...")
     run(
         "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
-    )
-
-
-@cli.command()
-def mypy_xai():
-    """Run mypy type checks on xai plugin specifically."""
-    click.echo("Running mypy on xai plugin...")
-    run(
-        "uv run mypy --install-types --non-interactive --explicit-package-bases plugins/xai"
     )
 
 
@@ -116,7 +107,7 @@ def check():
 
     # Run mypy on main package
     click.echo("\n=== 2. MyPy Type Checking ===")
-    run("uv run mypy --install-types --non-interactive -p stream_agents")
+    run("uv run mypy --install-types --non-interactive -p vision_agents")
 
     # Run mypy on plugins
     click.echo("\n=== 3. MyPy Plugin Type Checking ===")
