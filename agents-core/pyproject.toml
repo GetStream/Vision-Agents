@@ -18,15 +18,15 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://getstream.io/video/docs/python-ai/"
-Website = "https://getstream.io/video/voice-agents/"
-Source = "https://github.com/getstream/agents"
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff", "click"]
-openai = ["getstream-plugins-openai"]
-deepgram = ["getstream-plugins-deepgram>=0.1.0"]
-elevenlabs = ["getstream-plugins-elevenlabs>=0.1.0"]
+openai = ["vision-agents-plugins-openai>=0.1.0"]
+deepgram = ["vision-agents-plugins-deepgram>=0.1.0"]
+elevenlabs = ["vision-agents-plugins-elevenlabs>=0.1.0"]
 fal = ["fal-client>=0.6.1"]
 gemini = ["google-genai>=0.3.0"]
 all-plugins = [
