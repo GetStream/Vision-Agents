@@ -43,14 +43,14 @@ class _MockKPipeline:  # noqa: D401
 
 
 @pytest.mark.asyncio
-@patch("stream_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
+@patch("vision_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
 async def test_kokoro_tts_initialization():
     tts = kokoro.TTS()
     assert tts is not None
 
 
 @pytest.mark.asyncio
-@patch("stream_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
+@patch("vision_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
 async def test_kokoro_synthesize_returns_iterator():
     tts = kokoro.TTS()
     stream = await tts.stream_audio("Hello")
@@ -65,7 +65,7 @@ async def test_kokoro_synthesize_returns_iterator():
 
 
 @pytest.mark.asyncio
-@patch("stream_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
+@patch("vision_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
 async def test_kokoro_send_writes_and_emits():
     tts = kokoro.TTS()
     track = MockAudioTrack()
@@ -94,7 +94,7 @@ async def test_kokoro_send_writes_and_emits():
 
 
 @pytest.mark.asyncio
-@patch("stream_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
+@patch("vision_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
 async def test_kokoro_invalid_framerate():
     tts = kokoro.TTS()
     bad_track = MockAudioTrack(framerate=16_000)
@@ -104,7 +104,7 @@ async def test_kokoro_invalid_framerate():
 
 
 @pytest.mark.asyncio
-@patch("stream_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
+@patch("vision_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
 async def test_kokoro_send_without_track():
     tts = kokoro.TTS()
     with pytest.raises(ValueError):
@@ -112,7 +112,7 @@ async def test_kokoro_send_without_track():
 
 
 @pytest.mark.asyncio
-@patch("stream_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
+@patch("vision_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
 async def test_kokoro_tts_with_custom_client():
     """Test that Kokoro TTS can be initialized with a custom client."""
     # Create a custom mock client
@@ -126,7 +126,7 @@ async def test_kokoro_tts_with_custom_client():
 
 
 @pytest.mark.asyncio
-@patch("stream_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
+@patch("vision_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
 async def test_kokoro_tts_stop_method():
     """Test that the stop method properly flushes the audio track."""
     tts = kokoro.TTS()
@@ -146,7 +146,7 @@ async def test_kokoro_tts_stop_method():
 
 
 @pytest.mark.asyncio
-@patch("stream_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
+@patch("vision_agents.plugins.kokoro.tts.KPipeline", _MockKPipeline)
 async def test_kokoro_tts_stop_method_handles_exceptions():
     """Test that the stop method handles flush exceptions gracefully."""
     tts = kokoro.TTS()

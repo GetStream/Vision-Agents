@@ -2,7 +2,7 @@ import pytest
 import types
 import dataclasses
 
-from stream_agents.core.events.manager import EventManager, ExceptionEvent
+from vision_agents.core.events.manager import EventManager, ExceptionEvent
 
 
 @dataclasses.dataclass

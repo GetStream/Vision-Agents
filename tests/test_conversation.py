@@ -11,7 +11,7 @@ from getstream import Stream
 from getstream.chat.client import ChatClient
 from getstream.models import MessageRequest, ChannelResponse, ChannelInput
 
-from stream_agents.core.agents.conversation import (
+from vision_agents.core.agents.conversation import (
     Conversation,
     Message,
     InMemoryConversation,

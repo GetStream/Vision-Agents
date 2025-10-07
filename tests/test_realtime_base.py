@@ -16,10 +16,10 @@ from typing import Any, Optional
 
 import pytest
 
-from stream_agents.core.agents import Agent
-from stream_agents.core.llm import realtime as base_rt
-from stream_agents.core.llm.llm import LLMResponseEvent
-from stream_agents.core.llm.events import RealtimeDisconnectedEvent
+from vision_agents.core.agents import Agent
+from vision_agents.core.llm import realtime as base_rt
+from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.core.llm.events import RealtimeDisconnectedEvent
 
 
 class FakeConversation:
@@ -92,8 +92,8 @@ class FakeRealtime(base_rt.Realtime):
 @pytest.mark.asyncio
 async def test_agent_conversation_updates_with_realtime():
     """Test that Agent wires Realtime events to conversation updates."""
-    from stream_agents.core.edge import EdgeTransport
-    from stream_agents.core.edge.types import User, Connection
+    from vision_agents.core.edge import EdgeTransport
+    from vision_agents.core.edge.types import User, Connection
     
     # ===================================================================
     # Mock Connection - mimics the structure Agent expects
@@ -121,7 +121,7 @@ async def test_agent_conversation_updates_with_realtime():
             super().__init__()
             self.conversation = None
             # EdgeTransport doesn't initialize events, but Agent expects it
-            from stream_agents.core.events.manager import EventManager
+            from vision_agents.core.events.manager import EventManager
             self.events = EventManager()
         
         async def create_user(self, user: User):

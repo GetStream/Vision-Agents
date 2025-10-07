@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from torchvision.io.video import av
 
-from stream_agents.core.edge.types import PcmData
+from vision_agents.core.edge.types import PcmData
 
 
 def get_assets_dir():

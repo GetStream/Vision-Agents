@@ -1,8 +1,8 @@
 import os
 import tempfile
 import numpy as np
-from stream_agents.core.utils.utils import parse_instructions, Instructions
-from stream_agents.core.edge.types import PcmData
+from vision_agents.core.utils.utils import parse_instructions, Instructions
+from vision_agents.core.edge.types import PcmData
 
 
 class TestParseInstructions:
