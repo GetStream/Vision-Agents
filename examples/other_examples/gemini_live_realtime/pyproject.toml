@@ -6,14 +6,17 @@ requires-python = ">=3.10"
 # put only what this example needs
 dependencies = [
   "python-dotenv>=1.0",
-  "stream-agents-plugins-gemini",
-  "stream-agents-plugins-getstream",
-  "stream-agents",
+  "vision-agents-plugins-gemini",
+  "vision-agents-plugins-getstream",
+  "vision-agents",
   "google-genai>=1.33.0",
   "opentelemetry-exporter-otlp>=1.37.0",
+  "opentelemetry-exporter-prometheus>=0.58b0",
+  "prometheus-client>=0.23.1",
+  "opentelemetry-sdk>=1.37.0",
 ]
 
 [tool.uv.sources]
-"stream-agents-plugins-getstream" = {path = "../../../plugins/getstream", editable=true}
-"stream-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}
-"stream-agents" = {path = "../../../agents-core", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../../plugins/getstream", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}

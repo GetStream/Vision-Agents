@@ -42,11 +42,15 @@ async def start_agent() -> None:
 
 
 if __name__ == "__main__":
+    from opentelemetry import metrics
     from opentelemetry import trace
     from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    from prometheus_client import start_http_server
 
     resource = Resource.create(
         {
@@ -55,9 +59,15 @@ if __name__ == "__main__":
     )
     tp = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(endpoint="localhost:4317", insecure=True)
+    reader = PrometheusMetricReader()
 
     tp.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(tp)
+
+    metrics.set_meter_provider(
+        MeterProvider(resource=resource, metric_readers=[reader])
+    )
+    start_http_server(port=9464)
 
     asyncio.run(start_dispatcher(start_agent))
 

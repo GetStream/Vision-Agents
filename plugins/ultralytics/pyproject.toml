@@ -15,8 +15,6 @@ dependencies = [
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",
     "pillow>=10.0.0",
-    "aiortc>=1.6.0",
-    "av>=10.0.0",
 ]
 
 [tool.hatch.version]
