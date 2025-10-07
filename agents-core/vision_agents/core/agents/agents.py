@@ -248,14 +248,6 @@ class Agent:
 
             self.logger.info(f"🤖 Agent joined call: {call.id}")
 
-            # Set up audio and video tracks together to avoid SDP issues
-            audio_track = self._audio_track if self.publish_audio else None
-            video_track = self._video_track if self.publish_video else None
-
-            if audio_track or video_track:
-                with self.tracer.start_as_current_span("edge.publish_tracks"):
-                    await self.edge.publish_tracks(audio_track, video_track)
-
             # Listen to incoming tracks if any component needs them
             # This is independent of publishing - agents can listen without publishing
             # (e.g., STT-only agents that respond via text chat)
