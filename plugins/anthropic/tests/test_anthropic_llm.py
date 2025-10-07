@@ -2,11 +2,11 @@ import pytest
 from dotenv import load_dotenv
 
 
-from stream_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.agents.conversation import InMemoryConversation
 
-from stream_agents.core.agents.conversation import Message
-from stream_agents.core.llm.events import LLMResponseChunkEvent
-from stream_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
+from vision_agents.core.agents.conversation import Message
+from vision_agents.core.llm.events import LLMResponseChunkEvent
+from vision_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
 
 load_dotenv()
 

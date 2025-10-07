@@ -1,24 +1,37 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-fal"
-version = "0.1.1"
-description = "Fal.ai plugin for GetStream"
+name = "vision-agents-plugins-fal"
+dynamic = ["version"]
+description = "Fal.ai turn detection integration for Vision Agents"
 readme = "README.md"
+keywords = ["fal", "turn detection", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "fal-client>=0.7.0",
 ]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://getstream.io/video/voice-agents/"
+Source = "https://github.com/getstream/agents"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
+[tool.hatch.build.targets.sdist]
+include = ["/vision_agents"]
+
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

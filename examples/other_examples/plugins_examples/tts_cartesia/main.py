@@ -21,11 +21,11 @@ import asyncio
 from uuid import uuid4
 from dotenv import load_dotenv
 
-from stream_agents.core.agents import Agent
-from stream_agents.core.edge.types import User
-from stream_agents.plugins import cartesia, getstream, openai
-from stream_agents.core.events import CallSessionParticipantJoinedEvent
-from stream_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
+from vision_agents.core.agents import Agent
+from vision_agents.core.edge.types import User
+from vision_agents.plugins import cartesia, getstream, openai
+from vision_agents.core.events import CallSessionParticipantJoinedEvent
+from vision_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
 
 load_dotenv()
 

@@ -4,8 +4,8 @@ import asyncio
 import numpy as np
 import pytest
 
-from stream_agents.plugins import kokoro
-from stream_agents.core.tts.events import TTSAudioEvent
+from vision_agents.plugins import kokoro
+from vision_agents.core.tts.events import TTSAudioEvent
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 

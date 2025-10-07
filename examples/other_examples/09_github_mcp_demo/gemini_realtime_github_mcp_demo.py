@@ -11,13 +11,13 @@ import os
 from uuid import uuid4
 from dotenv import load_dotenv
 
-from stream_agents.core.agents import Agent
-from stream_agents.core.mcp import MCPServerRemote
-from stream_agents.plugins.gemini.gemini_realtime import Realtime
-from stream_agents.plugins import getstream
-from stream_agents.core import cli
-from stream_agents.core.events import CallSessionParticipantJoinedEvent
-from stream_agents.core.edge.types import User
+from vision_agents.core.agents import Agent
+from vision_agents.core.mcp import MCPServerRemote
+from vision_agents.plugins.gemini.gemini_realtime import Realtime
+from vision_agents.plugins import getstream
+from vision_agents.core import cli
+from vision_agents.core.events import CallSessionParticipantJoinedEvent
+from vision_agents.core.edge.types import User
 
 # Load environment variables from .env file
 load_dotenv()

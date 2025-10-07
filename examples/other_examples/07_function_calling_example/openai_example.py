@@ -4,7 +4,7 @@ Simple OpenAI function calling example.
 
 import asyncio
 from dotenv import load_dotenv
-from stream_agents.plugins import openai
+from vision_agents.plugins import openai
 
 load_dotenv()
 

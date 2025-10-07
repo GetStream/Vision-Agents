@@ -19,10 +19,10 @@ import asyncio
 from uuid import uuid4
 from dotenv import load_dotenv
 
-from stream_agents.core.agents import Agent
-from stream_agents.core.edge.types import User
-from stream_agents.plugins import deepgram, elevenlabs, openai, getstream
-from stream_agents.core.mcp import MCPBaseServer
+from vision_agents.core.agents import Agent
+from vision_agents.core.edge.types import User
+from vision_agents.plugins import deepgram, elevenlabs, openai, getstream
+from vision_agents.core.mcp import MCPBaseServer
 
 # Example MCP server for demonstration
 class ExampleMCPServer(MCPBaseServer):

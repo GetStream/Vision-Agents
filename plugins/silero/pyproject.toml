@@ -1,26 +1,30 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-silero"
-version = "0.1.0"
+name = "vision-agents-plugins-silero"
+dynamic = ["version"]
 description = "Silero plugin for GetStream"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "silero>=0.4.1",
     "torch>=2.7.1",
     "numpy>=2.2.6,<2.3",
 ]
 
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
+
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

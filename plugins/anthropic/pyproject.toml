@@ -1,24 +1,37 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stream-agents-plugins-anthropic"
-version = "0.1.1"
-description = "Anthropic/Claude plugin for GetStream"
+name = "vision-agents-plugins-anthropic"
+dynamic = ["version"]
+description = "Anthropic/Claude LLM integration for Vision Agents"
 readme = "README.md"
+keywords = ["anthropic", "claude", "LLM", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "stream-agents",
+    "vision-agents",
     "anthropic",
 ]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://getstream.io/video/voice-agents/"
+Source = "https://github.com/getstream/agents"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
+[tool.hatch.build.targets.sdist]
+include = ["/vision_agents"]
+
 [tool.uv.sources]
-stream-agents = { workspace = true }
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [
