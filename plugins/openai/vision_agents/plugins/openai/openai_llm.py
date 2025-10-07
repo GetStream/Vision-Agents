@@ -166,7 +166,11 @@ class OpenAILLM(LLM):
             # Defensive fallback for unknown response types
             llm_response = LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
-        if llm_response is not None:
+        # Note: For streaming responses, LLMResponseCompletedEvent is already emitted
+        # in _standardize_and_emit_event when processing "response.completed" event.
+        # Only emit it here for non-streaming responses to avoid duplication.
+        if llm_response is not None and isinstance(response, OpenAIResponse):
+            # Non-streaming response - emit completion event
             self.events.send(LLMResponseCompletedEvent(
                 original=llm_response.original,
                 text=llm_response.text

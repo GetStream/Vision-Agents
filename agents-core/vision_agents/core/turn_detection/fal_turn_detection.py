@@ -311,10 +311,13 @@ class FalTurnDetection(TurnDetector):
                     f"Turn completed detected for user {user_id} (confidence: {probability:.3f})"
                 )
 
-                # If this user was speaking, emit turn ended
-                if self._current_speaker == user_id:
-                    self._emit_turn_event(TurnEvent.TURN_ENDED, event_data)
-                    self._current_speaker = None
+                # User finished speaking - emit turn ended
+                # Set them as current speaker if they weren't already (in case we missed the start)
+                if self._current_speaker != user_id:
+                    self._current_speaker = user_id
+                    
+                self._emit_turn_event(TurnEvent.TURN_ENDED, event_data)
+                self._current_speaker = None
 
             else:
                 # Turn is still in progress

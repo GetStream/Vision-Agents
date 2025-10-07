@@ -129,6 +129,9 @@ class Agent:
         self.conversation: Optional[Conversation] = None
         self._user_conversation_handle: Optional[StreamHandle] = None
         self._agent_conversation_handle: Optional[StreamHandle] = None
+        
+        # Track pending transcripts for turn-based response triggering
+        self._pending_user_transcripts: Dict[str, str] = {}
 
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, vad, llm]:
@@ -673,16 +676,56 @@ class Agent:
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
+        # In realtime mode, the LLM handles turn detection, interruption, and responses itself
+        if self.realtime_mode:
+            return
+        
         if isinstance(event, TurnStartedEvent):
-            # TODO: Implement TTS pause/resume functionality
-            # For now, TTS will continue playing - this should be improved
-            self.logger.info(
-                f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
-            )
+            # Interrupt TTS when user starts speaking (barge-in)
+            if event.speaker_id and event.speaker_id != self.agent_user.id:
+                if self.tts:
+                    self.logger.info(
+                        f"👉 Turn started - interrupting TTS for participant {event.speaker_id}"
+                    )
+                    try:
+                        await self.tts.stop_audio()
+                    except Exception as e:
+                        self.logger.error(f"Error stopping TTS: {e}")
+                else:
+                    self.logger.info(
+                        f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
+                    )
+            else:
+                # Agent itself started speaking - this is normal
+                self.logger.debug(
+                    f"👉 Turn started - agent speaking {event.speaker_id}"
+                )
         elif isinstance(event, TurnEndedEvent):
             self.logger.info(
                 f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.duration}, confidence: {event.confidence})"
             )
+            
+            # When turn detection is enabled, trigger LLM response when user's turn ends
+            # This is the signal that the user has finished speaking and expects a response
+            if event.speaker_id and event.speaker_id != self.agent_user.id:
+                # Get the accumulated transcript for this speaker
+                transcript = self._pending_user_transcripts.get(event.speaker_id, "")
+                
+                if transcript and transcript.strip():
+                    self.logger.info(f"🤖 Triggering LLM response after turn ended for {event.speaker_id}")
+                    
+                    # Create participant object if we have metadata
+                    participant = None
+                    if hasattr(event, 'custom') and event.custom:
+                        # Try to extract participant info from custom metadata
+                        participant = event.custom.get('participant')
+                    
+                    # Trigger LLM response with the complete transcript
+                    if self.llm:
+                        await self.simple_response(transcript, participant)
+                    
+                    # Clear the pending transcript for this speaker
+                    self._pending_user_transcripts[event.speaker_id] = ""
 
     async def _on_partial_transcript(
         self, event: STTPartialTranscriptEvent | RealtimePartialTranscriptEvent
@@ -737,6 +780,38 @@ class Agent:
             )
             self.conversation.complete_message(self._user_conversation_handle)
             self._user_conversation_handle = None
+        
+        # In realtime mode, the LLM handles everything itself (STT, turn detection, responses)
+        # Skip our manual LLM triggering logic
+        if self.realtime_mode:
+            return
+        
+        # Determine how to handle LLM triggering based on turn detection
+        if self.turn_detection is not None:
+            # With turn detection: accumulate transcripts and wait for TurnEndedEvent
+            # Store/append the transcript for this user
+            if user_id not in self._pending_user_transcripts:
+                self._pending_user_transcripts[user_id] = event.text
+            else:
+                # Append to existing transcript (user might be speaking in chunks)
+                self._pending_user_transcripts[user_id] += " " + event.text
+            
+            self.logger.debug(
+                f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
+                f"{self._pending_user_transcripts[user_id][:100]}..."
+            )
+        else:
+            # Without turn detection: trigger LLM immediately on transcript completion
+            # This is the traditional STT -> LLM flow
+            if self.llm:
+                self.logger.info("🤖 Triggering LLM response immediately (no turn detection)")
+                
+                # Get participant from event metadata
+                participant = None
+                if hasattr(event, "user_metadata"):
+                    participant = event.user_metadata
+                
+                await self.simple_response(event.text, participant)
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""
