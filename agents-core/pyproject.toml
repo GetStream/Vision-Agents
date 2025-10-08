@@ -9,6 +9,16 @@ readme = "README.md"
 keywords = ["video AI", "AI", "voice AI", "video agents", "voice agents", "agents", "AI"]
 dynamic = ["version"]
 
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: OS Independent",
+]
+
 requires-python = ">=3.10"
 dependencies = [
     "getstream[webrtc,telemetry]>=2.5.3",

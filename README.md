@@ -1,5 +1,10 @@
 # Open Vision Agents by Stream
 
+[![build](https://github.com/GetStream/Vision-Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/GetStream/Vision-Agents/actions)
+[![PyPI version](https://badge.fury.io/py/vision-agents.svg)](http://badge.fury.io/py/vision-agents)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vision-agents.svg)
+[![License](https://img.shields.io/github/license/GetStream/Vision-Agents)](https://github.com/GetStream/Vision-Agents/blob/master/LICENSE)
+
 TODO: Image or video. Show code, image and demos
 
 Build Vision Agents quickly with any model or video provider.
@@ -62,12 +67,12 @@ Processors make it easy to combine the video & LLM with additional state. Here a
 * BufferedVideoCapture
 
 ## Docs
-To get started with Vision Agents, check out our getting started guide at [VisionAgents.ai](https://visionagents.ai). 
+To get started with Vision Agents, check out our getting started guide at [VisionAgents.ai](https://visionagents.ai).
 
-- Quickstart: [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents) 
-- Quickstart: [Building a Video AI app](https://visionagents.ai/introduction/video-agents) 
-- Tutorial: [Building realtime sports coaching](#) 
-- Tutorial: [Building a realtime meeting assistant](#) 
+- Quickstart: [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
+- Quickstart: [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
+- Tutorial: [Building realtime sports coaching](#)
+- Tutorial: [Building a realtime meeting assistant](#)
 
 ## Development
 
@@ -94,7 +99,7 @@ Our favorite people & projects to follow for vision AI
 - Pipecat: Flexible, but more verbose. Open, we will add support for Stream
 - OpenAI Agents: Focused on openAI only, but we will try to add support
 
-## Open Platform 
+## Open Platform
 Reach out to nash@getstream.io, and we'll collaborate on getting you added
 We'd like to add support for and are reaching out to:
 
@@ -110,14 +115,13 @@ We'd like to add support for and are reaching out to:
 
 **0.1 - First release**
 - Support for >10 out of the box [integrations](https://visionagents.ai/integrations/introduction-to-integrations)
-- Support for video processors 
-- Native Stream Chat integration for memory 
-- Support for MCP and function calling for Gemini and OpenAI 
-- Support for realtime WebRTC video and voice with GPT Realtime 
+- Support for video processors
+- Native Stream Chat integration for memory
+- Support for MCP and function calling for Gemini and OpenAI
+- Support for realtime WebRTC video and voice with GPT Realtime
 
 **0.2 - Next release**
 - The Python WebRTC lib we use has some problems. This can cause sudden spikes and latency issues. We'll be pushing fixes for the project
 - Hosting guidelines
 
 **Later**
-
