@@ -3,9 +3,9 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vision-agents-plugins-fal"
+name = "vision-agents-plugins-wizper"
 dynamic = ["version"]
-description = "Fal.ai turn detection integration for Vision Agents"
+description = "Wizper plugin for Vision Agents"
 readme = "README.md"
 keywords = ["fal", "turn detection", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"

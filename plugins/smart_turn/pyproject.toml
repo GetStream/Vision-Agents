@@ -1,18 +1,18 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vision-agents-plugins-getstream"
-dynamic = ["version"]
-description = "GetStream video/voice integration for Vision Agents"
+name = "vision-agents-plugins-smart-turn"
+version = "0.1.0"
+description = "Smart Turn detection plugin for Vision Agents"
 readme = "README.md"
-keywords = ["getstream", "video", "realtime", "streaming", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "getstream[webrtc,telemetry]>=2.5.0",
+    "fal-client>=0.5.6",
+    "numpy>=2.2.6,<2.3",
 ]
 
 [project.urls]
@@ -38,3 +38,4 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
+

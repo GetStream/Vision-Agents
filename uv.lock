@@ -19,7 +19,6 @@ members = [
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-deepgram",
     "vision-agents-plugins-elevenlabs",
-    "vision-agents-plugins-fal",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-kokoro",
@@ -27,6 +26,7 @@ members = [
     "vision-agents-plugins-moonshine",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-silero",
+    "vision-agents-plugins-smart-turn",
     "vision-agents-plugins-ultralytics",
     "vision-agents-plugins-xai",
 ]
@@ -1540,57 +1540,6 @@ webrtc = [
     { name = "twirp" },
     { name = "websocket-client" },
     { name = "websockets" },
-]
-
-[[package]]
-name = "getstream-plugins-common"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/12/33efcfa1815d95b6cbaaf8b2ef192d64eea6555dfe733ec9f642cf098322/getstream_plugins_common-0.1.1-py3-none-any.whl", hash = "sha256:87b04efbd9a9ce1e143045370ee62334a536e69d60060aae419acb2118cd242c", size = 14041, upload-time = "2025-08-01T15:47:11.774Z" },
-]
-
-[[package]]
-name = "getstream-plugins-deepgram"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "deepgram-sdk" },
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-common" },
-    { name = "numpy" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/6d/595a7870c092a30f8df56c7e09d4e6aca6f4f3ed5ffc453cc2281ed1100f/getstream_plugins_deepgram-0.1.1-py3-none-any.whl", hash = "sha256:5ed7a9a283fc5a897108a8ca6bb4e1b3289b12ef64aa1dff8520ca45d023cd18", size = 16802, upload-time = "2025-08-01T15:47:12.664Z" },
-]
-
-[[package]]
-name = "getstream-plugins-elevenlabs"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "elevenlabs" },
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-common" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/01/58ce9ca0acbb81a80b92edea0fc1108e82ddcee49828e5e4d26bc621c661/getstream_plugins_elevenlabs-0.1.0-py3-none-any.whl", hash = "sha256:d4b94bf43dd9d1a2e374a3662a38c2a79db43a8b88d41ef28c7050597a3272eb", size = 6142, upload-time = "2025-07-04T13:42:34.989Z" },
-]
-
-[[package]]
-name = "getstream-plugins-openai"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "getstream", extra = ["webrtc"] },
-    { name = "getstream-plugins-common" },
-    { name = "openai", extra = ["realtime"] },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/7e/c3f18ddb15e587e8e43496799fd6cb1d4a3b4c7381825e477325e4cc7bfd/getstream_plugins_openai-0.1.1-py3-none-any.whl", hash = "sha256:2fb665286402dc631f1d36fb6761416b6310f1a984b76152eda90348556259a0", size = 7473, upload-time = "2025-07-23T15:57:14.164Z" },
 ]
 
 [[package]]
@@ -5424,7 +5373,7 @@ all-plugins = [
     { name = "vision-agents-plugins-openai" },
 ]
 deepgram = [
-    { name = "getstream-plugins-deepgram" },
+    { name = "vision-agents-plugins-deepgram" },
 ]
 dev = [
     { name = "click" },
@@ -5433,7 +5382,7 @@ dev = [
     { name = "ruff" },
 ]
 elevenlabs = [
-    { name = "getstream-plugins-elevenlabs" },
+    { name = "vision-agents-plugins-elevenlabs" },
 ]
 fal = [
     { name = "fal-client" },
@@ -5442,7 +5391,7 @@ gemini = [
     { name = "google-genai" },
 ]
 openai = [
-    { name = "getstream-plugins-openai" },
+    { name = "vision-agents-plugins-openai" },
 ]
 
 [package.metadata]
@@ -5451,9 +5400,6 @@ requires-dist = [
     { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.0" },
-    { name = "getstream-plugins-deepgram", marker = "extra == 'deepgram'", specifier = ">=0.1.0" },
-    { name = "getstream-plugins-elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=0.1.0" },
-    { name = "getstream-plugins-openai", marker = "extra == 'openai'" },
     { name = "google-genai", marker = "extra == 'all-plugins'", specifier = ">=0.3.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=0.3.0" },
     { name = "mypy", marker = "extra == 'dev'" },
@@ -5463,8 +5409,11 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
+    { name = "vision-agents-plugins-deepgram", marker = "extra == 'deepgram'", editable = "plugins/deepgram" },
     { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "plugins/elevenlabs" },
+    { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "plugins/elevenlabs" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
+    { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
 ]
 provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemini", "openai"]
 
@@ -5576,34 +5525,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "vision-agents-plugins-fal"
-source = { editable = "plugins/fal" }
-dependencies = [
-    { name = "fal-client" },
-    { name = "vision-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "numpy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fal-client", specifier = ">=0.7.0" },
-    { name = "vision-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
@@ -5810,6 +5731,35 @@ dev = [
     { name = "scipy", specifier = ">=1.15.3,<1.16" },
     { name = "soundfile", specifier = ">=0.13.1" },
     { name = "torchaudio", specifier = ">=2.7.1" },
+]
+
+[[package]]
+name = "vision-agents-plugins-smart-turn"
+version = "0.1.0"
+source = { editable = "plugins/smart_turn" }
+dependencies = [
+    { name = "fal-client" },
+    { name = "numpy" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fal-client", specifier = ">=0.5.6" },
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]

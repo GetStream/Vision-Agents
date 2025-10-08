@@ -1,5 +1,5 @@
 """
-FAL Smart-Turn implementation for turn detection using the smart-turn AI model.
+Smart Turn detection implementation using the FAL AI smart-turn model.
 
 This module provides integration with the FAL AI smart-turn model to detect
 when a speaker has completed their turn in a conversation.
@@ -19,8 +19,11 @@ import numpy as np
 from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.utils.utils import to_mono
-
-from .turn_detection import TurnDetector, TurnEvent, TurnEventData
+from vision_agents.core.turn_detection.turn_detection import (
+    TurnDetector,
+    TurnEvent,
+    TurnEventData,
+)
 
 
 def _resample(samples: np.ndarray) -> np.ndarray:
@@ -28,7 +31,7 @@ def _resample(samples: np.ndarray) -> np.ndarray:
     return resample_audio(samples, 48000, 16000).astype(np.int16)
 
 
-class FalTurnDetection(TurnDetector):
+class TurnDetection(TurnDetector):
     """
     Turn detection implementation using FAL AI's smart-turn model.
 
@@ -48,7 +51,7 @@ class FalTurnDetection(TurnDetector):
         channels: int = 1,
     ):
         """
-        Initialize FAL turn detection.
+        Initialize Smart Turn detection.
 
         Args:
             api_key: FAL API key (if None, uses FAL_KEY env var)
@@ -59,10 +62,9 @@ class FalTurnDetection(TurnDetector):
         """
 
         super().__init__(
-            confidence_threshold=confidence_threshold,
-            provider_name="FalTurnDetection"
+            confidence_threshold=confidence_threshold, provider_name="SmartTurnDetection"
         )
-        self.logger = logging.getLogger("FalTurnDetection")
+        self.logger = logging.getLogger("SmartTurnDetection")
         self.api_key = api_key
         self.buffer_duration = buffer_duration
         self.sample_rate = sample_rate
@@ -75,7 +77,7 @@ class FalTurnDetection(TurnDetector):
 
         # Processing state
         self._processing_tasks: Dict[str, asyncio.Task] = {}
-        self._temp_dir = Path(tempfile.gettempdir()) / "fal_turn_detection"
+        self._temp_dir = Path(tempfile.gettempdir()) / "smart_turn_detection"
         self._temp_dir.mkdir(exist_ok=True)
 
         # Configure FAL client
@@ -83,7 +85,7 @@ class FalTurnDetection(TurnDetector):
             os.environ["FAL_KEY"] = self.api_key
 
         self.logger.info(
-            f"Initialized FAL turn detection (buffer: {buffer_duration}s, threshold: {confidence_threshold})"
+            f"Initialized Smart Turn detection (buffer: {buffer_duration}s, threshold: {confidence_threshold})"
         )
 
     def _infer_channels(self, format_str: str) -> int:
@@ -94,7 +96,9 @@ class FalTurnDetection(TurnDetector):
         elif any(f in format_str for f in ["mono", "s16", "int16", "pcm_s16le"]):
             return 1
         else:
-            self.logger.warning(f"Unknown format string: {format_str}. Assuming mono.")
+            self.logger.warning(
+                f"Unknown format string: {format_str}. Assuming mono."
+            )
             return 1
 
     def is_detecting(self) -> bool:
@@ -295,7 +299,7 @@ class FalTurnDetection(TurnDetector):
             # Create event data
             event_data = TurnEventData(
                 timestamp=current_time,
-                speaker_id=user_id,  # Now use the user_id directly
+                speaker_id=user_id,
                 confidence=probability,
                 custom={
                     "prediction": prediction,
@@ -315,7 +319,7 @@ class FalTurnDetection(TurnDetector):
                 # Set them as current speaker if they weren't already (in case we missed the start)
                 if self._current_speaker != user_id:
                     self._current_speaker = user_id
-                    
+
                 self._emit_turn_event(TurnEvent.TURN_ENDED, event_data)
                 self._current_speaker = None
 
@@ -346,7 +350,7 @@ class FalTurnDetection(TurnDetector):
         if self._is_detecting:
             return
         self._is_detecting = True
-        self.logger.info("FAL turn detection started")
+        self.logger.info("Smart Turn detection started")
 
     def stop(self) -> None:
         """Stop turn detection and clean up."""
@@ -374,4 +378,5 @@ class FalTurnDetection(TurnDetector):
         except Exception as e:
             self.logger.warning(f"Failed to clean up temp files: {e}")
 
-        self.logger.info("FAL turn detection stopped")
+        self.logger.info("Smart Turn detection stopped")
+
