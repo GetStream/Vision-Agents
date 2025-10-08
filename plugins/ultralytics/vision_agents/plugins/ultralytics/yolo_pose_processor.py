@@ -1,5 +1,3 @@
-
-
 import asyncio
 import time
 import logging
@@ -26,9 +24,9 @@ from vision_agents.core.utils.video_forwarder import VideoForwarder
 logger = logging.getLogger(__name__)
 
 DEFAULT_WIDTH = 640
-DEFAULT_HEIGHT= 480
+DEFAULT_HEIGHT = 480
 DEFAULT_WIDTH = 1920
-DEFAULT_HEIGHT= 1080
+DEFAULT_HEIGHT = 1080
 
 """
 TODO: video track & Queuing need more testing/ thought
@@ -38,6 +36,7 @@ TODO: video track & Queuing need more testing/ thought
 - Fix bugs
 
 """
+
 
 class YOLOPoseVideoTrack(VideoStreamTrack):
     """
@@ -59,23 +58,22 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
         self.height = height
         empty_image = Image.new("RGB", (self.width, self.height), color="blue")
         self.empty_frame = av.VideoFrame.from_image(empty_image)
-        self.last_frame : av.VideoFrame = self.empty_frame
+        self.last_frame: av.VideoFrame = self.empty_frame
         self._stopped = False
 
-    async def add_frame(self, frame : av.VideoFrame):
+    async def add_frame(self, frame: av.VideoFrame):
         # Resize the image and stick it on the queue
         if self._stopped:
             return
 
         # TODO: where do we resize?
         # Ensure the image is the correct size
-        #if image.size != (self.width, self.height):
+        # if image.size != (self.width, self.height):
         #    image = image.resize(
         #        (self.width, self.height), Image.Resampling.BILINEAR
         #    )
 
         self.frame_queue.put_latest_nowait(frame)
-
 
     async def recv(self) -> av.frame.Frame:
         """Receive the next video frame."""
@@ -97,7 +95,6 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
 
         pts, time_base = await self.next_timestamp()
 
-
         # Create av.VideoFrame from PIL Image
         try:
             av_frame = self.last_frame
@@ -106,12 +103,12 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
             av_frame.time_base = time_base
         except Exception:
             import pdb
+
             pdb.set_trace()
 
-
-        #if frame_received:
+        # if frame_received:
         #    logger.info(f"Returning NEW video frame: {av_frame.width}x{av_frame.height}")
-        #else:
+        # else:
         #    logger.info(f"Returning REPEATED video frame: {av_frame.width}x{av_frame.height}")
         return av_frame
 
@@ -119,9 +116,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
         self._stopped = True
 
 
-class YOLOPoseProcessor(
-    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
-):
+class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """
     Yolo pose detection processor.
 
@@ -129,6 +124,7 @@ class YOLOPoseProcessor(
     - Converts it to an ND array
 
     """
+
     def __init__(
         self,
         model_path: str = "yolo11n-pose.pt",
@@ -193,54 +189,61 @@ class YOLOPoseProcessor(
         if shared_forwarder is not None:
             # Use the shared forwarder
             self._video_forwarder = shared_forwarder
-            logger.info(f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS")
+            logger.info(
+                f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS"
+            )
             await self._video_forwarder.start_event_consumer(
-                self._add_pose_and_add_frame,
-                fps=float(self.fps),
-                consumer_name="yolo"
+                self._add_pose_and_add_frame, fps=float(self.fps), consumer_name="yolo"
             )
         else:
             # Create our own VideoForwarder (legacy behavior)
             self._video_forwarder = VideoForwarder(
                 incoming_track,  # type: ignore[arg-type]
-                max_buffer=30, # 1 second
+                max_buffer=30,  # 1 second
                 fps=self.fps,
                 name="yolo_forwarder",
             )
 
             # Start the forwarder
             await self._video_forwarder.start()
-            await self._video_forwarder.start_event_consumer(self._add_pose_and_add_frame)
+            await self._video_forwarder.start_event_consumer(
+                self._add_pose_and_add_frame
+            )
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
         frame_with_pose = await self.add_pose_to_frame(frame)
-        await self._video_track.add_frame(frame_with_pose)
+        if frame_with_pose is None:
+            logger.info(
+                "add_pose_to_frame did not return a frame, returning the original frame instead."
+            )
+            await self._video_track.add_frame(frame)
+        else:
+            await self._video_track.add_frame(frame_with_pose)
 
-    async def add_pose_to_frame(self, frame: av.VideoFrame):
-
+    async def add_pose_to_frame(self, frame: av.VideoFrame) -> Optional[av.VideoFrame]:
         try:
             frame_array = frame.to_ndarray(format="rgb24")
             array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
             frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
+            return frame_with_pose
         except Exception:
-            import pdb
-            pdb.set_trace()
-
-        return frame_with_pose
+            logger.exception("add_pose_to_frame failed")
+            return None
 
     async def add_pose_to_image(self, image: Image.Image) -> tuple[Image.Image, Any]:
         """
         Adds the pose to the given image. Note that this is slightly less efficient compared to
         using add_pose_to_ndarray directly
         """
-        width, height = image.size
         frame_array = np.array(image)
         array_with_pose, pose_data = await self.add_pose_to_ndarray(frame_array)
         annotated_image = Image.fromarray(array_with_pose)
 
         return annotated_image, pose_data
 
-    async def add_pose_to_ndarray(self, frame_array: np.ndarray) -> tuple[ndarray, dict[str, Any]]:
+    async def add_pose_to_ndarray(
+        self, frame_array: np.ndarray
+    ) -> tuple[ndarray, dict[str, Any]]:
         """
         Adds the pose information to the given frame array. This is slightly faster than using add_pose_to_image
         """
@@ -267,12 +270,12 @@ class YOLOPoseProcessor(
         """
         loop = asyncio.get_event_loop()
         frame_height, frame_width = frame_array.shape[:2]
-        
+
         logger.debug(f"🤖 Starting pose processing: {frame_width}x{frame_height}")
+        start_time = time.perf_counter()
 
         try:
             # Add timeout to prevent blocking
-            start_time = time.perf_counter()
             result = await asyncio.wait_for(
                 loop.run_in_executor(
                     self.executor, self._process_pose_sync, frame_array
@@ -280,15 +283,21 @@ class YOLOPoseProcessor(
                 timeout=12.0,  # 12 second timeout
             )
             processing_time = time.perf_counter() - start_time
-            logger.debug(f"✅ Pose processing completed in {processing_time:.3f}s for {frame_width}x{frame_height}")
+            logger.debug(
+                f"✅ Pose processing completed in {processing_time:.3f}s for {frame_width}x{frame_height}"
+            )
             return result
         except asyncio.TimeoutError:
             processing_time = time.perf_counter() - start_time
-            logger.warning(f"⏰ Pose processing TIMEOUT after {processing_time:.3f}s for {frame_width}x{frame_height} - returning original frame")
+            logger.warning(
+                f"⏰ Pose processing TIMEOUT after {processing_time:.3f}s for {frame_width}x{frame_height} - returning original frame"
+            )
             return frame_array, {}
         except Exception as e:
             processing_time = time.perf_counter() - start_time
-            logger.error(f"❌ Error in async pose processing after {processing_time:.3f}s for {frame_width}x{frame_height}: {e}")
+            logger.error(
+                f"❌ Error in async pose processing after {processing_time:.3f}s for {frame_width}x{frame_height}: {e}"
+            )
             return frame_array, {}
 
     def _process_pose_sync(
@@ -301,14 +310,16 @@ class YOLOPoseProcessor(
 
             # Store original dimensions for quality preservation
             original_height, original_width = frame_array.shape[:2]
-            logger.debug(f"🔍 Running YOLO pose detection on {original_width}x{original_height} frame")
+            logger.debug(
+                f"🔍 Running YOLO pose detection on {original_width}x{original_height} frame"
+            )
 
             # Run pose detection
             yolo_start = time.perf_counter()
             pose_results = self.pose_model(
                 frame_array,
                 verbose=False,
-                #imgsz=self.imgsz,
+                # imgsz=self.imgsz,
                 conf=self.conf_threshold,
                 device=self.device,
             )
@@ -354,7 +365,9 @@ class YOLOPoseProcessor(
                     if self.enable_wrist_highlights:
                         self._highlight_wrists(annotated_frame, kpts)
 
-            logger.debug(f"✅ Pose processing completed successfully - detected {len(pose_data['persons'])} persons")
+            logger.debug(
+                f"✅ Pose processing completed successfully - detected {len(pose_data['persons'])} persons"
+            )
             return annotated_frame, pose_data
 
         except Exception as e:

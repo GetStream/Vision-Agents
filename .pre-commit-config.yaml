@@ -16,3 +16,19 @@ repos:
   -   id: check-yaml
   -   id: check-added-large-files
       args: ["--maxkb=6000"]
+
+# Match GitHub checks: mypy for main package and plugins
+- repo: local
+  hooks:
+    - id: mypy-main
+      name: mypy (vision_agents)
+      entry: uv run mypy --install-types --non-interactive -p vision_agents
+      language: system
+      pass_filenames: false
+      types_or: [python]
+    - id: mypy-plugins
+      name: mypy (plugins)
+      entry: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
+      language: system
+      pass_filenames: false
+      types_or: [python]

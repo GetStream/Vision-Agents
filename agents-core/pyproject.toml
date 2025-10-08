@@ -11,7 +11,7 @@ dynamic = ["version"]
 
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc,telemetry]>=2.5.0",
+    "getstream[webrtc,telemetry]>=2.5.3",
     "python-dotenv>=1.1.1",
     "pillow>=11.3.0",
     "numpy>=1.24.0",
@@ -80,3 +80,4 @@ include = ["vision_agents"]
 #]
 # for local development
 # getstream = { path = "../../stream-py/", editable = true }
+# aiortc = { path = "../stream-py/", editable = true }
