@@ -132,6 +132,9 @@ class Agent:
         self.conversation: Optional[Conversation] = None
         self._user_conversation_handle: Optional[StreamHandle] = None
         self._agent_conversation_handle: Optional[StreamHandle] = None
+        
+        # Track pending transcripts for turn-based response triggering
+        self._pending_user_transcripts: Dict[str, str] = {}
 
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, vad, llm, edge]:
@@ -201,66 +204,69 @@ class Agent:
             self.call = call
             self.conversation = None
 
-        # Ensure all subsequent logs include the call context.
-        self._set_call_logging_context(call.id)
+            # Ensure all subsequent logs include the call context.
+            self._set_call_logging_context(call.id)
 
-        try:
-            # Connect to MCP servers if manager is available
-            if self.mcp_manager:
-                with self.tracer.start_as_current_span("mcp_manager.connect_all"):
-                    await self.mcp_manager.connect_all()
+            try:
+                # Connect to MCP servers if manager is available
+                if self.mcp_manager:
+                    with self.tracer.start_as_current_span("mcp_manager.connect_all"):
+                        await self.mcp_manager.connect_all()
 
+                # Setup chat and connect it to transcript events
+                self.conversation = await self.edge.create_conversation(
+                    call, self.agent_user, self.instructions
+                )
+                self.events.subscribe(self._on_transcript)
+                self.events.subscribe(self._on_partial_transcript)
 
-            # Setup chat and connect it to transcript events
-            self.conversation = await self.edge.create_conversation(
-                call, self.agent_user, self.instructions
+                # Ensure Realtime providers are ready before proceeding (they manage their own connection)
+                self.logger.info(f"🤖 Agent joining call: {call.id}")
+                if isinstance(self.llm, Realtime):
+                    await self.llm.connect()
+
+                with self.tracer.start_as_current_span("edge.join"):
+                    connection = await self.edge.join(self, call)
+            except Exception:
+                self._clear_call_logging_context()
+                raise
+
+            self._connection = connection
+            self._is_running = True
+
+            connection._connection._coordinator_ws_client.on_wildcard(
+                "*", lambda event_name, event: self.events.send(event)
             )
-            self.events.subscribe(self._on_transcript)
-            self.events.subscribe(self._on_partial_transcript)
 
-            # Ensure Realtime providers are ready before proceeding (they manage their own connection)
-            self.logger.info(f"🤖 Agent joining call: {call.id}")
-            if isinstance(self.llm, Realtime):
-                await self.llm.connect()
+            self.logger.info(f"🤖 Agent joined call: {call.id}")
 
-            with self.tracer.start_as_current_span("edge.join"):
-                connection = await self.edge.join(self, call)
-        except Exception:
-            self._clear_call_logging_context()
-            raise
+            # Set up audio and video tracks together to avoid SDP issues
+            audio_track = self._audio_track if self.publish_audio else None
+            video_track = self._video_track if self.publish_video else None
 
-        self._connection = connection
-        self._is_running = True
+            if audio_track or video_track:
+                with self.tracer.start_as_current_span("edge.publish_tracks"):
+                    await self.edge.publish_tracks(audio_track, video_track)
 
-        connection._connection._coordinator_ws_client.on_wildcard(
-            "*",
-            lambda event_name, event: self.events.send(event),
-        )
+            connection._connection._coordinator_ws_client.on_wildcard(
+                "*",
+                lambda event_name, event: self.events.send(event),
+            )
 
-        connection._connection._ws_client.on_wildcard(
-            "*",
-            lambda event_name, event: self.events.send(event),
-        )
+            connection._connection._ws_client.on_wildcard(
+                "*",
+                lambda event_name, event: self.events.send(event),
+            )
 
-        self.logger.info(f"🤖 Agent joined call: {call.id}")
+            # Listen to incoming tracks if any component needs them
+            # This is independent of publishing - agents can listen without publishing
+            # (e.g., STT-only agents that respond via text chat)
+            if self._needs_audio_or_video_input():
+                await self._listen_to_audio_and_video()
 
-        # Set up audio and video tracks together to avoid SDP issues
-        audio_track = self._audio_track if self.publish_audio else None
-        video_track = self._video_track if self.publish_video else None
+            from .agent_session import AgentSessionContextManager
 
-        if audio_track or video_track:
-            with self.tracer.start_as_current_span("edge.publish_tracks"):
-                await self.edge.publish_tracks(audio_track, video_track)
-
-        # Listen to incoming tracks if any component needs them
-        # This is independent of publishing - agents can listen without publishing
-        # (e.g., STT-only agents that respond via text chat)
-        if self._needs_audio_or_video_input():
-            await self._listen_to_audio_and_video()
-
-        from .agent_session import AgentSessionContextManager
-
-        return AgentSessionContextManager(self, self._connection)
+            return AgentSessionContextManager(self, self._connection)
 
     async def finish(self):
         """Wait for the call to end gracefully.
@@ -306,6 +312,15 @@ class Agent:
 
         for processor in self.processors:
             processor.close()
+        
+        # Stop all video forwarders
+        if hasattr(self, '_video_forwarders'):
+            for forwarder in self._video_forwarders:
+                try:
+                    await forwarder.stop()
+                except Exception as e:
+                    self.logger.error(f"Error stopping video forwarder: {e}")
+            self._video_forwarders.clear()
 
         # Close Realtime connection
         if self._realtime_connection:
@@ -583,53 +598,72 @@ class Agent:
         # Import VideoForwarder
         from ..utils.video_forwarder import VideoForwarder
         
-        # Create a SHARED VideoForwarder that all consumers will subscribe to
+        # Create a SHARED VideoForwarder for the RAW incoming track
         # This prevents multiple recv() calls competing on the same track
-        shared_forwarder = VideoForwarder(
+        raw_forwarder = VideoForwarder(
             track,  # type: ignore[arg-type]
             max_buffer=30,
             fps=30,  # Max FPS for the producer (individual consumers can throttle down)
-            name="shared_video_forwarder",
+            name=f"raw_video_forwarder_{track_id}",
         )
-        await shared_forwarder.start()
-        self.logger.info("🎥 Created shared VideoForwarder for track %s", track_id)
+        await raw_forwarder.start()
+        self.logger.info("🎥 Created raw VideoForwarder for track %s", track_id)
+        
+        # Track forwarders for cleanup
+        if not hasattr(self, '_video_forwarders'):
+            self._video_forwarders = []
+        self._video_forwarders.append(raw_forwarder)
 
-        # If Realtime provider supports video, tell it to watch the video
+        # If Realtime provider supports video, determine which track to send
         if self.realtime_mode:
-            # TODO: should we make this configurable? some use cases will want source, others processed track
-            track_to_watch = track
             if self._video_track:
-                self.logger.info("Forwarding processed video frames to Realtime provider")
-                track_to_watch = self._video_track
+                # We have a video publisher (e.g., YOLO processor)
+                # Create a separate forwarder for the PROCESSED video track
+                self.logger.info("🎥 Forwarding PROCESSED video frames to Realtime provider")
+                processed_forwarder = VideoForwarder(
+                    self._video_track,  # type: ignore[arg-type]
+                    max_buffer=30,
+                    fps=30,
+                    name=f"processed_video_forwarder_{track_id}",
+                )
+                await processed_forwarder.start()
+                self._video_forwarders.append(processed_forwarder)
+                
+                if isinstance(self.llm, Realtime):
+                    # Send PROCESSED frames with the processed forwarder
+                    await self.llm._watch_video_track(self._video_track, shared_forwarder=processed_forwarder)
             else:
-                self.logger.info("Forwarding original video frames to Realtime provider")
-
-            if isinstance(self.llm, Realtime):
-                # Pass the shared forwarder to the realtime provider
-                await self.llm._watch_video_track(track_to_watch, shared_forwarder=shared_forwarder)
+                # No video publisher, send raw frames
+                self.logger.info("🎥 Forwarding RAW video frames to Realtime provider")
+                if isinstance(self.llm, Realtime):
+                    await self.llm._watch_video_track(track, shared_forwarder=raw_forwarder)
 
 
         hasImageProcessers = len(self.image_processors) > 0
 
-        # video processors - pass the shared forwarder
+        # video processors - pass the raw forwarder (they process incoming frames)
         for processor in self.video_processors:
             try:
-                await processor.process_video(track, participant.user_id, shared_forwarder=shared_forwarder)
+                await processor.process_video(track, participant.user_id, shared_forwarder=raw_forwarder)
             except Exception as e:
                 self.logger.error(
                     f"Error in video processor {type(processor).__name__}: {e}"
                 )
 
-        # Use shared forwarder for image processors - only if there are image processors
+        # Use raw forwarder for image processors - only if there are image processors
         if not hasImageProcessers:
             # No image processors, just keep the connection alive
             self.logger.info("No image processors, video processing handled by video processors only")
             return
         
+        # Initialize error tracking counters
+        timeout_errors = 0
+        consecutive_errors = 0
+        
         while True:
             try:
-                # Use the shared forwarder instead of competing for track.recv()
-                video_frame = await shared_forwarder.next_frame(timeout=2.0)
+                # Use the raw forwarder instead of competing for track.recv()
+                video_frame = await raw_forwarder.next_frame(timeout=2.0)
 
                 if video_frame:
                     # Reset error counts on successful frame processing
@@ -655,6 +689,7 @@ class Agent:
 
             except asyncio.TimeoutError:
                 # Exponential backoff for timeout errors
+                timeout_errors += 1
                 backoff_delay = min(2.0 ** min(timeout_errors, 5), 30.0)
                 self.logger.debug(
                     f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s"
@@ -671,16 +706,56 @@ class Agent:
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
+        # In realtime mode, the LLM handles turn detection, interruption, and responses itself
+        if self.realtime_mode:
+            return
+        
         if isinstance(event, TurnStartedEvent):
-            # TODO: Implement TTS pause/resume functionality
-            # For now, TTS will continue playing - this should be improved
-            self.logger.info(
-                f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
-            )
+            # Interrupt TTS when user starts speaking (barge-in)
+            if event.speaker_id and event.speaker_id != self.agent_user.id:
+                if self.tts:
+                    self.logger.info(
+                        f"👉 Turn started - interrupting TTS for participant {event.speaker_id}"
+                    )
+                    try:
+                        await self.tts.stop_audio()
+                    except Exception as e:
+                        self.logger.error(f"Error stopping TTS: {e}")
+                else:
+                    self.logger.info(
+                        f"👉 Turn started - participant speaking {event.speaker_id} : {event.confidence}"
+                    )
+            else:
+                # Agent itself started speaking - this is normal
+                self.logger.debug(
+                    f"👉 Turn started - agent speaking {event.speaker_id}"
+                )
         elif isinstance(event, TurnEndedEvent):
             self.logger.info(
                 f"👉 Turn ended - participant {event.speaker_id} finished (duration: {event.duration}, confidence: {event.confidence})"
             )
+            
+            # When turn detection is enabled, trigger LLM response when user's turn ends
+            # This is the signal that the user has finished speaking and expects a response
+            if event.speaker_id and event.speaker_id != self.agent_user.id:
+                # Get the accumulated transcript for this speaker
+                transcript = self._pending_user_transcripts.get(event.speaker_id, "")
+                
+                if transcript and transcript.strip():
+                    self.logger.info(f"🤖 Triggering LLM response after turn ended for {event.speaker_id}")
+                    
+                    # Create participant object if we have metadata
+                    participant = None
+                    if hasattr(event, 'custom') and event.custom:
+                        # Try to extract participant info from custom metadata
+                        participant = event.custom.get('participant')
+                    
+                    # Trigger LLM response with the complete transcript
+                    if self.llm:
+                        await self.simple_response(transcript, participant)
+                    
+                    # Clear the pending transcript for this speaker
+                    self._pending_user_transcripts[event.speaker_id] = ""
 
     async def _on_partial_transcript(
         self, event: STTPartialTranscriptEvent | RealtimePartialTranscriptEvent
@@ -735,6 +810,38 @@ class Agent:
             )
             self.conversation.complete_message(self._user_conversation_handle)
             self._user_conversation_handle = None
+        
+        # In realtime mode, the LLM handles everything itself (STT, turn detection, responses)
+        # Skip our manual LLM triggering logic
+        if self.realtime_mode:
+            return
+        
+        # Determine how to handle LLM triggering based on turn detection
+        if self.turn_detection is not None:
+            # With turn detection: accumulate transcripts and wait for TurnEndedEvent
+            # Store/append the transcript for this user
+            if user_id not in self._pending_user_transcripts:
+                self._pending_user_transcripts[user_id] = event.text
+            else:
+                # Append to existing transcript (user might be speaking in chunks)
+                self._pending_user_transcripts[user_id] += " " + event.text
+            
+            self.logger.debug(
+                f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
+                f"{self._pending_user_transcripts[user_id][:100]}..."
+            )
+        else:
+            # Without turn detection: trigger LLM immediately on transcript completion
+            # This is the traditional STT -> LLM flow
+            if self.llm:
+                self.logger.info("🤖 Triggering LLM response immediately (no turn detection)")
+                
+                # Get participant from event metadata
+                participant = None
+                if hasattr(event, "user_metadata"):
+                    participant = event.user_metadata
+                
+                await self.simple_response(event.text, participant)
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""

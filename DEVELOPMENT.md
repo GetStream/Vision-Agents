@@ -56,7 +56,7 @@ uv run ruff check --fix
 
 
 ```
-uv run mypy --install-types --non-interactive -p stream_agents
+uv run mypy --install-types --non-interactive -p vision_agents
 ```
 
 ```
@@ -65,8 +65,21 @@ uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' pl
 
 ## Release
 
+Create a new release on Github, CI handles the rest. If you do need to do it manually follow these instructions:
+
 ```
-git tag -a v0.0.1 -m "Release 0.0.1" && git push --tags
+rm -rf dist
+git tag v0.0.15
+uv run hatch version # this should show the right version
+git push origin main --tags
+uv build --all
+uv publish
+```
+
+Common issues. If you have local changes (or ran build before you had the tag) you'll get this error
+
+```
+  Caused by: Upload failed with status code 400 Bad Request. Server says: 400 The use of local versions in <Version('0.0.16.dev0+gc7563254f.d20251008')> is not allowed. See https://packaging.python.org/specifications/core-metadata for more information.
 ```
 
 ## Architecture
@@ -128,6 +141,92 @@ Integration tests run once a day to verify that changes to underlying APIs didn'
 - Traces and metrics go to Prometheus and OpenTelemetry
 - Metrics on performance of TTS, STT, LLM, Turn detection and connection to realtime edge.
 - Integration with external LLM observability solutions
+
+#### Example setup for tracing and Jaeger:
+
+**Step 1 - Install open telemetry OTLP exporter**
+
+```bash
+# with uv:
+uv install opentelemetry-sdk opentelemetry-exporter-otlp
+
+# or with pip:
+pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc
+`````
+
+**Step 2 - Setup tracing instrumentation in your code**
+
+Make sure to setup the instrumentation before you start the agent/server
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+resource = Resource.create(
+    {
+        "service.name": "agents",
+    }
+)
+tp = TracerProvider(resource=resource)
+exporter = OTLPSpanExporter(endpoint="localhost:4317", insecure=True)
+
+tp.add_span_processor(BatchSpanProcessor(exporter))
+trace.set_tracer_provider(tp)
+```
+
+**Step 3 - Run Jaeger**
+
+```bash
+docker run --rm -it \
+         -e COLLECTOR_OTLP_ENABLED=true \
+         -p 16686:16686 -p 4317:4317 -p 4318:4318 \
+         jaegertracing/all-in-one:1.51```
+```
+
+After this, you can run your code and see the traces in Jaeger at `http://localhost:16686`
+
+#### Example setup for metrics with Prometheus:
+
+**Step 1 - Install prometheus exporter**
+
+```bash
+# with uv:
+uv install opentelemetry-exporter-prometheus prometheus-client
+
+# or with pip:
+pip install opentelemetry-exporter-prometheus prometheus-client
+```
+
+**Step 2 - Setup metrics instrumentation in your code**
+
+Make sure to setup the instrumentation before you start the agent/server
+
+```python
+from opentelemetry import metrics
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from prometheus_client import start_http_server
+
+resource = Resource.create(
+    {
+        "service.name": "my-service-name",
+    }
+)
+
+reader = PrometheusMetricReader()
+metrics.set_meter_provider(
+    MeterProvider(resource=resource, metric_readers=[reader])
+)
+
+start_http_server(port=9464)
+```
+
+You can now see the metrics at `http://localhost:9464/metrics` (make sure that your Python program keeps running), after this you can setup your Prometheus server to scrape this endpoint.
+
 
 ### Queuing
 

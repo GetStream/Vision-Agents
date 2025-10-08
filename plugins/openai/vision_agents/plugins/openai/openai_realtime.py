@@ -169,7 +169,7 @@ class Realtime(realtime.Realtime):
     async def _handle_audio_output(self, audio_bytes: bytes) -> None:
         """Process audio output received from the OpenAI API.
 
-        Forwards audio data to the output track for playback.
+        Forwards audio data to the output track for playback and emits audio output event.
 
         Args:
             audio_bytes: Raw audio data bytes from OpenAI session.
@@ -177,7 +177,13 @@ class Realtime(realtime.Realtime):
         Note:
             Registered as callback with RTC manager.
         """
-        # Forward audio as event and to output track if available
+        # Emit audio output event
+        self._emit_audio_output_event(
+            audio_data=audio_bytes,
+            sample_rate=48000,  # OpenAI Realtime uses 48kHz
+        )
+        
+        # Forward audio to output track for playback
         await self.output_track.write(audio_bytes)
 
     async def _watch_video_track(self, track, **kwargs) -> None:

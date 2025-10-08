@@ -1,6 +1,6 @@
 # Event System Developer Guide
 
-This guide explains how to use the event system when building plugins for stream-agents. The event system provides a centralized way to handle asynchronous communication between components.
+This guide explains how to use the event system when building plugins for vision-agents. The event system provides a centralized way to handle asynchronous communication between components.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ The `EventManager` is the core component that handles event registration, subscr
 ### Basic Event Manager
 
 ```python
-from stream_agents.core.events.manager import EventManager
+from vision_agents.core.events.manager import EventManager
 
 # Create a basic event manager
 manager = EventManager()
@@ -57,7 +57,7 @@ class MyPlugin:
 ### Register Individual Events
 
 ```python
-from stream_agents.core.events.manager import EventManager
+from vision_agents.core.events.manager import EventManager
 from my_plugin.events import MyCustomEvent
 
 manager = EventManager()
@@ -92,7 +92,7 @@ All events must inherit from `PluginBaseEvent` and follow this pattern:
 
 ```python
 from dataclasses import dataclass, field
-from stream_agents.core.events import PluginBaseEvent
+from vision_agents.core.events import PluginBaseEvent
 from typing import Optional, Any
 
 @dataclass
@@ -246,7 +246,7 @@ async def handle_gemini_events(event: GeminiConnectedEvent):
 ```python
 # my_plugin/events.py
 from dataclasses import dataclass, field
-from stream_agents.core.events import PluginBaseEvent
+from vision_agents.core.events import PluginBaseEvent
 
 @dataclass
 class MyPluginStartEvent(PluginBaseEvent):
@@ -260,7 +260,7 @@ class MyPluginDataEvent(PluginBaseEvent):
     metadata: Optional[dict] = None
 
 # my_plugin/plugin.py
-from stream_agents.core.plugin_base import PluginBase
+from vision_agents.core.plugin_base import PluginBase
 from . import events
 
 class MyPlugin(PluginBase):
@@ -289,8 +289,8 @@ class MyPlugin(PluginBase):
 
 ```python
 # Simple plugin using base class events
-from stream_agents.core.stt.stt import STT
-from stream_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+from vision_agents.core.stt.stt import STT
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 
 class SimpleSTT(STT):
     def __init__(self):
@@ -325,8 +325,8 @@ class SimpleSTT(STT):
 
 ```python
 # Agent with event-driven architecture
-from stream_agents.core.agents import Agent
-from stream_agents.core.agents.events import AgentSayEvent
+from vision_agents.core.agents import Agent
+from vision_agents.core.agents.events import AgentSayEvent
 
 class MyAgent(Agent):
     def __init__(self, **kwargs):
@@ -464,7 +464,7 @@ async def test_plugin_events():
 ### OpenAI Plugin Events
 
 ```python
-# plugins/openai/stream_agents/plugins/openai/events.py
+# plugins/openai/vision_agents/plugins/openai/events.py
 @dataclass
 class OpenAIStreamEvent(PluginBaseEvent):
     type: str = field(default='plugin.openai.stream', init=False)
@@ -503,7 +503,7 @@ class OpenAILLM(LLM):
 ### Gemini Plugin Events
 
 ```python
-# plugins/gemini/stream_agents/plugins/gemini/events.py
+# plugins/gemini/vision_agents/plugins/gemini/events.py
 @dataclass
 class GeminiConnectedEvent(PluginBaseEvent):
     type: str = field(default='plugin.gemini.connected', init=False)

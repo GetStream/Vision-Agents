@@ -9,12 +9,12 @@ from unittest.mock import Mock
 
 from dotenv import load_dotenv
 
-from stream_agents.core.stt.stt import STT
-from stream_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent
+from vision_agents.core.stt.stt import STT
+from vision_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent
 from getstream.video.rtc.track_util import PcmData
-from stream_agents.core.agents import Agent
-from stream_agents.core.edge.types import User, Participant
-from stream_agents.plugins import getstream, openai, deepgram
+from vision_agents.core.agents import Agent
+from vision_agents.core.edge.types import User, Participant
+from vision_agents.plugins import getstream, openai, deepgram
 import numpy as np
 
 from .base_test import BaseTest

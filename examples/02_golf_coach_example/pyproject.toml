@@ -1,22 +1,20 @@
 [project]
-name = "stream-agents-golf"
+name = "vision-agents-golf"
 version = "0.0.0"
 requires-python = ">=3.13"
 
 # put only what this example needs
 dependencies = [
   "python-dotenv>=1.0",
-  "stream-agents",
-  "stream-agents-plugins-openai",
-  "stream-agents-plugins-getstream",
-  "stream-agents-plugins-ultralytics",
-  "ultralytics>=8.3.184",
-  "av>=14.4.0",
+  "vision-agents",
+  "vision-agents-plugins-openai",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-ultralytics",
 ]
 
 [tool.uv.sources]
-"stream-agents" = {path = "../../agents-core", editable=true}
-"stream-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
-"stream-agents-plugins-ultralytics" = {path = "../../plugins/ultralytics", editable=true}
-"stream-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
-"stream-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
+"vision-agents" = {path = "../../agents-core", editable=true}
+"vision-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
+"vision-agents-plugins-ultralytics" = {path = "../../plugins/ultralytics", editable=true}
+"vision-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}

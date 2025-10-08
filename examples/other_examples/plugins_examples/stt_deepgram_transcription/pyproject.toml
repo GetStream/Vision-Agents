@@ -7,9 +7,9 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 
 dependencies = [
-    "stream-agents-plugins-deepgram>=0.1.0",
+    "vision-agents-plugins-deepgram>=0.1.0",
     "python-dotenv>=1.1.1",
 ]
 
 [tool.uv.sources]
-stream-agents-plugins-deepgram = { path = "../../../plugins/deepgram", editable = true }
+vision-agents-plugins-deepgram = { path = "../../../plugins/deepgram", editable = true }

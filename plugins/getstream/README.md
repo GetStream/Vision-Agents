@@ -5,7 +5,7 @@ A plugin for Stream Agents that provides GetStream integration.
 ## Installation
 
 ```bash
-pip install stream-agents-plugins-getstream
+pip install vision-agents-plugins-getstream
 ```
 
 ## Usage

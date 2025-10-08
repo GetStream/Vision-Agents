@@ -1,8 +1,8 @@
 import asyncio
 import pytest
 
-from stream_agents.core.utils.queue import LatestNQueue
-from stream_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.utils.queue import LatestNQueue
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 class TestLatestNQueue:
     """Test suite for LatestNQueue"""

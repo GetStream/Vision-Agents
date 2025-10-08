@@ -2,7 +2,7 @@ import os
 import pytest
 import dotenv
 
-from stream_agents.plugins.openai import LLM as OpenAILLM
+from vision_agents.plugins.openai import LLM as OpenAILLM
 
 
 dotenv.load_dotenv()

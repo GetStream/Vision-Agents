@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 
-from vision_agents.plugins import fal
+from vision_agents.plugins import wizper
 from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 from getstream.video.rtc.track_util import PcmData
 
@@ -14,7 +14,7 @@ from getstream.video.rtc.track_util import PcmData
 async def stt():
     """Provides a fal.STT instance with a mocked fal_client."""
     with patch("fal_client.AsyncClient") as mock_fal_client:
-        stt_instance = fal.STT()
+        stt_instance = wizper.STT()
         stt_instance._fal_client = mock_fal_client.return_value
         yield stt_instance
 
@@ -25,7 +25,7 @@ class TestfalSTT:
     @pytest.mark.asyncio
     async def test_init(self):
         """Test that the __init__ method sets attributes correctly."""
-        stt = fal.STT(task="translate", target_language="es", sample_rate=16000)
+        stt = wizper.STT(task="translate", target_language="es", sample_rate=16000)
         assert stt.task == "translate"
         assert stt.target_language == "es"
         assert stt.sample_rate == 16000
@@ -103,7 +103,7 @@ class TestfalSTT:
     async def test_process_audio_impl_success_translate(self):
         """Test successful translation with target language."""
         with patch("fal_client.AsyncClient"):
-            stt = fal.STT(task="translate", target_language="pt")
+            stt = wizper.STT(task="translate", target_language="pt")
             stt._fal_client.upload_file = AsyncMock(
                 return_value="http://mock.url/audio.wav"
             )

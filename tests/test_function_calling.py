@@ -5,11 +5,11 @@ Tests for function calling functionality.
 import pytest
 from unittest.mock import Mock, patch
 
-from stream_agents.core.llm import FunctionRegistry, function_registry
-from stream_agents.core.llm.llm import LLM
-from stream_agents.plugins.openai import LLM as OpenAILLM
-from stream_agents.plugins.anthropic import LLM as ClaudeLLM
-from stream_agents.plugins.gemini import LLM as GeminiLLM
+from vision_agents.core.llm import FunctionRegistry, function_registry
+from vision_agents.core.llm.llm import LLM
+from vision_agents.plugins.openai import LLM as OpenAILLM
+from vision_agents.plugins.anthropic import LLM as ClaudeLLM
+from vision_agents.plugins.gemini import LLM as GeminiLLM
 
 
 class TestFunctionRegistry:
@@ -166,7 +166,7 @@ class TestOpenAIFunctionCalling:
     """Test OpenAI function calling functionality."""
     
     @pytest.mark.asyncio
-    @patch('stream_agents.plugins.openai.openai_llm.AsyncOpenAI')
+    @patch('vision_agents.plugins.openai.openai_llm.AsyncOpenAI')
     async def test_openai_function_calling_response(self, mock_openai):
         """Test OpenAI function calling response."""
         # Mock the OpenAI client and response
@@ -197,7 +197,7 @@ class TestOpenAIFunctionCalling:
         result = llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
     
-    @patch('stream_agents.plugins.openai.openai_llm.AsyncOpenAI')
+    @patch('vision_agents.plugins.openai.openai_llm.AsyncOpenAI')
     async def test_openai_conversational_response(self, mock_openai):
         """Test OpenAI conversational response generation."""
         mock_client = Mock()
@@ -228,7 +228,7 @@ class TestClaudeFunctionCalling:
     """Test Claude function calling functionality."""
     
     @pytest.mark.asyncio
-    @patch('stream_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic')
+    @patch('vision_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic')
     async def test_claude_function_calling_response(self, mock_anthropic):
         """Test Claude function calling response."""
         # Mock the Anthropic client and response
@@ -259,7 +259,7 @@ class TestClaudeFunctionCalling:
         result = llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
     
-    @patch('stream_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic')
+    @patch('vision_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic')
     async def test_claude_conversational_response(self, mock_anthropic):
         """Test Claude conversational response generation."""
         mock_client = Mock()
@@ -290,7 +290,7 @@ class TestGeminiFunctionCalling:
     """Test Gemini function calling functionality."""
     
     @pytest.mark.asyncio
-    @patch('stream_agents.plugins.gemini.gemini_llm.genai')
+    @patch('vision_agents.plugins.gemini.gemini_llm.genai')
     async def test_gemini_function_calling_response(self, mock_genai):
         """Test Gemini function calling response."""
         # Mock the Gemini client and response
@@ -325,7 +325,7 @@ class TestGeminiFunctionCalling:
         assert result == "Weather in New York: Sunny, 72°F"
     
     @pytest.mark.asyncio
-    @patch('stream_agents.plugins.gemini.gemini_llm.genai')
+    @patch('vision_agents.plugins.gemini.gemini_llm.genai')
     async def test_gemini_conversational_response(self, mock_genai):
         """Test Gemini conversational response generation."""
         mock_client = Mock()
@@ -478,7 +478,7 @@ class TestConcurrentToolExecution:
     @pytest.mark.asyncio
     async def test_tool_lifecycle_events(self):
         """Test that tool lifecycle events are emitted."""
-        from stream_agents.core.llm.events import ToolStartEvent, ToolEndEvent
+        from vision_agents.core.llm.events import ToolStartEvent, ToolEndEvent
         
         llm = LLM()
         

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs", "setuptools-scm"]
+build-backend = "hatchling.build"
+
 [tool.uv.sources]
 vision-agents = { workspace = true }
 vision-agents-plugins-anthropic = { workspace = true }
@@ -14,6 +18,8 @@ vision-agents-plugins-xai = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-krisp = { workspace = true }
+vision-agents-plugins-smart-turn = { workspace = true }
+vision-agents-plugins-wizper = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -31,7 +37,9 @@ members = [
     "plugins/xai",
     "plugins/getstream",
     "plugins/ultralytics",
-    "plugins/krisp"
+    "plugins/krisp",
+    "plugins/smart_turn",
+    "plugins/wizper"
 ]
 exclude = [
 "**/__pycache__",
@@ -60,6 +68,8 @@ dev = [
     "fastmcp>=2.12.3",
     "opentelemetry-exporter-otlp>=1.37.0",
     "pytest-timeout>=2.4.0",
+    "hatch-vcs>=0.5.0",
+    "hatch>=1.14.2",
 ]
 
 [tool.mypy]
@@ -70,3 +80,7 @@ ignore_missing_imports = true
 check_untyped_defs = true
 namespace_packages = true
 explicit_package_bases = true
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = {  search_parent_directories = true, fallback_version = "0.0.0" }

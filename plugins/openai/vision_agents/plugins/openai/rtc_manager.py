@@ -13,7 +13,6 @@ from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamT
 from fractions import Fraction
 import numpy as np
 from av import AudioFrame, VideoFrame
-from openai.types.realtime import RealtimeSessionCreateRequestParam
 
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 

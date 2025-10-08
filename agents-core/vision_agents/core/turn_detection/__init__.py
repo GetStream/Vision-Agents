@@ -8,7 +8,6 @@ from .events import (
     TurnStartedEvent,
     TurnEndedEvent,
 )
-from .fal_turn_detection import FalTurnDetection
 
 
 __all__ = [
@@ -20,6 +19,4 @@ __all__ = [
     # Events
     "TurnStartedEvent",
     "TurnEndedEvent",
-    # Implementations
-    "FalTurnDetection",
 ]

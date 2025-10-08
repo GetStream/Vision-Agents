@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "vision-agents-plugins-krisp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Krisp turn detection plugin for Vision Agents"
 readme = "README.md"
 keywords = ["krisp", "turn detection", "AI", "voice agents", "agents"]
@@ -16,12 +16,19 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://getstream.io/video/docs/python-ai/"
-Website = "https://getstream.io/video/voice-agents/"
-Source = "https://github.com/getstream/agents"
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["vision_agents"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/vision_agents"]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }

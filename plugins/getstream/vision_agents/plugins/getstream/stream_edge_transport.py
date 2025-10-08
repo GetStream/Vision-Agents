@@ -8,6 +8,9 @@ from uuid import uuid4
 
 import aiortc
 from getstream import AsyncStream
+from getstream.chat.async_client import ChatClient
+from getstream.models import ChannelInput
+from getstream.video import rtc
 from getstream.chat.async_channel import Channel
 from getstream.chat.async_client import ChatClient
 from getstream.models import ChannelInput, UserRequest
@@ -23,7 +26,7 @@ from vision_agents.plugins.getstream.stream_conversation import StreamConversati
 from vision_agents.core.edge.types import Connection, User
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.edge import events
-from vision_agents.core.utils import get_stream_agents_version
+from vision_agents.core.utils import get_vision_agents_version
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
@@ -48,8 +51,8 @@ class StreamEdge(EdgeTransport):
     def __init__(self, **kwargs):
         # Initialize Stream client
         super().__init__()
-        version = get_stream_agents_version()
-        self.client = AsyncStream(user_agent=f"stream-agents-{version}")
+        version = get_vision_agents_version()
+        self.client = AsyncStream(user_agent=f"vision-agents-{version}")
         self.logger = logging.getLogger(self.__class__.__name__)
         self.events = EventManager()
         self.events.register_events_from_module(events)
@@ -302,9 +305,6 @@ class StreamEdge(EdgeTransport):
         # Create a human user for testing
         human_id = f"user-{uuid4()}"
         name = "Human User"
-
-        # TODO: cleanup
-        await client.upsert_users(UserRequest(id=human_id, name=name))
 
         # Create user token for browser access
         token = client.create_token(human_id, expiration=3600)
