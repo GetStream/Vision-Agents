@@ -214,3 +214,179 @@ async def test_merge_managers_events_processed_in_one():
     assert len(all_events_processed) == 1
     assert all_events_processed[0][0] == "manager2"  # Handler from manager2
     assert all_events_processed[0][1].value == "from_manager2"
+
+
+@pytest.mark.asyncio
+async def test_merge_managers_preserves_silent_events(caplog):
+    """Test that when two managers are merged, silent events from both are preserved."""
+    import logging
+    
+    manager1 = EventManager()
+    manager2 = EventManager()
+    
+    manager1.register(ValidEvent)
+    manager2.register(AnotherEvent)
+    
+    # Mark ValidEvent as silent in manager1
+    manager1.silent(ValidEvent)
+    # Mark AnotherEvent as silent in manager2
+    manager2.silent(AnotherEvent)
+    
+    handler_called = []
+    
+    @manager1.subscribe
+    async def valid_handler(event: ValidEvent):
+        handler_called.append("valid")
+    
+    @manager2.subscribe
+    async def another_handler(event: AnotherEvent):
+        handler_called.append("another")
+    
+    # Merge manager2 into manager1
+    manager1.merge(manager2)
+    
+    # Verify that both silent events are preserved
+    assert "custom.validevent" in manager1._silent_events
+    assert "custom.anotherevent" in manager1._silent_events
+    
+    # Verify that manager2 also references the merged silent events
+    assert manager2._silent_events is manager1._silent_events
+    
+    # Capture logs at INFO level
+    with caplog.at_level(logging.INFO):
+        # Send both events
+        manager1.send(ValidEvent(field=42))
+        manager1.send(AnotherEvent(value="test"))
+        await manager1.wait()
+    
+    # Both handlers should have been called
+    assert handler_called == ["valid", "another"]
+    
+    # Check log messages
+    log_messages = [record.message for record in caplog.records]
+    
+    # Should NOT see "Called handler" for either event (both are silent)
+    assert not any("Called handler valid_handler" in msg for msg in log_messages)
+    assert not any("Called handler another_handler" in msg for msg in log_messages)
+
+
+@pytest.mark.asyncio
+async def test_silent_suppresses_handler_logging(caplog):
+    """Test that marking an event as silent suppresses the 'Called handler' log message."""
+    import logging
+    
+    manager = EventManager()
+    manager.register(ValidEvent)
+    manager.register(AnotherEvent)
+    
+    handler_called = []
+    
+    @manager.subscribe
+    async def valid_handler(event: ValidEvent):
+        handler_called.append("valid")
+    
+    @manager.subscribe
+    async def another_handler(event: AnotherEvent):
+        handler_called.append("another")
+    
+    # Mark ValidEvent as silent
+    manager.silent(ValidEvent)
+    
+    # Capture logs at INFO level
+    with caplog.at_level(logging.INFO):
+        # Send both events
+        manager.send(ValidEvent(field=42))
+        manager.send(AnotherEvent(value="test"))
+        await manager.wait()
+    
+    # Both handlers should have been called
+    assert handler_called == ["valid", "another"]
+    
+    # Check log messages
+    log_messages = [record.message for record in caplog.records]
+    
+    # Should NOT see "Called handler" for ValidEvent (it's silent)
+    assert not any("Called handler valid_handler" in msg and "custom.validevent" in msg for msg in log_messages)
+    
+    # SHOULD see "Called handler" for AnotherEvent (not silent)
+    assert any("Called handler another_handler" in msg and "custom.anotherevent" in msg for msg in log_messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_protobuf_events_with_base_event():
+    """Test that event manager handles protobuf events that inherit from BaseEvent."""
+    from vision_agents.core.events.manager import EventManager
+    from vision_agents.core.edge.sfu_events import AudioLevelEvent, ParticipantJoinedEvent
+    from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
+    from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
+    
+    manager = EventManager()
+    
+    # Register generated protobuf event classes
+    manager.register(AudioLevelEvent)
+    manager.register(ParticipantJoinedEvent)
+    
+    assert AudioLevelEvent.type in manager._events
+    assert ParticipantJoinedEvent.type in manager._events
+    
+    # Test 1: Send wrapped protobuf event with BaseEvent fields
+    proto_audio = events_pb2.AudioLevel(user_id='user123', level=0.85, is_speaking=True)
+    wrapped_event = AudioLevelEvent.from_proto(proto_audio, session_id='session123')
+    
+    received_audio_events = []
+    
+    @manager.subscribe
+    async def handle_audio(event: AudioLevelEvent):
+        received_audio_events.append(event)
+    
+    manager.send(wrapped_event)
+    await manager.wait()
+    
+    assert len(received_audio_events) == 1
+    assert received_audio_events[0].user_id == 'user123'
+    assert received_audio_events[0].session_id == 'session123'
+    assert received_audio_events[0].is_speaking is True
+    assert abs(received_audio_events[0].level - 0.85) < 0.01
+    assert hasattr(received_audio_events[0], 'event_id')
+    assert hasattr(received_audio_events[0], 'timestamp')
+    
+    # Test 2: Send raw protobuf message (auto-wrapped)
+    proto_raw = events_pb2.AudioLevel(user_id='user456', level=0.95, is_speaking=False)
+    
+    received_audio_events.clear()
+    manager.send(proto_raw)
+    await manager.wait()
+    
+    assert len(received_audio_events) == 1
+    assert received_audio_events[0].user_id == 'user456'
+    assert abs(received_audio_events[0].level - 0.95) < 0.01
+    assert received_audio_events[0].is_speaking is False
+    assert hasattr(received_audio_events[0], 'event_id')
+    
+    # Test 3: Create event without protobuf payload (all fields optional)
+    empty_event = AudioLevelEvent()
+    assert empty_event.payload is None
+    assert empty_event.user_id is None
+    assert empty_event.event_id is not None
+    
+    # Test 4: Multiple protobuf event types
+    received_participant_events = []
+    
+    @manager.subscribe
+    async def handle_participant(event: ParticipantJoinedEvent):
+        received_participant_events.append(event)
+    
+    participant = models_pb2.Participant(user_id="user789", session_id="sess456")
+    proto_participant = events_pb2.ParticipantJoined(
+        call_cid="call123",
+        participant=participant
+    )
+    
+    manager.send(proto_participant)
+    await manager.wait()
+    
+    assert len(received_participant_events) == 1
+    assert received_participant_events[0].call_cid == "call123"
+    assert received_participant_events[0].participant is not None
+    assert hasattr(received_participant_events[0], 'event_id')
