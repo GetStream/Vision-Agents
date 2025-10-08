@@ -11,7 +11,8 @@ from getstream.video.rtc import Call
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 
-from ..edge.events import AudioReceivedEvent, CallEndedEvent, TrackAddedEvent
+from ..edge import sfu_events
+from ..edge.events import AudioReceivedEvent, TrackAddedEvent
 from ..edge.types import Connection, Participant, PcmData, TrackType, User
 from ..events.manager import EventManager
 from ..llm.events import (
@@ -110,6 +111,7 @@ class Agent:
         self.events = EventManager()
         self.events.register_events_from_module(getstream.models, "call.")
         self.events.register_events_from_module(events)
+        self.events.register_events_from_module(sfu_events)
 
         self.llm = llm
         self.stt = stt
@@ -134,7 +136,7 @@ class Agent:
         self._pending_user_transcripts: Dict[str, str] = {}
 
         # Merge plugin events BEFORE subscribing to any events
-        for plugin in [stt, tts, turn_detection, vad, llm]:
+        for plugin in [stt, tts, turn_detection, vad, llm, edge]:
             if plugin and hasattr(plugin, "events"):
                 self.logger.info(f"Registered plugin {plugin}")
                 self.events.merge(plugin.events)
@@ -225,7 +227,7 @@ class Agent:
                 with self.tracer.start_as_current_span("edge.join"):
                     connection = await self.edge.join(self, call)
             except Exception:
-                self._clear_call_logging_context()
+                self.clear_call_logging_context()
                 raise
 
             self._connection = connection
@@ -245,7 +247,15 @@ class Agent:
                 with self.tracer.start_as_current_span("edge.publish_tracks"):
                     await self.edge.publish_tracks(audio_track, video_track)
 
-            self.logger.info(f"🤖 Agent joined call: {call.id}")
+            connection._connection._coordinator_ws_client.on_wildcard(
+                "*",
+                lambda event_name, event: self.events.send(event),
+            )
+
+            connection._connection._ws_client.on_wildcard(
+                "*",
+                lambda event_name, event: self.events.send(event),
+            )
 
             # Listen to incoming tracks if any component needs them
             # This is independent of publishing - agents can listen without publishing
@@ -256,30 +266,6 @@ class Agent:
             from .agent_session import AgentSessionContextManager
 
             return AgentSessionContextManager(self, self._connection)
-
-    async def finish(self):
-        """Wait for the call to end gracefully.
-
-        Subscribes to the edge transport's `call_ended` event and awaits it. If
-        no connection is active, returns immediately.
-        """
-        # If connection is None or already closed, return immediately
-        if not self._connection:
-            logging.info("🔚 Agent connection already closed, finishing immediately")
-            return
-
-        try:
-            fut = asyncio.get_event_loop().create_future()
-
-            @self.edge.events.subscribe
-            async def on_ended(event: CallEndedEvent):
-                if not fut.done():
-                    fut.set_result(None)
-
-            await fut
-        except Exception as e:
-            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
-            # Don't raise the exception, just log it and continue cleanup
 
     async def close(self):
         """Clean up all connections and resources.
@@ -294,7 +280,7 @@ class Agent:
         self._is_running = False
         self._user_conversation_handle = None
         self._agent_conversation_handle = None
-        self._clear_call_logging_context()
+        self.clear_call_logging_context()
 
         # Disconnect from MCP servers
         if self.mcp_manager:
@@ -363,10 +349,10 @@ class Agent:
         """Apply the call id to the logging context for the agent lifecycle."""
 
         if self._call_context_token is not None:
-            self._clear_call_logging_context()
+            self.clear_call_logging_context()
         self._call_context_token = set_call_context(call_id)
 
-    def _clear_call_logging_context(self) -> None:
+    def clear_call_logging_context(self) -> None:
         """Remove the call id from the logging context if present."""
 
         if self._call_context_token is not None:
@@ -380,6 +366,8 @@ class Agent:
             Provider-specific user creation response.
         """
         with self.tracer.start_as_current_span("edge.create_user"):
+            if self.agent_user.id == "":
+                self.agent_user.id = str(uuid4())
             return await self.edge.create_user(self.agent_user)
 
     async def _handle_output_text_delta(self, event: LLMResponseChunkEvent):
@@ -685,11 +673,6 @@ class Agent:
                     f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s"
                 )
                 await asyncio.sleep(backoff_delay)
-            except asyncio.CancelledError:
-                return
-
-            except Exception:
-                raise
 
         # Cleanup and logging
         self.logger.info(f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}")
