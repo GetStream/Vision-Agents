@@ -81,7 +81,7 @@ class StreamEdge(EdgeTransport):
 
     async def _on_track_published(self, event: sfu_events.TrackPublishedEvent):
         """Handle track published events from SFU - spawn TrackAddedEvent with correct type."""
-        if not event.participant:
+        if not event.participant or not event.payload:
             return
         
         user_id = event.user_id
@@ -152,13 +152,13 @@ class StreamEdge(EdgeTransport):
         session_id = participant.session_id
         
         # Determine which tracks to remove
-        if hasattr(event, 'payload') and hasattr(event.payload, 'type'):
+        if hasattr(event.payload, 'type') and event.payload is not None:
             # TrackUnpublishedEvent - single track
             tracks_to_remove = [event.payload.type]
             event_desc = "Track unpublished"
         else:
             # ParticipantLeftEvent - all published tracks
-            tracks_to_remove = participant.published_tracks
+            tracks_to_remove = participant.published_tracks or []
             event_desc = "Participant left"
         
         track_names = [TrackType.Name(t) for t in tracks_to_remove]
