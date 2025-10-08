@@ -97,13 +97,13 @@ To see how the agent work open up agents.py
 
 ### Realtime STS flow
 
-** Audio **
+**Audio**
 
 * The agent listens to AudioReceivedEvent and calls simple_audio_response
 * asyncio.create_task(self.llm.simple_audio_response(pcm_data))
 * The STS writes on agent.llm.audio_track
 
-** Video **
+**Video**
 
 * The agent receives the video track, and calls agent.llm._watch_video_track
 * The LLM uses the VideoForwarder to write the video to a websocket or webrtc connection
@@ -126,8 +126,8 @@ If features are added to the client, you can use them easily via tts.client
 ### Typing
 
 Avoid using Union types or complicated composite types.
-Keep typing simple. Use the PcmAudio type instead of bytes when passing around audio.
-This prevents mistakes related to different audio formats.
+Keep typing simple. Use the `getstream.video.rtc.track_util.PcmData` type instead of bytes when passing around audio.
+This prevents mistakes related to handling audio with different formats, sample rates etc.
 
 ### Testing
 
