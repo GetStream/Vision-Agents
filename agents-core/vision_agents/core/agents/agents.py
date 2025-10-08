@@ -302,6 +302,15 @@ class Agent:
 
         for processor in self.processors:
             processor.close()
+        
+        # Stop all video forwarders
+        if hasattr(self, '_video_forwarders'):
+            for forwarder in self._video_forwarders:
+                try:
+                    await forwarder.stop()
+                except Exception as e:
+                    self.logger.error(f"Error stopping video forwarder: {e}")
+            self._video_forwarders.clear()
 
         # Close Realtime connection
         if self._realtime_connection:
@@ -579,44 +588,59 @@ class Agent:
         # Import VideoForwarder
         from ..utils.video_forwarder import VideoForwarder
         
-        # Create a SHARED VideoForwarder that all consumers will subscribe to
+        # Create a SHARED VideoForwarder for the RAW incoming track
         # This prevents multiple recv() calls competing on the same track
-        shared_forwarder = VideoForwarder(
+        raw_forwarder = VideoForwarder(
             track,  # type: ignore[arg-type]
             max_buffer=30,
             fps=30,  # Max FPS for the producer (individual consumers can throttle down)
-            name="shared_video_forwarder",
+            name=f"raw_video_forwarder_{track_id}",
         )
-        await shared_forwarder.start()
-        self.logger.info("🎥 Created shared VideoForwarder for track %s", track_id)
+        await raw_forwarder.start()
+        self.logger.info("🎥 Created raw VideoForwarder for track %s", track_id)
+        
+        # Track forwarders for cleanup
+        if not hasattr(self, '_video_forwarders'):
+            self._video_forwarders = []
+        self._video_forwarders.append(raw_forwarder)
 
-        # If Realtime provider supports video, tell it to watch the video
+        # If Realtime provider supports video, determine which track to send
         if self.realtime_mode:
-            # TODO: should we make this configurable? some use cases will want source, others processed track
-            track_to_watch = track
             if self._video_track:
-                self.logger.info("Forwarding processed video frames to Realtime provider")
-                track_to_watch = self._video_track
+                # We have a video publisher (e.g., YOLO processor)
+                # Create a separate forwarder for the PROCESSED video track
+                self.logger.info("🎥 Forwarding PROCESSED video frames to Realtime provider")
+                processed_forwarder = VideoForwarder(
+                    self._video_track,  # type: ignore[arg-type]
+                    max_buffer=30,
+                    fps=30,
+                    name=f"processed_video_forwarder_{track_id}",
+                )
+                await processed_forwarder.start()
+                self._video_forwarders.append(processed_forwarder)
+                
+                if isinstance(self.llm, Realtime):
+                    # Send PROCESSED frames with the processed forwarder
+                    await self.llm._watch_video_track(self._video_track, shared_forwarder=processed_forwarder)
             else:
-                self.logger.info("Forwarding original video frames to Realtime provider")
-
-            if isinstance(self.llm, Realtime):
-                # Pass the shared forwarder to the realtime provider
-                await self.llm._watch_video_track(track_to_watch, shared_forwarder=shared_forwarder)
+                # No video publisher, send raw frames
+                self.logger.info("🎥 Forwarding RAW video frames to Realtime provider")
+                if isinstance(self.llm, Realtime):
+                    await self.llm._watch_video_track(track, shared_forwarder=raw_forwarder)
 
 
         hasImageProcessers = len(self.image_processors) > 0
 
-        # video processors - pass the shared forwarder
+        # video processors - pass the raw forwarder (they process incoming frames)
         for processor in self.video_processors:
             try:
-                await processor.process_video(track, participant.user_id, shared_forwarder=shared_forwarder)
+                await processor.process_video(track, participant.user_id, shared_forwarder=raw_forwarder)
             except Exception as e:
                 self.logger.error(
                     f"Error in video processor {type(processor).__name__}: {e}"
                 )
 
-        # Use shared forwarder for image processors - only if there are image processors
+        # Use raw forwarder for image processors - only if there are image processors
         if not hasImageProcessers:
             # No image processors, just keep the connection alive
             self.logger.info("No image processors, video processing handled by video processors only")
@@ -628,8 +652,8 @@ class Agent:
         
         while True:
             try:
-                # Use the shared forwarder instead of competing for track.recv()
-                video_frame = await shared_forwarder.next_frame(timeout=2.0)
+                # Use the raw forwarder instead of competing for track.recv()
+                video_frame = await raw_forwarder.next_frame(timeout=2.0)
 
                 if video_frame:
                     # Reset error counts on successful frame processing

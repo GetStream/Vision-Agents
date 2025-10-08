@@ -24,25 +24,50 @@ class VideoForwarder:
         self.fps = fps  # None = unlimited, else forward at ~fps
         self._tasks: set[asyncio.Task] = set()
         self._stopped = asyncio.Event()
+        self._started = False
         self.name = name
 
     # ---------- lifecycle ----------
     async def start(self) -> None:
+        if self._started:
+            logger.warning("%s: start() called but already started", self.name)
+            return
+        self._started = True
         self._stopped.clear()
-        self._tasks.add(asyncio.create_task(self._producer()))
+        task = asyncio.create_task(self._producer())
+        task.add_done_callback(self._task_done)
+        self._tasks.add(task)
 
     async def stop(self) -> None:
+        if not self._started:
+            return
         self._stopped.set()
-        for t in list(self._tasks):
+        self._started = False
+        # Create snapshot of tasks to avoid race conditions
+        tasks_snapshot = list(self._tasks)
+        for t in tasks_snapshot:
             t.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+        if tasks_snapshot:
+            await asyncio.gather(*tasks_snapshot, return_exceptions=True)
         self._tasks.clear()
         # drain queue
         try:
             while True:
                 self.queue.get_nowait()
         except asyncio.QueueEmpty:
+            pass
+
+    def _task_done(self, task: asyncio.Task) -> None:
+        """Callback to remove completed tasks from the set."""
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        # Log any exceptions from tasks
+        try:
+            exc = task.exception()
+            if exc:
+                logger.error("%s: Task failed with exception: %s", self.name, exc, exc_info=exc)
+        except asyncio.CancelledError:
             pass
 
     # ---------- producer (fills latest-N buffer) ----------
@@ -53,9 +78,9 @@ class VideoForwarder:
                 await self.queue.put_latest(frame)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            # optional: log
-            pass
+        except Exception as e:
+            logger.error("%s: Producer failed with exception: %s", self.name, e, exc_info=True)
+            raise
 
     # ---------- consumer API (pull one frame; coalesce backlog to newest) ----------
     async def next_frame(self, *, timeout: Optional[float] = None) -> av.VideoFrame:
@@ -165,5 +190,8 @@ class VideoForwarder:
                 raise
             except Exception:
                 logger.exception("unexpected error in video forwarder consumer [%s]", consumer_label)
+                raise
 
-        self._tasks.add(asyncio.create_task(_consumer()))
+        task = asyncio.create_task(_consumer())
+        task.add_done_callback(self._task_done)
+        self._tasks.add(task)
