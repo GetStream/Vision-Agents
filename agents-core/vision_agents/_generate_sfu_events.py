@@ -28,7 +28,6 @@ HEADER_LINES: Sequence[str] = (
     "from dataclasses_json import DataClassJsonMixin",
     "from google.protobuf.json_format import MessageToDict",
     "from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2",
-    "from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant",
     "from vision_agents.core.events.base import BaseEvent",
     "",
     "# Note: For enum fields typed as 'int', use the corresponding enum from:",
@@ -289,8 +288,8 @@ def _render_class(proto_name: str, message_cls: Type[Message]) -> List[str]:
                 docstring += f" Use models_pb2.{enum_type_name} enum."
         
         lines.append(f"        \"\"\"{docstring}\"\"\"")
-        lines.append(f"        if self.payload is None:")
-        lines.append(f"            return None")
+        lines.append("        if self.payload is None:")
+        lines.append("            return None")
         
         # Handle message type fields - wrap them in our dataclass
         if field_desc.type == FieldDescriptor.TYPE_MESSAGE:

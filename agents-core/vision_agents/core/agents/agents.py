@@ -11,7 +11,6 @@ from getstream.video.rtc import Call
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 
-from ..edge import events as edge_events
 from ..edge import sfu_events
 from ..edge.events import AudioReceivedEvent, CallEndedEvent, TrackAddedEvent
 from ..edge.types import Connection, Participant, PcmData, TrackType, User

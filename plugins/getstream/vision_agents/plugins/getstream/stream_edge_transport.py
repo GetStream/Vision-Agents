@@ -12,9 +12,6 @@ from getstream.chat.async_client import ChatClient
 from getstream.models import ChannelInput
 from getstream.video import rtc
 from getstream.chat.async_channel import Channel
-from getstream.chat.async_client import ChatClient
-from getstream.models import ChannelInput, UserRequest
-from getstream.video import rtc
 from getstream.video.async_call import Call
 from getstream.video.rtc import ConnectionManager, audio_track
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant, TrackType
