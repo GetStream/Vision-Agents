@@ -71,13 +71,12 @@ class AgentSessionContextManager:
         # ------------------------------------------------------------------
         # Close the agent's own resources.
         # ------------------------------------------------------------------
-        if hasattr(self, "agent") and self.agent is not None:
-            if getattr(self.agent, "_call_context_token", None) is not None:
-                self.agent.clear_call_logging_context()
-            coro = self.agent.close()
-            if asyncio.iscoroutine(coro):
-                ctx = contextvars.copy_context()
-                ctx.run(loop.create_task, coro)
+        if getattr(self.agent, "_call_context_token", None) is not None:
+            self.agent.clear_call_logging_context()
+        coro = self.agent.close()
+        if asyncio.iscoroutine(coro):
+            ctx = contextvars.copy_context()
+            ctx.run(loop.create_task, coro)
 
         # ------------------------------------------------------------------
         # Handle any exception that caused the context manager to exit.
