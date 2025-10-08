@@ -28,6 +28,18 @@ jobs:
   test:
     name: Test "${{ inputs.marker }}"
     runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
+      DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      FAL_KEY: ${{ secrets.FAL_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+      STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
+      STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
     timeout-minutes: 30
     steps:
       - name: Checkout

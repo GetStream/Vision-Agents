@@ -43,20 +43,20 @@ class TestGeminiRealtime:
         assert len(events) > 0
 
     @pytest.mark.integration
-    async def test_audio_sending_flow(self, realtime2, mia_audio_16khz):
+    async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
         """Test sending real audio data and verify connection remains stable"""
         events = []
         
-        @realtime2.events.subscribe
+        @realtime.events.subscribe
         async def on_audio(event: RealtimeAudioOutputEvent):
             events.append(event)
         
         await asyncio.sleep(0.01)
-        await realtime2.connect()
+        await realtime.connect()
         
-        await realtime2.simple_response("Listen to the following story, what is Mia looking for?")
+        await realtime.simple_response("Listen to the following story, what is Mia looking for?")
         await asyncio.sleep(10.0)
-        await realtime2.simple_audio_response(mia_audio_16khz)
+        await realtime.simple_audio_response(mia_audio_16khz)
 
         # Wait a moment to ensure processing
         await asyncio.sleep(10.0)

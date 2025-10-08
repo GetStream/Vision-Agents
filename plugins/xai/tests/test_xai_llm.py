@@ -78,6 +78,7 @@ class TestXAILLM:
         await llm.simple_response(
             text="There are 2 dogs in the room",
         )
+        await llm.events.wait()
         response = await llm.simple_response(
             text="How many paws are there in the room?",
         )
@@ -90,6 +91,7 @@ class TestXAILLM:
         await llm.create_response(
             input="There are 2 dogs in the room",
         )
+        await llm.events.wait()
         response = await llm.create_response(
             input="How many paws are there in the room?",
         )
