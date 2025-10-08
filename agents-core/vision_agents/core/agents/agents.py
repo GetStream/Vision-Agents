@@ -227,7 +227,7 @@ class Agent:
                 with self.tracer.start_as_current_span("edge.join"):
                     connection = await self.edge.join(self, call)
             except Exception:
-                self._clear_call_logging_context()
+                self.clear_call_logging_context()
                 raise
 
             self._connection = connection
@@ -303,7 +303,7 @@ class Agent:
         self._is_running = False
         self._user_conversation_handle = None
         self._agent_conversation_handle = None
-        self._clear_call_logging_context()
+        self.clear_call_logging_context()
 
         # Disconnect from MCP servers
         if self.mcp_manager:
@@ -372,10 +372,10 @@ class Agent:
         """Apply the call id to the logging context for the agent lifecycle."""
 
         if self._call_context_token is not None:
-            self._clear_call_logging_context()
+            self.clear_call_logging_context()
         self._call_context_token = set_call_context(call_id)
 
-    def _clear_call_logging_context(self) -> None:
+    def clear_call_logging_context(self) -> None:
         """Remove the call id from the logging context if present."""
 
         if self._call_context_token is not None:

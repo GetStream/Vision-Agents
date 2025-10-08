@@ -73,7 +73,7 @@ class AgentSessionContextManager:
         # ------------------------------------------------------------------
         if hasattr(self, "agent") and self.agent is not None:
             if getattr(self.agent, "_call_context_token", None) is not None:
-                self.agent._clear_call_logging_context()
+                self.agent.clear_call_logging_context()
             coro = self.agent.close()
             if asyncio.iscoroutine(coro):
                 ctx = contextvars.copy_context()
