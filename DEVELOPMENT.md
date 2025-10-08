@@ -70,6 +70,7 @@ Create a new release on Github, CI handles the rest. If you do need to do it man
 ```
 rm -rf dist
 git tag v0.0.15
+uv run hatch version # this should show the right version
 git push origin main --tags
 uv build --all
 uv publish
