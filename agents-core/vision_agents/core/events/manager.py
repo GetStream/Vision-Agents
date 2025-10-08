@@ -1,10 +1,17 @@
 import asyncio
 import collections
+import logging
 import types
 import typing
-import logging
-from typing import get_origin, Union, get_args, Deque, Dict, Any, Optional
-from .base import ExceptionEvent, HealthCheckEvent, ConnectionOkEvent, ConnectionErrorEvent, ConnectionClosedEvent
+from typing import Any, Deque, Dict, Optional, Union, get_args, get_origin
+
+from .base import (
+    ConnectionClosedEvent,
+    ConnectionErrorEvent,
+    ConnectionOkEvent,
+    ExceptionEvent,
+    HealthCheckEvent,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -133,6 +140,7 @@ class EventManager:
         self._ignore_unknown_events = ignore_unknown_events
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
+        self._silent_events = set()
 
         self.register(ExceptionEvent)
         self.register(HealthCheckEvent)
@@ -188,6 +196,7 @@ class EventManager:
         self._events.update(em._events)
         self._modules.update(em._modules)
         self._handlers.update(em._handlers)
+        self._silent_events.update(em._silent_events)
         for event in em._queue:
             self._queue.append(event)
 
@@ -197,6 +206,7 @@ class EventManager:
         em._modules = self._modules
         em._handlers = self._handlers
         em._queue = self._queue
+        em._silent_events = self._silent_events
         em._processing_task = None  # Clear the stopped task reference
 
     def register_events_from_module(self, module, prefix='', ignore_not_compatible=True):
@@ -341,6 +351,7 @@ class EventManager:
         return function
 
     def _prepare_event(self, event):
+        # Handle dict events - convert to event class
         if isinstance(event, dict):
             event_type = event.get('type', '')
             try:
@@ -349,14 +360,46 @@ class EventManager:
             except Exception:
                 logger.exception(f"Can't convert dict {event} to event class, skipping")
                 return
-
-        if event.type in self._events:
+        
+        # Handle raw protobuf messages - wrap in BaseEvent subclass
+        # Check for protobuf DESCRIPTOR but exclude already-wrapped BaseEvent subclasses
+        elif (hasattr(event, 'DESCRIPTOR') and hasattr(event.DESCRIPTOR, 'full_name') 
+              and not hasattr(event, 'event_id')):  # event_id is unique to BaseEvent
+            proto_type = event.DESCRIPTOR.full_name
+            
+            # Look up the registered event class by protobuf type
+            event_class = self._events.get(proto_type)
+            if event_class and hasattr(event_class, 'from_proto'):
+                try:
+                    event = event_class.from_proto(event)
+                except Exception:
+                    logger.exception(f"Failed to convert protobuf {proto_type} to event class {event_class}")
+                    return
+            else:
+                # No matching event class found
+                if self._ignore_unknown_events:
+                    logger.info(f"Protobuf event not registered: {proto_type}")
+                    return
+                else:
+                    raise RuntimeError(f"Protobuf event not registered: {proto_type}")
+        
+        # Validate event is registered (handles both BaseEvent and generated protobuf events)
+        if hasattr(event, 'type') and event.type in self._events:
             #logger.info(f"Received event {_truncate_event_for_logging(event)}")
             return event
         elif self._ignore_unknown_events:
-                logger.info(f"Event not registered {_truncate_event_for_logging(event)}")
+            logger.info(f"Event not registered {_truncate_event_for_logging(event)}")
         else:
             raise RuntimeError(f"Event not registered {event}")
+
+    def silent(self, event_class):
+        """
+        Silence logging for an event class from being processed.
+        
+        Args:
+            event_class: The event class to silence
+        """
+        self._silent_events.add(event_class.type)
 
     def send(self, *events):
         """
@@ -448,10 +491,11 @@ class EventManager:
         for handler in self._handlers.get(event.type, []):
             try:
                 module_name = getattr(handler, '__module__', 'unknown')
-                #logger.info(f"Called handler {handler.__name__} from {module_name} for event {event.__class__.__name__}")
+                if event.type not in self._silent_events:
+                    logger.info(f"Called handler {handler.__name__} from {module_name} for event {event.type}")
                 await handler(event)
             except Exception as exc:
                 self._queue.appendleft(ExceptionEvent(exc, handler))  # type: ignore[arg-type]
                 module_name = getattr(handler, '__module__', 'unknown')
-                logger.exception(f"Error calling handler {handler.__name__} from {module_name} for event {event.__class__.__name__}")
+                logger.exception(f"Error calling handler {handler.__name__} from {module_name} for event {event.type}")
 

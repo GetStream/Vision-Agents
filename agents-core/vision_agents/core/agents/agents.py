@@ -11,6 +11,8 @@ from getstream.video.rtc import Call
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 
+from ..edge import events as edge_events
+from ..edge import sfu_events
 from ..edge.events import AudioReceivedEvent, CallEndedEvent, TrackAddedEvent
 from ..edge.types import Connection, Participant, PcmData, TrackType, User
 from ..events.manager import EventManager
@@ -110,6 +112,7 @@ class Agent:
         self.events = EventManager()
         self.events.register_events_from_module(getstream.models, "call.")
         self.events.register_events_from_module(events)
+        self.events.register_events_from_module(sfu_events)
 
         self.llm = llm
         self.stt = stt
@@ -131,7 +134,7 @@ class Agent:
         self._agent_conversation_handle: Optional[StreamHandle] = None
 
         # Merge plugin events BEFORE subscribing to any events
-        for plugin in [stt, tts, turn_detection, vad, llm]:
+        for plugin in [stt, tts, turn_detection, vad, llm, edge]:
             if plugin and hasattr(plugin, "events"):
                 self.logger.info(f"Registered plugin {plugin}")
                 self.events.merge(plugin.events)
@@ -230,7 +233,13 @@ class Agent:
         self._is_running = True
 
         connection._connection._coordinator_ws_client.on_wildcard(
-            "*", lambda event_name, event: self.events.send(event)
+            "*",
+            lambda event_name, event: self.events.send(event),
+        )
+
+        connection._connection._ws_client.on_wildcard(
+            "*",
+            lambda event_name, event: self.events.send(event),
         )
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
@@ -270,8 +279,7 @@ class Agent:
             @self.edge.events.subscribe
             async def on_ended(event: CallEndedEvent):
                 if not fut.done():
-                    fut.set_result(None)
-
+                    fut.set_result(None)    
             await fut
         except Exception as e:
             logging.warning(f"⚠️ Error while waiting for call to end: {e}")

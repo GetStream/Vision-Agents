@@ -1,11 +1,6 @@
-"""
-Stream Edge Transport Package
+"""Stream Edge Transport Package."""
 
-This package provides edge transport abstraction for Stream Agents.
-"""
+from vision_agents.core.edge.edge_transport import EdgeTransport
+from vision_agents.core.edge import sfu_events
 
-from .edge_transport import EdgeTransport
-
-__all__ = [
-    "EdgeTransport",
-]
+__all__ = ["EdgeTransport", "sfu_events"]
