@@ -12,7 +12,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Tracer
 
 from ..edge import sfu_events
-from ..edge.events import AudioReceivedEvent, CallEndedEvent, TrackAddedEvent
+from ..edge.events import AudioReceivedEvent, TrackAddedEvent
 from ..edge.types import Connection, Participant, PcmData, TrackType, User
 from ..events.manager import EventManager
 from ..llm.events import (

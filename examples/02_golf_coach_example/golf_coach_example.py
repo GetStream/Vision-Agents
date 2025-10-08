@@ -4,7 +4,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import getstream, ultralytics, openai, gemini
+from vision_agents.plugins import getstream, ultralytics, gemini
 
 load_dotenv()
 
