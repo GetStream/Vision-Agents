@@ -68,7 +68,10 @@ uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' pl
 Create a new release on Github, CI handles the rest. If you do need to do it manually follow these instructions:
 
 ```
+git tag v0.0.15
+git push origin main --tags
 uv build --all
+uv publish
 ```
 
 ## Architecture
