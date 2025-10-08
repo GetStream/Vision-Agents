@@ -278,8 +278,15 @@ class Agent:
             logging.info("🔚 Agent connection already closed, finishing immediately")
             return
 
-        try:
-            fut = asyncio.get_event_loop().create_future()
+        @self.edge.events.subscribe
+        async def on_ended(event: CallEndedEvent):
+            self._is_running = False
+ 
+        while self._is_running:
+            try:
+                await asyncio.sleep(0.0001)
+            except asyncio.CancelledError:
+                self._is_running = False
 
             @self.edge.events.subscribe
             async def on_ended(event: CallEndedEvent):
@@ -389,6 +396,8 @@ class Agent:
             Provider-specific user creation response.
         """
         with self.tracer.start_as_current_span("edge.create_user"):
+            if self.agent_user.id == "":
+                self.agent_user.id = str(uuid4())
             return await self.edge.create_user(self.agent_user)
 
     async def _handle_output_text_delta(self, event: LLMResponseChunkEvent):
@@ -694,11 +703,6 @@ class Agent:
                     f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s"
                 )
                 await asyncio.sleep(backoff_delay)
-            except asyncio.CancelledError:
-                return
-
-            except Exception:
-                raise
 
         # Cleanup and logging
         self.logger.info(f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}")

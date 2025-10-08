@@ -475,14 +475,18 @@ class EventManager:
         in the queue. It's shielded from cancellation to ensure all events
         are processed before shutdown.
         """
+        cancelled_exc = None
         while True:
             if self._queue:
                 event = self._queue.popleft()
                 try:
                     await self._process_single_event(event)
-                except asyncio.CancelledError:
+                except asyncio.CancelledError as exc:
+                    cancelled_exc = exc
+                    logger.info(f"Event processing task was cancelled, processing remaining events, {len(self._queue)}")
                     await self._process_single_event(event)
-                    logger.info("Event processing task was cancelled, processing remaining events")
+            elif cancelled_exc:
+                raise cancelled_exc
             else:
                 await asyncio.sleep(0.0001)
 
