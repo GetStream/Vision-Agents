@@ -7,6 +7,7 @@ In the project root, run:
 ```bash
 uv venv --python 3.12.11
 uv sync --all-extras --dev
+pre-commit install
 ```
 
 To setup your .env
@@ -89,9 +90,9 @@ To see how the agent work open up agents.py
 ### STT & TTS flow
 
 * The agent listens to AudioReceivedEvent and forwards that to STT.
-* STT then fires the STTPartialTranscriptEvent and STTTranscriptEvent event. 
+* STT then fires the STTPartialTranscriptEvent and STTTranscriptEvent event.
 * The agent receives this event and calls agent.llm.simple_response.
-* The LLM triggers LLMResponseEvent, and the agent calls 
+* The LLM triggers LLMResponseEvent, and the agent calls
 * await self.tts.send(llm_response.text)
 
 ### Realtime STS flow
