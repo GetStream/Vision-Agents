@@ -140,7 +140,7 @@ class EventManager:
         self._ignore_unknown_events = ignore_unknown_events
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
-        self._silent_events = set()
+        self._silent_events: set[type] = set()
 
         self.register(ExceptionEvent)
         self.register(HealthCheckEvent)
@@ -368,12 +368,12 @@ class EventManager:
             proto_type = event.DESCRIPTOR.full_name
             
             # Look up the registered event class by protobuf type
-            event_class = self._events.get(proto_type)
-            if event_class and hasattr(event_class, 'from_proto'):
+            proto_event_class = self._events.get(proto_type)
+            if proto_event_class and hasattr(proto_event_class, 'from_proto'):
                 try:
-                    event = event_class.from_proto(event)
+                    event = proto_event_class.from_proto(event)
                 except Exception:
-                    logger.exception(f"Failed to convert protobuf {proto_type} to event class {event_class}")
+                    logger.exception(f"Failed to convert protobuf {proto_type} to event class {proto_event_class}")
                     return
             else:
                 # No matching event class found
