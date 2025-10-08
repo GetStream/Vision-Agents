@@ -380,6 +380,8 @@ class Agent:
             Provider-specific user creation response.
         """
         with self.tracer.start_as_current_span("edge.create_user"):
+            if self.agent_user.id == "":
+                self.agent_user.id = str(uuid4())
             return await self.edge.create_user(self.agent_user)
 
     async def _handle_output_text_delta(self, event: LLMResponseChunkEvent):

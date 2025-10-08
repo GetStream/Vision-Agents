@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class User:
-    id: str
-    name: str
+    id: Optional[str] = ""
+    name: Optional[str] = ""
     image: Optional[str] = ""
 
 
