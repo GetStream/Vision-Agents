@@ -1,35 +1,18 @@
 import asyncio
-import logging
 from uuid import uuid4
-
 from dotenv import load_dotenv
 
-from vision_agents.core.edge.types import User
-from vision_agents.plugins import elevenlabs, deepgram, openai, getstream
-from vision_agents.core import agents, cli
+from vision_agents.core import User, Agent
+from vision_agents.plugins import elevenlabs, deepgram, openai, getstream, smart_turn
 from vision_agents.core.events import CallSessionParticipantJoinedEvent
-from vision_agents.core.turn_detection import FalTurnDetection
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-'''
-TODO:
-- show function calling
-'''
 
 async def start_agent() -> None:
-
-    call_id = str(uuid4())
-
     llm = openai.LLM(model="gpt-4o-mini")
     # create an agent to run with Stream's edge, openAI llm
-    agent = agents.Agent(
+    agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(name="My happy AI friend", id="agent"),  # the user object for the agent (name, image etc)
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
@@ -38,23 +21,15 @@ async def start_agent() -> None:
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        turn_detection=FalTurnDetection(buffer_duration=2.0, confidence_threshold=0.5),  # Enable turn detection with FAL
+        turn_detection=smart_turn.TurnDetection(buffer_duration=2.0, confidence_threshold=0.5),  # Enable turn detection with FAL/ Smart turn
         #vad=silero.VAD(),
         # realtime version (vad, tts and stt not needed)
         # llm=openai.Realtime()
     )
-
     await agent.create_user()
 
-    @agent.subscribe
-    async def my_handler(event: CallSessionParticipantJoinedEvent):
-        # Skip if the participant joining is the agent itself
-        if event.participant.user.id == "agent":
-            return
-        await agent.say(f"Hello, {event.participant.user.name}")
-
     # Create a call
-    call = agent.edge.client.video.call("default", call_id)
+    call = agent.edge.client.video.call("default", str(uuid4()))
 
     # Open the demo UI
     await agent.edge.open_demo(call)
@@ -79,4 +54,4 @@ async def start_agent() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(cli.start_dispatcher(start_agent))
+    asyncio.run(start_agent())
