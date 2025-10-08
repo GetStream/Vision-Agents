@@ -68,10 +68,17 @@ uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' pl
 Create a new release on Github, CI handles the rest. If you do need to do it manually follow these instructions:
 
 ```
+rm -rf dist
 git tag v0.0.15
 git push origin main --tags
 uv build --all
 uv publish
+```
+
+Common issues. If you have local changes (or ran build before you had the tag) you'll get this error
+
+```
+  Caused by: Upload failed with status code 400 Bad Request. Server says: 400 The use of local versions in <Version('0.0.16.dev0+gc7563254f.d20251008')> is not allowed. See https://packaging.python.org/specifications/core-metadata for more information.
 ```
 
 ## Architecture
