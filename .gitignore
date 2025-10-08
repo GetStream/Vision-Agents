@@ -1,32 +1,86 @@
-*/__pycache__
-*/chat/__pycache__
-*/video/__pycache__
-*/chat/sync/__pycache__
-*/chat/async_/__pycache__
-*/sync/__pycache__
-*/async_/__pycache__
-*/video/sync/__pycache__
-*/model/__pycache__/
-*/cli/__pycache__
-*/cli/__pycache__
-.env
-.venv
-.vscode/
-*.pyc
-dist/*
-dist/*
-*.log
-.python-version
-pyvenv.cfg
-.idea*
-bin/*
-lib/*
-shell.nix
-pyrightconfig.json
-.DS_Store
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
+# Distribution / packaging
+.Python
+build/
+dist/
+downloads/
+develop-eggs/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+pip-wheel-metadata/
+MANIFEST
 *.egg-info/
 *.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+nosetests.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Type checker / lint caches
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+.ruff_cache/
+
+# Environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.env
+.env.local
+.env.*.local
+.env.bak
+pyvenv.cfg
+.python-version
+
+# Editors / IDEs
+.vscode/
+.idea/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# OS / Misc
+.DS_Store
+*.log
+
+# Tooling & repo-specific
+pyrightconfig.json
+shell.nix
+bin/*
+lib/*
+stream-py/
+
+# Artifacts / assets
 *.pt
 *.kef
-.env.bak
