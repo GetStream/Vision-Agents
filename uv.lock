@@ -5367,11 +5367,27 @@ dependencies = [
 
 [package.optional-dependencies]
 all-plugins = [
-    { name = "fal-client" },
-    { name = "google-genai" },
+    { name = "vision-agents-plugins-anthropic" },
+    { name = "vision-agents-plugins-cartesia" },
     { name = "vision-agents-plugins-deepgram" },
     { name = "vision-agents-plugins-elevenlabs" },
+    { name = "vision-agents-plugins-gemini" },
+    { name = "vision-agents-plugins-getstream" },
+    { name = "vision-agents-plugins-kokoro" },
+    { name = "vision-agents-plugins-krisp" },
+    { name = "vision-agents-plugins-moonshine" },
     { name = "vision-agents-plugins-openai" },
+    { name = "vision-agents-plugins-silero" },
+    { name = "vision-agents-plugins-smart-turn" },
+    { name = "vision-agents-plugins-ultralytics" },
+    { name = "vision-agents-plugins-wizper" },
+    { name = "vision-agents-plugins-xai" },
+]
+anthropic = [
+    { name = "vision-agents-plugins-anthropic" },
+]
+cartesia = [
+    { name = "vision-agents-plugins-cartesia" },
 ]
 deepgram = [
     { name = "vision-agents-plugins-deepgram" },
@@ -5385,38 +5401,82 @@ dev = [
 elevenlabs = [
     { name = "vision-agents-plugins-elevenlabs" },
 ]
-fal = [
-    { name = "fal-client" },
-]
 gemini = [
-    { name = "google-genai" },
+    { name = "vision-agents-plugins-gemini" },
+]
+getstream = [
+    { name = "vision-agents-plugins-getstream" },
+]
+kokoro = [
+    { name = "vision-agents-plugins-kokoro" },
+]
+krisp = [
+    { name = "vision-agents-plugins-krisp" },
+]
+moonshine = [
+    { name = "vision-agents-plugins-moonshine" },
 ]
 openai = [
     { name = "vision-agents-plugins-openai" },
+]
+silero = [
+    { name = "vision-agents-plugins-silero" },
+]
+smart-turn = [
+    { name = "vision-agents-plugins-smart-turn" },
+]
+ultralytics = [
+    { name = "vision-agents-plugins-ultralytics" },
+]
+wizper = [
+    { name = "vision-agents-plugins-wizper" },
+]
+xai = [
+    { name = "vision-agents-plugins-xai" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
-    { name = "fal-client", marker = "extra == 'all-plugins'", specifier = ">=0.6.1" },
-    { name = "fal-client", marker = "extra == 'fal'", specifier = ">=0.6.1" },
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.0" },
-    { name = "google-genai", marker = "extra == 'all-plugins'", specifier = ">=0.3.0" },
-    { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=0.3.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruff", marker = "extra == 'dev'" },
+    { name = "vision-agents-plugins-anthropic", marker = "extra == 'all-plugins'", editable = "plugins/anthropic" },
+    { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "plugins/anthropic" },
+    { name = "vision-agents-plugins-cartesia", marker = "extra == 'all-plugins'", editable = "plugins/cartesia" },
+    { name = "vision-agents-plugins-cartesia", marker = "extra == 'cartesia'", editable = "plugins/cartesia" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'deepgram'", editable = "plugins/deepgram" },
     { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "plugins/elevenlabs" },
     { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "plugins/elevenlabs" },
+    { name = "vision-agents-plugins-gemini", marker = "extra == 'all-plugins'", editable = "plugins/gemini" },
+    { name = "vision-agents-plugins-gemini", marker = "extra == 'gemini'", editable = "plugins/gemini" },
+    { name = "vision-agents-plugins-getstream", marker = "extra == 'all-plugins'", editable = "plugins/getstream" },
+    { name = "vision-agents-plugins-getstream", marker = "extra == 'getstream'", editable = "plugins/getstream" },
+    { name = "vision-agents-plugins-kokoro", marker = "extra == 'all-plugins'", editable = "plugins/kokoro" },
+    { name = "vision-agents-plugins-kokoro", marker = "extra == 'kokoro'", editable = "plugins/kokoro" },
+    { name = "vision-agents-plugins-krisp", marker = "extra == 'all-plugins'", editable = "plugins/krisp" },
+    { name = "vision-agents-plugins-krisp", marker = "extra == 'krisp'", editable = "plugins/krisp" },
+    { name = "vision-agents-plugins-moonshine", marker = "extra == 'all-plugins'", editable = "plugins/moonshine" },
+    { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'", editable = "plugins/moonshine" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
+    { name = "vision-agents-plugins-silero", marker = "extra == 'all-plugins'", editable = "plugins/silero" },
+    { name = "vision-agents-plugins-silero", marker = "extra == 'silero'", editable = "plugins/silero" },
+    { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "plugins/smart_turn" },
+    { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
+    { name = "vision-agents-plugins-ultralytics", marker = "extra == 'all-plugins'", editable = "plugins/ultralytics" },
+    { name = "vision-agents-plugins-ultralytics", marker = "extra == 'ultralytics'", editable = "plugins/ultralytics" },
+    { name = "vision-agents-plugins-wizper", marker = "extra == 'all-plugins'", editable = "plugins/wizper" },
+    { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
+    { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
+    { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "deepgram", "dev", "elevenlabs", "fal", "gemini", "openai"]
+provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "kokoro", "krisp", "moonshine", "openai", "silero", "smart-turn", "ultralytics", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"

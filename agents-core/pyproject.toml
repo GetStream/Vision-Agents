@@ -24,17 +24,37 @@ Source = "https://github.com/GetStream/Vision-Agents"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff", "click"]
-openai = ["vision-agents-plugins-openai>=0.1.0"]
-deepgram = ["vision-agents-plugins-deepgram>=0.1.0"]
-elevenlabs = ["vision-agents-plugins-elevenlabs>=0.1.0"]
-fal = ["fal-client>=0.6.1"]
-gemini = ["google-genai>=0.3.0"]
+anthropic = ["vision-agents-plugins-anthropic"]
+cartesia = ["vision-agents-plugins-cartesia"]
+deepgram = ["vision-agents-plugins-deepgram"]
+elevenlabs = ["vision-agents-plugins-elevenlabs"]
+gemini = ["vision-agents-plugins-gemini"]
+getstream = ["vision-agents-plugins-getstream"]
+kokoro = ["vision-agents-plugins-kokoro"]
+krisp = ["vision-agents-plugins-krisp"]
+moonshine = ["vision-agents-plugins-moonshine"]
+openai = ["vision-agents-plugins-openai"]
+silero = ["vision-agents-plugins-silero"]
+smart_turn = ["vision-agents-plugins-smart-turn"]
+ultralytics = ["vision-agents-plugins-ultralytics"]
+wizper = ["vision-agents-plugins-wizper"]
+xai = ["vision-agents-plugins-xai"]
 all-plugins = [
-  "vision-agents-plugins-openai>=0.1.0",
-  "vision-agents-plugins-deepgram>=0.1.0",
-  "vision-agents-plugins-elevenlabs>=0.1.0",
-  "fal-client>=0.6.1",
-  "google-genai>=0.3.0",
+  "vision-agents-plugins-anthropic",
+  "vision-agents-plugins-cartesia",
+  "vision-agents-plugins-deepgram",
+  "vision-agents-plugins-elevenlabs",
+  "vision-agents-plugins-gemini",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-kokoro",
+  "vision-agents-plugins-krisp",
+  "vision-agents-plugins-moonshine",
+  "vision-agents-plugins-openai",
+  "vision-agents-plugins-silero",
+  "vision-agents-plugins-smart-turn",
+  "vision-agents-plugins-ultralytics",
+  "vision-agents-plugins-wizper",
+  "vision-agents-plugins-xai",
 ]
 
 [tool.hatch.metadata]
