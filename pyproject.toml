@@ -33,7 +33,9 @@ members = [
     "plugins/getstream",
     "plugins/ultralytics",
     "plugins/krisp",
-    "plugins/smart_turn"
+    "plugins/smart_turn",
+        "plugins/wizper"
+
 ]
 exclude = [
 "**/__pycache__",

@@ -28,6 +28,7 @@ members = [
     "vision-agents-plugins-silero",
     "vision-agents-plugins-smart-turn",
     "vision-agents-plugins-ultralytics",
+    "vision-agents-plugins-wizper",
     "vision-agents-plugins-xai",
 ]
 
@@ -5786,6 +5787,34 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-wizper"
+source = { editable = "plugins/wizper" }
+dependencies = [
+    { name = "fal-client" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "numpy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fal-client", specifier = ">=0.7.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
