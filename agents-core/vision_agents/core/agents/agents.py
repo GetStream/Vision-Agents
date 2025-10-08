@@ -267,36 +267,6 @@ class Agent:
 
             return AgentSessionContextManager(self, self._connection)
 
-    async def finish(self):
-        """Wait for the call to end gracefully.
-
-        Subscribes to the edge transport's `call_ended` event and awaits it. If
-        no connection is active, returns immediately.
-        """
-        # If connection is None or already closed, return immediately
-        if not self._connection:
-            logging.info("🔚 Agent connection already closed, finishing immediately")
-            return
-
-        @self.edge.events.subscribe
-        async def on_ended(event: CallEndedEvent):
-            self._is_running = False
- 
-        while self._is_running:
-            try:
-                await asyncio.sleep(0.0001)
-            except asyncio.CancelledError:
-                self._is_running = False
-
-            @self.edge.events.subscribe
-            async def on_ended(event: CallEndedEvent):
-                if not fut.done():
-                    fut.set_result(None)    
-            await fut
-        except Exception as e:
-            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
-            # Don't raise the exception, just log it and continue cleanup
-
     async def close(self):
         """Clean up all connections and resources.
 
