@@ -268,18 +268,17 @@ class Agent:
             logging.info("🔚 Agent connection already closed, finishing immediately")
             return
 
-        try:
-            fut = asyncio.get_event_loop().create_future()
+        @self.edge.events.subscribe
+        async def on_ended(event: CallEndedEvent):
+            self._is_running = False
+ 
+        while self._is_running:
+            try:
+                await asyncio.sleep(0.0001)
+            except asyncio.CancelledError:
+                self._is_running = False
 
-            @self.edge.events.subscribe
-            async def on_ended(event: CallEndedEvent):
-                if not fut.done():
-                    fut.set_result(None)
-
-            await fut
-        except Exception as e:
-            logging.warning(f"⚠️ Error while waiting for call to end: {e}")
-            # Don't raise the exception, just log it and continue cleanup
+        await asyncio.shield(self.close())
 
     async def close(self):
         """Clean up all connections and resources.
@@ -687,11 +686,6 @@ class Agent:
                     f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s"
                 )
                 await asyncio.sleep(backoff_delay)
-            except asyncio.CancelledError:
-                return
-
-            except Exception:
-                raise
 
         # Cleanup and logging
         self.logger.info(f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}")

@@ -4,10 +4,8 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
 from vision_agents.plugins import elevenlabs, deepgram, openai, getstream, smart_turn
-from vision_agents.core.events import CallSessionParticipantJoinedEvent
 
 load_dotenv()
-
 
 async def start_agent() -> None:
     llm = openai.LLM(model="gpt-4o-mini")

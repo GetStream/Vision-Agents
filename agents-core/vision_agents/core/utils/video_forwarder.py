@@ -60,15 +60,12 @@ class VideoForwarder:
     def _task_done(self, task: asyncio.Task) -> None:
         """Callback to remove completed tasks from the set."""
         self._tasks.discard(task)
+        exc = task.exception()
+        if exc:
+            logger.error("%s: Task failed with exception: %s", self.name, exc, exc_info=exc)
+
         if task.cancelled():
             return
-        # Log any exceptions from tasks
-        try:
-            exc = task.exception()
-            if exc:
-                logger.error("%s: Task failed with exception: %s", self.name, exc, exc_info=exc)
-        except asyncio.CancelledError:
-            pass
 
     # ---------- producer (fills latest-N buffer) ----------
     async def _producer(self):
@@ -135,62 +132,56 @@ class VideoForwarder:
             last_log = loop.time()
             last_width: Optional[int] = None
             last_height: Optional[int] = None
-            try:
-                while not self._stopped.is_set():
-                    # Wait for at least one frame
-                    frame = await self.next_frame()
-                    # track latest resolution for summary logs
-                    try:
-                        last_width = int(getattr(frame, "width", 0)) or last_width
-                        last_height = int(getattr(frame, "height", 0)) or last_height
-                    except Exception:
-                        # ignore resolution extraction errors
-                        pass
-                    # Throttle to fps (if set)
-                    if min_interval > 0.0:
-                        now = loop.time()
-                        elapsed = now - last_ts
-                        if elapsed < min_interval:
-                            # coalesce: keep draining to newest until it's time
-                            await asyncio.sleep(min_interval - elapsed)
-                        last_ts = loop.time()
-                    # Call handler
-                    if is_coro:
-                        await on_frame(frame)  # type: ignore[arg-type]
-                    else:
-                        on_frame(frame)
-                    frames_forwarded += 1
-                    # periodic summary logging
-                    if log_interval_seconds > 0:
-                        now_time = loop.time()
-                        if (now_time - last_log) >= log_interval_seconds:
-                            if last_width and last_height:
-                                logger.info(
-                                    "%s [%s] forwarded %d frames at %dx%d resolution in the last %.0f seconds (target: %.1f fps)",
-                                    self.name,
-                                    consumer_label,
-                                    frames_forwarded,
-                                    last_width,
-                                    last_height,
-                                    log_interval_seconds,
-                                    consumer_fps or 0,
-                                )
-                            else:
-                                logger.info(
-                                    "%s [%s] forwarded %d frames in the last %.0f seconds (target: %.1f fps)",
-                                    self.name,
-                                    consumer_label,
-                                    frames_forwarded,
-                                    log_interval_seconds,
-                                    consumer_fps or 0,
-                                )
-                            frames_forwarded = 0
-                            last_log = now_time
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("unexpected error in video forwarder consumer [%s]", consumer_label)
-                raise
+            while not self._stopped.is_set():
+                # Wait for at least one frame
+                frame = await self.next_frame()
+                # track latest resolution for summary logs
+                try:
+                    last_width = int(getattr(frame, "width", 0)) or last_width
+                    last_height = int(getattr(frame, "height", 0)) or last_height
+                except Exception:
+                    # ignore resolution extraction errors
+                    pass
+                # Throttle to fps (if set)
+                if min_interval > 0.0:
+                    now = loop.time()
+                    elapsed = now - last_ts
+                    if elapsed < min_interval:
+                        # coalesce: keep draining to newest until it's time
+                        await asyncio.sleep(min_interval - elapsed)
+                    last_ts = loop.time()
+                # Call handler
+                if is_coro:
+                    await on_frame(frame)  # type: ignore[arg-type]
+                else:
+                    on_frame(frame)
+                frames_forwarded += 1
+                # periodic summary logging
+                if log_interval_seconds > 0:
+                    now_time = loop.time()
+                    if (now_time - last_log) >= log_interval_seconds:
+                        if last_width and last_height:
+                            logger.info(
+                                "%s [%s] forwarded %d frames at %dx%d resolution in the last %.0f seconds (target: %.1f fps)",
+                                self.name,
+                                consumer_label,
+                                frames_forwarded,
+                                last_width,
+                                last_height,
+                                log_interval_seconds,
+                                consumer_fps or 0,
+                            )
+                        else:
+                            logger.info(
+                                "%s [%s] forwarded %d frames in the last %.0f seconds (target: %.1f fps)",
+                                self.name,
+                                consumer_label,
+                                frames_forwarded,
+                                log_interval_seconds,
+                                consumer_fps or 0,
+                            )
+                        frames_forwarded = 0
+                        last_log = now_time
 
         task = asyncio.create_task(_consumer())
         task.add_done_callback(self._task_done)
