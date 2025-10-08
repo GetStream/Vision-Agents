@@ -28,7 +28,7 @@ members = [
     "plugins/cartesia",
     "plugins/deepgram",
     "plugins/elevenlabs",
-    "plugins/fal",
+    #"plugins/fal",
     "plugins/gemini",
     "plugins/kokoro",
     "plugins/moonshine",

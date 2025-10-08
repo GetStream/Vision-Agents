@@ -241,10 +241,6 @@ class Realtime(realtime.Realtime):
                         await self._handle_tool_call(server_message.tool_call)
                     else:
                         self.logger.warning("Unrecognized event structure for gemini %s", server_message)
-
-        except asyncio.CancelledError:
-            self.logger.info("_receive_loop cancelled")
-            raise
         except Exception as e:
             # reconnect here for some errors
             self.logger.error(f"_receive_loop error: {e}")
@@ -252,7 +248,7 @@ class Realtime(realtime.Realtime):
             if is_temp:
                 await self._reconnect()
             else:
-                raise
+                raise e
         finally:
             self.logger.info("_receive_loop ended")
 
@@ -270,11 +266,8 @@ class Realtime(realtime.Realtime):
 
         if hasattr(self, '_receive_task') and self._receive_task:
             self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                pass
-        
+            await self._receive_task
+
         if hasattr(self, '_session_context') and self._session_context:
             # Properly close the session using the context manager's __aexit__
             try:

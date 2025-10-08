@@ -5,10 +5,10 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core.edge.types import User
-from vision_agents.plugins import elevenlabs, deepgram, openai, getstream
+from vision_agents.plugins import elevenlabs, deepgram, getstream, openai
 from vision_agents.core import agents, cli
 from vision_agents.core.events import CallSessionParticipantJoinedEvent
-from vision_agents.core.turn_detection import FalTurnDetection
+#from vision_agents.core.turn_detection import FalTurnDetection
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,7 +38,7 @@ async def start_agent() -> None:
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        turn_detection=FalTurnDetection(buffer_duration=2.0, confidence_threshold=0.5),  # Enable turn detection with FAL
+        #turn_detection=FalTurnDetection(buffer_duration=2.0, confidence_threshold=0.5),  # Enable turn detection with FAL
         #vad=silero.VAD(),
         # realtime version (vad, tts and stt not needed)
         # llm=openai.Realtime()
