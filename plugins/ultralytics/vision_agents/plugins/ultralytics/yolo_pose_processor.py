@@ -214,26 +214,27 @@ class YOLOPoseProcessor(
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
         frame_with_pose = await self.add_pose_to_frame(frame)
-        await self._video_track.add_frame(frame_with_pose)
+        if frame_with_pose is None:
+            logger.info(f"add_pose_to_frame did not return a frame, returning the original frame instead.")
+            await self._video_track.add_frame(frame)
+        else:
+            await self._video_track.add_frame(frame_with_pose)
 
-    async def add_pose_to_frame(self, frame: av.VideoFrame):
-
+    async def add_pose_to_frame(self, frame: av.VideoFrame) -> Optional[av.VideoFrame]:
         try:
             frame_array = frame.to_ndarray(format="rgb24")
             array_with_pose, pose = await self.add_pose_to_ndarray(frame_array)
             frame_with_pose = av.VideoFrame.from_ndarray(array_with_pose)
+            return frame_with_pose
         except Exception:
-            import pdb
-            pdb.set_trace()
-
-        return frame_with_pose
+            logger.exception(f"add_pose_to_frame failed")
+            return None
 
     async def add_pose_to_image(self, image: Image.Image) -> tuple[Image.Image, Any]:
         """
         Adds the pose to the given image. Note that this is slightly less efficient compared to
         using add_pose_to_ndarray directly
         """
-        width, height = image.size
         frame_array = np.array(image)
         array_with_pose, pose_data = await self.add_pose_to_ndarray(frame_array)
         annotated_image = Image.fromarray(array_with_pose)
@@ -267,12 +268,12 @@ class YOLOPoseProcessor(
         """
         loop = asyncio.get_event_loop()
         frame_height, frame_width = frame_array.shape[:2]
-        
+
         logger.debug(f"🤖 Starting pose processing: {frame_width}x{frame_height}")
+        start_time = time.perf_counter()
 
         try:
             # Add timeout to prevent blocking
-            start_time = time.perf_counter()
             result = await asyncio.wait_for(
                 loop.run_in_executor(
                     self.executor, self._process_pose_sync, frame_array
