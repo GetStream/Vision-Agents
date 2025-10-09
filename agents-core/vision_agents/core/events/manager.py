@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 import collections
 import logging
 import types
@@ -141,6 +142,7 @@ class EventManager:
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
         self._silent_events: set[type] = set()
+        self._handler_tasks = {}
 
         self.register(ExceptionEvent)
         self.register(HealthCheckEvent)
@@ -182,6 +184,8 @@ class EventManager:
             #    raise KeyError(f"{event_class.type} is already registered.")
             self._events[event_class.type] = event_class
             logger.info(f"Registered new event {event_class} - {event_class.type}")
+        elif event_class.__name__.endswith('BaseEvent'):
+            return
         elif not ignore_not_compatible:
             raise ValueError(f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}")
         else:
@@ -458,6 +462,9 @@ class EventManager:
         start_time = asyncio.get_event_loop().time()
         while self._queue and (asyncio.get_event_loop().time() - start_time) < timeout:
             await asyncio.sleep(0.01)
+
+        while any(not task.done() for task in self._handler_tasks.values()):
+            await asyncio.sleep(0.01)
         
     def _start_processing_task(self):
         """Start the background event processing task."""
@@ -488,18 +495,27 @@ class EventManager:
             elif cancelled_exc:
                 raise cancelled_exc
             else:
+                cleanup_ids = set(task_id for task_id, task in self._handler_tasks.items() if task.done())
+                for task_id in cleanup_ids:
+                    self._handler_tasks.pop(task_id)
                 await asyncio.sleep(0.0001)
+
+    async def _run_handler(self, handler, event):
+        try:
+            return await handler(event)
+        except Exception as exc:
+            self._queue.appendleft(ExceptionEvent(exc, handler))  # type: ignore[arg-type]
+            module_name = getattr(handler, '__module__', 'unknown')
+            logger.exception(f"Error calling handler {handler.__name__} from {module_name} for event {event.type}")
 
     async def _process_single_event(self, event):
         """Process a single event."""
         for handler in self._handlers.get(event.type, []):
-            try:
-                module_name = getattr(handler, '__module__', 'unknown')
-                if event.type not in self._silent_events:
-                    logger.info(f"Called handler {handler.__name__} from {module_name} for event {event.type}")
-                await handler(event)
-            except Exception as exc:
-                self._queue.appendleft(ExceptionEvent(exc, handler))  # type: ignore[arg-type]
-                module_name = getattr(handler, '__module__', 'unknown')
-                logger.exception(f"Error calling handler {handler.__name__} from {module_name} for event {event.type}")
+            module_name = getattr(handler, '__module__', 'unknown')
+            if event.type not in self._silent_events:
+                logger.info(f"Called handler {handler.__name__} from {module_name} for event {event.type}")
+
+            loop = asyncio.get_running_loop()
+            handler_task = loop.create_task(self._run_handler(handler, event))
+            self._handler_tasks[uuid.uuid4()] = handler_task
 

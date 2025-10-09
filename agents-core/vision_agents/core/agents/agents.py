@@ -12,7 +12,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Tracer
 
 from ..edge import sfu_events
-from ..edge.events import AudioReceivedEvent, TrackAddedEvent
+from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
 from ..edge.types import Connection, Participant, PcmData, TrackType, User
 from ..events.manager import EventManager
 from ..llm.events import (
@@ -266,6 +266,28 @@ class Agent:
             from .agent_session import AgentSessionContextManager
 
             return AgentSessionContextManager(self, self._connection)
+
+    async def finish(self):
+        """Wait for the call to end gracefully.
+        Subscribes to the edge transport's `call_ended` event and awaits it. If
+        no connection is active, returns immediately.
+        """
+        # If connection is None or already closed, return immediately
+        if not self._connection:
+            logging.info("🔚 Agent connection already closed, finishing immediately")
+            return
+
+        @self.edge.events.subscribe
+        async def on_ended(event: CallEndedEvent):
+            self._is_running = False
+
+        while self._is_running:
+            try:
+                await asyncio.sleep(0.0001)
+            except asyncio.CancelledError:
+                self._is_running = False
+
+        await asyncio.shield(self.close())
 
     async def close(self):
         """Clean up all connections and resources.

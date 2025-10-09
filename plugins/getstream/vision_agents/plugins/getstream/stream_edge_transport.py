@@ -102,7 +102,7 @@ class StreamEdge(EdgeTransport):
         # SFU might send TrackPublishedEvent before WebRTC processes track_added
         track_id = None
         timeout = 10.0
-        poll_interval = 0.01  # 50ms
+        poll_interval = 0.01  # 10ms
         elapsed = 0.0
         
         while elapsed < timeout:
@@ -125,7 +125,7 @@ class StreamEdge(EdgeTransport):
         if track_id:
             # Store with correct type from SFU
             self._track_map[track_key] = {"track_id": track_id, "published": True}
-            self.logger.info(f"Track published: {track_type_name} from {user_id}, track_id: {track_id} (waited {elapsed:.2f}s)")
+            self.logger.info(f"Trackmap published: {track_type_name} from {user_id}, track_id: {track_id} (waited {elapsed:.2f}s)")
             
             # NOW spawn TrackAddedEvent with correct type
             self.events.send(events.TrackAddedEvent(
@@ -139,6 +139,9 @@ class StreamEdge(EdgeTransport):
             raise TimeoutError(
                 f"Timeout waiting for pending track: {track_type_name} ({expected_kind}) from user {user_id}, "
                 f"session {session_id}. Waited {timeout}s but WebRTC track_added with matching kind was never received."
+                f"Pending tracks: {self._pending_tracks}\n"
+                f"Key: {track_key}\n"
+                f"Track map: {self._track_map}\n"
             )
     
     async def _on_track_removed(self, event: sfu_events.ParticipantLeftEvent | sfu_events.TrackUnpublishedEvent):
@@ -229,16 +232,6 @@ class StreamEdge(EdgeTransport):
             raise
 
         self._connection = connection
-
-        original_on_subscriber_offer = self._connection._on_subscriber_offer  # type: ignore[attr-defined]
-
-        async def _safe_on_subscriber_offer(event):
-            if self._connection.subscriber_pc is None:  # type: ignore[attr-defined]
-                self.logger.debug("Ignoring subscriber offer after subscriber_pc teardown")
-                return
-            await original_on_subscriber_offer(event)
-
-        self._connection._on_subscriber_offer = _safe_on_subscriber_offer  # type: ignore[attr-defined]
 
         @self._connection.on("audio")
         async def on_audio_received(pcm: PcmData, participant: Participant):

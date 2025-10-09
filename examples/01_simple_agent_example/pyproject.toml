@@ -25,5 +25,6 @@ dependencies = [
 "vision-agents-plugins-anthropic" = {path = "../../plugins/anthropic", editable=true}
 "vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
 "vision-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"vision-agents-plugins-smart-turn" = {path = "../../plugins/smart_turn", editable=true}
 
 "vision-agents" = {path = "../../agents-core", editable=true}
