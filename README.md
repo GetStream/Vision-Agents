@@ -76,7 +76,7 @@ To get started with Vision Agents, check out our getting started guide at [Visio
 
 - Quickstart: [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
 - Quickstart: [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
-- Tutorial: [Building realtime sports coaching](#)
+- Tutorial: [Building realtime sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
 - Tutorial: [Building a realtime meeting assistant](#)
 
 ## Development
