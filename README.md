@@ -12,7 +12,7 @@ Build Vision Agents quickly with any model or video provider.
 -  **Video AI**: Built for real-time video AI. Combine Yolo, Roboflow and others with gemini/openai realtime
 -  **Low Latency**: Join quickly (500ms) and low audio/video latency (30ms)
 -  **Open**: Built by Stream, but use any video edge network that you like
--  **Native APIs**: Native SDK methods from OpenAI (create response), Gemini (generate) and Claude (create message). So you're never behind on the latest features
+-  **Native APIs**: Native SDK methods from OpenAI (create response), Gemini (generate) and Claude (create message). So you can always use the latest LLM capabilities.
 -  **SDKs**: SDKs for React, Android, iOS, Flutter, React, React Native and Unity.
 
 Created by Stream, uses [Stream's edge network](https://getstream.io/video/) for ultra-low latency.
@@ -39,7 +39,7 @@ agent = Agent(
 )
 ```
 
-### Cluely style Invisible Assistant
+### Cluely style Invisible Assistant (coming soon)
 
 Apps like Cluely offer realtime coaching via an invisible overlay. This example shows you how you can build your own invisible assistant.
 It combines Gemini realtime (to watch your screen and audio), and doesn't broadcast audio (only text). This approach
@@ -60,13 +60,18 @@ agent = Agent(
 
 ## Processors
 
-Processors make it easy to combine the video & LLM with additional state. Here are some built-in examples
+Processors enable you to provide state and receive/publish video & audio. 
+Many video AI use case require you to do things like
 
-* YoloPose
-* ImageCapture
-* BufferedVideoCapture
+* Run a smaller AI model next to the LLM (like Yolo or roboflow)
+* Make API calls to maintain relevant info/game state
+* Modify audio/video, for instance avatars
+* Capture audio/video
+
+This is all handled by processors. 
 
 ## Docs
+
 To get started with Vision Agents, check out our getting started guide at [VisionAgents.ai](https://visionagents.ai).
 
 - Quickstart: [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
@@ -96,8 +101,8 @@ Our favorite people & projects to follow for vision AI
 ## Inspiration
 
 - Livekit Agents: Great syntax, Livekit only
-- Pipecat: Flexible, but more verbose. Open, we will add support for Stream
-- OpenAI Agents: Focused on openAI only, but we will try to add support
+- Pipecat: Flexible, but more verbose.
+- OpenAI Agents: Focused on openAI only
 
 ## Open Platform
 Reach out to nash@getstream.io, and we'll collaborate on getting you added
@@ -120,8 +125,14 @@ We'd like to add support for and are reaching out to:
 - Support for MCP and function calling for Gemini and OpenAI
 - Support for realtime WebRTC video and voice with GPT Realtime
 
-**0.2 - Next release**
-- The Python WebRTC lib we use has some problems. This can cause sudden spikes and latency issues. We'll be pushing fixes for the project
-- Hosting guidelines
+**Coming Soon**
+- The Python WebRTC lib we use has some limitations. Investigating this.
+- Hosting & production deploy example
+- More built-in Yolo processors: Object detection, person detection, etc
+- Roboflow support
+- Computer use support
+- AI avatar support. Tavus etc
+- QWen3 vision support
+- Buffered video capture support (enabling AI to capture video when something exciting happens)
+- Moondream vision
 
-**Later**
