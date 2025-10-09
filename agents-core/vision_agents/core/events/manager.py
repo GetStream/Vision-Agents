@@ -142,7 +142,7 @@ class EventManager:
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
         self._silent_events: set[type] = set()
-        self._handler_tasks = {}
+        self._handler_tasks: Dict[uuid.UUID, asyncio.Task[Any]] = {}
 
         self.register(ExceptionEvent)
         self.register(HealthCheckEvent)
