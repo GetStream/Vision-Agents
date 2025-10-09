@@ -463,8 +463,8 @@ class EventManager:
         while self._queue and (asyncio.get_event_loop().time() - start_time) < timeout:
             await asyncio.sleep(0.01)
 
-        while any(not task.done() for task in self._handler_tasks.values()):
-            await asyncio.sleep(0.01)
+        if self._handler_tasks:
+            await asyncio.wait(list(self._handler_tasks.values()))
         
     def _start_processing_task(self):
         """Start the background event processing task."""
