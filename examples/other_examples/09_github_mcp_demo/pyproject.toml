@@ -16,15 +16,17 @@ dependencies = [
     "vision-agents-plugins-silero",
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-openai",
+    "vision-agents-plugins-gemini",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff"]
 
 [tool.uv.sources]
-"vision-agents" = {path = "../../agents-core", editable=true}
-"vision-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
-"vision-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
-"vision-agents-plugins-silero" = {path = "../../plugins/silero", editable=true}
-"vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
-"vision-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}
+"vision-agents-plugins-deepgram" = {path = "../../../plugins/deepgram", editable=true}
+"vision-agents-plugins-elevenlabs" = {path = "../../../plugins/elevenlabs", editable=true}
+"vision-agents-plugins-silero" = {path = "../../../plugins/silero", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../../plugins/getstream", editable=true}
+"vision-agents-plugins-openai" = {path = "../../../plugins/openai", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}

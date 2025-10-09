@@ -7,10 +7,10 @@ authors = [
 ]
 dependencies = [
     "python-dotenv",
-    "stream-agents-plugins-openai",
-    "stream-agents-plugins-anthropic", 
-    "stream-agents-plugins-gemini",
-    "stream-agents",
+    "vision-agents-plugins-openai",
+    "vision-agents-plugins-anthropic", 
+    "vision-agents-plugins-gemini",
+    "vision-agents",
 ]
 requires-python = ">=3.10"
 
@@ -22,7 +22,7 @@ build-backend = "hatchling.build"
 packages = ["."]
 
 [tool.uv.sources]
-"stream-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
-"stream-agents-plugins-anthropic" = {path = "../../plugins/anthropic", editable=true}
-"stream-agents-plugins-gemini" = {path = "../../plugins/gemini", editable=true}
-"stream-agents" = {path = "../../agents-core", editable=true}
+"vision-agents-plugins-openai" = {path = "../../../plugins/openai", editable=true}
+"vision-agents-plugins-anthropic" = {path = "../../../plugins/anthropic", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}
