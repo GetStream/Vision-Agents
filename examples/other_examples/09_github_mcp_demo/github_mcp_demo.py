@@ -78,14 +78,7 @@ async def main():
     try:
         # Connect to GitHub MCP server with timeout
         logger.info("Connecting to GitHub MCP server...")
-        # try:
-        #     await asyncio.wait_for(agent._connect_mcp_servers(), timeout=30.0)
-        #     logger.info("✅ Successfully connected to GitHub MCP server")
-        # except asyncio.TimeoutError:
-        #     logger.error("❌ Connection to GitHub MCP server timed out after 30 seconds")
-        #     logger.error("This might be due to network issues or server unavailability")
-        #     return
-        #
+
         # Check if MCP tools were registered with the function registry
         logger.info("Checking function registry for MCP tools...")
         available_functions = agent.llm.get_available_functions()
