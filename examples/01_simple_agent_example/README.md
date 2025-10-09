@@ -14,11 +14,11 @@ This example creates a voice AI assistant that:
 
 - Python 3.13 or higher
 - API keys for:
-  - OpenAI (for the LLM)
-  - ElevenLabs (for text-to-speech)
-  - Deepgram (for speech-to-text)
-  - Stream (for video/audio infrastructure)
-  - FAL AI (for turn detection)
+  - [OpenAI](https://openai.com) (for the LLM)
+  - [ElevenLabs](https://elevenlabs.io/) (for text-to-speech)
+  - [Deepgram](https://deepgram.com/) (for speech-to-text)
+  - [Stream](https://getstream.io/) (for video/audio infrastructure)
+  - [Smart Turn](https://fal.ai/models/fal-ai/smart-turn) (for turn detection)
 
 ## Installation
 
