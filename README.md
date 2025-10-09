@@ -21,6 +21,7 @@ Created by Stream, uses [Stream's edge network](https://getstream.io/video/) for
 ## Examples
 
 ### Sports Coaching
+[![Golf Example](assets/golf_example_tweet.png)](https://x.com/nash0x7e2/status/1950341779745599769)
 
 This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
