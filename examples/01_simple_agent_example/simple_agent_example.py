@@ -3,7 +3,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import elevenlabs, deepgram, openai, getstream, smart_turn
+from vision_agents.plugins import cartesia, deepgram, openai, getstream, smart_turn
 
 load_dotenv()
 
@@ -17,7 +17,7 @@ async def start_agent() -> None:
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
         # llm with tts & stt. if you use a realtime (sts capable) llm the tts, stt and vad aren't needed
         llm=llm,
-        tts=elevenlabs.TTS(),
+        tts=cartesia.TTS(),
         stt=deepgram.STT(),
         turn_detection=smart_turn.TurnDetection(buffer_duration=2.0, confidence_threshold=0.5),  # Enable turn detection with FAL/ Smart turn
         #vad=silero.VAD(),
