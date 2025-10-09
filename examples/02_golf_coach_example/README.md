@@ -2,9 +2,7 @@
 
 This example shows you how to build a real-time golf coaching AI using [Vision Agents](https://visionagents.ai/). The agent uses video processing to watch golf swings and provide feedback through voice conversation.
 
-## What This Example Does
-
-This example creates a golf coaching AI that:
+In this example, the AI golf coach will:
 - Watches video of the user's golf swing
 - Uses [YOLO](https://www.ultralytics.com/yolo) pose detection to analyze body position and movement
 - Processes the video in real-time with an LLM (Large Language Model)

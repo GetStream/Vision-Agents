@@ -1,10 +1,7 @@
 # Simple Agent Example
 
-This example shows you how to build a basic voice AI agent using [Vision Agents](https://visionagents.ai/). The agent can have conversations with users through voice input and output.
+This example shows you how to build a basic video AI agent using [Vision Agents](https://visionagents.ai/). The agent can have conversations with users through video and voice input and output.
 
-## What This Example Does
-
-This example creates a voice AI assistant that:
 - Listens to user speech and converts it to text
 - Processes the conversation using an LLM (Large Language Model)
 - Responds with natural-sounding speech
