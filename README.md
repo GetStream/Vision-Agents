@@ -5,7 +5,8 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vision-agents.svg)
 [![License](https://img.shields.io/github/license/GetStream/Vision-Agents)](https://github.com/GetStream/Vision-Agents/blob/master/LICENSE)
 
-TODO: Image or video. Show code, image and demos
+[![Watch the demo](assets/demo_thumbnail.png)](https://youtu.be/Hpl5EcCpLw8)
+
 
 Build Vision Agents quickly with any model or video provider.
 
