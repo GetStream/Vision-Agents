@@ -1,14 +1,14 @@
-# Stream + FAL.ai Wizper STT Example
+# Stream + Wizper STT Example
 
 This sample shows how to build a real-time transcription and translation bot that joins a
-Stream video call and converts speech to text (or translates it) using
-[FAL.ai](https://fal.ai) — specifically the **Wizper** Speech-to-Text model.
+Stream video call and converts speech to text (or translates it) using the
+**Wizper** Speech-to-Text model (a service provided by [FAL.ai](https://fal.ai)).
 
 ## What it does
 
 - Creates a **transcription bot** that automatically joins a Stream video call
 - Opens a **browser link** so participants can join the call in one click
-- Uses **Silero VAD** to detect speech segments and sends them to FAL.ai
+- Uses **Silero VAD** to detect speech segments and sends them to Wizper
 - Prints final transcripts (optionally translated) in the terminal with
   timestamps and confidence values
 
@@ -16,7 +16,7 @@ Stream video call and converts speech to text (or translates it) using
 
 1. **Stream account** – Get your API key & secret from the
    [Stream Dashboard](https://dashboard.getstream.io)
-2. **FAL.ai account** – Create an API key from the
+2. **FAL.ai account** – Wizper is accessed through FAL; create an API key from the
    [FAL Console](https://app.fal.ai)
 3. **Python 3.10+**
 
@@ -26,7 +26,7 @@ You can use your preferred package manager, but we recommend [`uv`](https://docs
 
 ```bash
 # 1. Navigate to this directory
-cd examples/stt_fal_transcription
+cd examples/other_examples/plugins_examples/wizper_stt_translate
 
 # 2. Install dependencies
 uv sync
@@ -67,7 +67,9 @@ Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop the bot.
 The STT setup is in `main.py`:
 
 ```python
-stt = FalWizperSTT(task="transcribe", target_language="fr")
+from vision_agents.plugins import wizper
+
+stt = wizper.STT(task="transcribe", target_language="fr")
 ```
 
 Key parameters:
@@ -78,11 +80,11 @@ Key parameters:
 Example – translate everything to Spanish:
 
 ```python
-stt = FalWizperSTT(task="translate", target_language="es")
+stt = wizper.STT(task="translate", target_language="es")
 ```
 
 Partial transcripts are not currently supported by Wizper; callbacks fire when
-FAL.ai marks a segment as complete.
+the service marks a segment as complete.
 
 ## Troubleshooting
 

@@ -7,9 +7,9 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 
 dependencies = [
-    "getstream-plugins-fal>=0.1.0",
+    "vision-agents-plugins-wizper>=0.1.0",
     "python-dotenv>=1.1.1",
 ]
 
 [tool.uv.sources]
-getstream-plugins-fal = { workspace = true }
+vision-agents-plugins-wizper = { workspace = true }
