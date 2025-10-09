@@ -60,7 +60,7 @@ The code creates an agent with several components:
 agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="My happy AI friend", id="agent"),
-    instructions="You're a voice AI assistant...",
+    instructions="You're a video AI assistant...",
     llm=openai.LLM(model="gpt-4o-mini"),
     tts=elevenlabs.TTS(),
     stt=deepgram.STT(),
@@ -100,7 +100,12 @@ This code:
 You can simplify the setup by using a realtime LLM like OpenAI Realtime or Gemini Live. These models handle speech-to-text and text-to-speech internally:
 
 ```python
-llm=openai.Realtime()
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=User(name="My happy AI friend", id="agent"),
+    instructions="You're a video AI assistant...",
+    llm=openai.Realtime()
+)
 # No need for separate tts, stt, or vad components
 ```
 
