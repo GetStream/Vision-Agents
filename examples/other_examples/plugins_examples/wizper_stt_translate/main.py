@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Example: Real-time Call Transcription with FAL.ai STT
+Example: Real-time Call Transcription with Wizper STT
 
 This example demonstrates how to:
 1. Create an Agent with STT capabilities for translation
 2. Join a Stream video call
-3. Transcribe audio in real-time using FAL.ai STT
+3. Transcribe audio in real-time using Wizper STT
 4. Open a browser link for users to join the call
 
 Usage:
@@ -30,7 +30,7 @@ from getstream.models import UserRequest
 from getstream.stream import Stream
 from vision_agents.core.agents import Agent
 from vision_agents.core.edge.types import User
-from vision_agents.plugins import fal, silero, getstream, openai
+from vision_agents.plugins import wizper, silero, getstream, openai
 from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 from vision_agents.core.vad.events import VADAudioEvent, VADErrorEvent
 
@@ -116,7 +116,7 @@ async def main():
         agent_user=User(name="Transcription Bot", id="transcription-bot"),
         instructions="I transcribe speech and translate it to French.",
         llm=openai.LLM(model="gpt-4o-mini"),
-        stt=fal.STT(target_language="fr"),
+        stt=wizper.STT(target_language="fr"),
         vad=silero.VAD(),
     )
 

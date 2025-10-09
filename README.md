@@ -48,7 +48,6 @@ is quite versatile and can be used for: Sales coaching, job interview cheating, 
 Demo video
 
 ```python
-# partial example, full example: examples/03_cluely_example/cluely_example.py
 agent = Agent(
     edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
     agent_user=agent_user,  # the user object for the agent (name, image etc)
