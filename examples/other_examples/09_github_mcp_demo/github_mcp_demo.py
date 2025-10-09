@@ -104,15 +104,13 @@ async def main():
         
         # Create a call
         call = agent.edge.client.video.call("default", str(uuid4()))
-        await call.get_or_create()
-
-        # Open the demo UI
-        logger.info("🌐 Opening browser with demo UI...")
-        agent.edge.open_demo(call)
         
         # Have the agent join the call/room
         logger.info("🎤 Agent joining call...")
         with await agent.join(call):
+            # Open the demo UI
+            logger.info("🌐 Opening browser with demo UI...")
+            agent.edge.open_demo(call)
             logger.info("✅ Agent is now live! You can talk to it in the browser.")
             logger.info("Try asking: 'What repositories do I have?' or 'Create a new issue'")
             
