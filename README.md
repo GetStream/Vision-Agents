@@ -26,8 +26,6 @@ This example shows you how to build golf coaching AI with YOLO and OpenAI realti
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
 For example: Drone fire detection. Sports/video game coaching. Physical therapy. Workout coaching, Just dance style games etc.
 
-TODO: Demo video
-
 ```python
 # partial example, full example: examples/02_golf_coach_example/golf_coach_example.py
 agent = Agent(
