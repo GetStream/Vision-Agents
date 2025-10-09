@@ -4,7 +4,7 @@
 [![PyPI version](https://badge.fury.io/py/vision-agents.svg)](http://badge.fury.io/py/vision-agents)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vision-agents.svg)
 [![License](https://img.shields.io/github/license/GetStream/Vision-Agents)](https://github.com/GetStream/Vision-Agents/blob/main/LICENSE)
-![Discord](https://img.shields.io/discord/1108586339550638090)
+[![Discord](https://img.shields.io/discord/1108586339550638090)](https://discord.gg/RkhX9PxMS6)
 
 [![Watch the demo](assets/demo_thumbnail.png)](https://youtu.be/Hpl5EcCpLw8)
 
