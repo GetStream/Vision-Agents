@@ -3,7 +3,8 @@
 [![build](https://github.com/GetStream/Vision-Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/GetStream/Vision-Agents/actions)
 [![PyPI version](https://badge.fury.io/py/vision-agents.svg)](http://badge.fury.io/py/vision-agents)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vision-agents.svg)
-[![License](https://img.shields.io/github/license/GetStream/Vision-Agents)](https://github.com/GetStream/Vision-Agents/blob/master/LICENSE)
+[![License](https://img.shields.io/github/license/GetStream/Vision-Agents)](https://github.com/GetStream/Vision-Agents/blob/main/LICENSE)
+![Discord](https://img.shields.io/discord/1108586339550638090)
 
 [![Watch the demo](assets/demo_thumbnail.png)](https://youtu.be/Hpl5EcCpLw8)
 
@@ -21,6 +22,11 @@ Created by Stream, uses [Stream's edge network](https://getstream.io/video/) for
 ## Examples
 
 ### Sports Coaching
+[![Golf Example](assets/golf_example_tweet.png)](https://x.com/nash0x7e2/status/1950341779745599769)
+
+This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
+Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
+For example: Drone fire detection, sports/video game coaching, physical therapy, workout coaching, just dance style games etc.
 
 ```python
 # partial example, full example: examples/02_golf_coach_example/golf_coach_example.py
