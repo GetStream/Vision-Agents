@@ -55,7 +55,7 @@ class StreamEdge(EdgeTransport):
         self.events.register_events_from_module(sfu_events)
         self.channel: Optional[Channel] = None
         self.conversation: Optional[StreamConversation] = None
-        self.channel_type = "videocall"
+        self.channel_type = "default"
         self.agent_user_id: str | None = None
         # Track mapping: (user_id, session_id, track_type_int) -> {"track_id": str, "published": bool}
         # track_type_int is from TrackType enum (e.g., TrackType.TRACK_TYPE_AUDIO)
