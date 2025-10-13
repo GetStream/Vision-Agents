@@ -5,7 +5,6 @@ import os
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-import ipdb
 import numpy as np
 import websockets
 from deepgram import AsyncDeepgramClient
