@@ -5,6 +5,7 @@ import os
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
+import ipdb
 import numpy as np
 import websockets
 from deepgram import AsyncDeepgramClient
@@ -111,6 +112,8 @@ class STT(stt.STT):
         # Time to wait for connection to be established before sending the event
         self._connection_timeout = connection_timeout
         self._last_sent_at = float("-inf")
+        # Lock to prevent concurrent connection opening
+        self._connect_lock = asyncio.Lock()
 
         # Start the listener loop in the background
         asyncio.create_task(self.start())
@@ -123,10 +126,29 @@ class STT(stt.STT):
             logger.warning("Cannot setup connection - Deepgram instance is closed")
             return None
 
-        # Establish a Deepgram connection
-        await self._connect_deepgram()
-        assert self.dg_connection is not None
+        # Establish a Deepgram connection.
+        # Use a lock to make sure it's established only once
+        async with self._connect_lock:
+            if self.dg_connection is not None:
+                logger.debug("Connection already set up, skipping initialization")
+                return None
 
+            try:
+                logger.info("Creating a Deepgram connection with options %s", self.options)
+                dg_connection = await self._stack.enter_async_context(
+                    self.deepgram.listen.v1.connect(**self.options)
+                )
+            except Exception as e:
+                # Log the error and set connection to None
+                logger.exception("Error setting up Deepgram connection")
+                self.dg_connection = None
+                # Emit error immediately
+                self._emit_error_event(e, "Deepgram connection setup")
+                raise
+            finally:
+                self._connected_once.set()
+
+        self.dg_connection = dg_connection
         # Start the keep-alive loop to keep the connection open
         asyncio.create_task(self._keepalive_loop())
 
@@ -176,25 +198,6 @@ class STT(stt.STT):
                 self.dg_connection = None
             except Exception:
                 logger.exception("Error closing Deepgram connection")
-
-    async def _connect_deepgram(self):
-        if self.dg_connection is not None:
-            logger.debug("Connection already set up, skipping initialization")
-            return None
-        try:
-            logger.info("Creating a Deepgram connection with options %s", self.options)
-            self.dg_connection = await self._stack.enter_async_context(
-                self.deepgram.listen.v1.connect(**self.options)
-            )
-        except Exception as e:
-            # Log the error and set connection to None
-            logger.exception("Error setting up Deepgram connection")
-            self.dg_connection = None
-            # Emit error immediately
-            self._emit_error_event(e, "Deepgram connection setup")
-            raise
-        finally:
-            self._connected_once.set()
 
     async def _on_message(
         self,

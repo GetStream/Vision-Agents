@@ -387,6 +387,29 @@ async def test_deepgram_keep_alive_after_audio():
 @patch(
     "vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient
 )
+async def test_deepgram_start_idempotent():
+    """Test that the start() method is idempotent."""
+    # Create a Deepgram STT instance
+    stt = deepgram.STT(api_key="test-api-key")
+
+    # Set up the connection with the mocked client
+    asyncio.create_task(stt.start())
+    await stt.started()
+    # Store the connection object
+    conn1 = stt.dg_connection
+    assert conn1
+
+    # Try to connect for the second time
+    asyncio.create_task(stt.start())
+    await stt.started()
+    # Ensure that the connection object remains intact
+    assert conn1 is stt.dg_connection
+
+
+@pytest.mark.asyncio
+@patch(
+    "vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient
+)
 async def test_deepgram_close_message():
     """Test that the finish message is sent when the connection is closed."""
     # Create a Deepgram STT instance
