@@ -96,14 +96,14 @@ class MockDeepgramV5Connection:
         """
         if EventType.MESSAGE in self.event_handlers:
             # Create a mock result
-            await self.event_handlers[EventType.MESSAGE](self, message)
+            await self.event_handlers[EventType.MESSAGE](message)
 
     async def emit_error(self, error_message):
         """Helper to emit an error event"""
 
         if EventType.ERROR in self.event_handlers:
             error_obj = Exception(error_message)
-            await self.event_handlers[EventType.ERROR](self, error_obj)
+            await self.event_handlers[EventType.ERROR](error_obj)
 
     async def __aenter__(self):
         return self
@@ -415,6 +415,270 @@ async def test_deepgram_close_message():
         "The connection close package was not sent on close"
     )
     assert close_message.type == "CloseStream"
+
+@pytest.mark.asyncio
+@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+async def test_real_time_transcript_emission():
+    """
+    Test that transcripts are emitted in real-time without needing a second audio chunk.
+
+    This test verifies that:
+    1. A transcript can be emitted immediately after receiving it from the server
+    2. Events are properly emitted to listeners through the hybrid approach
+    3. Both collection and immediate emission work correctly
+    """
+    # Create the Deepgram STT instance
+    stt = deepgram.STT(api_key="test-api-key")
+
+    # Set up the connection with the mocked client
+    asyncio.create_task(stt.start())
+    await stt.started()
+
+    # Collection for events
+    transcript_events = []
+    partial_transcript_events = []
+    error_events = []
+
+    # Register event handlers
+    @stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
+        transcript_events.append((event.text, event.user_metadata, {"is_final": True}))
+
+    @stt.events.subscribe
+    async def on_partial_transcript(event: STTPartialTranscriptEvent):
+        partial_transcript_events.append(
+            (event.text, event.user_metadata, {"is_final": False})
+        )
+
+    @stt.events.subscribe
+    async def on_error(event: STTErrorEvent):
+        error_events.append(event.error)
+
+    # Allow event subscriptions to be processed
+    await asyncio.sleep(0.01)
+
+    # Send some audio data to ensure the connection is active
+    pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
+    await stt.process_audio(pcm_data)
+
+    # Immediately trigger a transcript from the server
+    await stt.dg_connection.emit_result("hello world", is_final=True)
+
+    # With the new hybrid approach, events should be emitted immediately
+    # Wait a very small amount to allow synchronous execution to complete
+    await asyncio.sleep(0.01)
+
+    # Check that we received the transcript event
+    assert len(transcript_events) == 1, "Expected 1 transcript event"
+    assert transcript_events[0][0] == "hello world", "Incorrect transcript text"
+    assert transcript_events[0][2]["is_final"], "Transcript should be marked as final"
+
+    # No errors should have occurred
+    assert len(error_events) == 0, f"Unexpected errors: {error_events}"
+
+    # Cleanup
+    await stt.close()
+
+
+@pytest.mark.asyncio
+@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+async def test_real_time_partial_transcript_emission():
+    """
+    Test that partial transcripts are emitted in real-time.
+    """
+    # Create the Deepgram STT instance
+    stt = deepgram.STT(api_key="test-api-key")
+
+    # Set up the connection with the mocked client
+    asyncio.create_task(stt.start())
+    await stt.started()
+
+    # Collection for events
+    transcript_events = []
+    partial_transcript_events = []
+
+    # Register event handlers
+    @stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
+        transcript_events.append((event.text, event.user_metadata, {"is_final": True}))
+
+    @stt.events.subscribe
+    async def on_partial_transcript(event: STTPartialTranscriptEvent):
+        partial_transcript_events.append(
+            (event.text, event.user_metadata, {"is_final": False})
+        )
+
+    # Allow event subscriptions to be processed
+    await asyncio.sleep(0.01)
+
+    # Send some audio data to ensure the connection is active
+    pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
+    await stt.process_audio(pcm_data)
+
+    # Emit a partial transcript
+    await stt.dg_connection.emit_result("typing in prog", is_final=False)
+
+    # With immediate emission, we don't need to wait long
+    await asyncio.sleep(0.01)
+
+    # Emit another partial transcript
+    await stt.dg_connection.emit_result("typing in progress", is_final=False)
+
+    # Wait again
+    await asyncio.sleep(0.01)
+
+    # Emit the final transcript
+    await stt.dg_connection.emit_result("typing in progress complete", is_final=True)
+
+    # Wait a small amount of time for processing
+    await asyncio.sleep(0.01)
+
+    # Check that we received the partial transcript events
+    assert len(partial_transcript_events) == 2, "Expected 2 partial transcript events"
+    assert partial_transcript_events[0][0] == "typing in prog", (
+        "Incorrect partial transcript text"
+    )
+    assert partial_transcript_events[1][0] == "typing in progress", (
+        "Incorrect partial transcript text"
+    )
+
+    # Check that we received the final transcript event
+    assert len(transcript_events) == 1, "Expected 1 final transcript event"
+    assert transcript_events[0][0] == "typing in progress complete", (
+        "Incorrect final transcript text"
+    )
+
+    # Cleanup
+    await stt.close()
+
+
+@pytest.mark.asyncio
+@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+async def test_real_time_error_emission():
+    """
+    Test that errors are emitted in real-time.
+    """
+    # Create the Deepgram STT instance
+    stt = deepgram.STT(api_key="test-api-key")
+
+    # Set up the connection with the mocked client
+    asyncio.create_task(stt.start())
+    await stt.started()
+
+    # Collection for events
+    error_events = []
+
+    # Register event handler
+    @stt.events.subscribe
+    async def on_error(event: STTErrorEvent):
+        error_events.append(event)
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
+
+    # Send some audio data to ensure the connection is active
+    pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
+    await stt.process_audio(pcm_data)
+
+    # Trigger an error by emitting it directly from the mock connection
+    await stt.dg_connection.emit_error("Test error message")
+
+    # With immediate emission, error should be available quickly
+    await asyncio.sleep(0.01)
+
+    # Check that we received the error event
+    assert len(error_events) == 1, "Expected 1 error event"
+    assert "Test error message" in str(error_events[0]), "Incorrect error message"
+
+    # Cleanup
+    await stt.close()
+
+
+@pytest.mark.asyncio
+@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+async def test_close_cleanup():
+    """
+    Test that the STT service is properly closed and cleaned up.
+    """
+    # Create the Deepgram STT instance
+    stt = deepgram.STT(api_key="test-api-key")
+
+    # Verify the service is running
+    assert not stt._is_closed, "Service should be running after initialization"
+
+    # Close the STT service
+    await stt.close()
+
+    # Verify the service has been stopped
+    assert stt._is_closed, "Service should be closed"
+
+    # Try to emit a transcript after closing (should not crash)
+    transcript_events = []
+
+    @stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
+        transcript_events.append((event.text, event.user_metadata, {"is_final": True}))
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
+
+    # Process audio after close should be ignored
+    pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
+    result = await stt._process_audio_impl(pcm_data)
+
+    # Should return None since service is closed
+    assert result is None, "Should return None when closed"
+
+    # No events should have been received
+    assert len(transcript_events) == 0, "Should not receive events after close"
+
+
+@pytest.mark.asyncio
+@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+async def test_asynchronous_mode_behavior():
+    """
+    Test that Deepgram operates in asynchronous mode:
+    1. Events are emitted immediately when they arrive
+    2. _process_audio_impl always returns None (no result collection)
+    """
+    # Create the Deepgram STT instance
+    stt = deepgram.STT(api_key="test-api-key")
+
+    # Set up the connection with the mocked client
+    asyncio.create_task(stt.start())
+    await stt.started()
+
+    # Collection for events
+    transcript_events = []
+
+    # Register event handler
+    @stt.events.subscribe
+    async def on_transcript(event: STTTranscriptEvent):
+        transcript_events.append((event.text, event.user_metadata, {"is_final": True}))
+
+    # Allow event subscription to be processed
+    await asyncio.sleep(0.01)
+
+    # Send some audio data
+    pcm_data = PcmData(samples=b"\x00\x00" * 800, sample_rate=48000, format="s16")
+    await stt.process_audio(pcm_data)
+
+    # Trigger a transcript
+    await stt.dg_connection.emit_result("test message", is_final=True)
+
+    # Event should be emitted immediately
+    await asyncio.sleep(0.01)
+    assert len(transcript_events) == 1, "Event should be emitted immediately"
+
+    # _process_audio_impl should always return None in asynchronous mode
+    results = await stt._process_audio_impl(pcm_data, {"user_id": "test"})
+
+    # Should always return None for asynchronous mode
+    assert results is None, "Asynchronous mode should always return None"
+
+    # Cleanup
+    await stt.close()
+
 
 
 @pytest.mark.integration
