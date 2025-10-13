@@ -105,7 +105,7 @@ def moderate(client: Stream, text: str, user_name: str) -> CheckResponse:
 async def main():
     # Load environment variables
     load_dotenv()
-    
+
     # Initialize Stream client from ENV
     client = Stream.from_env()
 
@@ -147,7 +147,7 @@ async def main():
         if event.user_metadata:
             user = event.user_metadata
             user_info = user.name if user.name else str(user)
-        
+
         print(f"[{timestamp}] {user_info}: {event.text}")
         if event.confidence:
             print(f"    └─ confidence: {event.confidence:.2%}")
@@ -155,9 +155,7 @@ async def main():
             print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
 
         # Moderation check (executed in a background thread to avoid blocking)
-        moderation = await asyncio.to_thread(
-            moderate, client, event.text, user_info
-        )
+        moderation = await asyncio.to_thread(moderate, client, event.text, user_info)
         print(
             f"    └─ moderation recommended action: {moderation.recommended_action} for transcript: {event.text}"
         )
@@ -184,6 +182,7 @@ async def main():
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         client.delete_users([user_id])
@@ -219,7 +218,7 @@ if __name__ == "__main__":
     print("=" * 55)
 
     args = parse_args()
-    
+
     if args.setup:
         client = Stream.from_env()
         setup_moderation_config(client)

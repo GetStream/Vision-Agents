@@ -58,7 +58,7 @@ class TestClaudeLLM:
     @pytest.mark.integration
     async def test_stream(self, llm: ClaudeLLM):
         streamingWorks = False
-        
+
         @llm.events.subscribe
         async def passed(event: LLMResponseChunkEvent):
             nonlocal streamingWorks
@@ -69,7 +69,6 @@ class TestClaudeLLM:
         await llm.events.wait()
 
         assert streamingWorks
-
 
     @pytest.mark.integration
     async def test_memory(self, llm: ClaudeLLM):

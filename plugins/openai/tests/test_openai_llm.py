@@ -48,31 +48,27 @@ class TestOpenAILLM:
 
     @pytest.mark.integration
     async def test_native_api(self, llm: OpenAILLM):
-
-
         response = await llm.create_response(
             input="say hi", instructions="You are a helpful assistant."
         )
 
         # Assertions
         assert response.text
-        assert hasattr(response.original, 'id')  # OpenAI response has id
-
+        assert hasattr(response.original, "id")  # OpenAI response has id
 
     @pytest.mark.integration
     async def test_streaming(self, llm: OpenAILLM):
-
         streamingWorks = False
-        
+
         @llm.events.subscribe
         async def passed(event: LLMResponseChunkEvent):
             nonlocal streamingWorks
             streamingWorks = True
-        
+
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
-        
+
         await llm.events.wait()
 
         assert response.text

@@ -8,7 +8,7 @@ from typing import Optional
 class VADSpeechStartEvent(PluginBaseEvent):
     """Event emitted when speech begins."""
 
-    type: str = field(default='plugin.vad_speech_start', init=False)
+    type: str = field(default="plugin.vad_speech_start", init=False)
     speech_probability: float = 0.0
     activation_threshold: float = 0.0
     frame_count: int = 1
@@ -19,7 +19,7 @@ class VADSpeechStartEvent(PluginBaseEvent):
 class VADSpeechEndEvent(PluginBaseEvent):
     """Event emitted when speech ends."""
 
-    type: str = field(default='plugin.vad_speech_end', init=False)
+    type: str = field(default="plugin.vad_speech_end", init=False)
     speech_probability: float = 0.0
     deactivation_threshold: float = 0.0
     total_speech_duration_ms: float = 0.0
@@ -30,7 +30,7 @@ class VADSpeechEndEvent(PluginBaseEvent):
 class VADAudioEvent(PluginBaseEvent):
     """Event emitted when VAD detects complete speech segment."""
 
-    type: str = field(default='plugin.vad_audio', init=False)
+    type: str = field(default="plugin.vad_audio", init=False)
     audio_data: Optional[bytes] = None  # PCM audio data
     sample_rate: int = 16000
     audio_format: AudioFormat = AudioFormat.PCM_S16
@@ -44,7 +44,7 @@ class VADAudioEvent(PluginBaseEvent):
 class VADPartialEvent(PluginBaseEvent):
     """Event emitted during ongoing speech detection."""
 
-    type: str = field(default='plugin.vad_partial', init=False)
+    type: str = field(default="plugin.vad_partial", init=False)
     audio_data: Optional[bytes] = None  # PCM audio data
     sample_rate: int = 16000
     audio_format: AudioFormat = AudioFormat.PCM_S16
@@ -59,7 +59,7 @@ class VADPartialEvent(PluginBaseEvent):
 class VADInferenceEvent(PluginBaseEvent):
     """Event emitted after each VAD inference window."""
 
-    type: str = field(default='plugin.vad_inference', init=False)
+    type: str = field(default="plugin.vad_inference", init=False)
     speech_probability: float = 0.0
     inference_time_ms: float = 0.0
     window_samples: int = 0
@@ -74,7 +74,7 @@ class VADInferenceEvent(PluginBaseEvent):
 class VADErrorEvent(PluginBaseEvent):
     """Event emitted when a VAD error occurs."""
 
-    type: str = field(default='plugin.vad_error', init=False)
+    type: str = field(default="plugin.vad_error", init=False)
     error: Optional[Exception] = None
     error_code: Optional[str] = None
     context: Optional[str] = None

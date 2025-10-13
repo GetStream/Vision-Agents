@@ -54,7 +54,7 @@ class STT(abc.ABC):
         Args:
             sample_rate: The sample rate of the audio to process, in Hz.
             provider_name: Name of the STT provider (e.g., "deepgram", "moonshine")
-       """
+        """
 
         self._track = None
         self.sample_rate = sample_rate
@@ -64,13 +64,15 @@ class STT(abc.ABC):
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
-        self.events.send(PluginInitializedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            plugin_type="STT",
-            provider=self.provider_name,
-            configuration={"sample_rate": sample_rate},
-        ))
+        self.events.send(
+            PluginInitializedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                plugin_type="STT",
+                provider=self.provider_name,
+                configuration={"sample_rate": sample_rate},
+            )
+        )
 
     def _validate_pcm_data(self, pcm_data: PcmData) -> bool:
         """
@@ -112,18 +114,20 @@ class STT(abc.ABC):
             user_metadata: User-specific metadata.
             metadata: Transcription metadata (processing time, confidence, etc.).
         """
-        self.events.send(events.STTTranscriptEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            text=text,
-            user_metadata=user_metadata,
-            confidence=metadata.get("confidence"),
-            language=metadata.get("language"),
-            processing_time_ms=metadata.get("processing_time_ms"),
-            audio_duration_ms=metadata.get("audio_duration_ms"),
-            model_name=metadata.get("model_name"),
-            words=metadata.get("words"),
-        ))
+        self.events.send(
+            events.STTTranscriptEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                text=text,
+                user_metadata=user_metadata,
+                confidence=metadata.get("confidence"),
+                language=metadata.get("language"),
+                processing_time_ms=metadata.get("processing_time_ms"),
+                audio_duration_ms=metadata.get("audio_duration_ms"),
+                model_name=metadata.get("model_name"),
+                words=metadata.get("words"),
+            )
+        )
 
     def _emit_partial_transcript_event(
         self,
@@ -139,18 +143,20 @@ class STT(abc.ABC):
             user_metadata: User-specific metadata.
             metadata: Transcription metadata (processing time, confidence, etc.).
         """
-        self.events.send(events.STTPartialTranscriptEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            text=text,
-            user_metadata=user_metadata,
-            confidence=metadata.get("confidence"),
-            language=metadata.get("language"),
-            processing_time_ms=metadata.get("processing_time_ms"),
-            audio_duration_ms=metadata.get("audio_duration_ms"),
-            model_name=metadata.get("model_name"),
-            words=metadata.get("words"),
-        ))
+        self.events.send(
+            events.STTPartialTranscriptEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                text=text,
+                user_metadata=user_metadata,
+                confidence=metadata.get("confidence"),
+                language=metadata.get("language"),
+                processing_time_ms=metadata.get("processing_time_ms"),
+                audio_duration_ms=metadata.get("audio_duration_ms"),
+                model_name=metadata.get("model_name"),
+                words=metadata.get("words"),
+            )
+        )
 
     def _emit_error_event(
         self,
@@ -166,15 +172,17 @@ class STT(abc.ABC):
             context: Additional context about where the error occurred.
             user_metadata: User-specific metadata.
         """
-        self.events.send(events.STTErrorEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            error=error,
-            context=context,
-            user_metadata=user_metadata,
-            error_code=getattr(error, "error_code", None),
-            is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt)),
-        ))
+        self.events.send(
+            events.STTErrorEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                error=error,
+                context=context,
+                user_metadata=user_metadata,
+                error_code=getattr(error, "error_code", None),
+                is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt)),
+            )
+        )
 
     async def process_audio(
         self, pcm_data: PcmData, participant: Optional[Participant] = None
@@ -240,7 +248,9 @@ class STT(abc.ABC):
 
     @abc.abstractmethod
     async def _process_audio_impl(
-        self, pcm_data: PcmData, user_metadata: Optional[Union[Dict[str, Any], Participant]] = None
+        self,
+        pcm_data: PcmData,
+        user_metadata: Optional[Union[Dict[str, Any], Participant]] = None,
     ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
         """
         Implementation-specific method to process audio data.
@@ -280,10 +290,12 @@ class STT(abc.ABC):
             self._is_closed = True
 
             # Emit closure event
-            self.events.send(PluginClosedEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                plugin_type="STT",
-                provider=self.provider_name,
-                cleanup_successful=True,
-            ))
+            self.events.send(
+                PluginClosedEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    plugin_type="STT",
+                    provider=self.provider_name,
+                    cleanup_successful=True,
+                )
+            )

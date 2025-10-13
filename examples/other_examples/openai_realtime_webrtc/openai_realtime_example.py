@@ -26,7 +26,7 @@ load_dotenv()
 async def start_agent() -> None:
     # Set the call ID here to be used in the logging
     call_id = str(uuid4())
-    
+
     # create a stream client and a user object
     client = AsyncStream()
     agent_user = await client.create_user(name="My happy AI friend")
@@ -35,7 +35,8 @@ async def start_agent() -> None:
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=agent_user,  # the user object for the agent (name, image etc)
-        instructions=("""
+        instructions=(
+            """
 You are a voice assistant.
 - Greet the user once when asked, then wait for the next user input.
 - Speak English only.
@@ -45,8 +46,8 @@ You are a voice assistant.
 - Only respond to clear audio or text.
 - If the user's audio is not clear (e.g., ambiguous input/background noise/silent/unintelligible) or you didn't fully understand, ask for clarification.
 """
-            ),
-            # Enable video input and set a conservative default frame rate for realtime responsiveness
+        ),
+        # Enable video input and set a conservative default frame rate for realtime responsiveness
         llm=openai.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
@@ -63,7 +64,7 @@ You are a voice assistant.
         logger.info("Joining call")
         await agent.edge.open_demo(call)
         logger.info("LLM ready")
-        #await agent.llm.request_session_info()
+        # await agent.llm.request_session_info()
         logger.info("Requested session info")
         # Wait for a human to join the call before greeting
         logger.info("Waiting for human to join the call")

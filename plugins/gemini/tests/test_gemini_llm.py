@@ -10,9 +10,7 @@ from vision_agents.core.llm.events import LLMResponseChunkEvent
 load_dotenv()
 
 
-
 class TestGeminiLLM:
-
     def test_message(self):
         messages = GeminiLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
@@ -47,14 +45,14 @@ class TestGeminiLLM:
     @pytest.mark.integration
     async def test_stream(self, llm: GeminiLLM):
         streamingWorks = False
-        
+
         @llm.events.subscribe
         async def passed(event: LLMResponseChunkEvent):
             nonlocal streamingWorks
             streamingWorks = True
-        
+
         await llm.simple_response("Explain magma to a 5 year old")
-        
+
         # Wait for all events in queue to be processed
         await llm.events.wait()
 
@@ -63,7 +61,9 @@ class TestGeminiLLM:
     @pytest.mark.integration
     async def test_memory(self, llm: GeminiLLM):
         await llm.simple_response(text="There are 2 dogs in the room")
-        response = await llm.simple_response(text="How many paws are there in the room?")
+        response = await llm.simple_response(
+            text="How many paws are there in the room?"
+        )
 
         assert "8" in response.text or "eight" in response.text
 

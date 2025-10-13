@@ -17,6 +17,7 @@ class StreamConversation(InMemoryConversation):
     """
     Persists the message history to a stream channel & messages
     """
+
     messages: List[Message]
 
     # maps internal ids to stream message ids
@@ -25,7 +26,13 @@ class StreamConversation(InMemoryConversation):
     channel: ChannelResponse
     chat_client: ChatClient
 
-    def __init__(self, instructions: str, messages: List[Message], channel: ChannelResponse, chat_client: ChatClient):
+    def __init__(
+        self,
+        instructions: str,
+        messages: List[Message],
+        channel: ChannelResponse,
+        chat_client: ChatClient,
+    ):
         super().__init__(instructions, messages)
         self.messages = messages
         self.channel = channel
@@ -35,7 +42,9 @@ class StreamConversation(InMemoryConversation):
         # Initialize the worker thread for API calls
         self._api_queue: queue.Queue = queue.Queue()
         self._shutdown = False
-        self._worker_thread = threading.Thread(target=self._api_worker, daemon=True, name="StreamConversation-APIWorker")
+        self._worker_thread = threading.Thread(
+            target=self._api_worker, daemon=True, name="StreamConversation-APIWorker"
+        )
         self._worker_thread.start()
         self._pending_operations = 0
         self._operations_lock = threading.Lock()
@@ -57,30 +66,34 @@ class StreamConversation(InMemoryConversation):
                         response = self.chat_client.send_message(
                             operation["channel_type"],
                             operation["channel_id"],
-                            operation["request"]
+                            operation["request"],
                         )
                         # Store the mapping
-                        self.internal_ids_to_stream_ids[operation["internal_id"]] = response.data.message.id
+                        self.internal_ids_to_stream_ids[operation["internal_id"]] = (
+                            response.data.message.id
+                        )
                         operation["stream_id"] = response.data.message.id
 
                     elif op_type == "update_message_partial":
                         self.chat_client.update_message_partial(
                             operation["stream_id"],
                             user_id=operation["user_id"],
-                            set=operation["set_data"]
+                            set=operation["set_data"],
                         )
 
                     elif op_type == "ephemeral_message_update":
                         self.chat_client.ephemeral_message_update(
                             operation["stream_id"],
                             user_id=operation["user_id"],
-                            set=operation["set_data"]
+                            set=operation["set_data"],
                         )
 
                     logger.debug(f"Successfully processed API operation: {op_type}")
 
                 except Exception as e:
-                    logger.error(f"Error processing API operation {operation.get('type', 'unknown')}: {e}")
+                    logger.error(
+                        f"Error processing API operation {operation.get('type', 'unknown')}: {e}"
+                    )
                     # Continue processing other operations even if one fails
 
                 finally:
@@ -165,13 +178,20 @@ class StreamConversation(InMemoryConversation):
             max_wait = 5.0
             start_time = time.time()
             while time.time() - start_time < max_wait:
-                stream_id = self.internal_ids_to_stream_ids.get(message.id if message.id else "")
+                stream_id = self.internal_ids_to_stream_ids.get(
+                    message.id if message.id else ""
+                )
                 if stream_id:
                     update_op = {
-                        "type": "update_message_partial" if completed else "ephemeral_message_update",
+                        "type": "update_message_partial"
+                        if completed
+                        else "ephemeral_message_update",
                         "stream_id": stream_id,
                         "user_id": message.user_id,
-                        "set_data": {"text": message.content, "generating": not completed},
+                        "set_data": {
+                            "text": message.content,
+                            "generating": not completed,
+                        },
                     }
                     with self._operations_lock:
                         self._pending_operations += 1
@@ -183,7 +203,14 @@ class StreamConversation(InMemoryConversation):
         # Queue the update in a separate thread to avoid blocking
         threading.Thread(target=queue_update_operation, daemon=True).start()
 
-    def update_message(self, message_id: str, input_text: str, user_id: str, replace_content: bool, completed: bool):
+    def update_message(
+        self,
+        message_id: str,
+        input_text: str,
+        user_id: str,
+        replace_content: bool,
+        completed: bool,
+    ):
         """Update a message in the Stream conversation.
 
         This method updates both the local message content and queues the Stream API sync.
@@ -201,7 +228,9 @@ class StreamConversation(InMemoryConversation):
             None (operations are processed asynchronously)
         """
         # First, update the local message using the superclass logic
-        super().update_message(message_id, input_text, user_id, replace_content, completed)
+        super().update_message(
+            message_id, input_text, user_id, replace_content, completed
+        )
 
         # Get the updated message for Stream API sync
         message = self.lookup(message_id)
@@ -212,12 +241,16 @@ class StreamConversation(InMemoryConversation):
 
         stream_id = self.internal_ids_to_stream_ids.get(message_id)
         if stream_id is None:
-            logger.warning(f"stream_id for message {message_id} not found, skipping Stream API update")
+            logger.warning(
+                f"stream_id for message {message_id} not found, skipping Stream API update"
+            )
             return None
 
         # Queue the update operation
         update_op = {
-            "type": "update_message_partial" if completed else "ephemeral_message_update",
+            "type": "update_message_partial"
+            if completed
+            else "ephemeral_message_update",
             "stream_id": stream_id,
             "user_id": message.user_id,
             "set_data": {"text": message.content, "generating": not completed},

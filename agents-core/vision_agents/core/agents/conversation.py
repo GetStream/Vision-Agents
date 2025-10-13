@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class Message:
     """A single utterance or assistant message within a conversation.
@@ -21,6 +22,7 @@ class Message:
         user_id: Logical user identifier associated with the message.
         id: Unique message identifier (auto-generated if not provided).
     """
+
     content: str
     original: Optional[Any] = None  # the original openai, claude or gemini message
     timestamp: Optional[datetime.datetime] = None
@@ -36,23 +38,24 @@ class Message:
 @dataclass
 class StreamHandle:
     """Handle for managing a streaming message.
-    
+
     This lightweight object is returned when starting a streaming message
     and must be passed to subsequent update operations. It encapsulates
     the message ID and user ID, preventing accidental cross-contamination
     between concurrent streams.
-    
+
     Example:
         # Start a streaming message
         handle = conversation.start_streaming_message(role="assistant")
-        
+
         # Update the message using the handle
         conversation.append_to_message(handle, "Hello")
         conversation.append_to_message(handle, " world!")
-        
+
         # Complete the message
         conversation.complete_message(handle)
     """
+
     message_id: str
     user_id: str
 
@@ -75,50 +78,61 @@ class Conversation(ABC):
     @abstractmethod
     def add_message(self, message: Message, completed: bool = True):
         """Add a message to the conversation.
-        
+
         Args:
             message: The Message object to add
-            completed: If True, mark the message as completed (not generating). 
+            completed: If True, mark the message as completed (not generating).
                       If False, mark as still generating. Defaults to True.
-        
+
         Returns:
             The result of the add operation (implementation-specific)
         """
         ...
-    
+
     @abstractmethod
-    def update_message(self, message_id: str, input_text: str, user_id: str, replace_content: bool, completed: bool):
+    def update_message(
+        self,
+        message_id: str,
+        input_text: str,
+        user_id: str,
+        replace_content: bool,
+        completed: bool,
+    ):
         """Update an existing message or create a new one if not found.
-        
+
         Args:
             message_id: The ID of the message to update
             input_text: The text content to set or append
             user_id: The ID of the user who owns the message
             replace_content: If True, replace the entire message content. If False, append to existing content.
             completed: If True, mark the message as completed (not generating). If False, mark as still generating.
-        
+
         Returns:
             The result of the update operation (implementation-specific)
         """
         ...
-    
+
     # Streaming message convenience methods
-    def start_streaming_message(self, role: str = "assistant", user_id: Optional[str] = None, 
-                               initial_content: str = "") -> StreamHandle:
+    def start_streaming_message(
+        self,
+        role: str = "assistant",
+        user_id: Optional[str] = None,
+        initial_content: str = "",
+    ) -> StreamHandle:
         """Start a new streaming message and return a handle for subsequent operations.
-        
+
         This method simplifies the management of streaming messages by returning a handle
         that encapsulates the message ID and user ID. Use the handle with append_to_message,
         replace_message, and complete_message methods.
-        
+
         Args:
             role: The role of the message sender (default: "assistant")
             user_id: The ID of the user (default: same as role)
             initial_content: Initial content for the message (default: empty string)
-            
+
         Returns:
             StreamHandle: A handle to use for subsequent operations on this message
-            
+
         Example:
             # Simple usage
             handle = conversation.start_streaming_message()
@@ -126,15 +140,15 @@ class Conversation(ABC):
             conversation.replace_message(handle, "Here's the answer: ")
             conversation.append_to_message(handle, "42")
             conversation.complete_message(handle)
-            
+
             # Multiple concurrent streams
             user_handle = conversation.start_streaming_message(role="user", user_id="user123")
             assistant_handle = conversation.start_streaming_message(role="assistant")
-            
+
             # Update both independently
             conversation.append_to_message(user_handle, "Hello")
             conversation.append_to_message(assistant_handle, "Hi there!")
-            
+
             # Complete in any order
             conversation.complete_message(user_handle)
             conversation.complete_message(assistant_handle)
@@ -144,7 +158,7 @@ class Conversation(ABC):
             content=initial_content,
             role=role,
             user_id=user_id or role,
-            id=None  # Will be assigned during add
+            id=None,  # Will be assigned during add
         )
         self.add_message(message, completed=False)
         # The message now has an ID assigned by the add_message flow
@@ -154,10 +168,10 @@ class Conversation(ABC):
         assert added_message.id is not None, "Message ID should be set by add_message"
         assert added_message.user_id is not None, "User ID should be set by add_message"
         return StreamHandle(message_id=added_message.id, user_id=added_message.user_id)
-    
+
     def append_to_message(self, handle: StreamHandle, text: str):
         """Append text to a streaming message identified by the handle.
-        
+
         Args:
             handle: The StreamHandle returned by start_streaming_message
             text: Text to append to the message
@@ -167,12 +181,12 @@ class Conversation(ABC):
             input_text=text,
             user_id=handle.user_id,
             replace_content=False,
-            completed=False
+            completed=False,
         )
-    
+
     def replace_message(self, handle: StreamHandle, text: str):
         """Replace the content of a streaming message identified by the handle.
-        
+
         Args:
             handle: The StreamHandle returned by start_streaming_message
             text: Text to replace the message content with
@@ -182,18 +196,20 @@ class Conversation(ABC):
             input_text=text,
             user_id=handle.user_id,
             replace_content=True,
-            completed=False
+            completed=False,
         )
-    
+
     def complete_message(self, handle: StreamHandle):
         """Mark a streaming message as completed.
-        
+
         Args:
             handle: The StreamHandle returned by start_streaming_message
         """
         # We need to find the message to get its current content
         # so we can set completed without changing the content
-        message = next((msg for msg in self.messages if msg.id == handle.message_id), None)
+        message = next(
+            (msg for msg in self.messages if msg.id == handle.message_id), None
+        )
         if message:
             # Use replace mode with the current content to avoid space issues
             self.update_message(
@@ -201,7 +217,7 @@ class Conversation(ABC):
                 input_text=message.content,
                 user_id=handle.user_id,
                 replace_content=True,
-                completed=True
+                completed=True,
             )
 
 
@@ -240,7 +256,14 @@ class InMemoryConversation(Conversation):
         # In-memory conversation doesn't need to handle completed flag
         return None
 
-    def update_message(self, message_id: str, input_text: str, user_id: str, replace_content: bool, completed: bool):
+    def update_message(
+        self,
+        message_id: str,
+        input_text: str,
+        user_id: str,
+        replace_content: bool,
+        completed: bool,
+    ):
         """Update or create a message in-memory.
 
         If the message is not found, a new one is created with the given id.
@@ -254,10 +277,15 @@ class InMemoryConversation(Conversation):
         """
         # Find the message by id
         message = self.lookup(message_id)
-        
+
         if message is None:
             logger.info(f"message {message_id} not found, create one instead")
-            return self.add_message(Message(user_id=user_id, id=message_id, content=input_text, original=None), completed=completed)
+            return self.add_message(
+                Message(
+                    user_id=user_id, id=message_id, content=input_text, original=None
+                ),
+                completed=completed,
+            )
 
         if replace_content:
             message.content = input_text
@@ -266,4 +294,3 @@ class InMemoryConversation(Conversation):
 
         # In-memory conversation just updates the message, no external API call
         return None
-

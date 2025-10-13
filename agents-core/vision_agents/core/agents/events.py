@@ -6,7 +6,8 @@ from typing import Optional, Any, Dict
 @dataclass
 class AgentSayEvent(PluginBaseEvent):
     """Event emitted when the agent wants to say something."""
-    type: str = field(default='agent.say', init=False)
+
+    type: str = field(default="agent.say", init=False)
     text: str = ""
     user_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -19,7 +20,8 @@ class AgentSayEvent(PluginBaseEvent):
 @dataclass
 class AgentSayStartedEvent(PluginBaseEvent):
     """Event emitted when agent speech synthesis starts."""
-    type: str = field(default='agent.say_started', init=False)
+
+    type: str = field(default="agent.say_started", init=False)
     text: str = ""
     user_id: Optional[str] = None
     synthesis_id: Optional[str] = None
@@ -28,7 +30,8 @@ class AgentSayStartedEvent(PluginBaseEvent):
 @dataclass
 class AgentSayCompletedEvent(PluginBaseEvent):
     """Event emitted when agent speech synthesis completes."""
-    type: str = field(default='agent.say_completed', init=False)
+
+    type: str = field(default="agent.say_completed", init=False)
     text: str = ""
     user_id: Optional[str] = None
     synthesis_id: Optional[str] = None
@@ -38,7 +41,8 @@ class AgentSayCompletedEvent(PluginBaseEvent):
 @dataclass
 class AgentSayErrorEvent(PluginBaseEvent):
     """Event emitted when agent speech synthesis encounters an error."""
-    type: str = field(default='agent.say_error', init=False)
+
+    type: str = field(default="agent.say_error", init=False)
     text: str = ""
     user_id: Optional[str] = None
     error: Optional[Exception] = None

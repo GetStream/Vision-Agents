@@ -6,4 +6,3 @@ from .stream_edge_transport import StreamEdge as Edge
 from getstream import Stream as Client
 
 __all__ = ["Conversation", "Edge", "Client"]
-

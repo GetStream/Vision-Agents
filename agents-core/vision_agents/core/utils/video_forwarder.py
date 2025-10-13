@@ -10,6 +10,7 @@ from vision_agents.core.utils.queue import LatestNQueue
 
 logger = logging.getLogger(__name__)
 
+
 class VideoForwarder:
     """
     Pulls frames from `input_track` into a latest-N buffer.
@@ -18,7 +19,15 @@ class VideoForwarder:
       - run `start_event_consumer(on_frame)` (push model via callback).
     `fps` limits how often frames are forwarded to consumers (coalescing to newest).
     """
-    def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = 30, name: str = "video-forwarder"):
+
+    def __init__(
+        self,
+        input_track: VideoStreamTrack,
+        *,
+        max_buffer: int = 10,
+        fps: Optional[float] = 30,
+        name: str = "video-forwarder",
+    ):
         self.input_track = input_track
         self.queue: LatestNQueue[Frame] = LatestNQueue(maxlen=max_buffer)
         self.fps = fps  # None = unlimited, else forward at ~fps
@@ -62,7 +71,9 @@ class VideoForwarder:
         self._tasks.discard(task)
         exc = task.exception()
         if exc:
-            logger.error("%s: Task failed with exception: %s", self.name, exc, exc_info=exc)
+            logger.error(
+                "%s: Task failed with exception: %s", self.name, exc, exc_info=exc
+            )
 
         if task.cancelled():
             return
@@ -71,12 +82,14 @@ class VideoForwarder:
     async def _producer(self):
         try:
             while not self._stopped.is_set():
-                frame : Frame = await self.input_track.recv()
+                frame: Frame = await self.input_track.recv()
                 await self.queue.put_latest(frame)
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error("%s: Producer failed with exception: %s", self.name, e, exc_info=True)
+            logger.error(
+                "%s: Producer failed with exception: %s", self.name, e, exc_info=True
+            )
             raise
 
     # ---------- consumer API (pull one frame; coalesce backlog to newest) ----------
@@ -112,7 +125,7 @@ class VideoForwarder:
         """
         Starts a task that calls `on_frame(latest_frame)` at ~fps.
         If fps is None, it forwards as fast as frames arrive (still coalescing).
-        
+
         Args:
             on_frame: Callback function to receive frames
             fps: Frame rate for this consumer (overrides default). None = unlimited.
@@ -122,10 +135,12 @@ class VideoForwarder:
         # Use consumer-specific fps if provided, otherwise fall back to forwarder's default fps
         consumer_fps = fps if fps is not None else self.fps
         consumer_label = consumer_name or "consumer"
-        
+
         async def _consumer():
             loop = asyncio.get_running_loop()
-            min_interval = (1.0 / consumer_fps) if (consumer_fps and consumer_fps > 0) else 0.0
+            min_interval = (
+                (1.0 / consumer_fps) if (consumer_fps and consumer_fps > 0) else 0.0
+            )
             last_ts = 0.0
             is_coro = asyncio.iscoroutinefunction(on_frame)
             frames_forwarded = 0

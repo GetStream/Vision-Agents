@@ -6,5 +6,6 @@ from typing import Optional, Any
 @dataclass
 class XAIChunkEvent(PluginBaseEvent):
     """Event emitted when xAI provides a chunk."""
-    type: str = field(default='plugin.xai.chunk', init=False)
+
+    type: str = field(default="plugin.xai.chunk", init=False)
     chunk: Optional[Any] = None

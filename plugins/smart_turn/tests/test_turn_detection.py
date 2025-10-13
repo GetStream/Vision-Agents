@@ -28,4 +28,3 @@ class TestSmartTurnPlugin:
         # This test should be run manually with a valid FAL_KEY
         # For now, just pass
         assert True
-

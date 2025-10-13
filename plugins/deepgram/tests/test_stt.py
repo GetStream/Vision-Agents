@@ -6,7 +6,11 @@ from unittest.mock import patch, MagicMock
 import os
 
 from vision_agents.plugins import deepgram
-from vision_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent
+from vision_agents.core.stt.events import (
+    STTTranscriptEvent,
+    STTPartialTranscriptEvent,
+    STTErrorEvent,
+)
 from getstream.video.rtc.track_util import PcmData
 from plugins.plugin_test_utils import get_audio_asset, get_json_metadata
 

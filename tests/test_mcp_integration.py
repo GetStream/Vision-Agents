@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 def get_mcp_server():
     """Get configured MCP server based on environment variables."""
     local_cmd = os.getenv("MCP_LOCAL_CMD")
@@ -135,6 +136,7 @@ async def test_mcp_multiple_tool_calls():
             tools_after = await server.list_tools()
             assert len(tools_after) == len(tools), "Tool count changed unexpectedly"
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_mcp_resources():
@@ -171,7 +173,7 @@ async def test_mcp_concurrent_calls():
         url="https://api.githubcopilot.com/mcp/",
         headers={"Authorization": f"Bearer {github_pat}"},
         timeout=30.0,
-        session_timeout=60.0
+        session_timeout=60.0,
     )
 
     async with server:
@@ -195,7 +197,7 @@ async def test_mcp_concurrent_calls():
             else:
                 # Generic arguments for unknown GitHub tools
                 args = {"query": f"concurrent_test_{i}"}
-            
+
             tasks.append(call_tool(tool, args))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -227,9 +229,9 @@ async def test_mcp_tool_schema_validation():
             assert tool.name, f"Tool name is empty: {tool}"
 
             # Verify inputSchema is a dict
-            assert isinstance(
-                tool.inputSchema, dict
-            ), f"Tool inputSchema should be dict: {tool.inputSchema}"
+            assert isinstance(tool.inputSchema, dict), (
+                f"Tool inputSchema should be dict: {tool.inputSchema}"
+            )
 
 
 @pytest.mark.integration
@@ -263,9 +265,9 @@ async def test_mcp_github_integration():
         ]
         found_github_tools = [name for name in github_tools if name in tool_names]
 
-        assert (
-            len(found_github_tools) > 0
-        ), f"No expected GitHub tools found. Available: {tool_names}"
+        assert len(found_github_tools) > 0, (
+            f"No expected GitHub tools found. Available: {tool_names}"
+        )
 
         # Test a simple GitHub tool call
         if "search_repositories" in tool_names:
@@ -304,13 +306,13 @@ async def test_mcp_weather_integration():
 @pytest.mark.asyncio
 async def test_openai_llm_mcp_weather_integration():
     """Test OpenAI LLM integration with MCP weather server.
-    
+
     This test verifies the complete flow:
     1. Agent connects to MCP weather server
-    2. MCP tools are registered with LLM function registry  
+    2. MCP tools are registered with LLM function registry
     3. LLM makes function calls to MCP tools
     4. Tool results are processed and returned
-    
+
     Requires:
     - OPENAI_API_KEY environment variable
     - MCP_LOCAL_CMD pointing to weather server
@@ -319,19 +321,25 @@ async def test_openai_llm_mcp_weather_integration():
     # Skip if credentials not available
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("OPENAI_API_KEY not set, skipping OpenAI MCP integration test")
-    if not os.getenv("MCP_LOCAL_CMD") or "transport.py" not in os.getenv("MCP_LOCAL_CMD", ""):
+    if not os.getenv("MCP_LOCAL_CMD") or "transport.py" not in os.getenv(
+        "MCP_LOCAL_CMD", ""
+    ):
         pytest.skip("MCP_LOCAL_CMD not set to weather server, skipping test")
     if not os.getenv("STREAM_API_KEY") or not os.getenv("STREAM_API_SECRET"):
         pytest.skip("STREAM_API_KEY or STREAM_API_SECRET not set, skipping test")
 
     # Setup components
-    llm = OpenAILLM(model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))  # Use cheaper model
-    weather_server = MCPServerLocal(command=os.getenv("MCP_LOCAL_CMD"), session_timeout=60.0)
-    
+    llm = OpenAILLM(
+        model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY")
+    )  # Use cheaper model
+    weather_server = MCPServerLocal(
+        command=os.getenv("MCP_LOCAL_CMD"), session_timeout=60.0
+    )
+
     # Create real edge and agent user
     edge = getstream.Edge()
     agent_user = User(name="Weather Assistant", id="weather-agent")
-    
+
     # Create agent with required processing capabilities
     agent = Agent(
         edge=edge,
@@ -342,16 +350,16 @@ async def test_openai_llm_mcp_weather_integration():
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
     )
-    
+
     try:
         # Connect to MCP server
         await agent._connect_mcp_servers()
-        
+
         # Verify tools are registered
         available_functions = agent.llm.get_available_functions()
-        mcp_functions = [f for f in available_functions if f['name'].startswith('mcp_')]
+        mcp_functions = [f for f in available_functions if f["name"].startswith("mcp_")]
         assert len(mcp_functions) > 0, "No MCP tools registered"
-        
+
         # Test function calling
         response = await agent.llm.simple_response(
             text="What's the weather like in London?",
@@ -359,6 +367,6 @@ async def test_openai_llm_mcp_weather_integration():
 
         # Verify response was received (the core integration test)
         assert response is not None, "No response received from LLM"
- 
+
     finally:
         await agent.close()

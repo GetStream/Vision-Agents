@@ -8,7 +8,12 @@ import numpy as np
 import os
 import time
 
-from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions, DeepgramClientOptions
+from deepgram import (
+    DeepgramClient,
+    LiveTranscriptionEvents,
+    LiveOptions,
+    DeepgramClientOptions,
+)
 from vision_agents.core import stt
 from getstream.video.rtc.track_util import PcmData
 
@@ -65,9 +70,13 @@ class STT(stt.STT):
         # Initialize DeepgramClient with the API key
         logger.info("Initializing Deepgram client")
         config = DeepgramClientOptions(
-            options={"keepalive": "true"}  # Comment this out to see the effect of not using keepalive
+            options={
+                "keepalive": "true"
+            }  # Comment this out to see the effect of not using keepalive
         )
-        self.deepgram = client if client is not None else DeepgramClient(api_key, config)
+        self.deepgram = (
+            client if client is not None else DeepgramClient(api_key, config)
+        )
         self.dg_connection: Optional[Any] = None
         self.options = options or LiveOptions(
             model="nova-2",
@@ -204,7 +213,9 @@ class STT(stt.STT):
             self._emit_error_event(e, "Deepgram connection setup")
 
     async def _process_audio_impl(
-        self, pcm_data: PcmData, user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None
+        self,
+        pcm_data: PcmData,
+        user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None,
     ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
         """
         Process audio data through Deepgram for transcription.

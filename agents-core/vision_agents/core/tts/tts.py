@@ -52,12 +52,14 @@ class TTS(abc.ABC):
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
-        self.events.send(PluginInitializedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            plugin_type="TTS",
-            provider=self.provider_name,
-        ))
+        self.events.send(
+            PluginInitializedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                plugin_type="TTS",
+                provider=self.provider_name,
+            )
+        )
 
     def set_output_track(self, track: AudioStreamTrack) -> None:
         """
@@ -76,10 +78,10 @@ class TTS(abc.ABC):
     def get_required_framerate(self) -> int:
         """
         Get the required framerate for the audio track.
-        
+
         This method should be overridden by subclasses to return their specific
         framerate requirement. Defaults to 16000 Hz.
-        
+
         Returns:
             The required framerate in Hz
         """
@@ -88,10 +90,10 @@ class TTS(abc.ABC):
     def get_required_stereo(self) -> bool:
         """
         Get whether the audio track should be stereo or mono.
-        
+
         This method should be overridden by subclasses to return their specific
         stereo requirement. Defaults to False (mono).
-        
+
         Returns:
             True if stereo is required, False for mono
         """
@@ -157,13 +159,15 @@ class TTS(abc.ABC):
                 "Starting text-to-speech synthesis", extra={"text_length": len(text)}
             )
 
-            self.events.send(TTSSynthesisStartEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                text=text,
-                synthesis_id=synthesis_id,
-                user_metadata=user,
-            ))
+            self.events.send(
+                TTSSynthesisStartEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    text=text,
+                    synthesis_id=synthesis_id,
+                    user_metadata=user,
+                )
+            )
 
             # Synthesize audio
             audio_data = await self.stream_audio(text, *args, **kwargs)
@@ -198,7 +202,51 @@ class TTS(abc.ABC):
                         await self._track.write(chunk)
 
                         # Emit structured audio event
-                        self.events.send(TTSAudioEvent(
+                        self.events.send(
+                            TTSAudioEvent(
+                                session_id=self.session_id,
+                                plugin_name=self.provider_name,
+                                audio_data=chunk,
+                                synthesis_id=synthesis_id,
+                                text_source=text,
+                                user_metadata=user,
+                                chunk_index=audio_chunks - 1,
+                                is_final_chunk=False,  # We don't know if it's final yet
+                                sample_rate=self._track.framerate
+                                if self._track
+                                else 16000,
+                            )
+                        )
+                    else:  # assume it's a Cartesia TTS chunk object
+                        total_audio_bytes += len(chunk.data)
+                        audio_chunks += 1
+                        await self._track.write(chunk.data)
+
+                        self.events.send(
+                            TTSAudioEvent(
+                                session_id=self.session_id,
+                                plugin_name=self.provider_name,
+                                audio_data=chunk.data,
+                                synthesis_id=synthesis_id,
+                                text_source=text,
+                                user_metadata=user,
+                                chunk_index=audio_chunks - 1,
+                                is_final_chunk=False,  # We don't know if it's final yet
+                                sample_rate=self._track.framerate
+                                if self._track
+                                else 16000,
+                            )
+                        )
+            elif hasattr(audio_data, "__iter__") and not isinstance(
+                audio_data, (str, bytes, bytearray)
+            ):
+                for chunk in audio_data:
+                    total_audio_bytes += len(chunk)
+                    audio_chunks += 1
+                    await self._track.write(chunk)
+
+                    self.events.send(
+                        TTSAudioEvent(
                             session_id=self.session_id,
                             plugin_name=self.provider_name,
                             audio_data=chunk,
@@ -208,42 +256,8 @@ class TTS(abc.ABC):
                             chunk_index=audio_chunks - 1,
                             is_final_chunk=False,  # We don't know if it's final yet
                             sample_rate=self._track.framerate if self._track else 16000,
-                        ))
-                    else:  # assume it's a Cartesia TTS chunk object
-                        total_audio_bytes += len(chunk.data)
-                        audio_chunks += 1
-                        await self._track.write(chunk.data)
-
-                        self.events.send(TTSAudioEvent(
-                            session_id=self.session_id,
-                            plugin_name=self.provider_name,
-                            audio_data=chunk.data,
-                            synthesis_id=synthesis_id,
-                            text_source=text,
-                            user_metadata=user,
-                            chunk_index=audio_chunks - 1,
-                            is_final_chunk=False,  # We don't know if it's final yet
-                            sample_rate=self._track.framerate if self._track else 16000,
-                        ))
-            elif hasattr(audio_data, "__iter__") and not isinstance(
-                audio_data, (str, bytes, bytearray)
-            ):
-                for chunk in audio_data:
-                    total_audio_bytes += len(chunk)
-                    audio_chunks += 1
-                    await self._track.write(chunk)
-
-                    self.events.send(TTSAudioEvent(
-                        session_id=self.session_id,
-                        plugin_name=self.provider_name,
-                        audio_data=chunk,
-                        synthesis_id=synthesis_id,
-                        text_source=text,
-                        user_metadata=user,
-                        chunk_index=audio_chunks - 1,
-                        is_final_chunk=False,  # We don't know if it's final yet
-                        sample_rate=self._track.framerate if self._track else 16000,
-                    ))
+                        )
+                    )
             else:
                 raise TypeError(
                     f"Unsupported return type from synthesize: {type(audio_data)}"
@@ -261,38 +275,44 @@ class TTS(abc.ABC):
                 else None
             )
 
-            self.events.send(TTSSynthesisCompleteEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                synthesis_id=synthesis_id,
-                text=text,
-                user_metadata=user,
-                total_audio_bytes=total_audio_bytes,
-                synthesis_time_ms=synthesis_time * 1000,
-                audio_duration_ms=estimated_audio_duration_ms,
-                chunk_count=audio_chunks,
-                real_time_factor=real_time_factor,
-            ))
+            self.events.send(
+                TTSSynthesisCompleteEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    synthesis_id=synthesis_id,
+                    text=text,
+                    user_metadata=user,
+                    total_audio_bytes=total_audio_bytes,
+                    synthesis_time_ms=synthesis_time * 1000,
+                    audio_duration_ms=estimated_audio_duration_ms,
+                    chunk_count=audio_chunks,
+                    real_time_factor=real_time_factor,
+                )
+            )
         except Exception as e:
-            self.events.send(TTSErrorEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                error=e,
-                context="synthesis",
-                text_source=text,
-                synthesis_id=synthesis_id,
-                user_metadata=user,
-            ))
+            self.events.send(
+                TTSErrorEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    error=e,
+                    context="synthesis",
+                    text_source=text,
+                    synthesis_id=synthesis_id,
+                    user_metadata=user,
+                )
+            )
             # ASK: why ?
             # Re-raise to allow the caller to handle the error
             raise
 
     async def close(self):
         """Close the TTS service and release any resources."""
-        self.events.send(PluginClosedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            plugin_type="TTS",
-            provider=self.provider_name,
-            cleanup_successful=True,
-        ))
+        self.events.send(
+            PluginClosedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                plugin_type="TTS",
+                provider=self.provider_name,
+                cleanup_successful=True,
+            )
+        )

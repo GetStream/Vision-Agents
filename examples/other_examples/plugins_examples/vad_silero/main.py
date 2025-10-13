@@ -24,6 +24,7 @@ from vision_agents.plugins import silero, openai, getstream
 
 load_dotenv()
 
+
 async def main():
     # Create agent with VAD + LLM for conversation
     agent = Agent(
@@ -42,8 +43,10 @@ async def main():
         if event.user_metadata:
             user = event.user_metadata
             user_info = user.name if user.name else str(user)
-        
-        print(f"Speech detected from user: {user_info} - duration: {event.duration_ms:.2f}ms")
+
+        print(
+            f"Speech detected from user: {user_info} - duration: {event.duration_ms:.2f}ms"
+        )
 
     # Subscribe to VAD error events
     @agent.subscribe
@@ -58,8 +61,11 @@ async def main():
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.simple_response("Hello! I can detect when you speak and respond to you.")
+        await agent.simple_response(
+            "Hello! I can detect when you speak and respond to you."
+        )
         await agent.finish()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

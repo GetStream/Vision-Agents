@@ -29,6 +29,7 @@ from vision_agents.plugins import deepgram, openai, getstream, elevenlabs
 
 load_dotenv()
 
+
 async def main():
     # Create agent with STT + LLM + TTS for conversation
     agent = Agent(
@@ -53,8 +54,10 @@ async def main():
         if event.confidence:
             agent.logger.info(f"    └─ confidence: {event.confidence:.2%}")
         if event.processing_time_ms:
-            agent.logger.info(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
-        
+            agent.logger.info(
+                f"    └─ processing time: {event.processing_time_ms:.1f}ms"
+            )
+
         # Generate a response to the transcribed text
         await agent.simple_response(event.text)
 
@@ -73,15 +76,17 @@ async def main():
         if event.context:
             agent.logger.error(f"    └─ context: {event.context}")
 
-
     # Create call and open demo
     call = agent.edge.client.video.call("default", str(uuid4()))
     agent.edge.open_demo(call)
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.say("Hello! I'm your transcription bot. I'll listen to what you say, transcribe it, and respond to you. Try saying something!")
+        await agent.say(
+            "Hello! I'm your transcription bot. I'll listen to what you say, transcribe it, and respond to you. Try saying something!"
+        )
         await agent.finish()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

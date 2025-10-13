@@ -74,9 +74,7 @@ class TurnDetector(ABC):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(
-        self, 
-        confidence_threshold: float = 0.5,
-        provider_name: Optional[str] = None
+        self, confidence_threshold: float = 0.5, provider_name: Optional[str] = None
     ) -> None:
         self._confidence_threshold = confidence_threshold
         self._is_detecting = False
@@ -84,12 +82,14 @@ class TurnDetector(ABC):
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
-        self.events.send(PluginInitializedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            plugin_type="TurnDetection",
-            provider=self.provider_name,
-        ))
+        self.events.send(
+            PluginInitializedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                plugin_type="TurnDetection",
+                provider=self.provider_name,
+            )
+        )
 
     @abstractmethod
     def is_detecting(self) -> bool:
@@ -101,29 +101,33 @@ class TurnDetector(ABC):
     ) -> None:
         """
         Emit a turn detection event using the new event system.
-        
+
         Args:
             event_type: The type of turn event (TURN_STARTED or TURN_ENDED)
             event_data: Data associated with the event
         """
         if event_type == TurnEvent.TURN_STARTED:
-            self.events.send(events.TurnStartedEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                speaker_id=event_data.speaker_id,
-                confidence=event_data.confidence,
-                duration=event_data.duration,
-                custom=event_data.custom,
-            ))
+            self.events.send(
+                events.TurnStartedEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    speaker_id=event_data.speaker_id,
+                    confidence=event_data.confidence,
+                    duration=event_data.duration,
+                    custom=event_data.custom,
+                )
+            )
         elif event_type == TurnEvent.TURN_ENDED:
-            self.events.send(events.TurnEndedEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                speaker_id=event_data.speaker_id,
-                confidence=event_data.confidence,
-                duration=event_data.duration,
-                custom=event_data.custom,
-            ))
+            self.events.send(
+                events.TurnEndedEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    speaker_id=event_data.speaker_id,
+                    confidence=event_data.confidence,
+                    duration=event_data.duration,
+                    custom=event_data.custom,
+                )
+            )
 
     @abstractmethod
     async def process_audio(

@@ -24,13 +24,14 @@ from vision_agents.core.edge.types import User
 from vision_agents.plugins import deepgram, elevenlabs, openai, getstream
 from vision_agents.core.mcp import MCPBaseServer
 
+
 # Example MCP server for demonstration
 class ExampleMCPServer(MCPBaseServer):
     """Example MCP server that provides weather information."""
-    
+
     def __init__(self):
         super().__init__("example-server")
-    
+
     async def get_tools(self):
         """Return available tools."""
         return [
@@ -42,11 +43,11 @@ class ExampleMCPServer(MCPBaseServer):
                     "properties": {
                         "location": {"type": "string", "description": "City name"}
                     },
-                    "required": ["location"]
-                }
+                    "required": ["location"],
+                },
             }
         ]
-    
+
     async def call_tool(self, name: str, arguments: dict):
         """Execute a tool call."""
         if name == "get_weather":
@@ -54,7 +55,9 @@ class ExampleMCPServer(MCPBaseServer):
             return f"The weather in {location} is sunny and 72°F"
         return "Tool not found"
 
+
 load_dotenv()
+
 
 async def main():
     # Create agent with MCP servers
@@ -74,8 +77,11 @@ async def main():
 
     # Join call and start MCP-enabled conversation
     with await agent.join(call):
-        await agent.say("Hello! I have access to MCP tools including weather information. How can I help you?")
+        await agent.say(
+            "Hello! I have access to MCP tools including weather information. How can I help you?"
+        )
         await agent.finish()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

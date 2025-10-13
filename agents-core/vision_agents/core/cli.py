@@ -56,7 +56,6 @@ async def start_dispatcher(
 
     await agent_func()
 
-
     logger.info("🔚 Stream Agents dispatcher stopped")
 
 
