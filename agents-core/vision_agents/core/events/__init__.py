@@ -127,5 +127,5 @@ __all__ += [
     "PluginInitializedEvent",
     "PluginClosedEvent",
     "PluginErrorEvent",
-    "EventManager"
+    "EventManager",
 ]

@@ -13,7 +13,7 @@ class BaseTest:
     def assets_dir(self):
         """Get the test assets directory path."""
         return os.path.join(os.path.dirname(__file__), "test_assets")
-    
+
     @pytest.fixture
     def mia_audio_16khz(self):
         audio_file_path = os.path.join(os.path.dirname(__file__), "test_assets/mia.mp3")
@@ -27,11 +27,7 @@ class BaseTest:
         # Create resampler if needed
         resampler = None
         if original_sample_rate != target_rate:
-            resampler = av.AudioResampler(
-                format='s16',
-                layout='mono',
-                rate=target_rate
-            )
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
 
         # Read all audio frames
         samples = []
@@ -55,11 +51,7 @@ class BaseTest:
         container.close()
 
         # Create PCM data
-        pcm = PcmData(
-            samples=samples,
-            sample_rate=target_rate,
-            format="s16"
-        )
+        pcm = PcmData(samples=samples, sample_rate=target_rate, format="s16")
 
         return pcm
 
@@ -67,7 +59,10 @@ class BaseTest:
     def bunny_video_track(self):
         """Create RealVideoTrack from video file"""
         from aiortc import VideoStreamTrack
-        video_file_path = os.path.join(os.path.dirname(__file__), "test_assets/bunny_3s.mp4")
+
+        video_file_path = os.path.join(
+            os.path.dirname(__file__), "test_assets/bunny_3s.mp4"
+        )
 
         class RealVideoTrack(VideoStreamTrack):
             def __init__(self, video_path, max_frames=None):
@@ -87,16 +82,16 @@ class BaseTest:
                     for frame in self.container.decode(self.video_stream):
                         if frame is None:
                             raise asyncio.CancelledError("End of video stream")
-                        
+
                         self.frame_count += 1
                         # Convert to RGB
                         frame = frame.to_rgb()
-                        
+
                         # Sleep for realistic video timing
                         await asyncio.sleep(self.frame_duration)
-                        
+
                         return frame
-                    
+
                     # If we get here, we've exhausted all frames in the stream
                     raise asyncio.CancelledError("End of video stream")
 

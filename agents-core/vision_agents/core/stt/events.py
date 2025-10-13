@@ -7,7 +7,7 @@ from typing import Optional, Any
 class STTTranscriptEvent(PluginBaseEvent):
     """Event emitted when a complete transcript is available."""
 
-    type: str = field(default='plugin.stt_transcript', init=False)
+    type: str = field(default="plugin.stt_transcript", init=False)
     text: str = ""
     confidence: Optional[float] = None
     language: Optional[str] = None
@@ -26,7 +26,7 @@ class STTTranscriptEvent(PluginBaseEvent):
 class STTPartialTranscriptEvent(PluginBaseEvent):
     """Event emitted when a partial transcript is available."""
 
-    type: str = field(default='plugin.stt_partial_transcript', init=False)
+    type: str = field(default="plugin.stt_partial_transcript", init=False)
     text: str = ""
     confidence: Optional[float] = None
     language: Optional[str] = None
@@ -41,7 +41,7 @@ class STTPartialTranscriptEvent(PluginBaseEvent):
 class STTErrorEvent(PluginBaseEvent):
     """Event emitted when an STT error occurs."""
 
-    type: str = field(default='plugin.stt_error', init=False)
+    type: str = field(default="plugin.stt_error", init=False)
     error: Optional[Exception] = None
     error_code: Optional[str] = None
     context: Optional[str] = None
@@ -57,7 +57,7 @@ class STTErrorEvent(PluginBaseEvent):
 class STTConnectionEvent(PluginBaseEvent):
     """Event emitted for STT connection state changes."""
 
-    type: str = field(default='plugin.stt_connection', init=False)
+    type: str = field(default="plugin.stt_connection", init=False)
     connection_state: Optional[ConnectionState] = None
     provider: Optional[str] = None
     details: Optional[dict[str, Any]] = None

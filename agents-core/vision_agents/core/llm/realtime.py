@@ -37,11 +37,12 @@ class Realtime(LLM, abc.ABC):
         - Transcript outgoing audio
 
     """
-    fps : int = 1
+
+    fps: int = 1
 
     def __init__(
         self,
-        fps: int = 1, # the number of video frames per second to send (for implementations that support setting fps)
+        fps: int = 1,  # the number of video frames per second to send (for implementations that support setting fps)
     ):
         super().__init__()
         self._is_connected = False
@@ -65,7 +66,6 @@ class Realtime(LLM, abc.ABC):
 
     @abc.abstractmethod
     async def simple_audio_response(self, pcm: PcmData): ...
-
 
     async def _watch_video_track(self, track: Any, **kwargs) -> None:
         """Optionally overridden by providers that support video input."""
@@ -130,7 +130,9 @@ class Realtime(LLM, abc.ABC):
         )
         self.events.send(event)
 
-    def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
+    def _emit_partial_transcript_event(
+        self, text: str, user_metadata=None, original=None
+    ):
         event = events.RealtimeTranscriptEvent(
             text=text,
             user_metadata=user_metadata,
@@ -213,4 +215,3 @@ class Realtime(LLM, abc.ABC):
 
     @abc.abstractmethod
     async def _close_impl(self): ...
-

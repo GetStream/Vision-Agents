@@ -9,7 +9,10 @@ from vision_agents.plugins import gemini, getstream
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 

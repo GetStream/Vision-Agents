@@ -10,7 +10,11 @@ from unittest.mock import Mock
 from dotenv import load_dotenv
 
 from vision_agents.core.stt.stt import STT
-from vision_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent, STTErrorEvent
+from vision_agents.core.stt.events import (
+    STTTranscriptEvent,
+    STTPartialTranscriptEvent,
+    STTErrorEvent,
+)
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.agents import Agent
 from vision_agents.core.edge.types import User, Participant
@@ -106,7 +110,7 @@ async def test_emit_transcript_event(mock_stt):
     metadata = {"confidence": 0.95, "processing_time_ms": 100}
 
     mock_stt._emit_transcript_event(text, user_metadata, metadata)
-    
+
     # Wait for event processing
     await mock_stt.events.wait(timeout=1.0)
 
@@ -135,7 +139,7 @@ async def test_emit_partial_transcript_event(mock_stt):
     metadata = {"confidence": 0.8}
 
     mock_stt._emit_partial_transcript_event(text, user_metadata, metadata)
-    
+
     # Wait for event processing
     await mock_stt.events.wait(timeout=1.0)
 
@@ -160,7 +164,7 @@ async def test_emit_error_event(mock_stt):
     # Emit an error event
     test_error = Exception("Test error")
     mock_stt._emit_error_event(test_error, "test context")
-    
+
     # Wait for event processing
     await mock_stt.events.wait(timeout=1.0)
 
@@ -197,7 +201,7 @@ async def test_process_audio_with_valid_data(mock_stt, valid_pcm_data):
     # Process audio
     user_metadata = {"user_id": "123"}
     await mock_stt.process_audio(valid_pcm_data, user_metadata)
-    
+
     # Wait for event processing
     await mock_stt.events.wait(timeout=1.0)
 
@@ -246,7 +250,7 @@ async def test_process_audio_handles_exceptions(mock_stt, valid_pcm_data):
 
     # Process audio (should not raise exception)
     await mock_stt_with_exception.process_audio(valid_pcm_data)
-    
+
     # Wait for event processing
     await mock_stt_with_exception.events.wait(timeout=1.0)
 
@@ -260,6 +264,7 @@ async def test_process_audio_handles_exceptions(mock_stt, valid_pcm_data):
 # Integration Tests
 # ============================================================================
 
+
 class TestSTTIntegration(BaseTest):
     """Integration tests for STT with real components."""
 
@@ -267,10 +272,10 @@ class TestSTTIntegration(BaseTest):
     async def test_agent_stt_only_without_tts(self, mia_audio_16khz):
         """
         Real integration test: Agent with STT but no TTS.
-        
-        Uses real components (Deepgram STT, OpenAI LLM, Stream Edge) 
+
+        Uses real components (Deepgram STT, OpenAI LLM, Stream Edge)
         to verify STT-only agents work end-to-end.
-        
+
         This test verifies:
         - Agent can be created with STT but without TTS
         - Agent correctly identifies need for audio input
@@ -284,14 +289,12 @@ class TestSTTIntegration(BaseTest):
         missing_keys = [key for key in required_keys if not os.getenv(key)]
         if missing_keys:
             pytest.skip(f"Missing required API keys: {', '.join(missing_keys)}")
-        
-   
-        
+
         edge = getstream.Edge()
         llm = openai.LLM(model="gpt-4o-mini")
         # Create STT with correct sample rate to match our test audio
         stt = deepgram.STT(sample_rate=16000)
-        
+
         # Create agent with STT but explicitly NO TTS
         agent = Agent(
             edge=edge,
@@ -301,55 +304,57 @@ class TestSTTIntegration(BaseTest):
             tts=None,  # ← KEY: No TTS - this is what we're testing
             instructions="You are a test agent for STT-only support.",
         )
-        
+
         # Test 1: Verify agent needs audio input (because STT is present)
-        assert agent._needs_audio_or_video_input() is True, \
+        assert agent._needs_audio_or_video_input() is True, (
             "Agent with STT should need audio input"
-        
+        )
+
         # Test 2: Verify agent does NOT publish audio (because TTS is None)
-        assert agent.publish_audio is False, \
+        assert agent.publish_audio is False, (
             "Agent without TTS should not publish audio"
-        
+        )
+
         # Test 3: Set up event listeners to capture transcript
         transcript_events = []
-        
+
         @agent.events.subscribe
         async def on_transcript(event: STTTranscriptEvent):
             transcript_events.append(event)
-        
+
         # Test 4: Create a test participant (user sending audio)
         test_user = User(name="Test User", id="test_user")
         test_participant = Participant(
             original=test_user,  # The original user object
             user_id="test_user",  # User ID
         )
-        
+
         # Test 5: Send real audio through the agent's audio processing path
         # This simulates what happens when a user speaks in a call
         await agent._reply_to_audio(mia_audio_16khz, test_participant)
-        
+
         # Test 6: Wait for STT to process and emit transcript
         # Real STT takes time to process audio and establish connection
         await asyncio.sleep(5.0)
-        
+
         # Test 7: Verify that transcript event was emitted
-        assert len(transcript_events) > 0, \
+        assert len(transcript_events) > 0, (
             "STT should have emitted at least one transcript event"
-        
+        )
+
         # Test 8: Verify transcript has content
         first_transcript = transcript_events[0]
-        assert first_transcript.text is not None, \
-            "Transcript should have text content"
-        assert len(first_transcript.text) > 0, \
-            "Transcript text should not be empty"
-        
+        assert first_transcript.text is not None, "Transcript should have text content"
+        assert len(first_transcript.text) > 0, "Transcript text should not be empty"
+
         # Test 9: Verify user metadata is present
-        assert first_transcript.user_metadata is not None, \
+        assert first_transcript.user_metadata is not None, (
             "Transcript should have user metadata"
-        
+        )
+
         # Log the transcript for debugging
         print(f"✅ STT transcribed: '{first_transcript.text}'")
-        
+
         # Test 10: Clean up
         await stt.close()
         await agent.close()

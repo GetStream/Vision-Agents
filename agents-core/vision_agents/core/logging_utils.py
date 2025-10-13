@@ -9,6 +9,7 @@ _CURRENT_CALL_ID: str | None = None
 _ORIGINAL_FACTORY = logging.getLogRecordFactory()
 _CALL_ID_ENABLED = True
 
+
 @dataclass(slots=True)
 class CallContextToken:
     """Token capturing prior state for restoring logging context."""
@@ -61,8 +62,8 @@ def clear_call_context(token: CallContextToken) -> None:
 
     global _CURRENT_CALL_ID
 
-    #failing TODO: fix
-    #call_id_ctx.reset(token.context_token)
+    # failing TODO: fix
+    # call_id_ctx.reset(token.context_token)
     _CURRENT_CALL_ID = token.previous_global
 
 

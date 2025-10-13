@@ -446,19 +446,19 @@ async def test_silence_no_turns():
     async def on_audio(event: VADAudioEvent):
         nonlocal audio_event_fired
         audio_event_fired = True
-        duration_sec = (event.duration_ms / 1000.0) if event.duration_ms is not None else 0.0
-        logger.info(
-            f"Audio event detected on silence! Duration: {duration_sec:.2f}s"
+        duration_sec = (
+            (event.duration_ms / 1000.0) if event.duration_ms is not None else 0.0
         )
+        logger.info(f"Audio event detected on silence! Duration: {duration_sec:.2f}s")
 
     @vad.events.subscribe
     async def on_partial(event: VADPartialEvent):
         nonlocal partial_event_fired
         partial_event_fired = True
-        duration_sec = (event.duration_ms / 1000.0) if event.duration_ms is not None else 0.0
-        logger.info(
-            f"Partial event detected on silence! Duration: {duration_sec:.2f}s"
+        duration_sec = (
+            (event.duration_ms / 1000.0) if event.duration_ms is not None else 0.0
         )
+        logger.info(f"Partial event detected on silence! Duration: {duration_sec:.2f}s")
 
     # Process the silence in chunks to simulate streaming
     chunk_size = 512

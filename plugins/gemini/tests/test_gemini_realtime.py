@@ -29,11 +29,11 @@ class TestGeminiRealtime:
         """Test sending a simple text message and receiving response"""
         # Send a simple message
         events = []
-        
+
         @realtime.events.subscribe
         async def on_audio(event: RealtimeAudioOutputEvent):
             events.append(event)
-        
+
         await asyncio.sleep(0.01)
         await realtime.connect()
         await realtime.simple_response("Hello, can you hear me?")
@@ -46,15 +46,17 @@ class TestGeminiRealtime:
     async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
         """Test sending real audio data and verify connection remains stable"""
         events = []
-        
+
         @realtime.events.subscribe
         async def on_audio(event: RealtimeAudioOutputEvent):
             events.append(event)
-        
+
         await asyncio.sleep(0.01)
         await realtime.connect()
-        
-        await realtime.simple_response("Listen to the following story, what is Mia looking for?")
+
+        await realtime.simple_response(
+            "Listen to the following story, what is Mia looking for?"
+        )
         await asyncio.sleep(10.0)
         await realtime.simple_audio_response(mia_audio_16khz)
 
@@ -62,26 +64,25 @@ class TestGeminiRealtime:
         await asyncio.sleep(10.0)
         assert len(events) > 0
 
-
     @pytest.mark.integration
     async def test_video_sending_flow(self, realtime, bunny_video_track):
         """Test sending real video data and verify connection remains stable"""
         events = []
-        
+
         @realtime.events.subscribe
         async def on_audio(event: RealtimeAudioOutputEvent):
             events.append(event)
-        
+
         await asyncio.sleep(0.01)
         await realtime.connect()
         await realtime.simple_response("Describe what you see in this video please")
         await asyncio.sleep(10.0)
         # Start video sender with low FPS to avoid overwhelming the connection
         await realtime._watch_video_track(bunny_video_track)
-        
+
         # Let it run for a few seconds
         await asyncio.sleep(10.0)
-        
+
         # Stop video sender
         await realtime._stop_watching_video_track()
         assert len(events) > 0
@@ -91,13 +92,14 @@ class TestGeminiRealtime:
         # Get a frame from the bunny video track
         frame = await bunny_video_track.recv()
         png_bytes = frame_to_png_bytes(frame)
-        
+
         # Verify we got PNG data
         assert isinstance(png_bytes, bytes)
         assert len(png_bytes) > 0
-        
-        # Verify it's actually PNG data (PNG files start with specific bytes)
-        assert png_bytes.startswith(b'\x89PNG\r\n\x1a\n')
-        
-        print(f"Successfully converted bunny video frame to PNG: {len(png_bytes)} bytes")
 
+        # Verify it's actually PNG data (PNG files start with specific bytes)
+        assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+        print(
+            f"Successfully converted bunny video frame to PNG: {len(png_bytes)} bytes"
+        )

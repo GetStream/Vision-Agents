@@ -1,7 +1,5 @@
 import uuid
-from vision_agents.core.events import (
-    PluginBaseEvent, AudioFormat, ConnectionState
-)
+from vision_agents.core.events import PluginBaseEvent, AudioFormat, ConnectionState
 from dataclasses import dataclass, field
 from typing import Optional, Any
 
@@ -72,4 +70,3 @@ class TTSConnectionEvent(PluginBaseEvent):
     connection_state: Optional[ConnectionState] = None
     provider: Optional[str] = None
     details: Optional[dict[str, Any]] = None
-

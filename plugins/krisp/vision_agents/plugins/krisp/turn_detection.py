@@ -48,7 +48,7 @@ class TurnDetection(TurnDetector):
     ):
         super().__init__(
             confidence_threshold=confidence_threshold,
-            provider_name="KrispTurnDetection"
+            provider_name="KrispTurnDetection",
         )
         self.logger = logging.getLogger("KrispTurnDetection")
         self.model_path = model_path

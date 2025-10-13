@@ -1,6 +1,7 @@
 """
 Abstraction for stream vs other services here
 """
+
 import abc
 
 from typing import TYPE_CHECKING, Any, Optional
@@ -11,7 +12,6 @@ from pyee.asyncio import AsyncIOEventEmitter
 from vision_agents.core.edge.types import User
 
 if TYPE_CHECKING:
-
     pass
 
 
@@ -55,6 +55,7 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def add_track_subscriber(self, track_id: str) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
+    def add_track_subscriber(
+        self, track_id: str
+    ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
         pass
-

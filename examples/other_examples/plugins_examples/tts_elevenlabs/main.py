@@ -29,6 +29,7 @@ from vision_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
 
 load_dotenv()
 
+
 async def main():
     # Create agent with TTS
     agent = Agent(
@@ -42,12 +43,16 @@ async def main():
     # Subscribe to participant joined events
     @agent.subscribe
     async def handle_participant_joined(event: CallSessionParticipantJoinedEvent):
-        await agent.simple_response(f"Hello {event.participant.user.name}! Welcome to the call.")
+        await agent.simple_response(
+            f"Hello {event.participant.user.name}! Welcome to the call."
+        )
 
     # Subscribe to TTS events
     @agent.subscribe
     async def handle_tts_audio(event: TTSAudioEvent):
-        print(f"TTS audio generated: {event.chunk_index} chunks, final: {event.is_final_chunk}")
+        print(
+            f"TTS audio generated: {event.chunk_index} chunks, final: {event.is_final_chunk}"
+        )
 
     # Subscribe to TTS error events
     @agent.subscribe
@@ -63,6 +68,7 @@ async def main():
     # Join call and wait
     with await agent.join(call):
         await agent.finish()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

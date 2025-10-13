@@ -263,7 +263,9 @@ class STT(stt.STT):
             return None
 
     async def _process_audio_impl(
-        self, pcm_data: PcmData, user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None
+        self,
+        pcm_data: PcmData,
+        user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None,
     ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
         """
         Process audio data through Moonshine for transcription.

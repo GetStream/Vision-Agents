@@ -27,6 +27,7 @@ from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 
 load_dotenv()
 
+
 async def main():
     # Create agent with STT + LLM for conversation
     agent = Agent(
@@ -45,7 +46,7 @@ async def main():
         if event.user_metadata:
             user = event.user_metadata
             user_info = user.name if user.name else str(user)
-        
+
         print(f"[{event.timestamp}] {user_info}: {event.text}")
         if event.confidence:
             print(f"    └─ confidence: {event.confidence:.2%}")
@@ -65,8 +66,11 @@ async def main():
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.simple_response("Hello! I can transcribe your speech and respond to you.")
+        await agent.simple_response(
+            "Hello! I can transcribe your speech and respond to you."
+        )
         await agent.finish()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

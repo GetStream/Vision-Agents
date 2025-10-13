@@ -30,7 +30,7 @@ def assets_dir():
 def mia_audio_16khz():
     """Load mia.mp3 and convert to 16kHz PCM data."""
     audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
-    
+
     # Load audio file using PyAV
     container = av.open(audio_file_path)
     audio_stream = container.streams.audio[0]
@@ -40,11 +40,7 @@ def mia_audio_16khz():
     # Create resampler if needed
     resampler = None
     if original_sample_rate != target_rate:
-        resampler = av.AudioResampler(
-            format='s16',
-            layout='mono',
-            rate=target_rate
-        )
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
 
     # Read all audio frames
     samples = []
@@ -68,11 +64,7 @@ def mia_audio_16khz():
     container.close()
 
     # Create PCM data
-    pcm = PcmData(
-        samples=samples,
-        sample_rate=target_rate,
-        format="s16"
-    )
+    pcm = PcmData(samples=samples, sample_rate=target_rate, format="s16")
 
     return pcm
 
@@ -81,7 +73,7 @@ def mia_audio_16khz():
 async def bunny_video_track():
     """Create RealVideoTrack from video file."""
     from aiortc import VideoStreamTrack
-    
+
     video_file_path = os.path.join(get_assets_dir(), "bunny_3s.mp4")
 
     class RealVideoTrack(VideoStreamTrack):
@@ -101,12 +93,12 @@ async def bunny_video_track():
                 for frame in self.container.decode(self.video_stream):
                     if frame is None:
                         raise asyncio.CancelledError("End of video stream")
-                    
+
                     self.frame_count += 1
                     frame = frame.to_rgb()
                     await asyncio.sleep(self.frame_duration)
                     return frame
-                
+
                 raise asyncio.CancelledError("End of video stream")
 
             except asyncio.CancelledError:
@@ -123,4 +115,3 @@ async def bunny_video_track():
         yield track
     finally:
         track.container.close()
-
