@@ -8,9 +8,9 @@ available to all tests in the project, including plugin tests.
 import asyncio
 import os
 
+import av
 import numpy as np
 import pytest
-from torchvision.io.video import av
 
 from vision_agents.core.edge.types import PcmData
 

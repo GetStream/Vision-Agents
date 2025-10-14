@@ -23,6 +23,7 @@ members = [
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-kokoro",
     "vision-agents-plugins-krisp",
+    "vision-agents-plugins-moondream",
     "vision-agents-plugins-moonshine",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-silero",
@@ -6002,6 +6003,38 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.24.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-moondream"
+source = { editable = "plugins/moondream" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "numpy", specifier = ">=2.0.0" },
+    { name = "opencv-python", specifier = ">=4.8.0" },
+    { name = "pillow", specifier = ">=10.0.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
