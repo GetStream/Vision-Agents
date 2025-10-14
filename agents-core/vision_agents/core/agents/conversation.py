@@ -62,6 +62,7 @@ class StreamingMessageHandler(ABC):
         self.last_content_index = -1
         self._content_created = False
         self._apply_lock = asyncio.Lock()
+        self._creation_lock = asyncio.Lock()  # Prevents race condition on _on_content_created
 
     async def append_content(
         self, text: str, content_index: Optional[int] = None, finalize: bool = False
@@ -104,12 +105,13 @@ class StreamingMessageHandler(ABC):
         self.pending_fragments.clear()
         self.last_content_index = -1
 
-        # Notify implementation about content change
-        if not self._content_created:
-            await self._on_content_created()
-            self._content_created = True
-        else:
-            await self._on_content_changed()
+        # Use lock to prevent race condition: ensure only ONE call to _on_content_created
+        async with self._creation_lock:
+            if not self._content_created:
+                await self._on_content_created()
+                self._content_created = True
+            else:
+                await self._on_content_changed()
 
         if finalize:
             await self.finalize()
@@ -150,11 +152,13 @@ class StreamingMessageHandler(ABC):
             
             # Only send update to Stream after applying all available fragments
             if fragments_applied > 0:
-                if not self._content_created:
-                    await self._on_content_created()
-                    self._content_created = True
-                else:
-                    await self._on_content_changed()
+                # Use lock to prevent race condition: ensure only ONE call to _on_content_created
+                async with self._creation_lock:
+                    if not self._content_created:
+                        await self._on_content_created()
+                        self._content_created = True
+                    else:
+                        await self._on_content_changed()
 
     @abstractmethod
     async def _on_content_created(self):
@@ -267,12 +271,21 @@ class Conversation(ABC, Generic[HandlerType]):
             handler = self._streaming_handlers.get(message_id)
 
             if handler is None:
+                # Check if a message with this ID already exists (completion event arrived first)
+                existing_message = next(
+                    (msg for msg in self.messages if msg.id == message_id), None
+                )
+                
+                if existing_message is not None:
+                    # Message already exists, don't create handler
+                    return None
+                
                 # Create new handler
                 handler = self._create_handler(message_id, user_id, role)
                 self._streaming_handlers[message_id] = handler
 
         # Add content if provided (outside the lock to avoid blocking other operations)
-        if content:
+        if content and handler is not None:
             await handler.append_content(content, content_index)
 
         return handler

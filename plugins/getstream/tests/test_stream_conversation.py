@@ -453,3 +453,91 @@ async def test_content_index():
     response = await channel.get_or_create(state=True, messages=MessagePaginationParams(limit=10))
     assert len(response.data.messages) == 1
     assert response.data.messages[0].text == "once upon a time in a galaxy far far away"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_streaming_deltas_then_finalize_no_duplicate():
+    """Test that simulates Agent's LLM flow: deltas arrive, then completed event.
+    
+    This test should ensure only 1 message is created (not 2).
+    Simulates the exact flow from agents.py:
+    1. _handle_output_text_delta calls upsert_streaming_message_handler for each delta
+    2. on_llm_response_sync_conversation finds the handler and calls update_message
+    """
+    channel_id = f"test-channel-{uuid.uuid4()}"
+    chat_client = AsyncStream().chat
+    channel = chat_client.channel("messaging", channel_id)
+    
+    # Create the channel in Stream
+    await channel.get_or_create(
+        data=ChannelInput(created_by_id="test-user"),
+    )
+    
+    # Create a conversation
+    conversation = StreamConversation(
+        instructions="Test conversation",
+        messages=[],
+        channel=channel
+    )
+    
+    item_id = str(uuid.uuid4())
+    
+    # Simulate delta events arriving (like _handle_output_text_delta)
+    logger.info("Simulating delta events...")
+    logger.info(f"Initial message count: {len(conversation.messages)}")
+    
+    # Delta 1
+    handler = await conversation.upsert_streaming_message_handler(
+        message_id=item_id,
+        user_id="agent",
+        role="assistant",
+        content="Hello",
+        content_index=0,
+    )
+    logger.info(f"After delta 1, message count: {len(conversation.messages)}, messages: {[m.content for m in conversation.messages]}")
+    
+    # Delta 2
+    await conversation.upsert_streaming_message_handler(
+        message_id=item_id,
+        user_id="agent",
+        role="assistant",
+        content=" world",
+        content_index=1,
+    )
+    logger.info(f"After delta 2, message count: {len(conversation.messages)}, messages: {[m.content for m in conversation.messages]}")
+    
+    # Delta 3
+    await conversation.upsert_streaming_message_handler(
+        message_id=item_id,
+        user_id="agent",
+        role="assistant",
+        content="!",
+        content_index=2,
+    )
+    logger.info(f"After delta 3, message count: {len(conversation.messages)}, messages: {[m.content for m in conversation.messages]}")
+    
+    # Check that only 1 message exists in conversation.messages so far
+    assert len(conversation.messages) == 1, f"Expected 1 message after deltas, got {len(conversation.messages)}: {[m.content for m in conversation.messages]}"
+    assert conversation.messages[0].content == "Hello world!", f"Expected 'Hello world!', got '{conversation.messages[0].content}'"
+    
+    # Simulate completed event (like on_llm_response_sync_conversation)
+    logger.info("Simulating completed event...")
+    existing_handler = await conversation.get_streaming_message_handler(item_id)
+    assert existing_handler is not None, "Handler should exist after deltas"
+    
+    # This is what agents.py does when handler exists
+    await existing_handler.update_message("Hello world!", replace_content=True)
+    logger.info(f"After finalization, message count: {len(conversation.messages)}, messages: {[m.content for m in conversation.messages]}")
+    
+    # Verify still only 1 message in conversation.messages
+    assert len(conversation.messages) == 1, f"Expected 1 message after finalization, got {len(conversation.messages)}: {[m.content for m in conversation.messages]}"
+    assert conversation.messages[0].content == "Hello world!", f"Expected 'Hello world!', got '{conversation.messages[0].content}'"
+    
+    # Verify only 1 message in Stream Chat channel
+    response = await channel.get_or_create(state=True, messages=MessagePaginationParams(limit=10))
+    logger.info(f"Stream Chat messages: {[(m.id, m.text) for m in response.data.messages]}")
+    assert len(response.data.messages) == 1, f"Expected 1 message in Stream, got {len(response.data.messages)}: {[(m.id, m.text) for m in response.data.messages]}"
+    assert response.data.messages[0].text == "Hello world!", f"Expected 'Hello world!', got '{response.data.messages[0].text}'"
+    
+    logger.info(f"✅ Test passed: Only 1 message created")
