@@ -5,7 +5,7 @@ A high-quality Speech-to-Text (STT) plugin for Vision agents that uses the Deepg
 ## Installation
 
 ```bash
-pip install vision-agents-plugins-deepgram
+uv add vision-agents-plugins-deepgram
 ```
 
 ## Usage
