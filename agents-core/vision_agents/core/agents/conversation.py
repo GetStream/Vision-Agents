@@ -26,26 +26,26 @@ class Message:
 
 class ContentBuffer:
     """Manages out-of-order fragment buffering for streaming messages."""
-    
+
     def __init__(self):
         self.fragments: Dict[int, str] = {}
         self.last_index = -1
         self.accumulated = ""
-    
+
     def add_fragment(self, index: int, text: str):
         """Add a fragment and apply all sequential pending fragments."""
         self.fragments[index] = text
         self._apply_pending()
-    
+
     def _apply_pending(self):
         """Apply all sequential fragments starting from last_index + 1."""
         while (self.last_index + 1) in self.fragments:
             self.accumulated += self.fragments.pop(self.last_index + 1)
             self.last_index += 1
-    
+
     def get_accumulated(self) -> str:
         return self.accumulated
-    
+
     def clear(self):
         self.fragments.clear()
         self.last_index = -1
@@ -54,17 +54,19 @@ class ContentBuffer:
 
 class MessageState:
     """Internal state for tracking a message's lifecycle."""
-    
+
     def __init__(self, message_id: str):
         self.message_id = message_id
         self.buffer = ContentBuffer()
         self.created_in_backend = False  # Has message been sent to Stream/DB?
-        self.backend_message_ids: List[str] = []  # For chunking: multiple backend IDs per internal ID
+        self.backend_message_ids: List[
+            str
+        ] = []  # For chunking: multiple backend IDs per internal ID
 
 
 class Conversation(ABC):
     """Base conversation class with unified message API."""
-    
+
     def __init__(
         self,
         instructions: str,
@@ -74,7 +76,7 @@ class Conversation(ABC):
         self.messages = [m for m in messages]
         self._message_states: Dict[str, MessageState] = {}
         self._lock = asyncio.Lock()  # One lock to rule them all
-    
+
     async def send_message(
         self,
         role: str,
@@ -84,27 +86,27 @@ class Conversation(ABC):
         original: Any = None,
     ) -> Message:
         """Send a simple, complete message (non-streaming).
-        
+
         This is a convenience method for the common case of sending a complete message.
         For streaming messages, use upsert_message() directly.
-        
+
         Args:
             role: Message role (user/assistant/system)
             user_id: User ID
             content: Complete text content
             message_id: Optional ID. If None, auto-generates.
             original: Original event/object for metadata
-        
+
         Returns:
             The Message object
-        
+
         Examples:
             # User message
             await conv.send_message("user", "user123", "What's the weather?")
-            
+
             # Assistant response
             await conv.send_message("assistant", "agent", "It's sunny!")
-            
+
             # System message
             await conv.send_message("system", "system", "User joined")
         """
@@ -116,7 +118,7 @@ class Conversation(ABC):
             completed=True,
             original=original,
         )
-    
+
     async def upsert_message(
         self,
         role: str,
@@ -129,7 +131,7 @@ class Conversation(ABC):
         original: Any = None,
     ) -> Message:
         """Add or update a message. Handles streaming, non-streaming, everything.
-        
+
         Args:
             role: Message role (user/assistant/system)
             user_id: User ID
@@ -139,17 +141,17 @@ class Conversation(ABC):
             completed: If True, finalizes the message. If False, keeps it as "generating".
             replace: If True, replaces all content. If False, appends/merges with deltas.
             original: Original event/object for metadata
-        
+
         Returns:
             The Message object (newly created or updated)
-        
+
         Examples:
             # Streaming delta
             await conv.upsert_message("assistant", "agent", "Hello", msg_id, content_index=0, completed=False)
-            
+
             # Completion (replaces partial content)
             await conv.upsert_message("assistant", "agent", "Hello world!", msg_id, completed=True, replace=True)
-            
+
             # Simple non-streaming
             await conv.upsert_message("user", "user123", "Hi there!")
         """
@@ -157,7 +159,7 @@ class Conversation(ABC):
             # Generate ID if not provided
             if message_id is None:
                 message_id = str(uuid.uuid4())
-            
+
             # Find or create message
             message = self._find_message(message_id)
             if message is None:
@@ -167,15 +169,15 @@ class Conversation(ABC):
                     role=role,
                     user_id=user_id,
                     content="",
-                    original=original
+                    original=original,
                 )
                 self.messages.append(message)
                 state = MessageState(message_id)
                 self._message_states[message_id] = state
             else:
                 # Existing message - get its state
-                state = self._message_states.get(message_id)
-                if state is None:
+                state_or_none = self._message_states.get(message_id)
+                if state_or_none is None:
                     # Message exists but no state - was already completed
                     # Ignore late updates (deltas arriving after completion)
                     logger.debug(
@@ -183,7 +185,8 @@ class Conversation(ABC):
                         f"This happens when deltas arrive after completion."
                     )
                     return message
-            
+                state = state_or_none
+
             # Update content
             if content_index is not None:
                 # Streaming: buffer fragments in order
@@ -196,27 +199,29 @@ class Conversation(ABC):
             else:
                 # Append to existing
                 message.content += content
-            
+
             # Sync to backend (implementation-specific)
             await self._sync_to_backend(message, state, completed)
-            
+
             # Cleanup state if completed
             if completed:
                 self._message_states.pop(message_id, None)
-            
+
             return message
-    
+
     @abstractmethod
-    async def _sync_to_backend(self, message: Message, state: MessageState, completed: bool):
+    async def _sync_to_backend(
+        self, message: Message, state: MessageState, completed: bool
+    ):
         """Sync message to backend storage. Implementation-specific.
-        
+
         Args:
             message: The message to sync
             state: The message's internal state
             completed: If True, finalize the message. If False, mark as still generating.
         """
         pass
-    
+
     def _find_message(self, message_id: str) -> Optional[Message]:
         """Find a message by ID."""
         return next((m for m in self.messages if m.id == message_id), None)
@@ -224,7 +229,9 @@ class Conversation(ABC):
 
 class InMemoryConversation(Conversation):
     """In-memory conversation (no external storage)."""
-    
-    async def _sync_to_backend(self, message: Message, state: MessageState, completed: bool):
+
+    async def _sync_to_backend(
+        self, message: Message, state: MessageState, completed: bool
+    ):
         """No-op for in-memory storage - message is already in self.messages."""
         pass

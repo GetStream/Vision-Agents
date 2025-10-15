@@ -211,8 +211,8 @@ class Agent:
             await self.conversation.upsert_message(
                 message_id=event.item_id,
                 role="assistant",
-                user_id=self.agent_user.id,
-                content=event.text,
+                user_id=self.agent_user.id or "agent",
+                content=event.text or "",
                 completed=True,
                 replace=True,  # Replace any partial content from deltas
             )
@@ -221,7 +221,9 @@ class Agent:
         async def _handle_output_text_delta(event: LLMResponseChunkEvent):
             """Handle partial LLM response text deltas."""
 
-            self.logger.info(f"🤖 [LLM delta response]: {event.delta} {event.item_id} {event.content_index}")
+            self.logger.info(
+                f"🤖 [LLM delta response]: {event.delta} {event.item_id} {event.content_index}"
+            )
 
             if self.conversation is None:
                 return
@@ -230,8 +232,8 @@ class Agent:
             await self.conversation.upsert_message(
                 message_id=event.item_id,
                 role="assistant",
-                user_id=self.agent_user.id,
-                content=event.delta,
+                user_id=self.agent_user.id or "agent",
+                content=event.delta or "",
                 content_index=event.content_index,
                 completed=False,  # Still streaming
             )
@@ -241,14 +243,17 @@ class Agent:
         async def on_stt_transcript_event_sync_conversation(event: STTTranscriptEvent):
             self.logger.info(f"🎤 [Transcript]: {event.text}")
 
+            if self.conversation is None:
+                return
+
             user_id = event.user_id() or "user"
-            
+
             # Unified API: handles both streaming and non-streaming transcripts
             await self.conversation.upsert_message(
                 message_id="stt-" + user_id,
                 role="user",
                 user_id=user_id,
-                content=event.text,
+                content=event.text or "",
                 completed=True,
                 replace=True,  # Replace any partial transcripts
                 original=event,
@@ -568,12 +573,13 @@ class Agent:
             )
         )
         # Unified API: simple non-streaming message
-        await self.conversation.upsert_message(
-            role="assistant",
-            user_id=user_id or self.agent_user.id,
-            content=text,
-            completed=True,
-        )
+        if self.conversation is not None:
+            await self.conversation.upsert_message(
+                role="assistant",
+                user_id=user_id or self.agent_user.id or "agent",
+                content=text,
+                completed=True,
+            )
 
     def _setup_turn_detection(self):
         if self.turn_detection:
