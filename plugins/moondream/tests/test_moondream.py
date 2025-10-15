@@ -1,9 +1,30 @@
+"""
+Moondream processor tests.
+
+Unit tests run without API keys.
+Integration tests require MOONDREAM_API_KEY environment variable:
+
+    export MOONDREAM_API_KEY="your-key-here"
+    pytest plugins/moondream/tests/ -m integration -v
+    
+To run only unit tests (no API key needed):
+
+    pytest plugins/moondream/tests/ -m "not integration" -v
+"""
+import os
 import pytest
 import av
 import numpy as np
 from PIL import Image
 
-from vision_agents.plugins.moondream import MoondreamProcessor, MoondreamVideoTrack
+from vision_agents.plugins.moondream import (
+    MoondreamProcessor,
+    MoondreamVideoTrack,
+    MoondreamAPIError,
+    MoondreamAuthError,
+    MoondreamRateLimitError,
+    MoondreamBadRequestError,
+)
 
 
 @pytest.fixture
@@ -20,7 +41,7 @@ def sample_frame(sample_image):
 
 def test_processor_initialization():
     """Test that processor can be initialized with basic config."""
-    processor = MoondreamProcessor(mode="cloud")
+    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
     assert processor is not None
     assert processor.mode == "cloud"
     assert processor.skills == ["detection"]
@@ -44,7 +65,7 @@ def test_processor_with_custom_skills():
 
 def test_processor_state():
     """Test that processor returns empty state initially."""
-    processor = MoondreamProcessor(mode="cloud")
+    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
     state = processor.state()
     assert isinstance(state, dict)
     processor.close()
@@ -66,7 +87,7 @@ async def test_video_track_frame_queuing(sample_frame):
 
 def test_processor_publishes_track():
     """Test that processor publishes a MoondreamVideoTrack."""
-    processor = MoondreamProcessor()
+    processor = MoondreamProcessor(mode="local")  # local mode doesn't require API key
     track = processor.publish_video_track()
     assert isinstance(track, MoondreamVideoTrack)
     processor.close()
@@ -94,7 +115,13 @@ async def test_video_track_multiple_frames(sample_image):
 @pytest.mark.asyncio
 async def test_cloud_inference_structure(sample_image):
     """Test that cloud inference returns proper structure."""
-    processor = MoondreamProcessor(mode="cloud", skills=["detection"])
+    processor = MoondreamProcessor(mode="cloud", skills=["detection"], api_key="test_key")
+    
+    # Mock the API call to avoid making a real HTTP request
+    async def mock_detection_api(session, img_base64):
+        return [{"label": "test", "bbox": [0.1, 0.1, 0.5, 0.5], "confidence": 0.9}]
+    
+    processor._call_detection_api = mock_detection_api
     
     frame_array = np.array(sample_image)
     result = await processor._cloud_inference(frame_array)
@@ -134,7 +161,7 @@ async def test_run_inference_routing(sample_image):
     frame_array = np.array(sample_image)
     
     # Test cloud mode
-    processor_cloud = MoondreamProcessor(mode="cloud")
+    processor_cloud = MoondreamProcessor(mode="cloud", api_key="test_key")
     result = await processor_cloud.run_inference(frame_array)
     assert isinstance(result, dict)
     processor_cloud.close()
@@ -157,8 +184,23 @@ async def test_multi_skill_inference(sample_image):
     """Test inference with multiple skills enabled."""
     processor = MoondreamProcessor(
         mode="cloud",
-        skills=["detection", "vqa", "caption"]
+        skills=["detection", "vqa", "caption"],
+        api_key="test_key"
     )
+    
+    # Mock the API calls
+    async def mock_detection_api(session, img_base64):
+        return [{"label": "test", "bbox": [0.1, 0.1, 0.5, 0.5], "confidence": 0.9}]
+    
+    async def mock_vqa_api(session, img_base64, question):
+        return "Mock VQA response"
+    
+    async def mock_caption_api(session, img_base64):
+        return "Mock caption"
+    
+    processor._call_detection_api = mock_detection_api
+    processor._call_vqa_api = mock_vqa_api
+    processor._call_caption_api = mock_caption_api
     
     frame_array = np.array(sample_image)
     result = await processor.run_inference(frame_array)
@@ -175,7 +217,7 @@ async def test_multi_skill_inference(sample_image):
 
 def test_annotate_detections_with_normalized_coords(sample_image):
     """Test annotation with normalized coordinates."""
-    processor = MoondreamProcessor(mode="cloud", skills=["detection"])
+    processor = MoondreamProcessor(mode="cloud", skills=["detection"], api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -196,7 +238,7 @@ def test_annotate_detections_with_normalized_coords(sample_image):
 
 def test_annotate_detections_with_pixel_coords(sample_image):
     """Test annotation with pixel coordinates."""
-    processor = MoondreamProcessor(mode="cloud", skills=["detection"])
+    processor = MoondreamProcessor(mode="cloud", skills=["detection"], api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -217,7 +259,7 @@ def test_annotate_detections_with_pixel_coords(sample_image):
 
 def test_annotate_detections_multiple_objects(sample_image):
     """Test annotation with multiple detections."""
-    processor = MoondreamProcessor(mode="cloud", skills=["detection"])
+    processor = MoondreamProcessor(mode="cloud", skills=["detection"], api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -239,7 +281,7 @@ def test_annotate_detections_multiple_objects(sample_image):
 
 def test_annotate_detections_empty_results(sample_image):
     """Test annotation with no detections."""
-    processor = MoondreamProcessor(mode="cloud", skills=["detection"])
+    processor = MoondreamProcessor(mode="cloud", skills=["detection"], api_key="test_key")
     
     frame_array = np.array(sample_image)
     mock_results = {"detections": []}
@@ -254,7 +296,7 @@ def test_annotate_detections_empty_results(sample_image):
 @pytest.mark.asyncio
 async def test_process_and_add_frame(sample_frame):
     """Test the full frame processing pipeline."""
-    processor = MoondreamProcessor(mode="cloud", skills=["detection"])
+    processor = MoondreamProcessor(mode="cloud", skills=["detection"], api_key="test_key")
     
     # Mock the run_inference method to return test data
     async def mock_inference(frame_array):
@@ -275,7 +317,7 @@ async def test_process_and_add_frame(sample_frame):
 
 def test_state_exposes_results():
     """Test that state() provides LLM-friendly data."""
-    processor = MoondreamProcessor(mode="cloud", skills=["vqa", "detection"])
+    processor = MoondreamProcessor(mode="cloud", skills=["vqa", "detection"], api_key="test_key")
     
     # Simulate inference results
     processor._last_results = {
@@ -296,7 +338,7 @@ def test_state_exposes_results():
 
 def test_state_with_caption():
     """Test state with caption skill."""
-    processor = MoondreamProcessor(mode="cloud", skills=["caption"])
+    processor = MoondreamProcessor(mode="cloud", skills=["caption"], api_key="test_key")
     
     processor._last_results = {"caption": "A sunny day at the beach"}
     
@@ -308,7 +350,7 @@ def test_state_with_caption():
 
 def test_state_with_counting():
     """Test state with counting skill."""
-    processor = MoondreamProcessor(mode="cloud", skills=["counting"])
+    processor = MoondreamProcessor(mode="cloud", skills=["counting"], api_key="test_key")
     
     processor._last_results = {"count": 5}
     
@@ -320,7 +362,7 @@ def test_state_with_counting():
 
 def test_state_empty_before_processing():
     """Test that state is empty before any processing."""
-    processor = MoondreamProcessor(mode="cloud")
+    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
     state = processor.state()
     assert state == {}
     processor.close()
@@ -328,7 +370,7 @@ def test_state_empty_before_processing():
 
 def test_summarize_detections():
     """Test detection summarization for LLM."""
-    processor = MoondreamProcessor(mode="cloud")
+    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
     
     detections = [
         {"label": "person", "confidence": 0.95},
@@ -344,8 +386,88 @@ def test_summarize_detections():
 
 def test_summarize_empty_detections():
     """Test detection summary with no detections."""
-    processor = MoondreamProcessor(mode="cloud")
+    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
     summary = processor._summarize_detections([])
     assert summary == "No objects detected"
     processor.close()
+
+
+# Phase 7 Tests: Live API Integration
+
+@pytest.mark.integration
+@pytest.mark.skipif(not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set")
+@pytest.mark.asyncio
+async def test_live_detection_api():
+    """Test live detection API with real Moondream service."""
+    processor = MoondreamProcessor(
+        mode="cloud",
+        api_key=os.getenv("MOONDREAM_API_KEY"),
+        skills=["detection"],
+        conf_threshold=0.5
+    )
+    
+    # Use existing test image
+    from pathlib import Path
+    assets_dir = Path(__file__).parent.parent.parent.parent / "tests" / "test_assets"
+    image_path = assets_dir / "golf_swing.png"
+    
+    if image_path.exists():
+        image = Image.open(image_path)
+        frame_array = np.array(image)
+        
+        # Run inference
+        result = await processor.run_inference(frame_array)
+        
+        # Verify we got real detections
+        assert "detections" in result
+        assert isinstance(result["detections"], list)
+        
+        # Log what we detected
+        if result["detections"]:
+            print(f"\n✅ Detected {len(result['detections'])} objects:")
+            for det in result["detections"]:
+                print(f"  - {det.get('label')} ({det.get('confidence', 0):.2f})")
+        else:
+            print("\n⚠️ No objects detected (this might be expected)")
+    else:
+        pytest.skip(f"Test image not found: {image_path}")
+    
+    processor.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set")
+@pytest.mark.asyncio
+async def test_live_detection_with_annotation():
+    """Test that detection results are properly annotated on frames."""
+    processor = MoondreamProcessor(
+        mode="cloud",
+        api_key=os.getenv("MOONDREAM_API_KEY"),
+        skills=["detection"]
+    )
+    
+    # Create a simple test image
+    test_image = Image.new("RGB", (640, 480), color="blue")
+    frame_array = np.array(test_image)
+    
+    # Run inference
+    result = await processor.run_inference(frame_array)
+    
+    # If we got detections, test annotation
+    if result.get("detections"):
+        annotated = processor._annotate_detections(frame_array, result)
+        
+        # Verify frame was modified
+        assert not np.array_equal(frame_array, annotated)
+        
+        # Optionally save for visual inspection
+        # Image.fromarray(annotated).save("/tmp/moondream_test_annotated.jpg")
+    
+    processor.close()
+
+
+def test_missing_api_key():
+    """Test that missing API key raises ValueError."""
+    with pytest.raises(ValueError, match="api_key is required"):
+        MoondreamProcessor(mode="cloud", api_key=None)
 

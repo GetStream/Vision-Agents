@@ -26,6 +26,35 @@ logger = logging.getLogger(__name__)
 DEFAULT_WIDTH = 640
 DEFAULT_HEIGHT = 480
 
+# Moondream API Configuration
+MOONDREAM_API_BASE = "https://api.moondream.ai/v1"
+MOONDREAM_API_ENDPOINTS = {
+    "detect": "/detect",
+    "query": "/query",
+    "caption": "/caption",
+}
+MOONDREAM_TIMEOUT = 30.0
+
+
+class MoondreamAPIError(Exception):
+    """Base exception for Moondream API errors."""
+    pass
+
+
+class MoondreamAuthError(MoondreamAPIError):
+    """Invalid API key or authentication failed."""
+    pass
+
+
+class MoondreamRateLimitError(MoondreamAPIError):
+    """Rate limit exceeded."""
+    pass
+
+
+class MoondreamBadRequestError(MoondreamAPIError):
+    """Bad request (invalid image format or parameters)."""
+    pass
+
 
 class MoondreamVideoTrack(VideoStreamTrack):
     """
@@ -155,6 +184,12 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         # Initialize model for local mode
         if mode == "local":
             self._load_local_model()
+        
+        # Validate cloud mode requirements
+        if self.mode == "cloud":
+            if not self.api_key:
+                raise ValueError("api_key is required for cloud mode")
+            logger.info("✅ Cloud mode configured with API key")
         
         logger.info(f"🌙 Moondream Processor initialized with mode: {mode}, skills: {self.skills}")
     
@@ -290,26 +325,89 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             return {}
     
     async def _call_detection_api(self, session: aiohttp.ClientSession, img_base64: str) -> List[Dict]:
-        """Call Moondream detection API."""
-        # Placeholder - actual API endpoint needed
-        logger.debug("🔍 Calling detection API (mock)")
-        return []
+        """
+        Call Moondream detection API.
+        
+        Note: Moondream's "detect" endpoint is actually a "point" API that finds
+        specific objects. It expects an image_url and object parameter.
+        """
+        url = f"{MOONDREAM_API_BASE}{MOONDREAM_API_ENDPOINTS['detect']}"
+        headers = {
+            "X-Moondream-Auth": self.api_key,
+            "Content-Type": "application/json"
+        }
+        
+        # Convert base64 to data URI format (Moondream accepts data URIs)
+        image_data_uri = f"data:image/jpeg;base64,{img_base64}"
+        
+        # For now, detect "person" as a default object
+        # TODO: Make this configurable or detect multiple objects
+        payload = {
+            "image_url": image_data_uri,
+            "object": "person"  # The object to detect
+        }
+        
+        try:
+            async with session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=MOONDREAM_TIMEOUT)
+            ) as response:
+                # Handle error status codes
+                if response.status == 401:
+                    raise MoondreamAuthError("Invalid API key. Check your MOONDREAM_API_KEY.")
+                elif response.status == 429:
+                    raise MoondreamRateLimitError("Rate limit exceeded. Please wait and try again.")
+                elif response.status == 400:
+                    error_text = await response.text()
+                    raise MoondreamBadRequestError(f"Bad request: {error_text}")
+                elif response.status >= 500:
+                    raise MoondreamAPIError(f"Moondream server error: {response.status}")
+                
+                response.raise_for_status()
+                data = await response.json()
+                
+                # Moondream's detect/point API returns bounding boxes for the specified object
+                # Convert to our detection format
+                detections = []
+                if "objects" in data and isinstance(data["objects"], list):
+                    for obj in data["objects"]:
+                        # Moondream returns x_min, y_min, x_max, y_max (normalized 0-1)
+                        bbox = [
+                            obj.get("x_min", 0),
+                            obj.get("y_min", 0),
+                            obj.get("x_max", 0),
+                            obj.get("y_max", 0)
+                        ]
+                        detections.append({
+                            "label": payload["object"],  # The object we asked for
+                            "bbox": bbox,
+                            "confidence": obj.get("confidence", 1.0)
+                        })
+                
+                logger.debug(f"🔍 Detection API returned {len(detections)} objects")
+                return detections
+                
+        except aiohttp.ClientError as e:
+            logger.error(f"❌ Detection API request failed: {e}")
+            raise MoondreamAPIError(f"API request failed: {e}") from e
     
     async def _call_vqa_api(self, session: aiohttp.ClientSession, img_base64: str, question: str) -> str:
         """Call Moondream VQA API."""
-        # Placeholder - actual API endpoint needed
+        # TODO: Implement live API after detection is working
         logger.debug(f"❓ Calling VQA API with question: {question} (mock)")
         return ""
     
     async def _call_counting_api(self, session: aiohttp.ClientSession, img_base64: str) -> int:
         """Call Moondream counting API."""
-        # Placeholder - actual API endpoint needed
+        # TODO: Implement live API after detection is working
         logger.debug("🔢 Calling counting API (mock)")
         return 0
     
     async def _call_caption_api(self, session: aiohttp.ClientSession, img_base64: str) -> str:
         """Call Moondream caption API."""
-        # Placeholder - actual API endpoint needed
+        # TODO: Implement live API after detection is working
         logger.debug("📝 Calling caption API (mock)")
         return ""
     
