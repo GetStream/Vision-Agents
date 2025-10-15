@@ -2,8 +2,9 @@ import asyncio
 import base64
 import io
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
 import aiortc
@@ -134,10 +135,14 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     Args:
         mode: Inference mode ("cloud", "local", or "fal")
         skills: List of skills to enable (detection, vqa, counting, caption)
-        api_key: API key for cloud/FAL modes
+        api_key: API key for cloud/FAL modes. If not provided, will attempt to read
+                from MOONDREAM_API_KEY environment variable.
         model_path: Path to local model (for local mode)
         conf_threshold: Confidence threshold for detections
         vqa_prompt: Default question for VQA skill
+        detect_objects: Object(s) to detect. Moondream uses zero-shot detection,
+                       so any object string works. Examples: "person", "car",
+                       "basketball", ["person", "car", "dog"]. Default: "person"
         fps: Frame processing rate
         interval: Processing interval in seconds
         max_workers: Number of worker threads
@@ -152,6 +157,7 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         model_path: Optional[str] = None,
         conf_threshold: float = 0.3,
         vqa_prompt: str = "What do you see?",
+        detect_objects: Union[str, List[str]] = "person",
         fps: int = 30,
         interval: int = 0,
         max_workers: int = 4,
@@ -163,7 +169,10 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         
         self.mode = mode
         self.skills = skills or ["detection"]
-        self.api_key = api_key
+        
+        # Auto-load API key from environment if not provided
+        self.api_key = api_key or os.getenv("MOONDREAM_API_KEY")
+        
         self.model_path = model_path
         self.conf_threshold = conf_threshold
         self.vqa_prompt = vqa_prompt
@@ -171,6 +180,16 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         self.device = device
         self.max_workers = max_workers
         self._shutdown = False
+        
+        # Normalize detect_objects to list of strings
+        if isinstance(detect_objects, str):
+            self.detect_objects = [detect_objects]
+        elif isinstance(detect_objects, list):
+            if not all(isinstance(obj, str) for obj in detect_objects):
+                raise ValueError("detect_objects must be str or list of strings")
+            self.detect_objects = detect_objects
+        else:
+            raise ValueError("detect_objects must be str or list of strings")
         
         # Thread pool for CPU-intensive inference
         self.executor = ThreadPoolExecutor(
@@ -192,6 +211,7 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             logger.info("✅ Cloud mode configured with API key")
         
         logger.info(f"🌙 Moondream Processor initialized with mode: {mode}, skills: {self.skills}")
+        logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
     
     async def process_video(
         self,
@@ -326,72 +346,78 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     
     async def _call_detection_api(self, session: aiohttp.ClientSession, img_base64: str) -> List[Dict]:
         """
-        Call Moondream detection API.
+        Call Moondream detection API for all configured object types.
         
         Note: Moondream's "detect" endpoint is actually a "point" API that finds
         specific objects. It expects an image_url and object parameter.
+        Each object type requires a separate API call.
         """
-        url = f"{MOONDREAM_API_BASE}{MOONDREAM_API_ENDPOINTS['detect']}"
-        headers = {
-            "X-Moondream-Auth": self.api_key,
-            "Content-Type": "application/json"
-        }
-        
-        # Convert base64 to data URI format (Moondream accepts data URIs)
+        all_detections = []
         image_data_uri = f"data:image/jpeg;base64,{img_base64}"
         
-        # For now, detect "person" as a default object
-        # TODO: Make this configurable or detect multiple objects
-        payload = {
-            "image_url": image_data_uri,
-            "object": "person"  # The object to detect
-        }
+        # Call API for each configured object type
+        for object_type in self.detect_objects:
+            url = f"{MOONDREAM_API_BASE}{MOONDREAM_API_ENDPOINTS['detect']}"
+            headers = {
+                "X-Moondream-Auth": self.api_key,
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "image_url": image_data_uri,
+                "object": object_type  # The object to detect
+            }
+            
+            try:
+                logger.debug(f"🔍 Detecting '{object_type}' via Moondream API")
+                
+                async with session.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=MOONDREAM_TIMEOUT)
+                ) as response:
+                    # Handle error status codes
+                    if response.status == 401:
+                        raise MoondreamAuthError("Invalid API key. Check your MOONDREAM_API_KEY.")
+                    elif response.status == 429:
+                        raise MoondreamRateLimitError("Rate limit exceeded. Please wait and try again.")
+                    elif response.status == 400:
+                        error_text = await response.text()
+                        raise MoondreamBadRequestError(f"Bad request: {error_text}")
+                    elif response.status >= 500:
+                        raise MoondreamAPIError(f"Moondream server error: {response.status}")
+                    
+                    response.raise_for_status()
+                    data = await response.json()
+                    
+                    # Moondream's detect/point API returns bounding boxes for the specified object
+                    # Convert to our detection format
+                    if "objects" in data and isinstance(data["objects"], list):
+                        for obj in data["objects"]:
+                            # Moondream returns x_min, y_min, x_max, y_max (normalized 0-1)
+                            bbox = [
+                                obj.get("x_min", 0),
+                                obj.get("y_min", 0),
+                                obj.get("x_max", 0),
+                                obj.get("y_max", 0)
+                            ]
+                            all_detections.append({
+                                "label": object_type,  # The object we searched for
+                                "bbox": bbox,
+                                "confidence": obj.get("confidence", 1.0)
+                            })
+                    
+            except MoondreamAPIError:
+                # Re-raise our custom exceptions
+                raise
+            except aiohttp.ClientError as e:
+                logger.warning(f"⚠️ Failed to detect '{object_type}': {e}")
+                # Continue with other objects
+                continue
         
-        try:
-            async with session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=MOONDREAM_TIMEOUT)
-            ) as response:
-                # Handle error status codes
-                if response.status == 401:
-                    raise MoondreamAuthError("Invalid API key. Check your MOONDREAM_API_KEY.")
-                elif response.status == 429:
-                    raise MoondreamRateLimitError("Rate limit exceeded. Please wait and try again.")
-                elif response.status == 400:
-                    error_text = await response.text()
-                    raise MoondreamBadRequestError(f"Bad request: {error_text}")
-                elif response.status >= 500:
-                    raise MoondreamAPIError(f"Moondream server error: {response.status}")
-                
-                response.raise_for_status()
-                data = await response.json()
-                
-                # Moondream's detect/point API returns bounding boxes for the specified object
-                # Convert to our detection format
-                detections = []
-                if "objects" in data and isinstance(data["objects"], list):
-                    for obj in data["objects"]:
-                        # Moondream returns x_min, y_min, x_max, y_max (normalized 0-1)
-                        bbox = [
-                            obj.get("x_min", 0),
-                            obj.get("y_min", 0),
-                            obj.get("x_max", 0),
-                            obj.get("y_max", 0)
-                        ]
-                        detections.append({
-                            "label": payload["object"],  # The object we asked for
-                            "bbox": bbox,
-                            "confidence": obj.get("confidence", 1.0)
-                        })
-                
-                logger.debug(f"🔍 Detection API returned {len(detections)} objects")
-                return detections
-                
-        except aiohttp.ClientError as e:
-            logger.error(f"❌ Detection API request failed: {e}")
-            raise MoondreamAPIError(f"API request failed: {e}") from e
+        logger.debug(f"🔍 Detection API returned {len(all_detections)} objects across {len(self.detect_objects)} types")
+        return all_detections
     
     async def _call_vqa_api(self, session: aiohttp.ClientSession, img_base64: str, question: str) -> str:
         """Call Moondream VQA API."""

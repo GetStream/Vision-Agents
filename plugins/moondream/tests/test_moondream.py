@@ -466,8 +466,162 @@ async def test_live_detection_with_annotation():
     processor.close()
 
 
-def test_missing_api_key():
-    """Test that missing API key raises ValueError."""
+def test_missing_api_key(monkeypatch):
+    """Test that missing API key raises ValueError when env var is also missing."""
+    # Remove the environment variable to test the error case
+    monkeypatch.delenv("MOONDREAM_API_KEY", raising=False)
+    
     with pytest.raises(ValueError, match="api_key is required"):
         MoondreamProcessor(mode="cloud", api_key=None)
+
+
+def test_api_key_from_env(monkeypatch):
+    """Test that API key is loaded from environment variable."""
+    monkeypatch.setenv("MOONDREAM_API_KEY", "test_env_key")
+    
+    processor = MoondreamProcessor(mode="cloud", skills=["detection"])
+    assert processor.api_key == "test_env_key"
+    processor.close()
+
+
+def test_api_key_explicit_override(monkeypatch):
+    """Test that explicit API key overrides environment variable."""
+    monkeypatch.setenv("MOONDREAM_API_KEY", "env_key")
+    
+    processor = MoondreamProcessor(mode="cloud", api_key="explicit_key", skills=["detection"])
+    assert processor.api_key == "explicit_key"
+    processor.close()
+
+
+# Phase 8 Tests: Configurable Detection Objects
+
+def test_detect_objects_default():
+    """Test default detect_objects is 'person'."""
+    processor = MoondreamProcessor(mode="local")
+    assert processor.detect_objects == ["person"]
+    processor.close()
+
+
+def test_detect_objects_single_string():
+    """Test detect_objects with single string."""
+    processor = MoondreamProcessor(
+        mode="local",
+        detect_objects="car"
+    )
+    assert processor.detect_objects == ["car"]
+    processor.close()
+
+
+def test_detect_objects_list():
+    """Test detect_objects with list."""
+    processor = MoondreamProcessor(
+        mode="local",
+        detect_objects=["person", "car", "dog"]
+    )
+    assert processor.detect_objects == ["person", "car", "dog"]
+    processor.close()
+
+
+def test_detect_objects_invalid_type():
+    """Test detect_objects with invalid type raises error."""
+    with pytest.raises(ValueError, match="detect_objects must be str or list"):
+        MoondreamProcessor(
+            mode="local",
+            detect_objects=123  # Invalid: not a string or list
+        )
+
+
+def test_detect_objects_invalid_list_contents():
+    """Test detect_objects with non-string list items raises error."""
+    with pytest.raises(ValueError, match="detect_objects must be str or list"):
+        MoondreamProcessor(
+            mode="local",
+            detect_objects=["person", 123, "car"]  # Invalid: contains non-string
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set")
+@pytest.mark.asyncio
+async def test_custom_object_detection():
+    """Test detection with custom object type (not 'person')."""
+    processor = MoondreamProcessor(
+        mode="cloud",
+        api_key=os.getenv("MOONDREAM_API_KEY"),
+        skills=["detection"],
+        detect_objects="car"  # Detect cars instead of persons
+    )
+    
+    # Use golf_swing.png - might not have cars, but test should run
+    from pathlib import Path
+    assets_dir = Path(__file__).parent.parent.parent.parent / "tests" / "test_assets"
+    image_path = assets_dir / "golf_swing.png"
+    
+    if image_path.exists():
+        image = Image.open(image_path)
+        frame_array = np.array(image)
+        
+        # Run inference - may return empty if no cars in image
+        result = await processor.run_inference(frame_array)
+        
+        # Verify structure is correct
+        assert "detections" in result
+        assert isinstance(result["detections"], list)
+        
+        # If any detections, verify label is "car"
+        for det in result.get("detections", []):
+            assert det["label"] == "car", f"Expected 'car' but got '{det['label']}'"
+        
+        print(f"\n🚗 Car detection test: Found {len(result.get('detections', []))} cars")
+    else:
+        pytest.skip(f"Test image not found: {image_path}")
+    
+    processor.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set")
+@pytest.mark.asyncio
+async def test_multiple_object_detection():
+    """Test detection with multiple object types."""
+    processor = MoondreamProcessor(
+        mode="cloud",
+        api_key=os.getenv("MOONDREAM_API_KEY"),
+        skills=["detection"],
+        detect_objects=["person", "grass", "sky"]  # Multiple types
+    )
+    
+    # Use golf_swing.png - likely has person and grass
+    from pathlib import Path
+    assets_dir = Path(__file__).parent.parent.parent.parent / "tests" / "test_assets"
+    image_path = assets_dir / "golf_swing.png"
+    
+    if image_path.exists():
+        image = Image.open(image_path)
+        frame_array = np.array(image)
+        
+        # Run inference
+        result = await processor.run_inference(frame_array)
+        
+        # Verify structure
+        assert "detections" in result
+        assert isinstance(result["detections"], list)
+        
+        # Log what was detected
+        detected_labels = [det["label"] for det in result.get("detections", [])]
+        unique_labels = set(detected_labels)
+        
+        print(f"\n🎯 Multiple object detection test:")
+        print(f"   Searched for: {processor.detect_objects}")
+        print(f"   Found {len(result.get('detections', []))} total detections")
+        print(f"   Unique object types: {unique_labels}")
+        
+        # Verify all labels are from our configured list
+        for label in detected_labels:
+            assert label in processor.detect_objects, \
+                f"Detected '{label}' but it's not in configured objects {processor.detect_objects}"
+    else:
+        pytest.skip(f"Test image not found: {image_path}")
+    
+    processor.close()
 
