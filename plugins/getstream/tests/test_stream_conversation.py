@@ -59,7 +59,7 @@ class TestStreamConversation:
     @pytest.mark.asyncio
     async def test_send_message_simple(self, stream_conversation, mock_channel):
         """Test send_message convenience method."""
-        message = await stream_conversation.send_message(
+        await stream_conversation.send_message(
             role="user",
             user_id="user123",
             content="Hello",
@@ -78,12 +78,12 @@ class TestStreamConversation:
         assert isinstance(request, MessageRequest)
         assert request.text == "Hello"
         assert request.user_id == "user123"
-        assert request.custom.get("generating") == False  # completed=True by default
+        assert request.custom.get("generating") is False  # completed=True by default
     
     @pytest.mark.asyncio
     async def test_upsert_simple_message(self, stream_conversation, mock_channel):
         """Test adding a simple non-streaming message with upsert."""
-        message = await stream_conversation.upsert_message(
+        await stream_conversation.upsert_message(
             role="user",
             user_id="user123",
             content="Hello",
@@ -536,7 +536,7 @@ async def test_large_message_chunking_integration():
     
     # Verify all chunks have generating=False (completed=True)
     for i, stream_msg in enumerate(response.data.messages):
-        assert stream_msg.custom.get("generating") == False
+        assert stream_msg.custom.get("generating") is False
     
     # Verify content is preserved
     full_content = ''.join(msg.text for msg in response.data.messages)
@@ -605,7 +605,7 @@ async def test_streaming_with_chunking_integration():
     
     # All chunks should have generating=False (completed)
     for stream_msg in response.data.messages:
-        assert stream_msg.custom.get("generating") == False
+        assert stream_msg.custom.get("generating") is False
     
     # Content preserved
     full_content = ''.join(msg.text for msg in response.data.messages)

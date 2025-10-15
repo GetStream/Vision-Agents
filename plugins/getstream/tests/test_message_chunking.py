@@ -277,7 +277,7 @@ class TestChunkingIntegration:
             
             # Only last chunk has generating=False
             is_last = (i == 2)
-            assert msg_request.custom["generating"] == (not is_last) or msg_request.custom["generating"] == False
+            assert msg_request.custom["generating"] == (not is_last) or not msg_request.custom["generating"]
     
     @pytest.mark.asyncio
     async def test_streaming_grows_creates_new_chunk(self, conversation, mock_channel):
@@ -293,7 +293,7 @@ class TestChunkingIntegration:
         assert len(mock_channel.sent_messages) == 1
         assert conversation.messages[0].content == "Short"
         # First chunk created with generating=True (it's the last/only chunk initially)
-        assert mock_channel.sent_messages[0].custom["generating"] == True
+        assert mock_channel.sent_messages[0].custom["generating"] is True
         
         # Add more content to exceed chunk_size (should create 2nd chunk)
         await conversation.upsert_message(
@@ -306,7 +306,7 @@ class TestChunkingIntegration:
         
         # Chunk 1 (last, newly created): should have generating=True
         assert mock_channel.sent_messages[1].custom["chunk_index"] == 1
-        assert mock_channel.sent_messages[1].custom["generating"] == True
+        assert mock_channel.sent_messages[1].custom["generating"] is True
         
         # First chunk should have been updated via ephemeral to generating=False (it's now intermediate)
         assert mock_channel.client.ephemeral_message_update.call_count >= 1
@@ -318,7 +318,7 @@ class TestChunkingIntegration:
         ]
         if first_chunk_updates:
             # Most recent update should have generating=False
-            assert first_chunk_updates[-1][1]["set"]["generating"] == False
+            assert first_chunk_updates[-1][1]["set"]["generating"] is False
     
     @pytest.mark.asyncio
     async def test_completion_shrinks_deletes_chunks(self, conversation, mock_channel):
@@ -392,9 +392,9 @@ End."""
             # Only last chunk has generating (and it's False since completed=True)
             is_last = (i == chunks_created - 1)
             if is_last:
-                assert req.custom["generating"] == False
+                assert req.custom["generating"] is False
             else:
-                assert req.custom["generating"] == False  # Intermediate chunks never generating
+                assert req.custom["generating"] is False  # Intermediate chunks never generating
     
     @pytest.mark.asyncio  
     async def test_streaming_chunk_generating_flag(self, conversation, mock_channel):
@@ -416,9 +416,9 @@ End."""
         for i, req in enumerate(mock_channel.sent_messages):
             is_last = (i == chunks_sent - 1)
             if is_last:
-                assert req.custom["generating"] == True, f"Last chunk {i} should have generating=True"
+                assert req.custom["generating"] is True, f"Last chunk {i} should have generating=True"
             else:
-                assert req.custom["generating"] == False, f"Intermediate chunk {i} should have generating=False"
+                assert req.custom["generating"] is False, f"Intermediate chunk {i} should have generating=False"
 
 
 class TestChunkingSentenceBoundaries:
