@@ -59,6 +59,7 @@ class MessageState:
         self.message_id = message_id
         self.buffer = ContentBuffer()
         self.created_in_backend = False  # Has message been sent to Stream/DB?
+        self.backend_message_ids: List[str] = []  # For chunking: multiple backend IDs per internal ID
 
 
 class Conversation(ABC):
