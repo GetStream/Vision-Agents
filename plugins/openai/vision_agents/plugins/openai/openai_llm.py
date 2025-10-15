@@ -227,8 +227,11 @@ class OpenAILLM(LLM):
         for round_num in range(max_rounds):
             # Execute tools (with cross-round deduplication)
             triples, seen = await self._dedup_and_execute(
-                current_tool_calls, max_concurrency=8, timeout_s=30, seen=seen
-            )  # type: ignore[arg-type]
+                current_tool_calls,  # type: ignore[arg-type]
+                max_concurrency=8,
+                timeout_s=30,
+                seen=seen,
+            )
 
             # If no tools were executed, break the loop
             if not triples:
@@ -274,8 +277,8 @@ class OpenAILLM(LLM):
             tools_spec = self._get_tools_for_provider()
             if tools_spec:
                 follow_up_kwargs["tools"] = self._convert_tools_to_provider_format(
-                    tools_spec
-                )  # type: ignore[arg-type]
+                    tools_spec  # type: ignore[arg-type]
+                )
 
             # Get follow-up response
             follow_up_response = await self.client.responses.create(**follow_up_kwargs)

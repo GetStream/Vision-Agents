@@ -114,7 +114,7 @@ class ConnectionOkEvent(BaseEvent):
     connection_id: Optional[str] = None
     server_time: Optional[str] = None
     api_key: Optional[str] = None
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None  # type: ignore[assignment]
 
 
 @dataclass
