@@ -32,7 +32,7 @@ from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
-from .conversation import Conversation, Message, StreamHandle
+from .conversation import Conversation, Message
 
 if TYPE_CHECKING:
     from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
@@ -131,9 +131,8 @@ class Agent:
 
         # we sync the user talking and the agent responses to the conversation
         # because we want to support streaming responses and can have delta updates for both
-        # user and agent we keep an handle for both
+        # user and agent
         self.conversation: Optional[Conversation] = None
-        self._user_conversation_handle: Optional[StreamHandle] = None
 
         # Track pending transcripts for turn-based response triggering
         self._pending_user_transcripts: Dict[str, str] = {}
@@ -208,21 +207,15 @@ class Agent:
             if self.conversation is None:
                 return
 
-            # Check if we have a streaming handler for this message
-            existing_handler = await self.conversation.get_streaming_message_handler(event.item_id)
-
-            if existing_handler is None:
-                # No streaming handler exists, so this is a non-streaming model - create a new message
-                message = Message(
-                    id=event.item_id,
-                    content=event.text,
-                    role="assistant",
-                    user_id=self.agent_user.id,
-                )
-                await self.conversation.add_message(message)
-            else:
-                # We have a streaming handler, so deltas were sent - just finalize the message
-                await existing_handler.update_message(event.text, replace_content=True)
+            # Unified API: handles both streaming and non-streaming
+            await self.conversation.upsert_message(
+                message_id=event.item_id,
+                role="assistant",
+                user_id=self.agent_user.id,
+                content=event.text,
+                completed=True,
+                replace=True,  # Replace any partial content from deltas
+            )
 
         @self.llm.events.subscribe
         async def _handle_output_text_delta(event: LLMResponseChunkEvent):
@@ -233,12 +226,14 @@ class Agent:
             if self.conversation is None:
                 return
 
-            await self.conversation.upsert_streaming_message_handler(
+            # Unified API: streaming delta
+            await self.conversation.upsert_message(
                 message_id=event.item_id,
-                user_id=self.agent_user.id,
                 role="assistant",
+                user_id=self.agent_user.id,
                 content=event.delta,
                 content_index=event.content_index,
+                completed=False,  # Still streaming
             )
 
     async def _setup_speech_events(self):
@@ -247,21 +242,17 @@ class Agent:
             self.logger.info(f"🎤 [Transcript]: {event.text}")
 
             user_id = event.user_id() or "user"
-            handler = await self.conversation.get_streaming_message_handler(
-                "stt-" + user_id
+            
+            # Unified API: handles both streaming and non-streaming transcripts
+            await self.conversation.upsert_message(
+                message_id="stt-" + user_id,
+                role="user",
+                user_id=user_id,
+                content=event.text,
+                completed=True,
+                replace=True,  # Replace any partial transcripts
+                original=event,
             )
-            if handler is None:
-                # No partial transcripts were received, create a completed message directly
-                message = Message(
-                    original=event,
-                    content=event.text,
-                    role="user",
-                    user_id=user_id,
-                )
-                await self.conversation.add_message(message)
-            else:
-                # Replace with final text and complete the message
-                await handler.set_content(event.text, finalize=True)
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
@@ -399,7 +390,6 @@ class Agent:
         hooks (e.g., WebRTC connections, plugin services).
         """
         self._is_running = False
-        self._user_conversation_handle = None
         self.clear_call_logging_context()
 
         # Disconnect from MCP servers
@@ -577,12 +567,12 @@ class Agent:
                 metadata=metadata,
             )
         )
-        await self.conversation.add_message(
-            Message(
-                content=text,
-                role="assistant",
-                user_id=user_id or self.agent_user.id,
-            )
+        # Unified API: simple non-streaming message
+        await self.conversation.upsert_message(
+            role="assistant",
+            user_id=user_id or self.agent_user.id,
+            content=text,
+            completed=True,
         )
 
     def _setup_turn_detection(self):
