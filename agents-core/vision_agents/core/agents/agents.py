@@ -32,7 +32,7 @@ from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
-from .conversation import Conversation, Message
+from .conversation import Conversation
 
 if TYPE_CHECKING:
     from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge

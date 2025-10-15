@@ -6,7 +6,6 @@ Tests the markdown-aware chunking algorithm and chunk management.
 import pytest
 from unittest.mock import Mock, AsyncMock
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
-from vision_agents.core.agents.conversation import Message
 
 
 class TestMessageChunking:

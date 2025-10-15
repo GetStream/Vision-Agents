@@ -1,5 +1,4 @@
 import logging
-import re
 from typing import List, Dict
 
 from getstream.models import MessageRequest

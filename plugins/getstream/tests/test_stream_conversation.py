@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from getstream.models import MessageRequest, ChannelInput, MessagePaginationParams
 from getstream import AsyncStream
 
-from vision_agents.core.agents.conversation import Message
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
 logger = logging.getLogger(__name__)
