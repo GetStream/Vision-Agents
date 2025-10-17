@@ -4,7 +4,6 @@ Vision Agents Setup Script
 Creates a .env file from template and provides setup guidance.
 """
 
-import os
 import sys
 import shutil
 import argparse

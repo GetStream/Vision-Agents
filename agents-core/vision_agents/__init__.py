@@ -2,8 +2,6 @@
 Vision Agents - Open video agents for building low latency video and voice agents.
 """
 
-import os
-import sys
 from pathlib import Path
 
 # Version will be set by hatch-vcs
