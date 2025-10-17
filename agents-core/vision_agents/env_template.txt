@@ -1,0 +1,129 @@
+# Vision Agents Environment Configuration
+# Copy this file to .env and fill in your actual API keys
+
+# =============================================================================
+# CORE INFRASTRUCTURE
+# =============================================================================
+
+# Stream (Required for video/audio infrastructure)
+# Get your keys from: https://getstream.io/
+STREAM_API_KEY=your_stream_api_key_here
+STREAM_API_SECRET=your_stream_api_secret_here
+STREAM_BASE_URL=https://getstream.io
+
+# =============================================================================
+# LLM PROVIDERS
+# =============================================================================
+
+# OpenAI (for GPT models)
+# Get your key from: https://platform.openai.com/api-keys
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Google/Gemini
+# Get your key from: https://aistudio.google.com/app/apikey
+GOOGLE_API_KEY=your_google_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here  # Alternative to GOOGLE_API_KEY
+
+# Anthropic (Claude)
+# Get your key from: https://console.anthropic.com/
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# xAI (Grok)
+# Get your key from: https://console.x.ai/
+XAI_API_KEY=your_xai_api_key_here
+
+# =============================================================================
+# SPEECH-TO-TEXT (STT) PROVIDERS
+# =============================================================================
+
+# Deepgram
+# Get your key from: https://console.deepgram.com/
+DEEPGRAM_API_KEY=your_deepgram_api_key_here
+
+# Moonshine
+# Get your key from: https://moonshine.ai/
+MOONSHINE_API_KEY=your_moonshine_api_key_here
+
+# Wizper
+# Get your key from: https://wizper.ai/
+WIZPER_API_KEY=your_wizper_api_key_here
+
+# =============================================================================
+# TEXT-TO-SPEECH (TTS) PROVIDERS
+# =============================================================================
+
+# Cartesia
+# Get your key from: https://cartesia.ai/
+CARTESIA_API_KEY=your_cartesia_api_key_here
+
+# ElevenLabs
+# Get your key from: https://elevenlabs.io/
+ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
+
+# Kokoro
+# Get your key from: https://kokoro.ai/
+KOKORO_API_KEY=your_kokoro_api_key_here
+
+# =============================================================================
+# TURN DETECTION & VAD
+# =============================================================================
+
+# Smart Turn (FAL)
+# Get your key from: https://fal.ai/
+FAL_KEY=your_fal_api_key_here
+
+# =============================================================================
+# COMPUTER VISION
+# =============================================================================
+
+# Ultralytics (YOLO models)
+# No API key required for basic usage
+# ULTRALYTICS_API_KEY=your_ultralytics_api_key_here
+
+# =============================================================================
+# AUDIO PROCESSING
+# =============================================================================
+
+# Krisp (Noise cancellation)
+# Get your key from: https://krisp.ai/
+KRISP_API_KEY=your_krisp_api_key_here
+
+# =============================================================================
+# MCP (Model Context Protocol) SERVERS
+# =============================================================================
+
+# Local MCP server command (for testing)
+MCP_LOCAL_CMD=python -m mcp_server_weather
+
+# Remote MCP server URL (for testing)
+MCP_REMOTE_URL=https://your-mcp-server.com
+
+# MCP server headers (prefix with MCP_REMOTE_HEADERS_)
+# MCP_REMOTE_HEADERS_Authorization=Bearer your_token
+# MCP_REMOTE_HEADERS_X_API_Key=your_api_key
+
+# =============================================================================
+# DEVELOPMENT & TESTING
+# =============================================================================
+
+# Example base URL for demos
+EXAMPLE_BASE_URL=https://getstream.io/video/demos
+
+# Test configuration
+TEST_MCP_CITY=New York
+
+# GitHub (for MCP integration tests)
+GITHUB_PAT=your_github_personal_access_token_here
+
+# =============================================================================
+# OPTIONAL CONFIGURATION
+# =============================================================================
+
+# OpenAI model selection
+OPENAI_MODEL=gpt-4o-mini
+
+# Logging level
+LOG_LEVEL=INFO
+
+# Debug mode
+DEBUG=false

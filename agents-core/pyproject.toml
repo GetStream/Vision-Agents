@@ -81,6 +81,9 @@ packages = ["vision_agents"]
 [tool.hatch.build.targets.sdist]
 include = ["vision_agents"]
 
+[project.scripts]
+vision-agents-setup = "vision_agents.post_install:main"
+
 #[tool.uv.sources]
 #krisp-audio = [
 #    { path = "./vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", marker = "sys_platform == 'darwin' and platform_machine == 'aarch64'" },
