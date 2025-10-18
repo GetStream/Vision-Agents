@@ -83,7 +83,6 @@ This is all handled by processors.
 To get started with Vision Agents, check out our getting started guide at [VisionAgents.ai](https://visionagents.ai).
 
 - Quickstart: [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
-- Quickstart: [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
 - Tutorial: [Building realtime sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
 - Tutorial: [Building a realtime meeting assistant](#)
 
@@ -122,7 +121,7 @@ We'd like to add support for and are reaching out to:
 * Twilio
 * AWS IVS
 * Vonage
-* And others.
+* And others
 
 ## Roadmap
 
@@ -143,4 +142,3 @@ We'd like to add support for and are reaching out to:
 - QWen3 vision support
 - Buffered video capture support (enabling AI to capture video when something exciting happens)
 - Moondream vision
-
