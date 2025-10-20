@@ -56,7 +56,7 @@ async def start_agent() -> None:
         # await agent.say("Hello, how are you?")
         # await asyncio.sleep(5)
 
-        await agent.simple_response("tell me a story")
+        await agent.simple_response("tell me something interesting in a short sentence")
         await agent.finish()
 
 
