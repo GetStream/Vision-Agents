@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import (
     Any,
+    Optional,
 )
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from vision_agents.core.edge.types import PcmData
+from vision_agents.core.edge.types import PcmData, Participant
 
 
 import abc
@@ -37,11 +38,12 @@ class Realtime(LLM, abc.ABC):
         - Transcript outgoing audio
 
     """
-    fps : int = 1
+
+    fps: int = 1
 
     def __init__(
         self,
-        fps: int = 1, # the number of video frames per second to send (for implementations that support setting fps)
+        fps: int = 1,  # the number of video frames per second to send (for implementations that support setting fps)
     ):
         super().__init__()
         self._is_connected = False
@@ -54,6 +56,8 @@ class Realtime(LLM, abc.ABC):
         self.output_track: AudioStreamTrack = AudioStreamTrack(
             framerate=48000, stereo=True, format="s16"
         )
+        # Store current participant for user speech transcription events
+        self._current_participant: Optional[Participant] = None
 
     @property
     def is_connected(self) -> bool:
@@ -64,8 +68,9 @@ class Realtime(LLM, abc.ABC):
     async def connect(self): ...
 
     @abc.abstractmethod
-    async def simple_audio_response(self, pcm: PcmData): ...
-
+    async def simple_audio_response(
+        self, pcm: PcmData, participant: Optional[Participant] = None
+    ): ...
 
     async def _watch_video_track(self, track: Any, **kwargs) -> None:
         """Optionally overridden by providers that support video input."""
@@ -130,27 +135,6 @@ class Realtime(LLM, abc.ABC):
         )
         self.events.send(event)
 
-    def _emit_partial_transcript_event(self, text: str, user_metadata=None, original=None):
-        event = events.RealtimeTranscriptEvent(
-            text=text,
-            user_metadata=user_metadata,
-            original=original,
-        )
-        self.events.send(event)
-
-    def _emit_transcript_event(
-        self,
-        text: str,
-        user_metadata=None,
-        original=None,
-    ):
-        event = events.RealtimeTranscriptEvent(
-            text=text,
-            user_metadata=user_metadata,
-            original=original,
-        )
-        self.events.send(event)
-
     def _emit_response_event(
         self,
         text,
@@ -198,6 +182,27 @@ class Realtime(LLM, abc.ABC):
         )
         self.events.send(event)
 
+    def _emit_user_speech_transcription(self, text: str, original=None):
+        """Emit a user speech transcription event with participant info."""
+        event = events.RealtimeUserSpeechTranscriptionEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            text=text,
+            original=original,
+            user_metadata=self._current_participant,
+        )
+        self.events.send(event)
+
+    def _emit_agent_speech_transcription(self, text: str, original=None):
+        """Emit an agent speech transcription event."""
+        event = events.RealtimeAgentSpeechTranscriptionEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            text=text,
+            original=original,
+        )
+        self.events.send(event)
+
     async def close(self):
         """Close the Realtime service and release any resources."""
         if self._is_connected:
@@ -213,4 +218,3 @@ class Realtime(LLM, abc.ABC):
 
     @abc.abstractmethod
     async def _close_impl(self): ...
-

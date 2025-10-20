@@ -46,24 +46,6 @@ class RealtimeAudioOutputEvent(PluginBaseEvent):
 
 
 @dataclass
-class RealtimeTranscriptEvent(PluginBaseEvent):
-    """Event emitted when realtime session provides a transcript."""
-
-    original: Optional[Any] = None
-    type: str = field(default="plugin.realtime_transcript", init=False)
-    text: Optional[str] = None
-    user_metadata: Optional[Any] = None
-
-
-@dataclass
-class RealtimePartialTranscriptEvent(PluginBaseEvent):
-    original: Optional[Any] = None
-    type: str = field(default="plugin.realtime_partial_transcript", init=False)
-    text: Optional[str] = None
-    user_metadata: Optional[Any] = None
-
-
-@dataclass
 class RealtimeResponseEvent(PluginBaseEvent):
     """Event emitted when realtime session provides a response."""
 
@@ -154,3 +136,21 @@ class ToolEndEvent(PluginBaseEvent):
     error: Optional[str] = None
     tool_call_id: Optional[str] = None
     execution_time_ms: Optional[float] = None
+
+
+@dataclass
+class RealtimeUserSpeechTranscriptionEvent(PluginBaseEvent):
+    """Event emitted when user speech transcription is available from realtime session."""
+
+    type: str = field(default="plugin.realtime_user_speech_transcription", init=False)
+    text: str = ""
+    original: Optional[Any] = None
+
+
+@dataclass
+class RealtimeAgentSpeechTranscriptionEvent(PluginBaseEvent):
+    """Event emitted when agent speech transcription is available from realtime session."""
+
+    type: str = field(default="plugin.realtime_agent_speech_transcription", init=False)
+    text: str = ""
+    original: Optional[Any] = None

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -16,9 +17,12 @@ from ..edge import sfu_events
 from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
 from ..edge.types import Connection, Participant, PcmData, User
 from ..events.manager import EventManager
+from ..llm import events as llm_events
 from ..llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
+    RealtimeUserSpeechTranscriptionEvent,
+    RealtimeAgentSpeechTranscriptionEvent,
 )
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
@@ -112,6 +116,7 @@ class Agent:
         self.events.register_events_from_module(getstream.models, "call.")
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(sfu_events)
+        self.events.register_events_from_module(llm_events)
 
         self.llm = llm
         self.stt = stt
@@ -248,14 +253,52 @@ class Agent:
 
             user_id = event.user_id() or "user"
 
-            # Unified API: handles both streaming and non-streaming transcripts
             await self.conversation.upsert_message(
+                # TODO: FIX THIS, IT IS INCREDIBLY WRONG!
                 message_id="stt-" + user_id,
                 role="user",
                 user_id=user_id,
                 content=event.text or "",
                 completed=True,
                 replace=True,  # Replace any partial transcripts
+                original=event,
+            )
+
+        @self.events.subscribe
+        async def on_realtime_user_speech_transcription(
+            event: RealtimeUserSpeechTranscriptionEvent,
+        ):
+            self.logger.info(f"🎤 [User transcript]: {event.text}")
+
+            if self.conversation is None or not event.text:
+                return
+
+            await self.conversation.upsert_message(
+                message_id=str(uuid.uuid4()),
+                role="user",
+                user_id=event.user_id() or "",
+                content=event.text,
+                completed=True,
+                replace=True,
+                original=event,
+            )
+
+        @self.events.subscribe
+        async def on_realtime_agent_speech_transcription(
+            event: RealtimeAgentSpeechTranscriptionEvent,
+        ):
+            self.logger.info(f"🎤 [Agent transcript]: {event.text}")
+
+            if self.conversation is None or not event.text:
+                return
+
+            await self.conversation.upsert_message(
+                message_id=str(uuid.uuid4()),
+                role="assistant",
+                user_id=self.agent_user.id or "",
+                content=event.text,
+                completed=True,
+                replace=True,
                 original=event,
             )
 
@@ -638,7 +681,9 @@ class Agent:
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.realtime_mode and isinstance(self.llm, Realtime):
                 # TODO: this behaviour should be easy to change in the agent class
-                asyncio.create_task(self.llm.simple_audio_response(pcm_data))
+                asyncio.create_task(
+                    self.llm.simple_audio_response(pcm_data, participant)
+                )
                 # task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
             # Process audio through STT
             elif self.stt:
