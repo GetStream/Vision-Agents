@@ -132,21 +132,14 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
 
     async def start(self) -> None:
         if self._started:
+            logger.warning(f"rtc manager already started", stack_info=True)
             return
 
-        if self._shared_forwarder is not None:
-            # Use the shared forwarder
-            self._forwarder = self._shared_forwarder
-            logger.info(f"🎥 OpenAI using shared VideoForwarder at {self._fps} FPS")
-        else:
-            # Create our own VideoForwarder with the input source track (legacy behavior)
-            self._forwarder = VideoForwarder(
-                self._source_track,  # type: ignore[arg-type]
-                max_buffer=5,
-                fps=self._fps,
-            )
-            await self._forwarder.start()
+        if self._shared_forwarder is None:
+            raise RuntimeError("self._shared_forwarder is None, something is very wrong")
 
+        self._forwarder = self._shared_forwarder
+        logger.info(f"🎥 OpenAI using shared VideoForwarder at {self._fps} FPS")
         self._started = True
 
     async def recv(self):
@@ -653,12 +646,10 @@ class RTCManager:
 
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""
+        print(f"_handle_event {event['type']}")
         cb = self._event_callback
         if cb is not None:
-            try:
-                await cb(event)
-            except Exception as e:
-                logger.error(f"Event callback error: {e}")
+            await cb(event)
 
         # Store session information when we receive session.created event
         # FIXME Typing

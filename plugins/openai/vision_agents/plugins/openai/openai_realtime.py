@@ -233,7 +233,7 @@ class Realtime(realtime.Realtime):
         elif et == "input_audio_buffer.speech_started":
             # Validate event but don't need to store it
             InputAudioBufferSpeechStartedEvent.model_validate(event)
-            await self.output_track.flush()
+            # await self.output_track.flush()
         elif et == "response.output_item.added":
             # Check if this is a function call
             item = event.get("item", {})

@@ -101,12 +101,10 @@ class StreamEdge(EdgeTransport):
             user_id = event.payload.user_id
             session_id = event.payload.session_id
 
-        if user_id == self.agent_user_id:
-            return
-
         track_type_int = event.payload.type  # TrackType enum int from SFU
         expected_kind = self._get_webrtc_kind(track_type_int)
         track_key = (user_id, session_id, track_type_int)
+        is_agent_track = (user_id == self.agent_user_id)
 
         # First check if track already exists in map (e.g., from previous unpublish/republish)
         if track_key in self._track_map:
@@ -151,16 +149,18 @@ class StreamEdge(EdgeTransport):
                 f"Trackmap published: {track_type_int} from {user_id}, track_id: {track_id} (waited {elapsed:.2f}s)"
             )
 
-            # NOW spawn TrackAddedEvent with correct type
-            self.events.send(
-                events.TrackAddedEvent(
-                    plugin_name="getstream",
-                    track_id=track_id,
-                    track_type=track_type_int,
-                    user=event.participant,
-                    user_metadata=event.participant,
+            # Only emit TrackAddedEvent for remote participants, not for agent's own tracks
+            if not is_agent_track:
+                # NOW spawn TrackAddedEvent with correct type
+                self.events.send(
+                    events.TrackAddedEvent(
+                        plugin_name="getstream",
+                        track_id=track_id,
+                        track_type=track_type_int,
+                        user=event.participant,
+                        user_metadata=event.participant,
+                    )
                 )
-            )
         else:
             raise TimeoutError(
                 f"Timeout waiting for pending track: {track_type_int} ({expected_kind}) from user {user_id}, "
