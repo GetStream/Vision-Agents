@@ -254,8 +254,7 @@ class Agent:
             user_id = event.user_id() or "user"
 
             await self.conversation.upsert_message(
-                # TODO: FIX THIS, IT IS INCREDIBLY WRONG!
-                message_id="stt-" + user_id,
+                message_id=str(uuid.uuid4()),
                 role="user",
                 user_id=user_id,
                 content=event.text or "",
