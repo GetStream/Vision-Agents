@@ -72,9 +72,6 @@ async def start_agent():
     logger.info(f"GitHub server: {github_server}")
 
     try:
-        # Create the agent user
-        await agent.create_user()
-
         # Set up event handler for when participants join
         @agent.subscribe
         async def on_participant_joined(event: CallSessionParticipantJoinedEvent):

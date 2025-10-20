@@ -529,6 +529,7 @@ class Agent:
             if not self.agent_user.id:
                 self.agent_user.id = f"agent-{uuid4()}"
             await self.edge.create_user(self.agent_user)
+            self._agent_user_initialized = True
 
         return None
 

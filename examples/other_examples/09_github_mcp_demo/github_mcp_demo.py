@@ -88,9 +88,6 @@ async def start_agent():
         )
         logger.info("MCP tools are now available to the LLM for function calling!")
 
-        # Create the agent user
-        await agent.create_user()
-
         # Set up event handler for when participants join
         @agent.subscribe
         async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
