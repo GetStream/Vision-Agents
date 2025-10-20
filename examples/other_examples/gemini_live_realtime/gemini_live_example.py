@@ -4,23 +4,28 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 from getstream import AsyncStream
+
+from vision_agents.core.edge.types import User
 from vision_agents.core.agents import Agent
 from vision_agents.plugins import gemini, getstream
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
 async def start_agent() -> None:
     client = AsyncStream()
 
-    agent_user = await client.create_user(name="My happy AI friend")
-
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=agent_user,  # the user object for the agent (name, image etc)
+        agent_user=User(
+            name="My happy AI friend"
+        ),  # the user object for the agent (name, image etc)
         instructions="Read @voice-agent.md",
         llm=gemini.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
