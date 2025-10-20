@@ -132,11 +132,13 @@ class StreamVideoForwardingTrack(VideoStreamTrack):
 
     async def start(self) -> None:
         if self._started:
-            logger.warning(f"rtc manager already started", stack_info=True)
+            logger.warning("rtc manager already started", stack_info=True)
             return
 
         if self._shared_forwarder is None:
-            raise RuntimeError("self._shared_forwarder is None, something is very wrong")
+            raise RuntimeError(
+                "self._shared_forwarder is None, something is very wrong"
+            )
 
         self._forwarder = self._shared_forwarder
         logger.info(f"🎥 OpenAI using shared VideoForwarder at {self._fps} FPS")
