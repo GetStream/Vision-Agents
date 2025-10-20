@@ -1,236 +1,353 @@
 import logging
-import threading
-import queue
-import time
 from typing import List, Dict
 
-from getstream.chat.client import ChatClient
-from getstream.models import MessageRequest, ChannelResponse
+from getstream.models import MessageRequest
+from getstream.chat.async_channel import Channel
+from getstream.base import StreamAPIException
 
-from vision_agents.core.agents.conversation import InMemoryConversation, Message
-
+from vision_agents.core.agents.conversation import (
+    Conversation,
+    Message,
+    MessageState,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class StreamConversation(InMemoryConversation):
-    """
-    Persists the message history to a stream channel & messages
-    """
-    messages: List[Message]
+class StreamConversation(Conversation):
+    """Persists the message history to a Stream channel with automatic chunking."""
 
-    # maps internal ids to stream message ids
+    # Maps internal message IDs to first Stream message ID (for backward compatibility)
     internal_ids_to_stream_ids: Dict[str, str]
+    channel: Channel
+    chunk_size: int
 
-    channel: ChannelResponse
-    chat_client: ChatClient
+    def __init__(
+        self,
+        instructions: str,
+        messages: List[Message],
+        channel: Channel,
+        chunk_size: int = 1000,
+    ):
+        """Initialize StreamConversation with automatic message chunking.
 
-    def __init__(self, instructions: str, messages: List[Message], channel: ChannelResponse, chat_client: ChatClient):
+        Args:
+            instructions: System instructions
+            messages: Initial messages
+            channel: Stream channel for persistence
+            chunk_size: Maximum characters per message chunk (default 1000)
+        """
         super().__init__(instructions, messages)
-        self.messages = messages
         self.channel = channel
-        self.chat_client = chat_client
         self.internal_ids_to_stream_ids = {}
+        self.chunk_size = chunk_size
 
-        # Initialize the worker thread for API calls
-        self._api_queue: queue.Queue = queue.Queue()
-        self._shutdown = False
-        self._worker_thread = threading.Thread(target=self._api_worker, daemon=True, name="StreamConversation-APIWorker")
-        self._worker_thread.start()
-        self._pending_operations = 0
-        self._operations_lock = threading.Lock()
-        logger.info(f"Started API worker thread for channel {channel.id}")
+    async def _sync_to_backend(
+        self, message: Message, state: MessageState, completed: bool
+    ):
+        """Sync message to Stream Chat API with automatic chunking.
 
-    def _api_worker(self):
-        """Worker thread that processes Stream API calls."""
-        logger.debug("API worker thread started")
-        while not self._shutdown:
+        Args:
+            message: The message to sync
+            state: The message's internal state
+            completed: If True, finalize the message. If False, mark as still generating.
+        """
+        # Split message into chunks (markdown-aware)
+        chunks = self._smart_chunk(message.content, self.chunk_size)
+
+        if not state.created_in_backend:
+            # CREATE: Send all chunks to Stream
+            await self._create_chunks(message, state, chunks, completed)
+            state.created_in_backend = True
+        else:
+            # UPDATE: Update/create/delete chunks as needed
+            await self._update_chunks(message, state, chunks, completed)
+
+    async def _create_chunks(
+        self, message: Message, state: MessageState, chunks: List[str], completed: bool
+    ):
+        """Create all chunks for a new message."""
+        for i, chunk_text in enumerate(chunks):
+            is_last_chunk = i == len(chunks) - 1
+
+            request = MessageRequest(
+                text=chunk_text,
+                user_id=message.user_id,
+                custom={
+                    # Only the LAST chunk has "generating" flag
+                    "generating": not completed if is_last_chunk else False,
+                    "chunk_group": message.id,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks),
+                },
+            )
+
             try:
-                # Get operation from queue with timeout to check shutdown periodically
-                operation = self._api_queue.get(timeout=0.1)
+                response = await self.channel.send_message(request)
+
+                if response.data.message.type == "error":
+                    raise StreamAPIException(response=response.__response)
+
+                chunk_id = response.data.message.id
+                state.backend_message_ids.append(chunk_id)
+
+                logger.debug(
+                    f"Created chunk {i + 1}/{len(chunks)} (Stream ID: {chunk_id}) "
+                    f"for message {message.id}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to create chunk {i} for message {message.id}: {e}"
+                )
+                raise
+
+        # Store first chunk ID for backward compatibility
+        if state.backend_message_ids and message.id:
+            self.internal_ids_to_stream_ids[message.id] = state.backend_message_ids[0]
+
+    async def _update_chunks(
+        self,
+        message: Message,
+        state: MessageState,
+        new_chunks: List[str],
+        completed: bool,
+    ):
+        """Update existing chunks, creating or deleting as needed."""
+        old_chunk_count = len(state.backend_message_ids)
+        new_chunk_count = len(new_chunks)
+
+        # Update existing chunks
+        for i in range(min(old_chunk_count, new_chunk_count)):
+            chunk_id = state.backend_message_ids[i]
+            chunk_text = new_chunks[i]
+            is_last_chunk = i == new_chunk_count - 1
+
+            try:
+                if completed:
+                    # Finalize with update_message_partial
+                    # Only last chunk gets generating=False on completion
+                    await self.channel.client.update_message_partial(
+                        chunk_id,
+                        user_id=message.user_id,
+                        set={
+                            "text": chunk_text,
+                            "generating": False if is_last_chunk else False,
+                            "chunk_group": message.id,
+                            "chunk_index": i,
+                            "total_chunks": new_chunk_count,
+                        },
+                    )
+                    logger.debug(
+                        f"Finalized chunk {i + 1}/{new_chunk_count} (ID: {chunk_id})"
+                    )
+                else:
+                    # Update with ephemeral (still generating)
+                    # Only last chunk gets generating=True when streaming
+                    await self.channel.client.ephemeral_message_update(
+                        chunk_id,
+                        user_id=message.user_id,
+                        set={
+                            "text": chunk_text,
+                            "generating": True if is_last_chunk else False,
+                            "chunk_group": message.id,
+                            "chunk_index": i,
+                            "total_chunks": new_chunk_count,
+                        },
+                    )
+                    logger.debug(
+                        f"Updated chunk {i + 1}/{new_chunk_count} (ID: {chunk_id})"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to update chunk {i} (ID: {chunk_id}): {e}")
+                # Don't re-raise - message is in memory
+
+        # Create new chunks if content grew
+        if new_chunk_count > old_chunk_count:
+            for i in range(old_chunk_count, new_chunk_count):
+                chunk_text = new_chunks[i]
+                is_last_chunk = i == new_chunk_count - 1
+
+                request = MessageRequest(
+                    text=chunk_text,
+                    user_id=message.user_id,
+                    custom={
+                        "generating": not completed if is_last_chunk else False,
+                        "chunk_group": message.id,
+                        "chunk_index": i,
+                        "total_chunks": new_chunk_count,
+                    },
+                )
 
                 try:
-                    op_type = operation["type"]
-                    logger.debug(f"Processing API operation: {op_type}")
-
-                    if op_type == "send_message":
-                        response = self.chat_client.send_message(
-                            operation["channel_type"],
-                            operation["channel_id"],
-                            operation["request"]
-                        )
-                        # Store the mapping
-                        self.internal_ids_to_stream_ids[operation["internal_id"]] = response.data.message.id
-                        operation["stream_id"] = response.data.message.id
-
-                    elif op_type == "update_message_partial":
-                        self.chat_client.update_message_partial(
-                            operation["stream_id"],
-                            user_id=operation["user_id"],
-                            set=operation["set_data"]
-                        )
-
-                    elif op_type == "ephemeral_message_update":
-                        self.chat_client.ephemeral_message_update(
-                            operation["stream_id"],
-                            user_id=operation["user_id"],
-                            set=operation["set_data"]
-                        )
-
-                    logger.debug(f"Successfully processed API operation: {op_type}")
-
+                    response = await self.channel.send_message(request)
+                    chunk_id = response.data.message.id
+                    state.backend_message_ids.append(chunk_id)
+                    logger.debug(
+                        f"Created new chunk {i + 1}/{new_chunk_count} (ID: {chunk_id})"
+                    )
                 except Exception as e:
-                    logger.error(f"Error processing API operation {operation.get('type', 'unknown')}: {e}")
-                    # Continue processing other operations even if one fails
+                    logger.error(f"Failed to create new chunk {i}: {e}")
+                    raise
 
-                finally:
-                    # Decrement pending operations counter
-                    with self._operations_lock:
-                        self._pending_operations -= 1
+        # Delete extra chunks if content shrank
+        elif new_chunk_count < old_chunk_count:
+            for i in range(new_chunk_count, old_chunk_count):
+                chunk_id = state.backend_message_ids[i]
+                try:
+                    # Use client.delete_message, not channel.delete_message
+                    await self.channel.client.delete_message(chunk_id, hard=True)
+                    logger.debug(f"Deleted chunk {i + 1} (ID: {chunk_id})")
+                except Exception as e:
+                    logger.warning(f"Failed to delete chunk {i} (ID: {chunk_id}): {e}")
 
-            except queue.Empty:
-                # Timeout reached, loop back to check shutdown flag
+            # Remove from tracking
+            state.backend_message_ids = state.backend_message_ids[:new_chunk_count]
+
+    def _smart_chunk(self, text: str, max_size: int) -> List[str]:
+        """Chunk text intelligently, respecting markdown structures.
+
+        Best-effort approach to avoid breaking:
+        - Code blocks (```)
+        - Lists
+        - Paragraphs
+
+        Args:
+            text: Text to chunk
+            max_size: Maximum characters per chunk
+
+        Returns:
+            List of text chunks
+        """
+        if len(text) <= max_size:
+            return [text]
+
+        # Special case: text with no newlines (force split at max_size)
+        if "\n" not in text:
+            return self._force_split(text, max_size)
+
+        chunks = []
+        current_chunk = ""
+
+        # Track markdown state
+        in_code_block = False
+        code_block_buffer = ""
+
+        lines = text.split("\n")
+
+        for line in lines:
+            # Detect code block boundaries
+            if line.strip().startswith("```"):
+                if not in_code_block:
+                    # Starting code block
+                    in_code_block = True
+                    code_block_buffer = line + "\n"
+                else:
+                    # Ending code block
+                    in_code_block = False
+                    code_block_buffer += line + "\n"
+
+                    # Try to fit code block in current chunk
+                    if len(current_chunk) + len(code_block_buffer) <= max_size:
+                        current_chunk += code_block_buffer
+                    elif len(code_block_buffer) <= max_size:
+                        # Code block fits alone, start new chunk
+                        if current_chunk:
+                            chunks.append(current_chunk.rstrip())
+                        current_chunk = code_block_buffer
+                    else:
+                        # Code block too large, must split it
+                        if current_chunk:
+                            chunks.append(current_chunk.rstrip())
+                            current_chunk = ""
+
+                        # Split code block at newlines
+                        cb_chunks = self._split_large_block(code_block_buffer, max_size)
+                        chunks.extend(cb_chunks[:-1])
+                        current_chunk = cb_chunks[-1] if cb_chunks else ""
+
+                    code_block_buffer = ""
                 continue
-            except Exception as e:
-                logger.error(f"Unexpected error in API worker thread: {e}")
-                time.sleep(0.1)  # Brief pause before continuing
 
-        logger.debug("API worker thread shutting down")
+            # Inside code block - accumulate
+            if in_code_block:
+                code_block_buffer += line + "\n"
+                continue
 
-    def wait_for_pending_operations(self, timeout: float = 5.0) -> bool:
-        """Wait for all pending API operations to complete.
+            # Regular line - check if we should chunk
+            line_with_newline = line + "\n"
 
-        Args:
-            timeout: Maximum time to wait in seconds.
+            # Check if adding this line would exceed limit
+            if len(current_chunk) + len(line_with_newline) > max_size:
+                # Try to break at paragraph (double newline) or list boundary
+                if current_chunk:
+                    chunks.append(current_chunk.rstrip())
+                    current_chunk = line_with_newline
+            else:
+                current_chunk += line_with_newline
 
-        Returns:
-            True if all operations completed, False if timeout reached.
-        """
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            with self._operations_lock:
-                if self._pending_operations == 0:
-                    return True
-            time.sleep(0.01)  # Small sleep to avoid busy waiting
+        # Handle any remaining buffered content
+        if in_code_block and code_block_buffer:
+            # Unclosed code block - include as-is
+            if len(current_chunk) + len(code_block_buffer) <= max_size:
+                current_chunk += code_block_buffer
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.rstrip())
+                current_chunk = code_block_buffer
 
-        with self._operations_lock:
-            remaining = self._pending_operations
-        if remaining > 0:
-            logger.warning(f"Timeout waiting for {remaining} pending operations")
-        return False
+        if current_chunk:
+            chunks.append(current_chunk.rstrip())
 
-    def shutdown(self):
-        """Shutdown the worker thread gracefully."""
-        logger.info("Shutting down API worker thread")
-        self._shutdown = True
-        if self._worker_thread.is_alive():
-            self._worker_thread.join(timeout=2.0)
-            if self._worker_thread.is_alive():
-                logger.warning("API worker thread did not shut down cleanly")
+        return chunks if chunks else [text]  # Fallback to original text
 
-    def add_message(self, message: Message, completed: bool = True):
-        """Add a message to the Stream conversation.
+    def _split_large_block(self, block: str, max_size: int) -> List[str]:
+        """Split a large block (e.g., huge code block) at newline boundaries.
 
         Args:
-            message: The Message object to add
-            completed: If True, mark the message as completed using update_message_partial.
-                      If False, mark as still generating using ephemeral_message_update.
+            block: Large text block to split
+            max_size: Maximum size per chunk
 
         Returns:
-            None (operations are processed asynchronously)
+            List of chunks
         """
-        self.messages.append(message)
+        if len(block) <= max_size:
+            return [block]
 
-        # Queue the send_message operation
-        request = MessageRequest(text=message.content, user_id=message.user_id)
-        send_op = {
-            "type": "send_message",
-            "channel_type": self.channel.type,
-            "channel_id": self.channel.id,
-            "request": request,
-            "internal_id": message.id,
-        }
+        chunks = []
+        lines = block.split("\n")
+        current = ""
 
-        # Increment pending operations counter
-        with self._operations_lock:
-            self._pending_operations += 1
+        for line in lines:
+            if len(current) + len(line) + 1 > max_size:
+                if current:
+                    chunks.append(current)
+                # If single line exceeds max_size, include it anyway
+                current = line + "\n"
+            else:
+                current += line + "\n"
 
-        self._api_queue.put(send_op)
+        if current:
+            chunks.append(current)
 
-        # Queue the update operation (will use the stream_id once send_message completes)
-        # We need to wait for the send operation to complete first
-        # So we'll handle this in a second operation that waits for the stream_id
-        def queue_update_operation():
-            # Wait for the stream_id to be available
-            max_wait = 5.0
-            start_time = time.time()
-            while time.time() - start_time < max_wait:
-                stream_id = self.internal_ids_to_stream_ids.get(message.id if message.id else "")
-                if stream_id:
-                    update_op = {
-                        "type": "update_message_partial" if completed else "ephemeral_message_update",
-                        "stream_id": stream_id,
-                        "user_id": message.user_id,
-                        "set_data": {"text": message.content, "generating": not completed},
-                    }
-                    with self._operations_lock:
-                        self._pending_operations += 1
-                    self._api_queue.put(update_op)
-                    return
-                time.sleep(0.01)
-            logger.error(f"Timeout waiting for stream_id for message {message.id}")
+        return chunks
 
-        # Queue the update in a separate thread to avoid blocking
-        threading.Thread(target=queue_update_operation, daemon=True).start()
+    def _force_split(self, text: str, max_size: int) -> List[str]:
+        """Force split text at max_size boundaries (no newlines available).
 
-    def update_message(self, message_id: str, input_text: str, user_id: str, replace_content: bool, completed: bool):
-        """Update a message in the Stream conversation.
-
-        This method updates both the local message content and queues the Stream API sync.
-        If the message doesn't exist, it creates a new one.
+        Used for text without any newlines (e.g., long URLs, continuous text).
 
         Args:
-            message_id: The ID of the message to update
-            input_text: The text content to set or append
-            user_id: The ID of the user who owns the message
-            replace_content: If True, replace the entire message content. If False, append to existing content.
-            completed: If True, mark the message as completed using update_message_partial.
-                      If False, mark as still generating using ephemeral_message_update.
+            text: Text to split
+            max_size: Maximum characters per chunk
 
         Returns:
-            None (operations are processed asynchronously)
+            List of chunks
         """
-        # First, update the local message using the superclass logic
-        super().update_message(message_id, input_text, user_id, replace_content, completed)
+        if len(text) <= max_size:
+            return [text]
 
-        # Get the updated message for Stream API sync
-        message = self.lookup(message_id)
-        if message is None:
-            # This shouldn't happen after super().update_message, but handle gracefully
-            logger.warning(f"message {message_id} not found after update")
-            return None
+        chunks = []
+        for i in range(0, len(text), max_size):
+            chunks.append(text[i : i + max_size])
 
-        stream_id = self.internal_ids_to_stream_ids.get(message_id)
-        if stream_id is None:
-            logger.warning(f"stream_id for message {message_id} not found, skipping Stream API update")
-            return None
-
-        # Queue the update operation
-        update_op = {
-            "type": "update_message_partial" if completed else "ephemeral_message_update",
-            "stream_id": stream_id,
-            "user_id": message.user_id,
-            "set_data": {"text": message.content, "generating": not completed},
-        }
-
-        with self._operations_lock:
-            self._pending_operations += 1
-
-        return self._api_queue.put(update_op)
-
-    def __del__(self):
-        """Cleanup when the conversation is destroyed."""
-        try:
-            self.shutdown()
-        except Exception as e:
-            logger.error(f"Error during StreamConversation cleanup: {e}")
+        return chunks

@@ -11,7 +11,6 @@ from getstream import AsyncStream
 from getstream.chat.async_client import ChatClient
 from getstream.models import ChannelInput, ChannelMember
 from getstream.video import rtc
-from getstream.chat.async_channel import Channel
 from getstream.video.async_call import Call
 from getstream.video.rtc import ConnectionManager, audio_track
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
@@ -59,7 +58,6 @@ class StreamEdge(EdgeTransport):
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(sfu_events)
-        self.channel: Optional[Channel] = None
         self.conversation: Optional[StreamConversation] = None
         self.channel_type = "messaging"
         self.agent_user_id: str | None = None
@@ -103,12 +101,10 @@ class StreamEdge(EdgeTransport):
             user_id = event.payload.user_id
             session_id = event.payload.session_id
 
-        if user_id == self.agent_user_id:
-            return
-
         track_type_int = event.payload.type  # TrackType enum int from SFU
         expected_kind = self._get_webrtc_kind(track_type_int)
         track_key = (user_id, session_id, track_type_int)
+        is_agent_track = (user_id == self.agent_user_id)
 
         # First check if track already exists in map (e.g., from previous unpublish/republish)
         if track_key in self._track_map:
@@ -153,16 +149,18 @@ class StreamEdge(EdgeTransport):
                 f"Trackmap published: {track_type_int} from {user_id}, track_id: {track_id} (waited {elapsed:.2f}s)"
             )
 
-            # NOW spawn TrackAddedEvent with correct type
-            self.events.send(
-                events.TrackAddedEvent(
-                    plugin_name="getstream",
-                    track_id=track_id,
-                    track_type=track_type_int,
-                    user=event.participant,
-                    user_metadata=event.participant,
+            # Only emit TrackAddedEvent for remote participants, not for agent's own tracks
+            if not is_agent_track:
+                # NOW spawn TrackAddedEvent with correct type
+                self.events.send(
+                    events.TrackAddedEvent(
+                        plugin_name="getstream",
+                        track_id=track_id,
+                        track_type=track_type_int,
+                        user=event.participant,
+                        user_metadata=event.participant,
+                    )
                 )
-            )
         else:
             raise TimeoutError(
                 f"Timeout waiting for pending track: {track_type_int} ({expected_kind}) from user {user_id}, "
@@ -225,14 +223,11 @@ class StreamEdge(EdgeTransport):
 
     async def create_conversation(self, call: Call, user, instructions):
         chat_client: ChatClient = call.client.stream.chat
-        self.channel = await chat_client.get_or_create_channel(
-            self.channel_type,
-            call.id,
+        channel = chat_client.channel(self.channel_type, call.id)
+        await channel.get_or_create(
             data=ChannelInput(created_by_id=user.id),
         )
-        self.conversation = StreamConversation(
-            instructions, [], self.channel.data.channel, chat_client
-        )
+        self.conversation = StreamConversation(instructions, [], channel)
         return self.conversation
 
     async def create_user(self, user: User):

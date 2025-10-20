@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -16,25 +17,26 @@ from ..edge import sfu_events
 from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
 from ..edge.types import Connection, Participant, PcmData, User
 from ..events.manager import EventManager
+from ..llm import events as llm_events
 from ..llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
-    RealtimePartialTranscriptEvent,
-    RealtimeTranscriptEvent,
+    RealtimeUserSpeechTranscriptionEvent,
+    RealtimeAgentSpeechTranscriptionEvent,
 )
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
 from ..logging_utils import CallContextToken, clear_call_context, set_call_context
 from ..mcp import MCPBaseServer, MCPManager
 from ..processors.base_processor import Processor, ProcessorType, filter_processors
-from ..stt.events import STTPartialTranscriptEvent, STTTranscriptEvent
+from ..stt.events import STTTranscriptEvent
 from ..stt.stt import STT
 from ..tts.tts import TTS
 from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
-from .conversation import Conversation, Message, StreamHandle
+from .conversation import Conversation
 
 if TYPE_CHECKING:
     from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
@@ -115,6 +117,7 @@ class Agent:
         self.events.register_events_from_module(getstream.models, "call.")
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(sfu_events)
+        self.events.register_events_from_module(llm_events)
 
         self.llm = llm
         self.stt = stt
@@ -134,10 +137,8 @@ class Agent:
 
         # we sync the user talking and the agent responses to the conversation
         # because we want to support streaming responses and can have delta updates for both
-        # user and agent we keep an handle for both
+        # user and agent
         self.conversation: Optional[Conversation] = None
-        self._user_conversation_handle: Optional[StreamHandle] = None
-        self._agent_conversation_handle: Optional[StreamHandle] = None
 
         # Track pending transcripts for turn-based response triggering
         self._pending_user_transcripts: Dict[str, str] = {}
@@ -149,8 +150,6 @@ class Agent:
                 self.events.merge(plugin.events)
 
         self.llm._attach_agent(self)
-        self.llm.events.subscribe(self._handle_after_response)
-        self.llm.events.subscribe(self._handle_output_text_delta)
 
         self.events.subscribe(self._on_vad_audio)
         self.events.subscribe(self._on_agent_say)
@@ -200,6 +199,136 @@ class Agent:
         """
         return self.events.subscribe(function)
 
+    async def _setup_llm_events(self):
+        @self.llm.events.subscribe
+        async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
+            # Trigger TTS directly instead of through event system
+            if self.tts and event.text and event.text.strip():
+                await self.tts.send(event.text)
+
+        @self.llm.events.subscribe
+        async def on_llm_response_sync_conversation(event: LLMResponseCompletedEvent):
+            self.logger.info(f"🤖 [LLM response]: {event.text} {event.item_id}")
+
+            if self.conversation is None:
+                return
+
+            # Unified API: handles both streaming and non-streaming
+            await self.conversation.upsert_message(
+                message_id=event.item_id,
+                role="assistant",
+                user_id=self.agent_user.id or "agent",
+                content=event.text or "",
+                completed=True,
+                replace=True,  # Replace any partial content from deltas
+            )
+
+        @self.llm.events.subscribe
+        async def _handle_output_text_delta(event: LLMResponseChunkEvent):
+            """Handle partial LLM response text deltas."""
+
+            self.logger.info(
+                f"🤖 [LLM delta response]: {event.delta} {event.item_id} {event.content_index}"
+            )
+
+            if self.conversation is None:
+                return
+
+            # Unified API: streaming delta
+            await self.conversation.upsert_message(
+                message_id=event.item_id,
+                role="assistant",
+                user_id=self.agent_user.id or "agent",
+                content=event.delta or "",
+                content_index=event.content_index,
+                completed=False,  # Still streaming
+            )
+
+    async def _setup_speech_events(self):
+        @self.events.subscribe
+        async def on_stt_transcript_event_sync_conversation(event: STTTranscriptEvent):
+            self.logger.info(f"🎤 [Transcript]: {event.text}")
+
+            if self.conversation is None:
+                return
+
+            user_id = event.user_id() or "user"
+
+            await self.conversation.upsert_message(
+                message_id=str(uuid.uuid4()),
+                role="user",
+                user_id=user_id,
+                content=event.text or "",
+                completed=True,
+                replace=True,  # Replace any partial transcripts
+                original=event,
+            )
+
+        @self.events.subscribe
+        async def on_realtime_user_speech_transcription(
+            event: RealtimeUserSpeechTranscriptionEvent,
+        ):
+            self.logger.info(f"🎤 [User transcript]: {event.text}")
+
+            if self.conversation is None or not event.text:
+                return
+
+            await self.conversation.upsert_message(
+                message_id=str(uuid.uuid4()),
+                role="user",
+                user_id=event.user_id() or "",
+                content=event.text,
+                completed=True,
+                replace=True,
+                original=event,
+            )
+
+        @self.events.subscribe
+        async def on_realtime_agent_speech_transcription(
+            event: RealtimeAgentSpeechTranscriptionEvent,
+        ):
+            self.logger.info(f"🎤 [Agent transcript]: {event.text}")
+
+            if self.conversation is None or not event.text:
+                return
+
+            await self.conversation.upsert_message(
+                message_id=str(uuid.uuid4()),
+                role="assistant",
+                user_id=self.agent_user.id or "",
+                content=event.text,
+                completed=True,
+                replace=True,
+                original=event,
+            )
+
+        @self.events.subscribe
+        async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
+            if self.realtime_mode or not self.llm:
+                # when running in realtime mode, there is no need to send the response to the LLM
+                return
+
+            user_id = event.user_id() or "user"
+
+            # Determine how to handle LLM triggering based on turn detection
+            if self.turn_detection is not None:
+                # With turn detection: accumulate transcripts and wait for TurnEndedEvent
+                # Store/append the transcript for this user
+                if user_id not in self._pending_user_transcripts:
+                    self._pending_user_transcripts[user_id] = event.text
+                else:
+                    # Append to existing transcript (user might be speaking in chunks)
+                    self._pending_user_transcripts[user_id] += " " + event.text
+
+                self.logger.debug(
+                    f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
+                    f"{self._pending_user_transcripts[user_id][:100]}..."
+                )
+            else:
+                # Without turn detection: trigger LLM immediately on transcript completion
+                # This is the traditional STT -> LLM flow
+                await self.simple_response(event.text, event.user_metadata)
+
     async def join(self, call: Call) -> "AgentSessionContextManager":
         await self.create_user()
 
@@ -214,18 +343,19 @@ class Agent:
             # Ensure all subsequent logs include the call context.
             self._set_call_logging_context(call.id)
 
+            # Setup chat and connect it to transcript events (we'll wait at the end)
+            create_conversation_coro = self.edge.create_conversation(
+                call, self.agent_user, self.instructions
+            )
+
+            await self._setup_llm_events()
+            await self._setup_speech_events()
+
             try:
                 # Connect to MCP servers if manager is available
                 if self.mcp_manager:
                     with self.tracer.start_as_current_span("mcp_manager.connect_all"):
                         await self.mcp_manager.connect_all()
-
-                # Setup chat and connect it to transcript events
-                self.conversation = await self.edge.create_conversation(
-                    call, self.agent_user, self.instructions
-                )
-                self.events.subscribe(self._on_transcript)
-                self.events.subscribe(self._on_partial_transcript)
 
                 # Ensure Realtime providers are ready before proceeding (they manage their own connection)
                 self.logger.info(f"🤖 Agent joining call: {call.id}")
@@ -273,6 +403,8 @@ class Agent:
 
             from .agent_session import AgentSessionContextManager
 
+            # wait for conversation creation coro at the very end of the join flow
+            self.conversation = await create_conversation_coro
             return AgentSessionContextManager(self, self._connection)
 
     async def finish(self):
@@ -308,8 +440,6 @@ class Agent:
         hooks (e.g., WebRTC connections, plugin services).
         """
         self._is_running = False
-        self._user_conversation_handle = None
-        self._agent_conversation_handle = None
         self.clear_call_logging_context()
 
         # Disconnect from MCP servers
@@ -402,49 +532,6 @@ class Agent:
 
         return None
 
-    async def _handle_output_text_delta(self, event: LLMResponseChunkEvent):
-        """Handle partial LLM response text deltas."""
-
-        if self.conversation is None:
-            return
-
-        self.logger.info(
-            f"received standardized.output_text.delta {self._truncate_for_logging(event)}"
-        )
-        # Create a new streaming message if we don't have one
-        if self._agent_conversation_handle is None:
-            self._agent_conversation_handle = self.conversation.start_streaming_message(
-                role="assistant",
-                user_id=self.agent_user.id,
-                initial_content=event.delta or "",
-            )
-        else:
-            self.conversation.append_to_message(
-                self._agent_conversation_handle, event.delta or ""
-            )
-
-    async def _handle_after_response(self, event: LLMResponseCompletedEvent):
-        if self.conversation is None:
-            return
-
-        if event.text is None or not event.text.strip():
-            return
-
-        if self._agent_conversation_handle is None:
-            message = Message(
-                content=event.text,
-                role="assistant",
-                user_id=self.agent_user.id,
-            )
-            self.conversation.add_message(message)
-        else:
-            self.conversation.complete_message(self._agent_conversation_handle)
-            self._agent_conversation_handle = None
-
-        # Trigger TTS directly instead of through event system
-        if self.tts and event.text and event.text.strip():
-            await self.tts.send(event.text)
-
     def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
 
@@ -533,6 +620,14 @@ class Agent:
             )
         )
 
+        if self.conversation is not None:
+            await self.conversation.upsert_message(
+                role="assistant",
+                user_id=user_id or self.agent_user.id or "agent",
+                content=text,
+                completed=True,
+            )
+
     def _setup_turn_detection(self):
         if self.turn_detection:
             self.logger.info("🎙️ Setting up turn detection listeners")
@@ -590,7 +685,9 @@ class Agent:
             # when in Realtime mode call the Realtime directly (non-blocking)
             if self.realtime_mode and isinstance(self.llm, Realtime):
                 # TODO: this behaviour should be easy to change in the agent class
-                asyncio.create_task(self.llm.simple_audio_response(pcm_data))
+                asyncio.create_task(
+                    self.llm.simple_audio_response(pcm_data, participant)
+                )
                 # task.add_done_callback(lambda t: print(f"Task (send_audio_pcm) error: {t.exception()}"))
             # Process audio through STT
             elif self.stt:
@@ -717,11 +814,6 @@ class Agent:
                 )
                 await asyncio.sleep(backoff_delay)
 
-        # Cleanup and logging
-        self.logger.info(
-            f"🎥VDP: Video processing loop ended for track {track_id} - timeouts: {timeout_errors}, consecutive_errors: {consecutive_errors}"
-        )
-
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
         # In realtime mode, the LLM handles turn detection, interruption, and responses itself
@@ -776,94 +868,6 @@ class Agent:
 
                     # Clear the pending transcript for this speaker
                     self._pending_user_transcripts[event.speaker_id] = ""
-
-    async def _on_partial_transcript(
-        self, event: STTPartialTranscriptEvent | RealtimePartialTranscriptEvent
-    ):
-        self.logger.info(f"🎤 [Partial transcript]: {event.text}")
-
-        if event.text and event.text.strip() and self.conversation:
-            user_id = "unknown"
-            if hasattr(event, "user_metadata"):
-                user_id = getattr(event.user_metadata, "user_id", "unknown")
-
-            # Check if we have an active handle for this user
-            if self._user_conversation_handle is None:
-                # Start a new streaming message for this user
-                self._user_conversation_handle = (
-                    self.conversation.start_streaming_message(
-                        role="user", user_id=user_id
-                    )
-                )
-
-            # Append the partial transcript to the active message
-            self.conversation.append_to_message(
-                self._user_conversation_handle, event.text
-            )
-
-    async def _on_transcript(self, event: STTTranscriptEvent | RealtimeTranscriptEvent):
-        self.logger.info(f"🎤 [STT transcript]: {event.text}")
-
-        if not event.text:
-            return
-
-        if self.conversation is None:
-            return
-
-        user_id = "unknown"
-        if hasattr(event, "user_metadata"):
-            user_id = getattr(event.user_metadata, "user_id", "unknown")
-
-        if self._user_conversation_handle is None:
-            # No partial transcripts were received, create a completed message directly
-            message = Message(
-                original=event,
-                content=event.text,
-                role="user",
-                user_id=user_id,
-            )
-            self.conversation.add_message(message)
-        else:
-            # Replace with final text and complete the message
-            self.conversation.replace_message(
-                self._user_conversation_handle, event.text
-            )
-            self.conversation.complete_message(self._user_conversation_handle)
-            self._user_conversation_handle = None
-
-        # In realtime mode, the LLM handles everything itself (STT, turn detection, responses)
-        # Skip our manual LLM triggering logic
-        if self.realtime_mode:
-            return
-
-        # Determine how to handle LLM triggering based on turn detection
-        if self.turn_detection is not None:
-            # With turn detection: accumulate transcripts and wait for TurnEndedEvent
-            # Store/append the transcript for this user
-            if user_id not in self._pending_user_transcripts:
-                self._pending_user_transcripts[user_id] = event.text
-            else:
-                # Append to existing transcript (user might be speaking in chunks)
-                self._pending_user_transcripts[user_id] += " " + event.text
-
-            self.logger.debug(
-                f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
-                f"{self._pending_user_transcripts[user_id][:100]}..."
-            )
-        else:
-            # Without turn detection: trigger LLM immediately on transcript completion
-            # This is the traditional STT -> LLM flow
-            if self.llm:
-                self.logger.info(
-                    "🤖 Triggering LLM response immediately (no turn detection)"
-                )
-
-                # Get participant from event metadata
-                participant = None
-                if hasattr(event, "user_metadata"):
-                    participant = event.user_metadata
-
-                await self.simple_response(event.text, participant)
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""

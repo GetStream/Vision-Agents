@@ -3,13 +3,20 @@ import json
 
 from openai import AsyncOpenAI
 from openai.lib.streaming.responses import ResponseStreamEvent
-from openai.types.responses import ResponseCompletedEvent, ResponseTextDeltaEvent, Response as OpenAIResponse
+from openai.types.responses import (
+    ResponseCompletedEvent,
+    ResponseTextDeltaEvent,
+    Response as OpenAIResponse,
+)
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-from vision_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
+from vision_agents.core.llm.events import (
+    LLMResponseChunkEvent,
+    LLMResponseCompletedEvent,
+)
 from . import events
 
 from vision_agents.core.processors import Processor
@@ -42,7 +49,12 @@ class OpenAILLM(LLM):
 
     """
 
-    def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[AsyncOpenAI] = None):
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        client: Optional[AsyncOpenAI] = None,
+    ):
         """
         Initialize the OpenAILLM class.
 
@@ -64,8 +76,12 @@ class OpenAILLM(LLM):
         else:
             self.client = AsyncOpenAI()
 
-    async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
-                              participant: Participant = None):
+    async def simple_response(
+        self,
+        text: str,
+        processors: Optional[List[Processor]] = None,
+        participant: Participant = None,
+    ):
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
 
@@ -80,7 +96,7 @@ class OpenAILLM(LLM):
         """
         # Use enhanced instructions if available (includes markdown file contents)
         instructions = None
-        if hasattr(self, 'parsed_instructions') and self.parsed_instructions:
+        if hasattr(self, "parsed_instructions") and self.parsed_instructions:
             instructions = self._build_enhanced_instructions()
         elif self.conversation is not None:
             instructions = self.conversation.instructions
@@ -90,7 +106,9 @@ class OpenAILLM(LLM):
             instructions=instructions,
         )
 
-    async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponseEvent[OpenAIResponse]:
+    async def create_response(
+        self, *args: Any, **kwargs: Any
+    ) -> LLMResponseEvent[OpenAIResponse]:
         """
         create_response gives you full support/access to the native openAI responses.create method
         this method wraps the openAI method and ensures we broadcast an event which the agent class hooks into
@@ -110,8 +128,7 @@ class OpenAILLM(LLM):
             kwargs["tools"] = self._convert_tools_to_provider_format(tools_spec)  # type: ignore[arg-type]
 
         # Use parsed instructions if available (includes markdown file contents)
-        if hasattr(self, 'parsed_instructions') and self.parsed_instructions:
-
+        if hasattr(self, "parsed_instructions") and self.parsed_instructions:
             # Combine original instructions with markdown file contents
             enhanced_instructions = self._build_enhanced_instructions()
             if enhanced_instructions:
@@ -122,43 +139,49 @@ class OpenAILLM(LLM):
             # Use the first positional argument as input, or create a default
             input_content = args[0] if args else "Hello"
             kwargs["input"] = input_content
-        
+
         # OpenAI Responses API only accepts keyword arguments
         response = await self.client.responses.create(**kwargs)
 
-        llm_response : Optional[LLMResponseEvent[OpenAIResponse]] = None
+        llm_response: Optional[LLMResponseEvent[OpenAIResponse]] = None
 
         if isinstance(response, OpenAIResponse):
             # Non-streaming response
-            llm_response = LLMResponseEvent[OpenAIResponse](response, response.output_text)
-            
+            llm_response = LLMResponseEvent[OpenAIResponse](
+                response, response.output_text
+            )
+
             # Check for tool calls in non-streaming response
             tool_calls = self._extract_tool_calls_from_response(response)
             if tool_calls:
                 # Execute tools and get follow-up response
                 llm_response = await self._handle_tool_calls(tool_calls, kwargs)
-                
+
         elif hasattr(response, "__aiter__"):  # async stream
             # Streaming response
             stream_response = response
             pending_tool_calls = []
             seen = set()
-            
+
             # Process streaming events and collect tool calls
             async for event in stream_response:
                 llm_response_optional = self._standardize_and_emit_event(event)
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
-                
+
                 # Grab tool calls when the model finalizes the turn
                 if getattr(event, "type", "") == "response.completed":
                     calls = self._extract_tool_calls_from_response(event.response)
                     for c in calls:
-                        key = (c["id"], c["name"], json.dumps(c["arguments_json"], sort_keys=True))
+                        key = (
+                            c["id"],
+                            c["name"],
+                            json.dumps(c["arguments_json"], sort_keys=True),
+                        )
                         if key not in seen:
                             pending_tool_calls.append(c)
                             seen.add(key)
-            
+
             # If we have tool calls, execute them and get follow-up response
             if pending_tool_calls:
                 llm_response = await self._handle_tool_calls(pending_tool_calls, kwargs)
@@ -171,22 +194,27 @@ class OpenAILLM(LLM):
         # Only emit it here for non-streaming responses to avoid duplication.
         if llm_response is not None and isinstance(response, OpenAIResponse):
             # Non-streaming response - emit completion event
-            self.events.send(LLMResponseCompletedEvent(
-                original=llm_response.original,
-                text=llm_response.text
-            ))
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    item_id=llm_response.original.output[0].id,
+                    original=llm_response.original,
+                    text=llm_response.text,
+                )
+            )
 
         return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
-    async def _handle_tool_calls(self, tool_calls: List[NormalizedToolCallItem], original_kwargs: Dict[str, Any]) -> LLMResponseEvent[OpenAIResponse]:
+    async def _handle_tool_calls(
+        self, tool_calls: List[NormalizedToolCallItem], original_kwargs: Dict[str, Any]
+    ) -> LLMResponseEvent[OpenAIResponse]:
         """
         Handle tool calls by executing them and getting a follow-up response.
         Supports multi-round tool calling (max 3 rounds).
-        
+
         Args:
             tool_calls: List of tool calls to execute
             original_kwargs: Original kwargs from the request
-            
+
         Returns:
             LLM response with tool results
         """
@@ -195,15 +223,20 @@ class OpenAILLM(LLM):
         current_tool_calls = tool_calls
         current_kwargs = original_kwargs.copy()
         seen: set[tuple] = set()
-        
+
         for round_num in range(max_rounds):
             # Execute tools (with cross-round deduplication)
-            triples, seen = await self._dedup_and_execute(current_tool_calls, max_concurrency=8, timeout_s=30, seen=seen)  # type: ignore[arg-type]
-            
+            triples, seen = await self._dedup_and_execute(
+                current_tool_calls,  # type: ignore[arg-type]
+                max_concurrency=8,
+                timeout_s=30,
+                seen=seen,
+            )
+
             # If no tools were executed, break the loop
             if not triples:
                 break
-            
+
             # Process all tool calls, including failed ones
             tool_messages = []
             for tc, res, err in triples:
@@ -211,74 +244,86 @@ class OpenAILLM(LLM):
                 if not cid:
                     # Skip tool calls without ID - they can't be reported back
                     continue
-                
+
                 # Use error result if there was an error, otherwise use the result
                 output = err if err is not None else res
-                
+
                 # Convert to string for OpenAI Responses API with sanitization
                 output_str = self._sanitize_tool_output(output)
-                tool_messages.append({
-                    "type": "function_call_output",
-                    "call_id": cid,
-                    "output": output_str,
-                })
-            
+                tool_messages.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": cid,
+                        "output": output_str,
+                    }
+                )
+
             # Don't send empty tool result inputs
             if not tool_messages:
                 return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
-            
+
             # Send follow-up request with tool results
             if not self.openai_conversation:
                 return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
-            
+
             follow_up_kwargs = {
                 "model": current_kwargs.get("model", self.model),
                 "conversation": self.openai_conversation.id,
                 "input": tool_messages,
                 "stream": True,
             }
-            
+
             # Include tools again for potential follow-up calls
             tools_spec = self._get_tools_for_provider()
             if tools_spec:
-                follow_up_kwargs["tools"] = self._convert_tools_to_provider_format(tools_spec)  # type: ignore[arg-type]
-            
+                follow_up_kwargs["tools"] = self._convert_tools_to_provider_format(
+                    tools_spec  # type: ignore[arg-type]
+                )
+
             # Get follow-up response
             follow_up_response = await self.client.responses.create(**follow_up_kwargs)
-            
+
             if isinstance(follow_up_response, OpenAIResponse):
                 # Non-streaming response
-                llm_response = LLMResponseEvent[OpenAIResponse](follow_up_response, follow_up_response.output_text)
-                
+                llm_response = LLMResponseEvent[OpenAIResponse](
+                    follow_up_response, follow_up_response.output_text
+                )
+
                 # Check for more tool calls
-                next_tool_calls = self._extract_tool_calls_from_response(follow_up_response)
+                next_tool_calls = self._extract_tool_calls_from_response(
+                    follow_up_response
+                )
                 if next_tool_calls and round_num < max_rounds - 1:
                     current_tool_calls = next_tool_calls
                     current_kwargs = follow_up_kwargs
                     continue
                 else:
                     return llm_response
-                    
+
             elif hasattr(follow_up_response, "__aiter__"):  # async stream
                 stream_response = follow_up_response
                 llm_response = None
                 pending_tool_calls = []
                 # Don't reset seen - keep deduplication across rounds
-                
+
                 async for event in stream_response:
                     llm_response_optional = self._standardize_and_emit_event(event)
                     if llm_response_optional is not None:
                         llm_response = llm_response_optional
-                    
+
                     # Check for more tool calls
                     if getattr(event, "type", "") == "response.completed":
                         calls = self._extract_tool_calls_from_response(event.response)
                         for c in calls:
-                            key = (c["id"], c["name"], json.dumps(c["arguments_json"], sort_keys=True))
+                            key = (
+                                c["id"],
+                                c["name"],
+                                json.dumps(c["arguments_json"], sort_keys=True),
+                            )
                             if key not in seen:
                                 pending_tool_calls.append(c)
                                 seen.add(key)
-                
+
                 # If we have more tool calls and haven't exceeded max rounds, continue
                 if pending_tool_calls and round_num < max_rounds - 1:
                     current_tool_calls = pending_tool_calls
@@ -289,7 +334,7 @@ class OpenAILLM(LLM):
             else:
                 # Defensive fallback
                 return LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
-        
+
         # If we've exhausted all rounds, return the last response
         return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
@@ -302,9 +347,7 @@ class OpenAILLM(LLM):
 
         # standardize on input
         if isinstance(openai_input, str):
-            openai_input = [
-                dict(content=openai_input, role="user", type="message")
-            ]
+            openai_input = [dict(content=openai_input, role="user", type="message")]
         elif not isinstance(openai_input, List):
             openai_input = [openai_input]
 
@@ -316,15 +359,15 @@ class OpenAILLM(LLM):
 
         return messages
 
-
-
-    def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+    def _convert_tools_to_provider_format(
+        self, tools: List[ToolSchema]
+    ) -> List[Dict[str, Any]]:
         """
         Convert ToolSchema objects to OpenAI Responses API format.
-        
+
         Args:
             tools: List of ToolSchema objects from the function registry
-            
+
         Returns:
             List of tools in OpenAI Responses API format
         """
@@ -339,22 +382,26 @@ class OpenAILLM(LLM):
             params.setdefault("properties", {})
             params.setdefault("additionalProperties", False)
 
-            out.append({
-                "type": "function",
-                "name": name,                 # <-- top-level
-                "description": description,   # <-- top-level
-                "parameters": params,         # <-- top-level
-                "strict": True,               # optional but fine
-            })
+            out.append(
+                {
+                    "type": "function",
+                    "name": name,  # <-- top-level
+                    "description": description,  # <-- top-level
+                    "parameters": params,  # <-- top-level
+                    "strict": True,  # optional but fine
+                }
+            )
         return out
 
-    def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToolCallItem]:
+    def _extract_tool_calls_from_response(
+        self, response: Any
+    ) -> List[NormalizedToolCallItem]:
         """
         Extract tool calls from OpenAI response.
-        
+
         Args:
             response: OpenAI response object
-            
+
         Returns:
             List of normalized tool call items
         """
@@ -368,22 +415,23 @@ class OpenAILLM(LLM):
                     args_obj = {}
                 call_item: NormalizedToolCallItem = {
                     "type": "tool_call",
-                    "id": getattr(item, "call_id", ""),        # <-- call_id
+                    "id": getattr(item, "call_id", ""),  # <-- call_id
                     "name": getattr(item, "name", "unknown"),
                     "arguments_json": args_obj,
                 }
                 calls.append(call_item)
         return calls
 
-
-    def _create_tool_result_message(self, tool_calls: List[NormalizedToolCallItem], results: List[Any]) -> List[Dict[str, Any]]:
+    def _create_tool_result_message(
+        self, tool_calls: List[NormalizedToolCallItem], results: List[Any]
+    ) -> List[Dict[str, Any]]:
         """
         Create tool result messages for OpenAI Responses API.
-        
+
         Args:
             tool_calls: List of tool calls that were executed
             results: List of results from function execution
-            
+
         Returns:
             List of tool result messages in Responses API format
         """
@@ -393,56 +441,69 @@ class OpenAILLM(LLM):
             if not call_id:
                 # skip or wrap into a normal assistant message / log an error
                 continue
-                
+
             # Send only function_call_output items keyed by call_id
             # Convert to string for Responses API
             output_str = res if isinstance(res, str) else json.dumps(res)
-            msgs.append({
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": output_str,
-            })
+            msgs.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output_str,
+                }
+            )
         return msgs
 
-    def _standardize_and_emit_event(self, event: ResponseStreamEvent) -> Optional[LLMResponseEvent]:
+    def _standardize_and_emit_event(
+        self, event: ResponseStreamEvent
+    ) -> Optional[LLMResponseEvent]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
         # start by forwarding the native event
-        self.events.send(events.OpenAIStreamEvent(
-            plugin_name="openai",
-            event_type=event.type,
-            event_data=event
-        ))
+        self.events.send(
+            events.OpenAIStreamEvent(
+                plugin_name="openai", event_type=event.type, event_data=event
+            )
+        )
 
         if event.type == "response.error":
             # Handle error events
             error_message = getattr(event, "error", {}).get("message", "Unknown error")
-            self.events.send(events.LLMErrorEvent(
-                plugin_name="openai",
-                error_message=error_message,
-                event_data=event
-            ))
+            self.events.send(
+                events.LLMErrorEvent(
+                    plugin_name="openai", error_message=error_message, event_data=event
+                )
+            )
             return None
         elif event.type == "response.output_text.delta":
             # standardize the delta event
             delta_event: ResponseTextDeltaEvent = event
-            self.events.send(LLMResponseChunkEvent(
-                plugin_name="openai",
-                content_index=delta_event.content_index,
-                item_id=delta_event.item_id,
-                output_index=delta_event.output_index,
-                sequence_number=delta_event.sequence_number,
-                delta=delta_event.delta,
-            ))
+            self.events.send(
+                LLMResponseChunkEvent(
+                    plugin_name="openai",
+                    # sadly content_index is always set to 0
+                    # content_index=delta_event.content_index,
+                    content_index=None,
+                    item_id=delta_event.item_id,
+                    output_index=delta_event.output_index,
+                    sequence_number=delta_event.sequence_number,
+                    delta=delta_event.delta,
+                )
+            )
         elif event.type == "response.completed":
             # standardize the response event and return the llm response
             completed_event: ResponseCompletedEvent = event
-            llm_response = LLMResponseEvent[OpenAIResponse](completed_event.response, completed_event.response.output_text)
-            self.events.send(LLMResponseCompletedEvent(
-                plugin_name="openai",
-                original=llm_response.original,
-                text=llm_response.text
-            ))
+            llm_response = LLMResponseEvent[OpenAIResponse](
+                completed_event.response, completed_event.response.output_text
+            )
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    plugin_name="openai",
+                    original=llm_response.original,
+                    text=llm_response.text,
+                    item_id=llm_response.original.output[0].id,
+                )
+            )
             return llm_response
         return None

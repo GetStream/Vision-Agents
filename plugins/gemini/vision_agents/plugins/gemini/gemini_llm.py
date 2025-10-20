@@ -1,3 +1,4 @@
+import uuid
 from typing import Optional, List, TYPE_CHECKING, Any, Dict
 
 from google import genai
@@ -100,19 +101,21 @@ class GeminiLLM(LLM):
         text_parts : List[str] = []
         final_chunk = None
         pending_calls: List[NormalizedToolCallItem] = []
-        
-        for chunk in iterator:
+
+        # Gemini API does not have an item_id, we create it here and add it to all events
+        item_id = str(uuid.uuid4())
+
+        for idx, chunk in enumerate(iterator):
             response_chunk: GenerateContentResponse = chunk
             final_chunk = response_chunk
-            llm_response_optional = self._standardize_and_emit_event(response_chunk, text_parts)
+            self._standardize_and_emit_event(response_chunk, text_parts, item_id, idx)
+
             # collect function calls as they stream
             try:
                 chunk_calls = self._extract_tool_calls_from_stream_chunk(chunk)
                 pending_calls.extend(chunk_calls)
             except Exception:
                 pass  # Ignore errors in chunk processing
-            if llm_response_optional is not None:
-                llm_response = llm_response_optional
 
         # Check if there were function calls in the response
         if pending_calls:
@@ -147,12 +150,11 @@ class GeminiLLM(LLM):
                 follow_up_last = None
                 next_calls = []
                 
-                for chk in follow_up_iter:
+                for idx, chk in enumerate(follow_up_iter):
                     follow_up_last = chk
-                    llm_response_optional = self._standardize_and_emit_event(chk, follow_up_text_parts)
-                    if llm_response_optional is not None:
-                        llm_response = llm_response_optional
-                    
+                    # TODO: unclear if this is correct (item_id and idx)
+                    self._standardize_and_emit_event(chk, follow_up_text_parts, item_id, idx)
+
                     # Check for new function calls
                     try:
                         chunk_calls = self._extract_tool_calls_from_stream_chunk(chk)
@@ -172,7 +174,8 @@ class GeminiLLM(LLM):
         self.events.send(LLMResponseCompletedEvent(
             plugin_name="gemini",
             original=llm_response.original,
-            text=llm_response.text
+            text=llm_response.text,
+            item_id=item_id,
         ))
 
         # Return the LLM response
@@ -198,7 +201,7 @@ class GeminiLLM(LLM):
 
         return messages
 
-    def _standardize_and_emit_event(self, chunk: GenerateContentResponse, text_parts: List[str]) -> Optional[LLMResponseEvent[Any]]:
+    def _standardize_and_emit_event(self, chunk: GenerateContentResponse, text_parts: List[str], item_id: str, idx: int) -> Optional[LLMResponseEvent[Any]]:
         """
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
@@ -212,10 +215,8 @@ class GeminiLLM(LLM):
         if hasattr(chunk, 'text') and chunk.text:
             self.events.send(LLMResponseChunkEvent(
                 plugin_name="gemini",
-                content_index=0,
-                item_id="",
-                output_index=0,
-                sequence_number=0,
+                content_index=idx,
+                item_id=item_id,
                 delta=chunk.text,
             ))
             text_parts.append(chunk.text)

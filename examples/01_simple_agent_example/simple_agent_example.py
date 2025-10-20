@@ -3,13 +3,13 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import cartesia, deepgram, openai, getstream, smart_turn
+from vision_agents.plugins import cartesia, deepgram, getstream, smart_turn, gemini
 
 load_dotenv()
 
 
 async def start_agent() -> None:
-    llm = openai.LLM(model="gpt-4o-mini")
+    llm = gemini.LLM("gemini-2.0-flash")
     # create an agent to run with Stream's edge, openAI llm
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
@@ -52,6 +52,10 @@ async def start_agent() -> None:
         # ],)
 
         # run till the call ends
+        # await agent.say("Hello, how are you?")
+        # await asyncio.sleep(5)
+
+        await agent.simple_response("tell me something interesting in a short sentence")
         await agent.finish()
 
 

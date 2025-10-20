@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "cartesia>=2.0.5",
+    "cartesia>=2.0.9",
 ]
 
 [project.urls]

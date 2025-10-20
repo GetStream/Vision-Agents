@@ -1,26 +1,17 @@
+import asyncio
 import datetime
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 
 from dataclasses import dataclass
 
-
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Message:
-    """A single utterance or assistant message within a conversation.
-
-    Attributes:
-        content: Text content of the message.
-        original: Optional provider-native object for this message.
-        timestamp: Time the message was created (auto-filled on init).
-        role: Role of the sender (e.g., "user", "assistant").
-        user_id: Logical user identifier associated with the message.
-        id: Unique message identifier (auto-generated if not provided).
-    """
     content: str
     original: Optional[Any] = None  # the original openai, claude or gemini message
     timestamp: Optional[datetime.datetime] = None
@@ -33,237 +24,214 @@ class Message:
         self.timestamp = datetime.datetime.now()
 
 
-@dataclass
-class StreamHandle:
-    """Handle for managing a streaming message.
-    
-    This lightweight object is returned when starting a streaming message
-    and must be passed to subsequent update operations. It encapsulates
-    the message ID and user ID, preventing accidental cross-contamination
-    between concurrent streams.
-    
-    Example:
-        # Start a streaming message
-        handle = conversation.start_streaming_message(role="assistant")
-        
-        # Update the message using the handle
-        conversation.append_to_message(handle, "Hello")
-        conversation.append_to_message(handle, " world!")
-        
-        # Complete the message
-        conversation.complete_message(handle)
-    """
-    message_id: str
-    user_id: str
+class ContentBuffer:
+    """Manages out-of-order fragment buffering for streaming messages."""
+
+    def __init__(self):
+        self.fragments: Dict[int, str] = {}
+        self.last_index = -1
+        self.accumulated = ""
+
+    def add_fragment(self, index: int, text: str):
+        """Add a fragment and apply all sequential pending fragments."""
+        self.fragments[index] = text
+        self._apply_pending()
+
+    def _apply_pending(self):
+        """Apply all sequential fragments starting from last_index + 1."""
+        while (self.last_index + 1) in self.fragments:
+            self.accumulated += self.fragments.pop(self.last_index + 1)
+            self.last_index += 1
+
+    def get_accumulated(self) -> str:
+        return self.accumulated
+
+    def clear(self):
+        self.fragments.clear()
+        self.last_index = -1
+        self.accumulated = ""
+
+
+class MessageState:
+    """Internal state for tracking a message's lifecycle."""
+
+    def __init__(self, message_id: str):
+        self.message_id = message_id
+        self.buffer = ContentBuffer()
+        self.created_in_backend = False  # Has message been sent to Stream/DB?
+        self.backend_message_ids: List[
+            str
+        ] = []  # For chunking: multiple backend IDs per internal ID
 
 
 class Conversation(ABC):
+    """Base conversation class with unified message API."""
+
     def __init__(
         self,
         instructions: str,
         messages: List[Message],
     ):
-        """Create a conversation container.
-
-        Args:
-            instructions: System instructions that guide the assistant.
-            messages: Initial message history.
-        """
         self.instructions = instructions
         self.messages = [m for m in messages]
+        self._message_states: Dict[str, MessageState] = {}
+        self._lock = asyncio.Lock()  # One lock to rule them all
+
+    async def send_message(
+        self,
+        role: str,
+        user_id: str,
+        content: str,
+        message_id: Optional[str] = None,
+        original: Any = None,
+    ) -> Message:
+        """Send a simple, complete message (non-streaming).
+
+        This is a convenience method for the common case of sending a complete message.
+        For streaming messages, use upsert_message() directly.
+
+        Args:
+            role: Message role (user/assistant/system)
+            user_id: User ID
+            content: Complete text content
+            message_id: Optional ID. If None, auto-generates.
+            original: Original event/object for metadata
+
+        Returns:
+            The Message object
+
+        Examples:
+            # User message
+            await conv.send_message("user", "user123", "What's the weather?")
+
+            # Assistant response
+            await conv.send_message("assistant", "agent", "It's sunny!")
+
+            # System message
+            await conv.send_message("system", "system", "User joined")
+        """
+        return await self.upsert_message(
+            role=role,
+            user_id=user_id,
+            content=content,
+            message_id=message_id,
+            completed=True,
+            original=original,
+        )
+
+    async def upsert_message(
+        self,
+        role: str,
+        user_id: str,
+        content: str = "",
+        message_id: Optional[str] = None,
+        content_index: Optional[int] = None,
+        completed: bool = True,
+        replace: bool = False,
+        original: Any = None,
+    ) -> Message:
+        """Add or update a message. Handles streaming, non-streaming, everything.
+
+        Args:
+            role: Message role (user/assistant/system)
+            user_id: User ID
+            content: Text content (can be partial or complete)
+            message_id: Optional ID. If None, auto-generates. If provided, updates existing.
+            content_index: For streaming deltas. If provided, buffers out-of-order fragments.
+            completed: If True, finalizes the message. If False, keeps it as "generating".
+            replace: If True, replaces all content. If False, appends/merges with deltas.
+            original: Original event/object for metadata
+
+        Returns:
+            The Message object (newly created or updated)
+
+        Examples:
+            # Streaming delta
+            await conv.upsert_message("assistant", "agent", "Hello", msg_id, content_index=0, completed=False)
+
+            # Completion (replaces partial content)
+            await conv.upsert_message("assistant", "agent", "Hello world!", msg_id, completed=True, replace=True)
+
+            # Simple non-streaming
+            await conv.upsert_message("user", "user123", "Hi there!")
+        """
+        async with self._lock:
+            # Generate ID if not provided
+            if message_id is None:
+                message_id = str(uuid.uuid4())
+
+            # Find or create message
+            message = self._find_message(message_id)
+            if message is None:
+                # New message
+                message = Message(
+                    id=message_id,
+                    role=role,
+                    user_id=user_id,
+                    content="",
+                    original=original,
+                )
+                self.messages.append(message)
+                state = MessageState(message_id)
+                self._message_states[message_id] = state
+            else:
+                # Existing message - get its state
+                state_or_none = self._message_states.get(message_id)
+                if state_or_none is None:
+                    # Message exists but no state - was already completed
+                    # Ignore late updates (deltas arriving after completion)
+                    logger.debug(
+                        f"Message {message_id} already completed, ignoring update. "
+                        f"This happens when deltas arrive after completion."
+                    )
+                    return message
+                state = state_or_none
+
+            # Update content
+            if content_index is not None:
+                # Streaming: buffer fragments in order
+                state.buffer.add_fragment(content_index, content)
+                message.content = state.buffer.get_accumulated()
+            elif replace:
+                # Replace all content
+                state.buffer.clear()
+                message.content = content
+            else:
+                # Append to existing
+                message.content += content
+
+            # Sync to backend (implementation-specific)
+            await self._sync_to_backend(message, state, completed)
+
+            # Cleanup state if completed
+            if completed:
+                self._message_states.pop(message_id, None)
+
+            return message
 
     @abstractmethod
-    def add_message(self, message: Message, completed: bool = True):
-        """Add a message to the conversation.
-        
+    async def _sync_to_backend(
+        self, message: Message, state: MessageState, completed: bool
+    ):
+        """Sync message to backend storage. Implementation-specific.
+
         Args:
-            message: The Message object to add
-            completed: If True, mark the message as completed (not generating). 
-                      If False, mark as still generating. Defaults to True.
-        
-        Returns:
-            The result of the add operation (implementation-specific)
+            message: The message to sync
+            state: The message's internal state
+            completed: If True, finalize the message. If False, mark as still generating.
         """
-        ...
-    
-    @abstractmethod
-    def update_message(self, message_id: str, input_text: str, user_id: str, replace_content: bool, completed: bool):
-        """Update an existing message or create a new one if not found.
-        
-        Args:
-            message_id: The ID of the message to update
-            input_text: The text content to set or append
-            user_id: The ID of the user who owns the message
-            replace_content: If True, replace the entire message content. If False, append to existing content.
-            completed: If True, mark the message as completed (not generating). If False, mark as still generating.
-        
-        Returns:
-            The result of the update operation (implementation-specific)
-        """
-        ...
-    
-    # Streaming message convenience methods
-    def start_streaming_message(self, role: str = "assistant", user_id: Optional[str] = None, 
-                               initial_content: str = "") -> StreamHandle:
-        """Start a new streaming message and return a handle for subsequent operations.
-        
-        This method simplifies the management of streaming messages by returning a handle
-        that encapsulates the message ID and user ID. Use the handle with append_to_message,
-        replace_message, and complete_message methods.
-        
-        Args:
-            role: The role of the message sender (default: "assistant")
-            user_id: The ID of the user (default: same as role)
-            initial_content: Initial content for the message (default: empty string)
-            
-        Returns:
-            StreamHandle: A handle to use for subsequent operations on this message
-            
-        Example:
-            # Simple usage
-            handle = conversation.start_streaming_message()
-            conversation.append_to_message(handle, "Processing...")
-            conversation.replace_message(handle, "Here's the answer: ")
-            conversation.append_to_message(handle, "42")
-            conversation.complete_message(handle)
-            
-            # Multiple concurrent streams
-            user_handle = conversation.start_streaming_message(role="user", user_id="user123")
-            assistant_handle = conversation.start_streaming_message(role="assistant")
-            
-            # Update both independently
-            conversation.append_to_message(user_handle, "Hello")
-            conversation.append_to_message(assistant_handle, "Hi there!")
-            
-            # Complete in any order
-            conversation.complete_message(user_handle)
-            conversation.complete_message(assistant_handle)
-        """
-        message = Message(
-            original=None,
-            content=initial_content,
-            role=role,
-            user_id=user_id or role,
-            id=None  # Will be assigned during add
-        )
-        self.add_message(message, completed=False)
-        # The message now has an ID assigned by the add_message flow
-        # Find it in the messages list (it's the last one added)
-        added_message = self.messages[-1]
-        # Message IDs and user_ids are always set by add_message
-        assert added_message.id is not None, "Message ID should be set by add_message"
-        assert added_message.user_id is not None, "User ID should be set by add_message"
-        return StreamHandle(message_id=added_message.id, user_id=added_message.user_id)
-    
-    def append_to_message(self, handle: StreamHandle, text: str):
-        """Append text to a streaming message identified by the handle.
-        
-        Args:
-            handle: The StreamHandle returned by start_streaming_message
-            text: Text to append to the message
-        """
-        self.update_message(
-            message_id=handle.message_id,
-            input_text=text,
-            user_id=handle.user_id,
-            replace_content=False,
-            completed=False
-        )
-    
-    def replace_message(self, handle: StreamHandle, text: str):
-        """Replace the content of a streaming message identified by the handle.
-        
-        Args:
-            handle: The StreamHandle returned by start_streaming_message
-            text: Text to replace the message content with
-        """
-        self.update_message(
-            message_id=handle.message_id,
-            input_text=text,
-            user_id=handle.user_id,
-            replace_content=True,
-            completed=False
-        )
-    
-    def complete_message(self, handle: StreamHandle):
-        """Mark a streaming message as completed.
-        
-        Args:
-            handle: The StreamHandle returned by start_streaming_message
-        """
-        # We need to find the message to get its current content
-        # so we can set completed without changing the content
-        message = next((msg for msg in self.messages if msg.id == handle.message_id), None)
-        if message:
-            # Use replace mode with the current content to avoid space issues
-            self.update_message(
-                message_id=handle.message_id,
-                input_text=message.content,
-                user_id=handle.user_id,
-                replace_content=True,
-                completed=True
-            )
+        pass
+
+    def _find_message(self, message_id: str) -> Optional[Message]:
+        """Find a message by ID."""
+        return next((m for m in self.messages if m.id == message_id), None)
 
 
 class InMemoryConversation(Conversation):
-    messages: List[Message]
+    """In-memory conversation (no external storage)."""
 
-    def __init__(self, instructions: str, messages: List[Message]):
-        """Create an in-memory conversation holder.
-
-        Stores messages in a local list and performs updates in place. Useful for
-        tests and local development, or as a base for provider-backed
-        conversations.
-        """
-        super().__init__(instructions, messages)
-
-    def lookup(self, id: str) -> Optional[Message]:
-        """Find a message by ID. Needed by StreamConversation
-
-        Args:
-            id: Message identifier to lookup.
-
-        Returns:
-            The `Message` if found, otherwise None.
-        """
-        msgs = [m for m in self.messages if m.id == id]
-        if msgs:
-            return msgs[0]
-        return None
-
-    def add_message(self, message: Message, completed: bool = True):
-        """Append a message to the in-memory list and return None.
-
-        The `completed` flag is not used for in-memory conversations.
-        """
-        self.messages.append(message)
-        # In-memory conversation doesn't need to handle completed flag
-        return None
-
-    def update_message(self, message_id: str, input_text: str, user_id: str, replace_content: bool, completed: bool):
-        """Update or create a message in-memory.
-
-        If the message is not found, a new one is created with the given id.
-
-        Args:
-            message_id: Target message identifier.
-            input_text: Text to set (replace) or append.
-            user_id: Owner user id for the message.
-            replace_content: If True, replace content; otherwise append.
-            completed: Ignored for in-memory conversations.
-        """
-        # Find the message by id
-        message = self.lookup(message_id)
-        
-        if message is None:
-            logger.info(f"message {message_id} not found, create one instead")
-            return self.add_message(Message(user_id=user_id, id=message_id, content=input_text, original=None), completed=completed)
-
-        if replace_content:
-            message.content = input_text
-        else:
-            message.content += input_text
-
-        # In-memory conversation just updates the message, no external API call
-        return None
-
+    async def _sync_to_backend(
+        self, message: Message, state: MessageState, completed: bool
+    ):
+        """No-op for in-memory storage - message is already in self.messages."""
+        pass

@@ -39,6 +39,6 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "soundfile>=0.13.1",
-    "torchaudio>=2.7.1",
+    "torchvision>=0.20.0",
     "scipy>=1.15.3,<1.16",
 ]
