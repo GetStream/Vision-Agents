@@ -15,6 +15,7 @@ from deepgram.extensions.types.sockets.listen_v1_results_event import (
     ListenV1ResultsMetadata,
 )
 from getstream.video.rtc.track_util import PcmData
+from torchvision.io.video import av
 from vision_agents.core.stt.events import (
     STTErrorEvent,
     STTPartialTranscriptEvent,
@@ -142,22 +143,34 @@ def mia_metadata():
 @pytest.fixture
 def audio_data(mia_mp3_path):
     """Load and prepare the audio data for testing."""
-    import numpy as np
-    import torch
-    import torchaudio
     from scipy import signal
 
-    # Load the mp3 file
-    waveform, original_sample_rate = torchaudio.load(mia_mp3_path)
+    # Load the mp3 file using PyAV
+    container = av.open(mia_mp3_path)
+    audio_stream = container.streams.audio[0]
+    original_sample_rate = audio_stream.sample_rate
 
-    # Convert to mono if stereo
-    if waveform.shape[0] > 1:
-        waveform = torch.mean(waveform, dim=0, keepdim=True)
+    # Read all audio frames
+    samples = []
+    for frame in container.decode(audio_stream):
+        # Convert to numpy array
+        frame_array = frame.to_ndarray()
+        if len(frame_array.shape) > 1:
+            # Convert stereo to mono by averaging channels
+            frame_array = np.mean(frame_array, axis=0)
+        samples.append(frame_array)
 
-    # Convert to numpy array
-    data = waveform.numpy().squeeze()
+    # Concatenate all samples
+    data = np.concatenate(samples)
+    container.close()
 
-    # Resample to 16kHz if needed (Deepgram's preferred rate)
+    # Convert to float32 if needed
+    if data.dtype == np.int16:
+        data = data.astype(np.float32) / 32768.0
+    elif data.dtype == np.int32:
+        data = data.astype(np.float32) / 2147483648.0
+
+    # Resample to 48kHz if needed (Deepgram's preferred rate)
     target_sample_rate = 48000
     if original_sample_rate != target_sample_rate:
         number_of_samples = round(
@@ -439,8 +452,11 @@ async def test_deepgram_close_message():
     )
     assert close_message.type == "CloseStream"
 
+
 @pytest.mark.asyncio
-@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+@patch(
+    "vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient
+)
 async def test_real_time_transcript_emission():
     """
     Test that transcripts are emitted in real-time without needing a second audio chunk.
@@ -504,7 +520,9 @@ async def test_real_time_transcript_emission():
 
 
 @pytest.mark.asyncio
-@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+@patch(
+    "vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient
+)
 async def test_real_time_partial_transcript_emission():
     """
     Test that partial transcripts are emitted in real-time.
@@ -576,7 +594,9 @@ async def test_real_time_partial_transcript_emission():
 
 
 @pytest.mark.asyncio
-@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+@patch(
+    "vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient
+)
 async def test_real_time_error_emission():
     """
     Test that errors are emitted in real-time.
@@ -618,7 +638,9 @@ async def test_real_time_error_emission():
 
 
 @pytest.mark.asyncio
-@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+@patch(
+    "vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient
+)
 async def test_close_cleanup():
     """
     Test that the STT service is properly closed and cleaned up.
@@ -657,7 +679,9 @@ async def test_close_cleanup():
 
 
 @pytest.mark.asyncio
-@patch("vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient)
+@patch(
+    "vision_agents.plugins.deepgram.stt.AsyncDeepgramClient", MockAsyncDeepgramClient
+)
 async def test_asynchronous_mode_behavior():
     """
     Test that Deepgram operates in asynchronous mode:
@@ -701,7 +725,6 @@ async def test_asynchronous_mode_behavior():
 
     # Cleanup
     await stt.close()
-
 
 
 @pytest.mark.integration

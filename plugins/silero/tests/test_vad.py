@@ -6,7 +6,7 @@ import tempfile
 import numpy as np
 import pytest
 import soundfile as sf
-import torchaudio
+from torchvision.io.video import av
 from typing import List, Dict, Any, Optional
 
 from vision_agents.plugins import silero
@@ -44,9 +44,34 @@ def mia_wav_path(mia_mp3_path):
     fd, wav_path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
 
-    # Convert mp3 to wav using torchaudio
-    waveform, sample_rate = torchaudio.load(mia_mp3_path)
-    torchaudio.save(wav_path, waveform, sample_rate)
+    # Convert mp3 to wav using PyAV
+    container = av.open(mia_mp3_path)
+    audio_stream = container.streams.audio[0]
+    sample_rate = audio_stream.sample_rate
+
+    # Read all audio frames
+    samples = []
+    for frame in container.decode(audio_stream):
+        # Convert to numpy array
+        frame_array = frame.to_ndarray()
+        if len(frame_array.shape) > 1:
+            # Convert stereo to mono by averaging channels
+            frame_array = np.mean(frame_array, axis=0)
+        samples.append(frame_array)
+
+    # Concatenate all samples
+    audio_data = np.concatenate(samples)
+
+    # Convert to float32 for soundfile (it expects values between -1.0 and 1.0)
+    if audio_data.dtype == np.int16:
+        audio_data = audio_data.astype(np.float32) / 32768.0
+    elif audio_data.dtype == np.int32:
+        audio_data = audio_data.astype(np.float32) / 2147483648.0
+
+    container.close()
+
+    # Save as wav using soundfile
+    sf.write(wav_path, audio_data, sample_rate)
 
     yield wav_path
 
@@ -446,19 +471,19 @@ async def test_silence_no_turns():
     async def on_audio(event: VADAudioEvent):
         nonlocal audio_event_fired
         audio_event_fired = True
-        duration_sec = (event.duration_ms / 1000.0) if event.duration_ms is not None else 0.0
-        logger.info(
-            f"Audio event detected on silence! Duration: {duration_sec:.2f}s"
+        duration_sec = (
+            (event.duration_ms / 1000.0) if event.duration_ms is not None else 0.0
         )
+        logger.info(f"Audio event detected on silence! Duration: {duration_sec:.2f}s")
 
     @vad.events.subscribe
     async def on_partial(event: VADPartialEvent):
         nonlocal partial_event_fired
         partial_event_fired = True
-        duration_sec = (event.duration_ms / 1000.0) if event.duration_ms is not None else 0.0
-        logger.info(
-            f"Partial event detected on silence! Duration: {duration_sec:.2f}s"
+        duration_sec = (
+            (event.duration_ms / 1000.0) if event.duration_ms is not None else 0.0
         )
+        logger.info(f"Partial event detected on silence! Duration: {duration_sec:.2f}s")
 
     # Process the silence in chunks to simulate streaming
     chunk_size = 512

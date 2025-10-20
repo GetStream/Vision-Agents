@@ -5940,7 +5940,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "scipy" },
     { name = "soundfile" },
-    { name = "torchaudio" },
+    { name = "torchvision" },
 ]
 
 [package.metadata]
@@ -5956,7 +5956,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "scipy", specifier = ">=1.15.3,<1.16" },
     { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
+    { name = "torchvision", specifier = ">=0.20.0" },
 ]
 
 [[package]]
@@ -6169,7 +6169,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "scipy" },
     { name = "soundfile" },
-    { name = "torchaudio" },
+    { name = "torchvision" },
 ]
 
 [package.metadata]
@@ -6186,7 +6186,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "scipy", specifier = ">=1.15.3,<1.16" },
     { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchaudio", specifier = ">=2.7.1" },
+    { name = "torchvision", specifier = ">=0.20.0" },
 ]
 
 [[package]]
