@@ -17,6 +17,7 @@ from typing import Any, Optional
 import pytest
 
 from vision_agents.core.agents import Agent
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime as base_rt
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.llm.events import RealtimeDisconnectedEvent
@@ -33,7 +34,7 @@ class FakeConversation:
 
     def finish_last_message(self, text: str) -> None:
         self.finish_calls.append(text)
-    
+
     def add_message(self, message: dict) -> None:
         """Add a message to the conversation."""
         self.messages.append(message)
@@ -53,40 +54,36 @@ class FakeRealtime(base_rt.Realtime):
     async def connect(self):
         return None
 
-    async def send_text(self, text: str):
-        # Emit transcript for user
-        self._emit_transcript_event(text=text)
-        # Emit a delta and a final response
-        self._emit_response_event(text="Hello", is_complete=False)
-        self._emit_response_event(text="Hello world", is_complete=True)
-
-    async def simple_audio_response(self, pcm):
+    async def simple_audio_response(
+        self, pcm, participant: Optional[Participant] = None
+    ):
         """Required abstract method implementation."""
         return None
 
     async def _close_impl(self):
         return None
-    
+
     # Additional methods from LLM base class
     def set_before_response_listener(self, callback):
         """Set before response callback."""
         self.before_response_listener = callback
-    
+
     def set_after_response_listener(self, callback):
         """Set after response callback."""
         self.after_response_listener = callback
-    
+
     async def wait_until_ready(self, timeout: float = 5.0) -> bool:
         """Wait until ready (already ready in fake)."""
         return True
-    
+
     async def interrupt_playback(self):
         """Interrupt playback (no-op for fake)."""
         pass
-    
+
     def resume_playback(self):
         """Resume playback (no-op for fake)."""
         pass
+
 
 @pytest.mark.skip(reason="Conversation class has not fully been wired into Agent yet")
 @pytest.mark.asyncio
@@ -94,12 +91,13 @@ async def test_agent_conversation_updates_with_realtime():
     """Test that Agent wires Realtime events to conversation updates."""
     from vision_agents.core.edge import EdgeTransport
     from vision_agents.core.edge.types import User, Connection
-    
+
     # ===================================================================
     # Mock Connection - mimics the structure Agent expects
     # ===================================================================
     class MockConnection(Connection):
         """Mock connection with minimal structure for testing."""
+
         def __init__(self):
             super().__init__()
             # Agent.join() accesses connection._connection._coordinator_ws_client.on_wildcard()
@@ -108,86 +106,81 @@ async def test_agent_conversation_updates_with_realtime():
                     on_wildcard=lambda *args, **kwargs: None
                 )
             )
-        
+
         async def close(self):
             pass
-    
+
     # ===================================================================
     # Mock EdgeTransport - provides conversation and connection
     # ===================================================================
     class MockEdge(EdgeTransport):
         """Mock edge transport for testing Agent integration."""
+
         def __init__(self):
             super().__init__()
             self.conversation = None
             # EdgeTransport doesn't initialize events, but Agent expects it
             from vision_agents.core.events.manager import EventManager
+
             self.events = EventManager()
-        
+
         async def create_user(self, user: User):
             return user
-        
+
         def create_audio_track(self):
             return None
-        
+
         def close(self):
             pass
-        
+
         def open_demo(self, *args, **kwargs):
             pass
-        
+
         async def join(self, agent, call):
             """Return a mock connection."""
             return MockConnection()
-        
+
         async def publish_tracks(self, audio_track, video_track):
             pass
-        
+
         async def create_conversation(self, call, user, instructions):
             """Return our fake conversation for testing."""
             return self.conversation
-        
+
         def add_track_subscriber(self, track_id):
             return None
-    
+
     # ===================================================================
     # Fake Conversation - tracks partial and final updates
     # ===================================================================
     fake_conv = FakeConversation()
-    
+
     # ===================================================================
     # Create Agent with new API
     # ===================================================================
     rt = FakeRealtime()
     mock_edge = MockEdge()
     mock_edge.conversation = fake_conv  # Set before join
-    
+
     agent_user = User(id="agent-123", name="Test Agent")
-    
+
     agent = Agent(
-        edge=mock_edge,
-        llm=rt,
-        agent_user=agent_user,
-        instructions="Test instructions"
+        edge=mock_edge, llm=rt, agent_user=agent_user, instructions="Test instructions"
     )
-    
+
     # ===================================================================
     # Mock Call object
     # ===================================================================
     call = SimpleNamespace(
         id="test-call-123",
-        client=SimpleNamespace(
-            stream=SimpleNamespace(
-                chat=SimpleNamespace()
-            )
-        )
+        client=SimpleNamespace(stream=SimpleNamespace(chat=SimpleNamespace())),
     )
-    
+
     # ===================================================================
     # Join call (registers event handlers)
     # ===================================================================
     await agent.join(call)
-    
+
     # ===================================================================
     # Trigger events through FakeRealtime
     # ===================================================================
@@ -196,22 +189,24 @@ async def test_agent_conversation_updates_with_realtime():
     # 2. RealtimeResponseEvent (partial: "Hello")
     # 3. RealtimeResponseEvent (complete: "Hello world")
     await rt.send_text("Hi")
-    
+
     # Allow async event handlers to run
     await asyncio.sleep(0.05)
-    
+
     # Wait for event processing
     await agent.events.wait(timeout=1.0)
-    
+
     # ===================================================================
     # Assertions - verify conversation received updates
     # ===================================================================
-    assert ("Hello", None) in fake_conv.partial_calls, \
+    assert ("Hello", None) in fake_conv.partial_calls, (
         f"Expected partial update 'Hello', got: {fake_conv.partial_calls}"
-    
-    assert "Hello world" in fake_conv.finish_calls, \
+    )
+
+    assert "Hello world" in fake_conv.finish_calls, (
         f"Expected finish call 'Hello world', got: {fake_conv.finish_calls}"
-    
+    )
+
     # Cleanup
     await agent.close()
 
@@ -238,17 +233,17 @@ class FakeRealtimeAgg(base_rt.Realtime):
     async def simple_response(self, text: str, processors=None, participant=None):
         """Aggregates streaming responses."""
         # Call before listener if set
-        if hasattr(self, 'before_response_listener') and self.before_response_listener:
+        if hasattr(self, "before_response_listener") and self.before_response_listener:
             self.before_response_listener([{"role": "user", "content": text}])
-        
+
         await self.send_text(text)
         # Aggregate all response events ("Hi " + "there" + "!")
         result = LLMResponseEvent(original=None, text="Hi there!")
-        
+
         # Call after listener if set
-        if hasattr(self, 'after_response_listener') and self.after_response_listener:
+        if hasattr(self, "after_response_listener") and self.after_response_listener:
             await self.after_response_listener(result)
-        
+
         return result
 
     async def simple_audio_response(self, pcm):
@@ -257,12 +252,12 @@ class FakeRealtimeAgg(base_rt.Realtime):
 
     async def _close_impl(self):
         return None
-    
+
     # Additional methods from LLM base class
     def set_before_response_listener(self, callback):
         """Set before response callback."""
         self.before_response_listener = callback
-    
+
     def set_after_response_listener(self, callback):
         """Set after response callback."""
         self.after_response_listener = callback
@@ -312,10 +307,10 @@ async def test_close_emits_disconnected_event():
     await asyncio.sleep(0.01)
 
     await rt.close()
-    
+
     # Wait for all events in queue to be processed
     await rt.events.wait(timeout=1.0)
-    
+
     assert observed["disconnected"] is True
 
 
@@ -358,7 +353,7 @@ class FakeRealtimeNative(base_rt.Realtime):
 
     async def _close_impl(self):
         return None
-    
+
     # Additional method for native_response test
     async def native_response(self, **kwargs):
         """Native response aggregates streaming responses."""
