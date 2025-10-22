@@ -10,10 +10,14 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  UV_LINK_MODE: copy
+
 jobs:
   lint:
     name: Ruff & mypy
-    runs-on: ubuntu-latest
+    runs-on: build1
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -30,7 +34,7 @@ jobs:
 
   test:
     name: Test "${{ inputs.marker }}"
-    runs-on: ubuntu-latest
+    runs-on: build1
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
