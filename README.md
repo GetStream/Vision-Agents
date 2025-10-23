@@ -148,17 +148,21 @@ Want to add your platform or provider? Reach out to **nash@getstream.io**.
 
 Our favorite people & projects to follow for vision AI
 
-- https://x.com/demishassabis. CEO google deepmind, won a nobel prize
-- https://x.com/OfficialLoganK. Product lead gemini, posts about robotics vision
-- https://x.com/ultralytics. various fast vision AI models. Pose, detect objects, segment, classify etc.
-- https://x.com/skalskip92. roboflow open source lead
-- https://x.com/moondreamai. the tiny vision model that could
-- https://x.com/kwindla. pipecat/daily
-- https://x.com/juberti. head of realtime AI openai
-- https://x.com/romainhuet head of developer experience openAI
-- https://x.com/thorwebdev eleven labs
-- https://x.com/mervenoyann huggingface, quite some posts about Video AI
-- https://x.com/stash_pomichter spatial memory for robots
+|  [<img src="https://avatars.githubusercontent.com/u/12345" width="80"/>](https://x.com/demishassabis)  |       [<img src="https://avatars.githubusercontent.com/u/12346" width="80"/>](https://x.com/OfficialLoganK)        |            [<img src="https://avatars.githubusercontent.com/u/12347" width="80"/>](https://x.com/ultralytics)            |
+| :----------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: |
+| [@demishassabis](https://x.com/demishassabis)<br>CEO @ Google DeepMind<br><sub>Won a Nobel prize</sub> | [@OfficialLoganK](https://x.com/OfficialLoganK)<br>Product Lead @ Gemini<br><sub>Posts about robotics vision</sub> | [@ultralytics](https://x.com/ultralytics)<br>Various fast vision AI models<br><sub>Pose, detect, segment, classify</sub> |
+
+|         [<img src="https://avatars.githubusercontent.com/u/12348" width="80"/>](https://x.com/skalskip92)         |            [<img src="https://avatars.githubusercontent.com/u/12349" width="80"/>](https://x.com/moondreamai)            |  [<img src="https://avatars.githubusercontent.com/u/12350" width="80"/>](https://x.com/kwindla)   |
+| :---------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------: |
+| [@skalskip92](https://x.com/skalskip92)<br>Open Source Lead @ Roboflow<br><sub>Building tools for vision AI</sub> | [@moondreamai](https://x.com/moondreamai)<br>The tiny vision model that could<br><sub>Lightweight, fast, efficient</sub> | [@kwindla](https://x.com/kwindla)<br>Pipecat / Daily<br><sub>Sharing AI and vision insights</sub> |
+
+|   [<img src="https://avatars.githubusercontent.com/u/12351" width="80"/>](https://x.com/juberti)    |            [<img src="https://avatars.githubusercontent.com/u/12352" width="80"/>](https://x.com/romainhuet)            | [<img src="https://avatars.githubusercontent.com/u/12353" width="80"/>](https://x.com/thorwebdev) |
+| :-------------------------------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------: |
+| [@juberti](https://x.com/juberti)<br>Head of Realtime AI @ OpenAI<br><sub>Realtime AI systems</sub> | [@romainhuet](https://x.com/romainhuet)<br>Head of Developer Experience @ OpenAI<br><sub>Developer tooling & APIs</sub> |   [@thorwebdev](https://x.com/thorwebdev)<br>Eleven Labs<br><sub>Voice and AI experiments</sub>   |
+
+|    [<img src="https://avatars.githubusercontent.com/u/12354" width="80"/>](https://x.com/mervenoyann)    |        [<img src="https://avatars.githubusercontent.com/u/12355" width="80"/>](https://x.com/stash_pomichter)         |
+| :------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------: |
+| [@mervenoyann](https://x.com/mervenoyann)<br>Hugging Face<br><sub>Posts extensively about Video AI</sub> | [@stash_pomichter](https://x.com/stash_pomichter)<br>Spatial memory for robots<br><sub>Robotics & AI navigation</sub> |
 
 ## Inspiration
 
