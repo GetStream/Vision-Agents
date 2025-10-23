@@ -1,3 +1,5 @@
+<img width="1280" height="360" alt="Readme" src="https://github.com/user-attachments/assets/80c437dc-a80a-45da-bd18-0545740a3358" />
+
 # Open Vision Agents by Stream
 
 [![build](https://github.com/GetStream/Vision-Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/GetStream/Vision-Agents/actions)
@@ -148,19 +150,19 @@ Want to add your platform or provider? Reach out to **nash@getstream.io**.
 
 Our favorite people & projects to follow for vision AI
 
-|  [<img src="https://avatars.githubusercontent.com/u/12345" width="80"/>](https://x.com/demishassabis)  |       [<img src="https://avatars.githubusercontent.com/u/12346" width="80"/>](https://x.com/OfficialLoganK)        |            [<img src="https://avatars.githubusercontent.com/u/12347" width="80"/>](https://x.com/ultralytics)            |
+|  [<img src="https://github.com/user-attachments/assets/9149e871-cfe8-4169-a4ce-4073417e645c" width="80"/>](https://x.com/demishassabis)  |       [<img src="https://github.com/user-attachments/assets/2e1335d3-58af-4988-b879-1db8d862cd34" width="80"/>](https://x.com/OfficialLoganK)        |            [<img src="https://github.com/user-attachments/assets/c9249ae9-e66a-4a70-9393-f6fe4ab5c0b0" width="80"/>](https://x.com/ultralytics)            |
 | :----------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: |
 | [@demishassabis](https://x.com/demishassabis)<br>CEO @ Google DeepMind<br><sub>Won a Nobel prize</sub> | [@OfficialLoganK](https://x.com/OfficialLoganK)<br>Product Lead @ Gemini<br><sub>Posts about robotics vision</sub> | [@ultralytics](https://x.com/ultralytics)<br>Various fast vision AI models<br><sub>Pose, detect, segment, classify</sub> |
 
-|         [<img src="https://avatars.githubusercontent.com/u/12348" width="80"/>](https://x.com/skalskip92)         |            [<img src="https://avatars.githubusercontent.com/u/12349" width="80"/>](https://x.com/moondreamai)            |  [<img src="https://avatars.githubusercontent.com/u/12350" width="80"/>](https://x.com/kwindla)   |
+|         [<img src="https://github.com/user-attachments/assets/c1fe873d-6f41-4155-9be1-afc287ca9ac7" width="80"/>](https://x.com/skalskip92)         |            [<img src="https://github.com/user-attachments/assets/43359165-c23d-4d5d-a5a6-1de58d71fabd" width="80"/>](https://x.com/moondreamai)            |  [<img src="https://github.com/user-attachments/assets/490d349c-7152-4dfb-b705-04e57bb0a4ca" width="80"/>](https://x.com/kwindla)   |
 | :---------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------: |
 | [@skalskip92](https://x.com/skalskip92)<br>Open Source Lead @ Roboflow<br><sub>Building tools for vision AI</sub> | [@moondreamai](https://x.com/moondreamai)<br>The tiny vision model that could<br><sub>Lightweight, fast, efficient</sub> | [@kwindla](https://x.com/kwindla)<br>Pipecat / Daily<br><sub>Sharing AI and vision insights</sub> |
 
-|   [<img src="https://avatars.githubusercontent.com/u/12351" width="80"/>](https://x.com/juberti)    |            [<img src="https://avatars.githubusercontent.com/u/12352" width="80"/>](https://x.com/romainhuet)            | [<img src="https://avatars.githubusercontent.com/u/12353" width="80"/>](https://x.com/thorwebdev) |
+|   [<img src="https://github.com/user-attachments/assets/d7ade584-781f-4dac-95b8-1acc6db4a7c4" width="80"/>](https://x.com/juberti)    |            [<img src="https://github.com/user-attachments/assets/00a1ed37-3620-426d-b47d-07dd59c19b28" width="80"/>](https://x.com/romainhuet)            | [<img src="https://github.com/user-attachments/assets/eb5928c7-83b9-4aaa-854f-1d4f641426f2" width="80"/>](https://x.com/thorwebdev) |
 | :-------------------------------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------: |
-| [@juberti](https://x.com/juberti)<br>Head of Realtime AI @ OpenAI<br><sub>Realtime AI systems</sub> | [@romainhuet](https://x.com/romainhuet)<br>Head of Developer Experience @ OpenAI<br><sub>Developer tooling & APIs</sub> |   [@thorwebdev](https://x.com/thorwebdev)<br>Eleven Labs<br><sub>Voice and AI experiments</sub>   |
+| [@juberti](https://x.com/juberti)<br>Head of Realtime AI @ OpenAI<br><sub>Realtime AI systems</sub> | [@romainhuet](https://x.com/romainhuet)<br>Head of DX @ OpenAI<br><sub>Developer tooling & APIs</sub> |   [@thorwebdev](https://x.com/thorwebdev)<br>Eleven Labs<br><sub>Voice and AI experiments</sub>   |
 
-|    [<img src="https://avatars.githubusercontent.com/u/12354" width="80"/>](https://x.com/mervenoyann)    |        [<img src="https://avatars.githubusercontent.com/u/12355" width="80"/>](https://x.com/stash_pomichter)         |
+|    [<img src="https://github.com/user-attachments/assets/ab5ef918-7c97-4c6d-be10-2e2aeefec015" width="80"/>](https://x.com/mervenoyann)    |        [<img src="https://github.com/user-attachments/assets/af936e13-22cf-4000-a35b-bfe30d44c320" width="80"/>](https://x.com/stash_pomichter)         |
 | :------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------: |
 | [@mervenoyann](https://x.com/mervenoyann)<br>Hugging Face<br><sub>Posts extensively about Video AI</sub> | [@stash_pomichter](https://x.com/stash_pomichter)<br>Spatial memory for robots<br><sub>Robotics & AI navigation</sub> |
 
