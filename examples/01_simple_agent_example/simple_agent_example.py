@@ -51,6 +51,8 @@ async def start_agent() -> None:
         # run till the call ends
         # await agent.say("Hello, how are you?")
         # await asyncio.sleep(5)
+        # Open the demo UI
+        await agent.edge.open_demo(call)
 
         # Open the demo UI
         await agent.edge.open_demo(call)

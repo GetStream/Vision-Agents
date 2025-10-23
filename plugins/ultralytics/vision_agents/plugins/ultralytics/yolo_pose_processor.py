@@ -96,15 +96,10 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
         pts, time_base = await self.next_timestamp()
 
         # Create av.VideoFrame from PIL Image
-        try:
-            av_frame = self.last_frame
+        av_frame = self.last_frame
 
-            av_frame.pts = pts
-            av_frame.time_base = time_base
-        except Exception:
-            import pdb
-
-            pdb.set_trace()
+        av_frame.pts = pts
+        av_frame.time_base = time_base
 
         # if frame_received:
         #    logger.info(f"Returning NEW video frame: {av_frame.width}x{av_frame.height}")

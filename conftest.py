@@ -10,9 +10,69 @@ import os
 
 import numpy as np
 import pytest
+from dotenv import load_dotenv
 from torchvision.io.video import av
 
 from vision_agents.core.edge.types import PcmData
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+
+load_dotenv()
+
+
+class STTSession:
+    """Helper class for testing STT implementations.
+    
+    Automatically subscribes to transcript and error events,
+    collects them, and provides a convenient wait method.
+    """
+    
+    def __init__(self, stt):
+        """Initialize STT session with an STT object.
+        
+        Args:
+            stt: STT implementation to monitor
+        """
+        self.stt = stt
+        self.transcripts = []
+        self.errors = []
+        self._event = asyncio.Event()
+        
+        # Subscribe to events
+        @stt.events.subscribe
+        async def on_transcript(event: STTTranscriptEvent):
+            self.transcripts.append(event)
+            self._event.set()
+        
+        @stt.events.subscribe
+        async def on_error(event: STTErrorEvent):
+            self.errors.append(event.error)
+            self._event.set()
+        
+        self._on_transcript = on_transcript
+        self._on_error = on_error
+    
+    async def wait_for_result(self, timeout: float = 30.0):
+        """Wait for either a transcript or error event.
+        
+        Args:
+            timeout: Maximum time to wait in seconds
+            
+        Raises:
+            asyncio.TimeoutError: If no result received within timeout
+        """
+        # Allow event subscriptions to be processed
+        await asyncio.sleep(0.01)
+        
+        # Wait for an event
+        await asyncio.wait_for(self._event.wait(), timeout=timeout)
+    
+    def get_full_transcript(self) -> str:
+        """Get full transcription text from all transcript events.
+        
+        Returns:
+            Combined text from all transcripts
+        """
+        return " ".join(t.text for t in self.transcripts)
 
 
 def get_assets_dir():
@@ -36,6 +96,57 @@ def mia_audio_16khz():
     audio_stream = container.streams.audio[0]
     original_sample_rate = audio_stream.sample_rate
     target_rate = 16000
+
+    # Create resampler if needed
+    resampler = None
+    if original_sample_rate != target_rate:
+        resampler = av.AudioResampler(
+            format='s16',
+            layout='mono',
+            rate=target_rate
+        )
+
+    # Read all audio frames
+    samples = []
+    for frame in container.decode(audio_stream):
+        # Resample if needed
+        if resampler:
+            frame = resampler.resample(frame)[0]
+
+        # Convert to numpy array
+        frame_array = frame.to_ndarray()
+        if len(frame_array.shape) > 1:
+            # Convert stereo to mono
+            frame_array = np.mean(frame_array, axis=0)
+        samples.append(frame_array)
+
+    # Concatenate all samples
+    samples = np.concatenate(samples)
+
+    # Convert to int16
+    samples = samples.astype(np.int16)
+    container.close()
+
+    # Create PCM data
+    pcm = PcmData(
+        samples=samples,
+        sample_rate=target_rate,
+        format="s16"
+    )
+
+    return pcm
+
+
+@pytest.fixture
+def mia_audio_48khz():
+    """Load mia.mp3 and convert to 48kHz PCM data."""
+    audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
+    
+    # Load audio file using PyAV
+    container = av.open(audio_file_path)
+    audio_stream = container.streams.audio[0]
+    original_sample_rate = audio_stream.sample_rate
+    target_rate = 48000
 
     # Create resampler if needed
     resampler = None

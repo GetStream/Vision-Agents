@@ -3,7 +3,7 @@ import contextlib
 import logging
 import os
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional
 
 import numpy as np
 import websockets
@@ -20,11 +20,11 @@ from deepgram.listen.v1.socket_client import AsyncV1SocketClient
 from getstream.video.rtc.track_util import PcmData
 
 from vision_agents.core import stt
+from vision_agents.core.stt import TranscriptResponse
 
 from .utils import generate_silence
 
-if TYPE_CHECKING:
-    from vision_agents.core.edge.types import Participant
+from vision_agents.core.edge.types import Participant
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,6 @@ class STT(stt.STT):
         self,
         api_key: Optional[str] = None,
         options: Optional[dict] = None,
-        sample_rate: int = 48000,
         language: str = "en-US",
         interim_results: bool = True,
         client: Optional[AsyncDeepgramClient] = None,
@@ -70,7 +69,7 @@ class STT(stt.STT):
             connection_timeout: Time to wait for the Deepgram connection to be established.
 
         """
-        super().__init__(sample_rate=sample_rate)
+        super().__init__(provider_name="deepgram")
 
         # If no API key was provided, check for DEEPGRAM_API_KEY in environment
         if api_key is None:
@@ -86,12 +85,13 @@ class STT(stt.STT):
             client if client is not None else AsyncDeepgramClient(api_key=api_key)
         )
         self.dg_connection: Optional[AsyncV1SocketClient] = None
+        self.sample_rate = 48000
 
         self.options = options or {
             "model": "nova-2",
             "language": language,
             "encoding": "linear16",
-            "sample_rate": sample_rate,
+            "sample_rate": self.sample_rate,
             "channels": 1,
             "interim_results": interim_results,
         }
@@ -101,7 +101,7 @@ class STT(stt.STT):
 
         # Generate a silence audio to use as keep-alive message
         self._keep_alive_data = generate_silence(
-            sample_rate=sample_rate, duration_ms=10
+            sample_rate=self.sample_rate, duration_ms=10
         )
         self._keep_alive_interval = keep_alive_interval
 
@@ -121,7 +121,7 @@ class STT(stt.STT):
         """
         Start the main task establishing the Deepgram connection and processing the events.
         """
-        if self._is_closed:
+        if self.closed:
             logger.warning("Cannot setup connection - Deepgram instance is closed")
             return None
 
@@ -178,15 +178,8 @@ class STT(stt.STT):
         )
 
     async def close(self):
+        await super().close()
         """Close the Deepgram connection and clean up resources."""
-        if self._is_closed:
-            logger.debug("Deepgram STT service already closed")
-            return
-
-        logger.info("Closing Deepgram STT service")
-        self._is_closed = True
-
-        # Close the Deepgram connection if it exists
         if self.dg_connection:
             logger.debug("Closing Deepgram connection")
             try:
@@ -225,20 +218,17 @@ class STT(stt.STT):
         # Check if this is a final result
         is_final = transcript.get("is_final", False)
 
-        # Create metadata with useful information
-        metadata = {
-            "confidence": alternatives[0].get("confidence", 0),
-            "words": alternatives[0].get("words", []),
-            "is_final": is_final,
-            "channel_index": transcript.get("channel_index", 0),
-        }
+        # Create response metadata
+        response_metadata = TranscriptResponse(
+            confidence=alternatives[0].get("confidence", 0),
+        )
 
         # Emit immediately for real-time responsiveness
         if is_final:
-            self._emit_transcript_event(transcript_text, self._current_user, metadata)
+            self._emit_transcript_event(transcript_text, self._current_user, response_metadata)
         else:
             self._emit_partial_transcript_event(
-                transcript_text, self._current_user, metadata
+                transcript_text, self._current_user, response_metadata
             )
 
         logger.debug(
@@ -246,7 +236,7 @@ class STT(stt.STT):
             extra={
                 "is_final": is_final,
                 "text_length": len(transcript_text),
-                "confidence": metadata["confidence"],
+                "confidence": response_metadata.confidence,
             },
         )
 
@@ -261,28 +251,14 @@ class STT(stt.STT):
         logger.warning(f"Deepgram connection closed. message={message}")
         await self.close()
 
-    async def _process_audio_impl(
+    async def process_audio(
         self,
         pcm_data: PcmData,
-        user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None,
-    ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
-        """
-        Process audio data through Deepgram for transcription.
-
-        Args:
-            pcm_data: The PCM audio data to process.
-            user_metadata: Additional metadata about the user or session.
-
-        Returns:
-            None - Deepgram operates in asynchronous mode and emits events directly
-            when transcripts arrive from the streaming service.
-        """
-        if self._is_closed:
+        participant: Optional[Participant] = None,
+    ):
+        if self.closed:
             logger.warning("Deepgram connection is closed, ignoring audio")
             return None
-
-        # Store the current user context for transcript events
-        self._current_user = user_metadata  # type: ignore[assignment]
 
         # Check if the input sample rate matches the expected sample rate
         if pcm_data.sample_rate != self.sample_rate:
@@ -334,7 +310,7 @@ class STT(stt.STT):
         Send the silence audio every `interval` seconds
         to prevent Deepgram from closing the connection.
         """
-        while not self._is_closed and self.dg_connection is not None:
+        while not self.closed and self.dg_connection is not None:
             if self._last_sent_at + self._keep_alive_interval <= time.time():
                 logger.debug("Sending keepalive packet to Deepgram...")
                 # Send audio silence to keep the connection open
