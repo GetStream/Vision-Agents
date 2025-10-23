@@ -58,6 +58,9 @@ tts_bytes_streamed = meter.create_counter(
     "tts.bytes.streamed", unit="By", description="Bytes sent/received for TTS"
 )
 tts_errors = meter.create_counter("tts.errors", description="TTS errors")
+tts_events_emitted = meter.create_counter(
+    "tts.events.emitted", description="Number of TTS events emitted"
+)
 
 inflight_ops = meter.create_up_down_counter(
     "voice.ops.inflight", description="Inflight voice ops"

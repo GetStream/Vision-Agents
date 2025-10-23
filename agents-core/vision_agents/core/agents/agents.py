@@ -32,6 +32,7 @@ from ..processors.base_processor import Processor, ProcessorType, filter_process
 from ..stt.events import STTTranscriptEvent
 from ..stt.stt import STT
 from ..tts.tts import TTS
+from ..tts.events import TTSAudioEvent
 from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
@@ -301,6 +302,18 @@ class Agent:
                 replace=True,
                 original=event,
             )
+
+        # Listen for TTS audio events and write audio to the output track
+        @self.events.subscribe
+        async def _on_tts_audio(event: TTSAudioEvent):
+            try:
+                if self._audio_track and event.audio_data:
+                    from typing import Any, cast
+
+                    track_any = cast(Any, self._audio_track)
+                    await track_any.write(event.audio_data)
+            except Exception as e:
+                self.logger.error(f"Error writing TTS audio to track: {e}")
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
@@ -1016,19 +1029,22 @@ class Agent:
                 self._audio_track = self.llm.output_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             else:
-                # TODO: what if we want to transform audio...
-                # Get the required framerate and stereo setting from TTS plugin, default to 48000 for WebRTC
-                if self.tts:
-                    framerate = self.tts.get_required_framerate()
-                    stereo = self.tts.get_required_stereo()
-                else:
-                    framerate = 48000
-                    stereo = True  # Default to stereo for WebRTC
+                # Default to WebRTC-friendly format unless configured differently
+                framerate = 48000
+                stereo = True
                 self._audio_track = self.edge.create_audio_track(
                     framerate=framerate, stereo=stereo
                 )
+                # Inform TTS of desired output format so it can resample accordingly
                 if self.tts:
-                    self.tts.set_output_track(self._audio_track)
+                    channels = 2 if stereo else 1
+                    try:
+                        self.tts.set_output_format(
+                            sample_rate=framerate,
+                            channels=channels,
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"Failed to set TTS output format: {e}")
 
         # Set up video track if video publishers are available
         if self.publish_video:

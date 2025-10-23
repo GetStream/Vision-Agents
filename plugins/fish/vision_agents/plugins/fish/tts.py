@@ -1,10 +1,10 @@
 import logging
 import os
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Iterator, Optional
 
 from fish_audio_sdk import Session, TTSRequest
-from getstream.video.rtc.audio_track import AudioStreamTrack
 from vision_agents.core import tts
+from vision_agents.core.edge.types import PcmData
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class TTS(tts.TTS):
     """
     Fish Audio Text-to-Speech implementation.
-    
+
     Fish Audio provides high-quality, multilingual text-to-speech synthesis with
     support for voice cloning via reference audio.
 
@@ -22,7 +22,7 @@ class TTS(tts.TTS):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        reference_id: Optional[str] = None,
+        reference_id: Optional[str] = "03397b4c4be74759b72533b663fbd001",
         base_url: Optional[str] = None,
         client: Optional[Session] = None,
     ):
@@ -39,7 +39,10 @@ class TTS(tts.TTS):
         super().__init__(provider_name="fish")
 
         if not api_key:
-            api_key = os.environ.get("FISH_API_KEY")
+            # Support both env names for compatibility
+            api_key = os.environ.get("FISH_API_KEY") or os.environ.get(
+                "FISH_AUDIO_API_KEY"
+            )
 
         if client is not None:
             self.client = client
@@ -50,35 +53,9 @@ class TTS(tts.TTS):
 
         self.reference_id = reference_id
 
-        # Fish Audio typically outputs at 44100 Hz, but we'll use 16000 for compatibility
-        # Note: You may need to adjust this based on Fish Audio's actual output
-        self.output_framerate = 16000
-
-    def get_required_framerate(self) -> int:
-        """Get the required framerate for Fish Audio TTS."""
-        return self.output_framerate
-
-    def get_required_stereo(self) -> bool:
-        """Get whether Fish Audio TTS requires stereo audio."""
-        return False  # Fish Audio typically returns mono audio
-
-    def set_output_track(self, track: AudioStreamTrack) -> None:
-        """
-        Set the output audio track.
-        
-        Args:
-            track: The audio track to output to.
-        
-        Raises:
-            TypeError: If the track framerate doesn't match requirements.
-        """
-        if track.framerate != self.output_framerate:
-            raise TypeError(
-                f"Invalid framerate, audio track only supports {self.output_framerate}"
-            )
-        super().set_output_track(track)
-
-    async def stream_audio(self, text: str, *_, **kwargs) -> AsyncIterator[bytes]:
+    async def stream_audio(
+        self, text: str, *_, **kwargs
+    ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
         """
         Convert text to speech using Fish Audio API.
 
@@ -91,36 +68,35 @@ class TTS(tts.TTS):
         """
         # Build the TTS request
         tts_request_kwargs = {"text": text}
-        
+
         # Add reference_id if configured
         if self.reference_id:
             tts_request_kwargs["reference_id"] = self.reference_id
-        
+
         # Allow overriding via kwargs (e.g., for dynamic reference audio)
         tts_request_kwargs.update(kwargs)
-        
-        tts_request = TTSRequest(format="pcm", sample_rate=16000, normalize=True,reference_id="03397b4c4be74759b72533b663fbd001", **tts_request_kwargs)
 
-        # Stream audio from Fish Audio
-        audio_stream = self.client.tts.awaitable(tts_request)
+        tts_request = TTSRequest(
+            format="pcm",
+            sample_rate=16000,
+            normalize=True,
+            **tts_request_kwargs,
+        )
 
-        return audio_stream
+        # Stream audio from Fish Audio; let PcmData normalize response types
+        stream = self.client.tts.awaitable(tts_request)
+        return PcmData.from_response(
+            stream, sample_rate=16000, channels=1, format="s16"
+        )
 
     async def stop_audio(self) -> None:
         """
         Clears the queue and stops playing audio.
-        
+
         This method can be used manually or under the hood in response to turn events.
 
         Returns:
             None
         """
-        if self.track is not None:
-            try:
-                await self.track.flush()
-                logger.info("🎤 Stopping audio track for Fish Audio TTS")
-            except Exception as e:
-                logger.error(f"Error flushing audio track: {e}")
-        else:
-            logger.warning("No audio track to stop")
-
+        # No internal output track to flush; agent manages playback
+        logger.info("🎤 Fish TTS stop requested (no-op)")

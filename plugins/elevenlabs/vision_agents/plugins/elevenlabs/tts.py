@@ -1,11 +1,10 @@
 import logging
-
-from vision_agents.core import tts
-from elevenlabs.client import AsyncElevenLabs
-from getstream.video.rtc.audio_track import AudioStreamTrack
-from typing import AsyncIterator, Optional
-
 import os
+from typing import AsyncIterator, Iterator, Optional
+
+from elevenlabs.client import AsyncElevenLabs
+from vision_agents.core import tts
+from vision_agents.core.edge.types import PcmData
 
 
 class TTS(tts.TTS):
@@ -37,20 +36,9 @@ class TTS(tts.TTS):
         self.model_id = model_id
         self.output_format = "pcm_16000"
 
-    def get_required_framerate(self) -> int:
-        """Get the required framerate for ElevenLabs TTS."""
-        return 16000
-
-    def get_required_stereo(self) -> bool:
-        """Get whether ElevenLabs TTS requires stereo audio."""
-        return False  # ElevenLabs returns mono audio
-
-    def set_output_track(self, track: AudioStreamTrack) -> None:
-        if track.framerate != 16000:
-            raise TypeError("Invalid framerate, audio track only supports 16000")
-        super().set_output_track(track)
-
-    async def stream_audio(self, text: str, *_, **__) -> AsyncIterator[bytes]:
+    async def stream_audio(
+        self, text: str, *_, **__
+    ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
         """
         Convert text to speech using ElevenLabs API.
 
@@ -69,7 +57,9 @@ class TTS(tts.TTS):
             request_options={"chunk_size": 64000},
         )
 
-        return audio_stream
+        return PcmData.from_response(
+            audio_stream, sample_rate=16000, channels=1, format="s16"
+        )
 
     async def stop_audio(self) -> None:
         """
@@ -79,11 +69,4 @@ class TTS(tts.TTS):
         Returns:
             None
         """
-        if self.track is not None:
-            try:
-                await self.track.flush()
-                logging.info("🎤 Stopping audio track for TTS")
-            except Exception as e:
-                logging.error(f"Error flushing audio track: {e}")
-        else:
-            logging.warning("No audio track to stop")
+        logging.info("🎤 ElevenLabs TTS stop requested (no-op)")
