@@ -418,6 +418,14 @@ class PcmData(NamedTuple):
                 )
                 resampled_samples = raw_array.reshape(ch, -1)
 
+            # Flatten mono arrays to 1D for consistency
+            if (
+                ch == 1
+                and isinstance(resampled_samples, np.ndarray)
+                and resampled_samples.ndim > 1
+            ):
+                resampled_samples = resampled_samples.flatten()
+
             # Ensure int16 dtype for s16
             if (
                 isinstance(resampled_samples, np.ndarray)
