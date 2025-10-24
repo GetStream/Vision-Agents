@@ -182,91 +182,11 @@ class TTS(abc.ABC):
         user: Optional[Dict[str, Any]],
     ) -> tuple[int, float]:
         """Resample, serialize, emit TTSAudioEvent; return (bytes_len, duration_ms)."""
-
-        if (
-            pcm.sample_rate == self._desired_sample_rate
-            and pcm.channels == self._desired_channels
-        ):
-            # No resampling needed
-            pcm_out = pcm
-        else:
-            resampler = self._get_resampler(pcm.sample_rate, pcm.channels)
-
-            # Prepare input frame in planar format
-            samples = pcm.samples
-            if isinstance(samples, np.ndarray):
-                if samples.ndim == 1:
-                    if pcm.channels > 1:
-                        cmaj = np.tile(samples, (pcm.channels, 1))
-                    else:
-                        cmaj = samples.reshape(1, -1)
-                elif samples.ndim == 2:
-                    ch = pcm.channels if pcm.channels else 1
-                    if samples.shape[0] == ch:
-                        cmaj = samples
-                    elif samples.shape[1] == ch:
-                        cmaj = samples.T
-                    else:
-                        if samples.shape[1] > samples.shape[0]:
-                            cmaj = samples
-                        else:
-                            cmaj = samples.T
-                cmaj = np.ascontiguousarray(cmaj)
-            else:
-                # Shouldn't happen, but handle it
-                cmaj = (
-                    samples.reshape(1, -1)
-                    if isinstance(samples, np.ndarray)
-                    else samples
-                )
-
-            in_layout = "mono" if pcm.channels == 1 else "stereo"
-            frame = av.AudioFrame.from_ndarray(cmaj, format="s16p", layout=in_layout)
-            frame.sample_rate = pcm.sample_rate
-
-            # Resample using persistent resampler
-            resampled_frames = resampler.resample(frame)
-
-            if resampled_frames:
-                resampled_frame = resampled_frames[0]
-                raw_array = resampled_frame.to_ndarray()
-                num_frames = resampled_frame.samples
-
-                # Handle PyAV's packed format quirk
-                ch = self._desired_channels
-                if raw_array.ndim == 2 and raw_array.shape[0] == 1 and ch > 1:
-                    flat = raw_array.reshape(-1)
-                    if len(flat) == num_frames * ch:
-                        resampled_samples = flat.reshape(-1, ch).T
-                    else:
-                        resampled_samples = flat.reshape(ch, -1)
-                elif raw_array.ndim == 2:
-                    if raw_array.shape[1] == ch:
-                        resampled_samples = raw_array.T
-                    elif raw_array.shape[0] == ch:
-                        resampled_samples = raw_array
-                    else:
-                        resampled_samples = raw_array.T
-                elif raw_array.ndim == 1:
-                    if ch == 1:
-                        resampled_samples = raw_array
-                    else:
-                        resampled_samples = np.tile(raw_array, (ch, 1))
-                else:
-                    resampled_samples = raw_array.reshape(ch, -1)
-
-                if resampled_samples.dtype != np.int16:
-                    resampled_samples = resampled_samples.astype(np.int16)
-
-                pcm_out = PcmData(
-                    samples=resampled_samples,
-                    sample_rate=self._desired_sample_rate,
-                    format="s16",
-                    channels=self._desired_channels,
-                )
-            else:
-                # Resampling failed, use original
-                pcm_out = pcm
+        # Resample using persistent resampler to avoid discontinuities between chunks
+        resampler = self._get_resampler(pcm.sample_rate, pcm.channels)
+        pcm_out = pcm.resample(
+            self._desired_sample_rate, self._desired_channels, resampler=resampler
+        )
 
         payload = pcm_out.to_bytes()
         # Metrics: counters per chunk

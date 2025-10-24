@@ -287,7 +287,10 @@ class PcmData(NamedTuple):
         raise TypeError(f"Unsupported data type for PcmData: {type(data)}")
 
     def resample(
-        self, target_sample_rate: int, target_channels: Optional[int] = None
+        self,
+        target_sample_rate: int,
+        target_channels: Optional[int] = None,
+        resampler: Optional[Any] = None,
     ) -> "PcmData":
         """
         Resample PcmData to a different sample rate and/or channels using AV library.
@@ -295,6 +298,9 @@ class PcmData(NamedTuple):
         Args:
             target_sample_rate: Target sample rate in Hz
             target_channels: Target number of channels (defaults to current)
+            resampler: Optional persistent AudioResampler instance to use. If None,
+                      creates a new resampler (for one-off use). Pass a persistent
+                      resampler to avoid discontinuities when resampling streaming chunks.
 
         Returns:
             New PcmData object with resampled audio
@@ -336,11 +342,13 @@ class PcmData(NamedTuple):
         frame = av.AudioFrame.from_ndarray(cmaj, format="s16p", layout=in_layout)
         frame.sample_rate = self.sample_rate
 
-        # Create resampler – output packed s16
-        out_layout = "mono" if target_channels == 1 else "stereo"
-        resampler = av.AudioResampler(
-            format="s16", layout=out_layout, rate=target_sample_rate
-        )
+        # Use provided resampler or create a new one
+        if resampler is None:
+            # Create new resampler for one-off use
+            out_layout = "mono" if target_channels == 1 else "stereo"
+            resampler = av.AudioResampler(
+                format="s16", layout=out_layout, rate=target_sample_rate
+            )
 
         # Resample the frame
         resampled_frames = resampler.resample(frame)

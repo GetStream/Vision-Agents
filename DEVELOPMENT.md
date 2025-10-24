@@ -109,6 +109,31 @@ To see how the agent work open up agents.py
 * The LLM uses the VideoForwarder to write the video to a websocket or webrtc connection
 * The STS writes the reply on agent.llm.audio_track and the RealtimeTranscriptEvent / RealtimePartialTranscriptEvent
 
+## Audio management
+
+Some important things about audio inside the library:
+
+1. WebRTC uses Opus 48khz stereo but inside the library audio is always in PCM format
+2. Plugins / AI models work with different PCM formats, usually 16khz mono
+3. PCM data is always passed around using the `PcmData` object which contains information about sample rate, channels and format
+4. Text-to-speech plugins automatically return PCM in the format needed by WebRTC. This is exposed via the `set_output_format` method
+5. Audio resampling can be done using `PcmData.resample` method
+6. When resampling audio in chunks, it is important to re-use the same `av.AudioResampler` resampler (see `PcmData.resample` and `core.tts.TTS`)
+7. Adjusting from stereo to mono and vice-versa can be done using the `PcmData.resample` method
+
+Some ground rules:
+
+1. Do not build code to resample / adjust audio unless it is not covered already by `PcmData`
+2. Do not pass PCM as plain bytes around and write code that assumes specific sample rate or format. Use `PcmData` instead
+
+### Testing audio manually
+
+Sometimes you need to test audio manually, here's some tips:
+
+1. Do not use earplugs when testing PCM playback ;)
+2. You can use the `PcmData.to_wav_bytes` method to convert PCM into wav bytes (see `manual_tts_to_wav` for an example)
+3. If you have `ffplay` installed, you can playback pcm directly to check if audio is correct
+
 ## Dev / Contributor Guidelines
 
 ### Light wrapping
