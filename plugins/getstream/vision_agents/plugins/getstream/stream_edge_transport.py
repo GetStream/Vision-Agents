@@ -22,7 +22,7 @@ from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConf
 
 from vision_agents.core.edge import EdgeTransport, sfu_events
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
-from vision_agents.core.edge.types import Connection, User
+from vision_agents.core.edge.types import Connection, User, OutputAudioTrack
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.edge import events
 from vision_agents.core.utils import get_vision_agents_version
@@ -104,7 +104,7 @@ class StreamEdge(EdgeTransport):
         track_type_int = event.payload.type  # TrackType enum int from SFU
         expected_kind = self._get_webrtc_kind(track_type_int)
         track_key = (user_id, session_id, track_type_int)
-        is_agent_track = (user_id == self.agent_user_id)
+        is_agent_track = user_id == self.agent_user_id
 
         # First check if track already exists in map (e.g., from previous unpublish/republish)
         if track_key in self._track_map:
@@ -288,7 +288,9 @@ class StreamEdge(EdgeTransport):
         standardize_connection = StreamConnection(connection)
         return standardize_connection
 
-    def create_audio_track(self, framerate: int = 48000, stereo: bool = True):
+    def create_audio_track(
+        self, framerate: int = 48000, stereo: bool = True
+    ) -> OutputAudioTrack:
         return audio_track.AudioStreamTrack(
             framerate=framerate, stereo=stereo
         )  # default to webrtc framerate

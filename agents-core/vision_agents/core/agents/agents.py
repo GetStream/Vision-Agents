@@ -2,10 +2,9 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
-import aiortc
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
@@ -15,7 +14,7 @@ from opentelemetry.trace import Tracer
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from ..edge import sfu_events
 from ..edge.events import AudioReceivedEvent, TrackAddedEvent, CallEndedEvent
-from ..edge.types import Connection, Participant, PcmData, User
+from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
 from ..events.manager import EventManager
 from ..llm import events as llm_events
 from ..llm.events import (
@@ -161,7 +160,7 @@ class Agent:
         self._callback_executed = False
         self._track_tasks: Dict[str, asyncio.Task] = {}
         self._connection: Optional[Connection] = None
-        self._audio_track: Optional[aiortc.AudioStreamTrack] = None
+        self._audio_track: Optional[OutputAudioTrack] = None
         self._video_track: Optional[VideoStreamTrack] = None
         self._realtime_connection = None
         self._pc_track_handler_attached: bool = False
@@ -308,15 +307,10 @@ class Agent:
                 original=event,
             )
 
-        # Listen for TTS audio events and write audio to the output track
         @self.events.subscribe
-        async def _on_tts_audio(event: TTSAudioEvent):
-            try:
-                if self._audio_track and event.audio_data:
-                    track_any = cast(Any, self._audio_track)
-                    await track_any.write(event.audio_data)
-            except Exception as e:
-                self.logger.error(f"Error writing TTS audio to track: {e}")
+        async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
+            if self._audio_track and event and event.audio_data is not None:
+                await self._audio_track.write(event.audio_data)
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):

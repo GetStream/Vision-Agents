@@ -1,5 +1,14 @@
 from dataclasses import dataclass
-from typing import Any, Optional, NamedTuple, Union, Iterator, AsyncIterator
+from typing import (
+    Any,
+    Optional,
+    NamedTuple,
+    Union,
+    Iterator,
+    AsyncIterator,
+    Protocol,
+    runtime_checkable,
+)
 import logging
 
 import numpy as np
@@ -32,6 +41,18 @@ class Connection(AsyncIOEventEmitter):
 
     async def close(self):
         pass
+
+
+@runtime_checkable
+class OutputAudioTrack(Protocol):
+    """
+    A protocol describing an output audio track, the actual implementation depends on the edge transported used
+    eg. getstream.video.rtc.audio_track.AudioStreamTrack
+    """
+
+    async def write(self, data: bytes) -> None: ...
+
+    def stop(self) -> None: ...
 
 
 class PcmData(NamedTuple):
