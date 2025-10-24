@@ -1,6 +1,6 @@
 # AWS Plugin for Vision Agents
 
-AWS (Bedrock) LLM integration for Vision Agents framework with support for both standard and realtime interactions.
+AWS (Bedrock) LLM integration for Vision Agents framework with support for both standard and realtime interactions. Includes AWS Polly TTS.
 
 ## Installation
 
@@ -32,13 +32,28 @@ The full example is available in example/aws_qwen_example.py
 
 Nova sonic audio realtime STS is also supported:
 
-```python    
+```python
 agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Story Teller AI"),
     instructions="Tell a story suitable for a 7 year old about a dragon and a princess",
     llm=aws.Realtime(),
 )
+```
+
+### Polly TTS Usage
+
+```python
+from vision_agents.plugins import aws
+from vision_agents.core.tts.manual_test import manual_tts_to_wav
+import asyncio
+
+async def main():
+    # For PCM, AWS Polly supports 8000 or 16000 Hz
+    tts = aws.TTS(voice_id="Joanna", sample_rate=16000)
+    await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
+
+asyncio.run(main())
 ```
 
 ## Running the examples
@@ -52,6 +67,7 @@ STREAM_API_SECRET=your_stream_api_secret_here
 AWS_BEARER_TOKEN_BEDROCK=
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
+AWS_REGION=us-east-1
 
 FAL_KEY=
 CARTESIA_API_KEY=
