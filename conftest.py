@@ -21,14 +21,14 @@ load_dotenv()
 
 class STTSession:
     """Helper class for testing STT implementations.
-    
+
     Automatically subscribes to transcript and error events,
     collects them, and provides a convenient wait method.
     """
-    
+
     def __init__(self, stt):
         """Initialize STT session with an STT object.
-        
+
         Args:
             stt: STT implementation to monitor
         """
@@ -36,39 +36,39 @@ class STTSession:
         self.transcripts = []
         self.errors = []
         self._event = asyncio.Event()
-        
+
         # Subscribe to events
         @stt.events.subscribe
         async def on_transcript(event: STTTranscriptEvent):
             self.transcripts.append(event)
             self._event.set()
-        
+
         @stt.events.subscribe
         async def on_error(event: STTErrorEvent):
             self.errors.append(event.error)
             self._event.set()
-        
+
         self._on_transcript = on_transcript
         self._on_error = on_error
-    
+
     async def wait_for_result(self, timeout: float = 30.0):
         """Wait for either a transcript or error event.
-        
+
         Args:
             timeout: Maximum time to wait in seconds
-            
+
         Raises:
             asyncio.TimeoutError: If no result received within timeout
         """
         # Allow event subscriptions to be processed
         await asyncio.sleep(0.01)
-        
+
         # Wait for an event
         await asyncio.wait_for(self._event.wait(), timeout=timeout)
-    
+
     def get_full_transcript(self) -> str:
         """Get full transcription text from all transcript events.
-        
+
         Returns:
             Combined text from all transcripts
         """
@@ -90,7 +90,7 @@ def assets_dir():
 def mia_audio_16khz():
     """Load mia.mp3 and convert to 16kHz PCM data."""
     audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
-    
+
     # Load audio file using PyAV
     container = av.open(audio_file_path)
     audio_stream = container.streams.audio[0]
@@ -100,11 +100,7 @@ def mia_audio_16khz():
     # Create resampler if needed
     resampler = None
     if original_sample_rate != target_rate:
-        resampler = av.AudioResampler(
-            format='s16',
-            layout='mono',
-            rate=target_rate
-        )
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
 
     # Read all audio frames
     samples = []
@@ -128,11 +124,7 @@ def mia_audio_16khz():
     container.close()
 
     # Create PCM data
-    pcm = PcmData(
-        samples=samples,
-        sample_rate=target_rate,
-        format="s16"
-    )
+    pcm = PcmData(samples=samples, sample_rate=target_rate, format="s16")
 
     return pcm
 
@@ -141,7 +133,7 @@ def mia_audio_16khz():
 def mia_audio_48khz():
     """Load mia.mp3 and convert to 48kHz PCM data."""
     audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
-    
+
     # Load audio file using PyAV
     container = av.open(audio_file_path)
     audio_stream = container.streams.audio[0]
@@ -151,11 +143,7 @@ def mia_audio_48khz():
     # Create resampler if needed
     resampler = None
     if original_sample_rate != target_rate:
-        resampler = av.AudioResampler(
-            format='s16',
-            layout='mono',
-            rate=target_rate
-        )
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
 
     # Read all audio frames
     samples = []
@@ -179,11 +167,7 @@ def mia_audio_48khz():
     container.close()
 
     # Create PCM data
-    pcm = PcmData(
-        samples=samples,
-        sample_rate=target_rate,
-        format="s16"
-    )
+    pcm = PcmData(samples=samples, sample_rate=target_rate, format="s16")
 
     return pcm
 
@@ -192,10 +176,10 @@ def mia_audio_48khz():
 def golf_swing_image():
     """Load golf_swing.png image and return as bytes."""
     image_file_path = os.path.join(get_assets_dir(), "golf_swing.png")
-    
+
     with open(image_file_path, "rb") as f:
         image_bytes = f.read()
-    
+
     return image_bytes
 
 
@@ -203,7 +187,7 @@ def golf_swing_image():
 async def bunny_video_track():
     """Create RealVideoTrack from video file."""
     from aiortc import VideoStreamTrack
-    
+
     video_file_path = os.path.join(get_assets_dir(), "bunny_3s.mp4")
 
     class RealVideoTrack(VideoStreamTrack):
@@ -223,12 +207,12 @@ async def bunny_video_track():
                 for frame in self.container.decode(self.video_stream):
                     if frame is None:
                         raise asyncio.CancelledError("End of video stream")
-                    
+
                     self.frame_count += 1
                     frame = frame.to_rgb()
                     await asyncio.sleep(self.frame_duration)
                     return frame
-                
+
                 raise asyncio.CancelledError("End of video stream")
 
             except asyncio.CancelledError:
@@ -245,4 +229,3 @@ async def bunny_video_track():
         yield track
     finally:
         track.container.close()
-

@@ -17,7 +17,7 @@ class TestFishTTS:
 
     @pytest.mark.integration
     async def test_fish_tts_convert_text_to_audio_manual_test(self, tts: fish.TTS):
-        await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
+        await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
 
     @pytest.mark.integration
     async def test_fish_tts_convert_text_to_audio(self, tts: fish.TTS):

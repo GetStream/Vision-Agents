@@ -1,4 +1,5 @@
 import abc
+import av
 import logging
 import time
 import uuid
@@ -24,6 +25,7 @@ from ..observability import (
     tts_events_emitted,
 )
 from ..edge.types import PcmData
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,10 @@ class TTS(abc.ABC):
         self._native_sample_rate: int = 16000
         self._native_channels: int = 1
         self._native_format: AudioFormat = AudioFormat.PCM_S16
+        # Persistent resampler to avoid discontinuities between chunks
+        self._resampler = None
+        self._resampler_input_rate: Optional[int] = None
+        self._resampler_input_channels: Optional[int] = None
 
     def set_output_format(
         self,
@@ -88,6 +94,46 @@ class TTS(abc.ABC):
         self._desired_sample_rate = int(sample_rate)
         self._desired_channels = int(channels)
         self._desired_format = audio_format
+
+        self._resampler = None
+        self._resampler_input_rate = None
+        self._resampler_input_channels = None
+
+    def _get_resampler(self, input_rate: int, input_channels: int):
+        """Get or create a persistent resampler for the given input format.
+
+        This avoids creating a new resampler for each chunk, which causes
+        discontinuities and clicking artifacts in the output audio.
+
+        Args:
+            input_rate: Input sample rate
+            input_channels: Input channel count
+
+        Returns:
+            PyAV AudioResampler instance
+        """
+
+        if self._resampler is not None and self._resampler_input_rate == input_rate and self._resampler_input_channels == input_channels:
+            return self._resampler
+
+        in_layout = "mono" if input_channels == 1 else "stereo"
+        out_layout = "mono" if self._desired_channels == 1 else "stereo"
+
+        self._resampler = av.AudioResampler(
+            format="s16", layout=out_layout, rate=self._desired_sample_rate
+        )
+        self._resampler_input_rate = input_rate
+        self._resampler_input_channels = input_channels
+
+        logger.debug(
+            "Created persistent resampler: %s@%dHz -> %s@%dHz",
+            in_layout,
+            input_rate,
+            out_layout,
+            self._desired_sample_rate,
+        )
+
+        return self._resampler
 
     def _normalize_to_pcm(self, item: Union[bytes, bytearray, PcmData, Any]) -> PcmData:
         """Normalize a chunk to PcmData using the native provider format."""
@@ -136,7 +182,92 @@ class TTS(abc.ABC):
         user: Optional[Dict[str, Any]],
     ) -> tuple[int, float]:
         """Resample, serialize, emit TTSAudioEvent; return (bytes_len, duration_ms)."""
-        pcm_out = pcm.resample(self._desired_sample_rate, self._desired_channels)
+
+        if (
+            pcm.sample_rate == self._desired_sample_rate
+            and pcm.channels == self._desired_channels
+        ):
+            # No resampling needed
+            pcm_out = pcm
+        else:
+            resampler = self._get_resampler(pcm.sample_rate, pcm.channels)
+
+            # Prepare input frame in planar format
+            samples = pcm.samples
+            if isinstance(samples, np.ndarray):
+                if samples.ndim == 1:
+                    if pcm.channels > 1:
+                        cmaj = np.tile(samples, (pcm.channels, 1))
+                    else:
+                        cmaj = samples.reshape(1, -1)
+                elif samples.ndim == 2:
+                    ch = pcm.channels if pcm.channels else 1
+                    if samples.shape[0] == ch:
+                        cmaj = samples
+                    elif samples.shape[1] == ch:
+                        cmaj = samples.T
+                    else:
+                        if samples.shape[1] > samples.shape[0]:
+                            cmaj = samples
+                        else:
+                            cmaj = samples.T
+                cmaj = np.ascontiguousarray(cmaj)
+            else:
+                # Shouldn't happen, but handle it
+                cmaj = (
+                    samples.reshape(1, -1)
+                    if isinstance(samples, np.ndarray)
+                    else samples
+                )
+
+            in_layout = "mono" if pcm.channels == 1 else "stereo"
+            frame = av.AudioFrame.from_ndarray(cmaj, format="s16p", layout=in_layout)
+            frame.sample_rate = pcm.sample_rate
+
+            # Resample using persistent resampler
+            resampled_frames = resampler.resample(frame)
+
+            if resampled_frames:
+                resampled_frame = resampled_frames[0]
+                raw_array = resampled_frame.to_ndarray()
+                num_frames = resampled_frame.samples
+
+                # Handle PyAV's packed format quirk
+                ch = self._desired_channels
+                if raw_array.ndim == 2 and raw_array.shape[0] == 1 and ch > 1:
+                    flat = raw_array.reshape(-1)
+                    if len(flat) == num_frames * ch:
+                        resampled_samples = flat.reshape(-1, ch).T
+                    else:
+                        resampled_samples = flat.reshape(ch, -1)
+                elif raw_array.ndim == 2:
+                    if raw_array.shape[1] == ch:
+                        resampled_samples = raw_array.T
+                    elif raw_array.shape[0] == ch:
+                        resampled_samples = raw_array
+                    else:
+                        resampled_samples = raw_array.T
+                elif raw_array.ndim == 1:
+                    if ch == 1:
+                        resampled_samples = raw_array
+                    else:
+                        resampled_samples = np.tile(raw_array, (ch, 1))
+                else:
+                    resampled_samples = raw_array.reshape(ch, -1)
+
+                if resampled_samples.dtype != np.int16:
+                    resampled_samples = resampled_samples.astype(np.int16)
+
+                pcm_out = PcmData(
+                    samples=resampled_samples,
+                    sample_rate=self._desired_sample_rate,
+                    format="s16",
+                    channels=self._desired_channels,
+                )
+            else:
+                # Resampling failed, use original
+                pcm_out = pcm
+
         payload = pcm_out.to_bytes()
         # Metrics: counters per chunk
         attrs = {"tts_class": self.__class__.__name__}
@@ -214,6 +345,11 @@ class TTS(abc.ABC):
 
         start_time = time.time()
         synthesis_id = str(uuid.uuid4())
+
+        # Reset resampler for each new synthesis to ensure clean state
+        self._resampler = None
+        self._resampler_input_rate = None
+        self._resampler_input_channels = None
 
         logger.debug(
             "Starting text-to-speech synthesis", extra={"text_length": len(text)}

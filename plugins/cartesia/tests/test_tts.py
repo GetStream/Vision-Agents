@@ -32,7 +32,7 @@ class TestCartesiaIntegration:
 
     @pytest.mark.integration
     async def test_cartesia_tts_convert_text_to_audio_manual_test(self, tts):
-        await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
+        await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
 
     @pytest.mark.integration
     async def test_cartesia_tts_non_blocking(self, tts: cartesia.TTS):

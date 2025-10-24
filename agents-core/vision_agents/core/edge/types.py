@@ -89,19 +89,36 @@ class PcmData(NamedTuple):
         # For f32 format, each element in the array is one sample (float32)
 
         if isinstance(self.samples, np.ndarray):
-            # If array has shape (channels, samples), duration uses the samples dimension
+            # If array has shape (channels, samples) or (samples, channels), duration uses the samples dimension
             if self.samples.ndim == 2:
-                num_samples = self.samples.shape[-1]
+                # Determine which dimension is samples vs channels
+                # Standard format is (channels, samples), but we need to handle both
+                ch = self.channels if self.channels else 1
+                if self.samples.shape[0] == ch:
+                    # Shape is (channels, samples) - correct format
+                    num_samples = self.samples.shape[1]
+                elif self.samples.shape[1] == ch:
+                    # Shape is (samples, channels) - transposed format
+                    num_samples = self.samples.shape[0]
+                else:
+                    # Ambiguous or unknown - assume (channels, samples) and pick larger dimension
+                    # This handles edge cases like (2, 2) arrays
+                    num_samples = max(self.samples.shape[0], self.samples.shape[1])
             else:
                 num_samples = len(self.samples)
         elif isinstance(self.samples, bytes):
             # If samples is bytes, calculate based on format
             if self.format == "s16":
                 # For s16 format, each sample is 2 bytes (16 bits)
-                num_samples = len(self.samples) // 2
+                # For multi-channel, divide by channels to get sample count
+                num_samples = len(self.samples) // (
+                    2 * (self.channels if self.channels else 1)
+                )
             elif self.format == "f32":
                 # For f32 format, each sample is 4 bytes (32 bits)
-                num_samples = len(self.samples) // 4
+                num_samples = len(self.samples) // (
+                    4 * (self.channels if self.channels else 1)
+                )
             else:
                 # Default assumption for other formats (treat as raw bytes)
                 num_samples = len(self.samples)
@@ -287,25 +304,39 @@ class PcmData(NamedTuple):
         if self.sample_rate == target_sample_rate and target_channels == self.channels:
             return self
 
-        # Prepare ndarray shape for AV.
-        # Our convention: (channels, samples) for multi-channel, (samples,) for mono.
-        samples = self.samples
-        if samples.ndim == 1:
-            # Mono: reshape to (1, samples) for AV
-            samples = samples.reshape(1, -1)
-        elif samples.ndim == 2:
-            # Already (channels, samples)
-            pass
-
-        # Create AV audio frame from the samples
+        # Prepare ndarray shape for AV input frame.
+        # Use planar input (s16p) with shape (channels, samples).
         in_layout = "mono" if self.channels == 1 else "stereo"
-        # For multi-channel, use planar format to avoid packed shape errors
-        in_format = "s16" if self.channels == 1 else "s16p"
-        samples = np.ascontiguousarray(samples)
-        frame = av.AudioFrame.from_ndarray(samples, format=in_format, layout=in_layout)
+        cmaj = self.samples
+        if isinstance(cmaj, np.ndarray):
+            if cmaj.ndim == 1:
+                # (samples,) -> (channels, samples)
+                if self.channels > 1:
+                    cmaj = np.tile(cmaj, (self.channels, 1))
+                else:
+                    cmaj = cmaj.reshape(1, -1)
+            elif cmaj.ndim == 2:
+                # Normalize to (channels, samples)
+                ch = self.channels if self.channels else 1
+                if cmaj.shape[0] == ch:
+                    # Already (channels, samples)
+                    pass
+                elif cmaj.shape[1] == ch:
+                    # (samples, channels) -> transpose
+                    cmaj = cmaj.T
+                else:
+                    # Ambiguous - assume larger dim is samples
+                    if cmaj.shape[1] > cmaj.shape[0]:
+                        # Likely (channels, samples)
+                        pass
+                    else:
+                        # Likely (samples, channels)
+                        cmaj = cmaj.T
+            cmaj = np.ascontiguousarray(cmaj)
+        frame = av.AudioFrame.from_ndarray(cmaj, format="s16p", layout=in_layout)
         frame.sample_rate = self.sample_rate
 
-        # Create resampler
+        # Create resampler – output packed s16
         out_layout = "mono" if target_channels == 1 else "stereo"
         resampler = av.AudioResampler(
             format="s16", layout=out_layout, rate=target_sample_rate
@@ -315,20 +346,72 @@ class PcmData(NamedTuple):
         resampled_frames = resampler.resample(frame)
         if resampled_frames:
             resampled_frame = resampled_frames[0]
-            resampled_samples = resampled_frame.to_ndarray()
+            # PyAV's to_ndarray() for packed format returns flattened interleaved data
+            # For stereo s16 (packed), it returns shape (1, num_values) where num_values = samples * channels
+            raw_array = resampled_frame.to_ndarray()
+            num_frames = resampled_frame.samples  # Actual number of sample frames
 
-            # AV returns (channels, samples), so for mono we want the first (and only) channel
-            if len(resampled_samples.shape) > 1:
-                if target_channels == 1:
-                    resampled_samples = resampled_samples[0]
+            # Normalize output to (channels, samples) format
+            ch = int(target_channels)
 
-            # Convert to int16
-            resampled_samples = resampled_samples.astype(np.int16)
+            # Handle PyAV's packed format quirk: returns (1, num_values) for stereo
+            if raw_array.ndim == 2 and raw_array.shape[0] == 1 and ch > 1:
+                # Flatten and deinterleave packed stereo data
+                # Shape (1, 32000) -> (32000,) -> deinterleave to (2, 16000)
+                flat = raw_array.reshape(-1)
+                if len(flat) == num_frames * ch:
+                    # Deinterleave: [L0,R0,L1,R1,...] -> [[L0,L1,...], [R0,R1,...]]
+                    resampled_samples = flat.reshape(-1, ch).T
+                else:
+                    logger.warning(
+                        "Unexpected array size %d for %d frames x %d channels",
+                        len(flat),
+                        num_frames,
+                        ch,
+                    )
+                    resampled_samples = flat.reshape(ch, -1)
+            elif raw_array.ndim == 2:
+                # Standard case: (samples, channels) or already (channels, samples)
+                if raw_array.shape[1] == ch:
+                    # (samples, channels) -> transpose to (channels, samples)
+                    resampled_samples = raw_array.T
+                elif raw_array.shape[0] == ch:
+                    # Already (channels, samples)
+                    resampled_samples = raw_array
+                else:
+                    # Ambiguous - assume time-major
+                    resampled_samples = raw_array.T
+            elif raw_array.ndim == 1:
+                # 1D output (mono)
+                if ch == 1:
+                    # Keep as 1D for mono
+                    resampled_samples = raw_array
+                elif ch > 1:
+                    # Shouldn't happen if we requested stereo, but handle it
+                    logger.warning(
+                        "Got 1D array but requested %d channels, duplicating", ch
+                    )
+                    resampled_samples = np.tile(raw_array, (ch, 1))
+                else:
+                    resampled_samples = raw_array
+            else:
+                # Unexpected dimensionality
+                logger.warning(
+                    "Unexpected ndim %d from PyAV, reshaping", raw_array.ndim
+                )
+                resampled_samples = raw_array.reshape(ch, -1)
+
+            # Ensure int16 dtype for s16
+            if (
+                isinstance(resampled_samples, np.ndarray)
+                and resampled_samples.dtype != np.int16
+            ):
+                resampled_samples = resampled_samples.astype(np.int16)
 
             return PcmData(
                 samples=resampled_samples,
                 sample_rate=target_sample_rate,
-                format=self.format,
+                format="s16",
                 pts=self.pts,
                 dts=self.dts,
                 time_base=self.time_base,
@@ -339,13 +422,34 @@ class PcmData(NamedTuple):
             return self
 
     def to_bytes(self) -> bytes:
-        """Return interleaved PCM bytes (s16 or f32 depending on format)."""
+        """Return interleaved PCM bytes (s16 or f32 depending on format).
+
+        For multi-channel audio, this returns packed/interleaved bytes in the order
+        [L0, R0, L1, R1, ...]. The internal convention is (channels, samples).
+        If the stored ndarray is (samples, channels), we transpose it.
+        """
         arr = self.samples
         if isinstance(arr, np.ndarray):
             if arr.ndim == 2:
-                # (channels, samples) -> interleaved (samples, channels)
-                interleaved = arr.T.reshape(-1)
-                return interleaved.tobytes()
+                channels = int(self.channels or arr.shape[0])
+                # Normalize to (channels, samples)
+                if arr.shape[0] == channels:
+                    cmaj = arr
+                elif arr.shape[1] == channels:
+                    cmaj = arr.T
+                else:
+                    logger.warning(
+                        "to_bytes: ambiguous array shape %s for channels=%d; assuming time-major",
+                        arr.shape,
+                        channels,
+                    )
+                    cmaj = arr.T
+                samples_count = cmaj.shape[1]
+                # Interleave channels explicitly to avoid any stride-related surprises
+                out = np.empty(samples_count * channels, dtype=cmaj.dtype)
+                for i in range(channels):
+                    out[i::channels] = cmaj[i]
+                return out.tobytes()
             return arr.tobytes()
         # Fallback
         if isinstance(arr, (bytes, bytearray)):

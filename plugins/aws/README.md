@@ -20,15 +20,13 @@ agent = Agent(
     agent_user=User(name="Friendly AI"),
     instructions="Be nice to the user",
     llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
-    tts=cartesia.TTS(),
+    tts=aws.TTS(), # using AWS Polly
     stt=deepgram.STT(),
     turn_detection=smart_turn.TurnDetection(buffer_duration=2.0, confidence_threshold=0.5),
 )
 ```
 
 The full example is available in example/aws_qwen_example.py
-
-### Realtime Text/Image Usage
 
 Nova sonic audio realtime STS is also supported:
 
@@ -43,18 +41,6 @@ agent = Agent(
 
 ### Polly TTS Usage
 
-```python
-from vision_agents.plugins import aws
-from vision_agents.core.tts.manual_test import manual_tts_to_wav
-import asyncio
-
-async def main():
-    # For PCM, AWS Polly supports 8000 or 16000 Hz
-    tts = aws.TTS(voice_id="Joanna", sample_rate=16000)
-    await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
-
-asyncio.run(main())
-```
 
 ## Running the examples
 

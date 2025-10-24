@@ -30,7 +30,7 @@ class TestElevenLabsIntegration:
 
     @pytest.mark.integration
     async def test_elevenlabs_tts_convert_text_to_audio_manual_test(self, tts):
-        path = await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
+        path = await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
         print("ElevenLabs TTS audio written to:", path)
 
     @pytest.mark.integration
