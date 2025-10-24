@@ -6,7 +6,7 @@ import pytest_asyncio
 
 from vision_agents.plugins import cartesia
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
-from vision_agents.core.tts.testing import TTSSession
+from vision_agents.core.tts.testing import TTSSession, assert_tts_send_non_blocking
 
 # Load environment variables
 load_dotenv()
@@ -14,7 +14,7 @@ load_dotenv()
 
 class TestCartesiaIntegration:
     @pytest_asyncio.fixture
-    def tts(self) -> cartesia.TTS:  # type: ignore[name-defined]
+    async def tts(self) -> cartesia.TTS:  # type: ignore[name-defined]
         api_key = os.environ.get("CARTESIA_API_KEY")
         if not api_key:
             pytest.skip("CARTESIA_API_KEY env var not set – skipping live API test.")
@@ -33,3 +33,7 @@ class TestCartesiaIntegration:
     @pytest.mark.integration
     async def test_cartesia_tts_convert_text_to_audio_manual_test(self, tts):
         await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
+
+    @pytest.mark.integration
+    async def test_cartesia_tts_non_blocking(self, tts: cartesia.TTS):
+        await assert_tts_send_non_blocking(tts, "Hello from Cartesia!")

@@ -3,7 +3,7 @@ import pytest
 import pytest_asyncio
 
 from vision_agents.plugins import openai as openai_plugin
-from vision_agents.core.tts.testing import TTSSession
+from vision_agents.core.tts.testing import TTSSession, assert_tts_send_non_blocking
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
 
 
@@ -29,3 +29,7 @@ class TestOpenAITTSIntegration:
     @pytest.mark.integration
     async def test_openai_tts_manual_wav(self, tts: openai_plugin.TTS):
         await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
+
+    @pytest.mark.integration
+    async def test_openai_tts_non_blocking(self, tts: openai_plugin.TTS):
+        await assert_tts_send_non_blocking(tts, "Hello from OpenAI TTS")

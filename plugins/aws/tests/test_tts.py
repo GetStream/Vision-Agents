@@ -4,7 +4,7 @@ import pytest_asyncio
 from dotenv import load_dotenv
 
 from vision_agents.plugins import aws as aws_plugin
-from vision_agents.core.tts.testing import TTSSession
+from vision_agents.core.tts.testing import TTSSession, assert_tts_send_non_blocking
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
 
 
@@ -46,3 +46,7 @@ class TestAWSPollyTTS:
     @pytest.mark.integration
     async def test_aws_polly_tts_manual_wav(self, tts: aws_plugin.TTS):
         await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
+
+    @pytest.mark.integration
+    async def test_aws_polly_tts_non_blocking(self, tts: aws_plugin.TTS):
+        await assert_tts_send_non_blocking(tts, "Hello from AWS Polly TTS")

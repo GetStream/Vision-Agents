@@ -1,4 +1,6 @@
+import asyncio
 import os
+from functools import partial
 from typing import Optional, Union, Iterator, AsyncIterator, List, Any
 
 import boto3
@@ -79,8 +81,11 @@ class TTS(BaseTTS):
         if self.lexicon_names:
             params["LexiconNames"] = self.lexicon_names  # type: ignore[assignment]
 
-        # Polly returns a StreamingBody for AudioStream
-        resp = self.client.synthesize_speech(**params)
+        # this is necessary to avoid blocking the event loop, I will first write a failing test
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(
+            None, partial(self.client.synthesize_speech, **params)
+        )
 
         audio_bytes = resp["AudioStream"].read()
 

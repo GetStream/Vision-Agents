@@ -7,3 +7,15 @@ This project uses uv to manage Python and its dependencies so when you run tests
 Extend from BaseTest
 
 Store data for fixtures in tests/test_assets/...
+
+Non-blocking checks
+
+- TTS plugins must not block the event loop inside `stream_audio`. Use the helper in `vision_agents.core.tts.testing`:
+
+  ```python
+  from vision_agents.core.tts.testing import assert_tts_send_non_blocking
+
+  @pytest.mark.integration
+  async def test_tts_non_blocking(tts):
+      await assert_tts_send_non_blocking(tts, "Hello")
+  ```

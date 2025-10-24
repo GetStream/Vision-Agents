@@ -14,7 +14,6 @@ from .events import (
     TTSErrorEvent,
 )
 from vision_agents.core.events import (
-    PluginInitializedEvent,
     PluginClosedEvent,
     AudioFormat,
 )
@@ -69,14 +68,6 @@ class TTS(abc.ABC):
         self._native_sample_rate: int = 16000
         self._native_channels: int = 1
         self._native_format: AudioFormat = AudioFormat.PCM_S16
-        self.events.send(
-            PluginInitializedEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                plugin_type="TTS",
-                provider=self.provider_name,
-            )
-        )
 
     def set_output_format(
         self,
