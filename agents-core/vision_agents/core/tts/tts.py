@@ -25,7 +25,6 @@ from ..observability import (
     tts_events_emitted,
 )
 from ..edge.types import PcmData
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -61,17 +60,14 @@ class TTS(abc.ABC):
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
+
         # Desired output audio format (what downstream audio track expects)
-        # Agent can override via set_output_format
         self._desired_sample_rate: int = 16000
         self._desired_channels: int = 1
         self._desired_format: AudioFormat = AudioFormat.PCM_S16
-        # Native/provider audio format default (used only if plugin returns raw bytes)
-        self._native_sample_rate: int = 16000
-        self._native_channels: int = 1
-        self._native_format: AudioFormat = AudioFormat.PCM_S16
+
         # Persistent resampler to avoid discontinuities between chunks
-        self._resampler = None
+        self._resampler: Optional[av.AudioResampler] = None
         self._resampler_input_rate: Optional[int] = None
         self._resampler_input_channels: Optional[int] = None
 
@@ -113,7 +109,11 @@ class TTS(abc.ABC):
             PyAV AudioResampler instance
         """
 
-        if self._resampler is not None and self._resampler_input_rate == input_rate and self._resampler_input_channels == input_channels:
+        if (
+            self._resampler is not None
+            and self._resampler_input_rate == input_rate
+            and self._resampler_input_channels == input_channels
+        ):
             return self._resampler
 
         in_layout = "mono" if input_channels == 1 else "stereo"
@@ -135,40 +135,21 @@ class TTS(abc.ABC):
 
         return self._resampler
 
-    def _normalize_to_pcm(self, item: Union[bytes, bytearray, PcmData, Any]) -> PcmData:
-        """Normalize a chunk to PcmData using the native provider format."""
-        if isinstance(item, PcmData):
-            return item
-        data = getattr(item, "data", item)
-        if not isinstance(data, (bytes, bytearray, memoryview)):
-            raise TypeError("Chunk is not bytes or PcmData")
-        fmt = (
-            self._native_format.value
-            if hasattr(self._native_format, "value")
-            else "s16"
-        )
-        return PcmData.from_bytes(
-            bytes(data),
-            sample_rate=self._native_sample_rate,
-            channels=self._native_channels,
-            format=fmt,
-        )
-
     async def _iter_pcm(self, resp: Any) -> AsyncGenerator[PcmData, None]:
         """Yield PcmData chunks from a provider response of various shapes."""
         # Single buffer or PcmData
-        if isinstance(resp, (bytes, bytearray, PcmData)):
-            yield self._normalize_to_pcm(resp)
+        if isinstance(resp, (PcmData,)):
+            yield resp
             return
         # Async iterable
         if hasattr(resp, "__aiter__"):
             async for item in resp:
-                yield self._normalize_to_pcm(item)
+                yield item
             return
-        # Sync iterable (avoid treating bytes-like as iterable of ints)
-        if hasattr(resp, "__iter__") and not isinstance(resp, (str, bytes, bytearray)):
+        # Sync iterable
+        if hasattr(resp, "__iter__"):
             for item in resp:
-                yield self._normalize_to_pcm(item)
+                yield item
             return
         raise TypeError(f"Unsupported return type from stream_audio: {type(resp)}")
 
@@ -297,9 +278,9 @@ class TTS(abc.ABC):
             chunk_index = 0
 
             # Fast-path: single buffer -> mark final
-            if isinstance(response, (bytes, bytearray, PcmData)):
+            if isinstance(response, (PcmData,)):
                 bytes_len, dur_ms = self._emit_chunk(
-                    self._normalize_to_pcm(response), 0, True, synthesis_id, text, user
+                    response, 0, True, synthesis_id, text, user
                 )
                 total_audio_bytes += bytes_len
                 total_audio_ms += dur_ms

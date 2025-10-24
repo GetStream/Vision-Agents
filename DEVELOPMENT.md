@@ -126,6 +126,48 @@ Some ground rules:
 1. Do not build code to resample / adjust audio unless it is not covered already by `PcmData`
 2. Do not pass PCM as plain bytes around and write code that assumes specific sample rate or format. Use `PcmData` instead
 
+## Example
+
+```python
+import asyncio
+from vision_agents.core.edge.types import PcmData
+from openai import AsyncOpenAI
+
+async def example():
+    client = AsyncOpenAI(api_key="sk-42")
+
+    resp = await client.audio.speech.create(
+        model="gpt-4o-mini-tts",
+        voice="alloy",
+        input="pcm is cool, give me some of that please",
+        response_format="pcm",
+    )
+
+    # load response into PcmData, note that you need to specify sample_rate, channels and format
+    pcm_data = PcmData.from_bytes(
+        resp.content, sample_rate=24_000, channels=1, format="s16"
+    )
+
+    # check if pcm_data is stereo (it's not in this case ofc)
+    print(pcm_data.stereo)
+
+    # write the pcm to file
+    with open("test.wav", "wb") as f:
+        f.write(pcm_data.to_wav_bytes())
+
+    # resample pcm to be 48khz stereo
+    resampled_pcm = pcm_data.resample(48_000, 2)
+
+    # play-out pcm using ffplay
+    from vision_agents.core.edge.types import play_pcm_with_ffplay
+
+    await play_pcm_with_ffplay(resampled_pcm)
+
+if __name__ == "__main__":
+    asyncio.run(example())
+```
+
+
 ### Testing audio manually
 
 Sometimes you need to test audio manually, here's some tips:

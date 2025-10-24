@@ -1,13 +1,12 @@
-import asyncio
 import os
-import shutil
 import tempfile
 import time
+
 from typing import Optional
 
 from vision_agents.core.tts import TTS
 from vision_agents.core.tts.testing import TTSSession
-from vision_agents.core.edge.types import PcmData
+from vision_agents.core.edge.types import PcmData, play_pcm_with_ffplay
 
 
 async def manual_tts_to_wav(
@@ -18,7 +17,6 @@ async def manual_tts_to_wav(
     text: str = "This is a manual TTS playback test.",
     outfile_path: Optional[str] = None,
     timeout_s: float = 20.0,
-    play_env: str = "FFPLAY",
 ) -> str:
     """Generate TTS audio to a WAV file and optionally play with ffplay.
 
@@ -48,7 +46,13 @@ async def manual_tts_to_wav(
     if result.errors:
         raise RuntimeError(f"TTS errors: {result.errors}")
 
-    # Write WAV file (16kHz mono, s16)
+    # Convert captured audio to PcmData
+    pcm_bytes = b"".join(result.speeches)
+    pcm = PcmData.from_bytes(
+        pcm_bytes, sample_rate=sample_rate, channels=channels, format="s16"
+    )
+
+    # Generate a descriptive filename if not provided
     if outfile_path is None:
         tmpdir = tempfile.gettempdir()
         timestamp = int(time.time())
@@ -56,27 +60,5 @@ async def manual_tts_to_wav(
             tmpdir, f"tts_manual_test_{tts.__class__.__name__}_{timestamp}.wav"
         )
 
-    pcm_bytes = b"".join(result.speeches)
-    pcm = PcmData.from_bytes(
-        pcm_bytes, sample_rate=sample_rate, channels=channels, format="s16"
-    )
-    with open(outfile_path, "wb") as f:
-        f.write(pcm.to_wav_bytes())
-
-    # Optional playback
-    if os.environ.get(play_env) == "1" and shutil.which("ffplay"):
-        proc = await asyncio.create_subprocess_exec(
-            "ffplay",
-            "-autoexit",
-            "-nodisp",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            outfile_path,
-        )
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=30.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-
-    return outfile_path
+    # Use utility function to write WAV and optionally play
+    return await play_pcm_with_ffplay(pcm, outfile_path=outfile_path, timeout_s=30.0)
