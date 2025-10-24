@@ -1,16 +1,10 @@
-import asyncio
-from typing import AsyncIterator, Iterator, List
+from typing import AsyncIterator, Iterator
 
 import pytest
 
 from vision_agents.core.tts.tts import TTS as BaseTTS
-from vision_agents.core.tts.events import (
-    TTSAudioEvent,
-    TTSErrorEvent,
-    TTSSynthesisStartEvent,
-    TTSSynthesisCompleteEvent,
-)
 from vision_agents.core.edge.types import PcmData
+from vision_agents.core.tts.testing import TTSSession
 
 
 class DummyTTSBytesSingle(BaseTTS):
@@ -80,136 +74,74 @@ class DummyTTSError(BaseTTS):
         return None
 
 
-@pytest.mark.asyncio
 async def test_tts_bytes_single_emits_events_and_bytes():
     tts = DummyTTSBytesSingle()
     tts.set_output_format(sample_rate=16000, channels=1)
+    session = TTSSession(tts)
 
-    events: List[type] = []
-    audio_chunks: List[bytes] = []
-
-    @tts.events.subscribe
-    async def _on_start(ev: TTSSynthesisStartEvent):
-        events.append(TTSSynthesisStartEvent)
-
-    @tts.events.subscribe
-    async def _on_audio(ev: TTSAudioEvent):
-        events.append(TTSAudioEvent)
-        if ev.audio_data:
-            audio_chunks.append(ev.audio_data)
-
-    @tts.events.subscribe
-    async def _on_complete(ev: TTSSynthesisCompleteEvent):
-        events.append(TTSSynthesisCompleteEvent)
-
-    await asyncio.sleep(0.01)
     await tts.send("hello")
     await tts.events.wait()
+    result = await session.wait_for_result(timeout=1.0)
 
-    # Expect start -> audio -> complete
-    assert TTSSynthesisStartEvent in events
-    assert TTSAudioEvent in events
-    assert TTSSynthesisCompleteEvent in events
-    assert len(audio_chunks) == 1
-    # audio event sample_rate/channels reflect desired output
-    assert audio_chunks[0] is not None
+    assert result.started
+    assert result.completed
+    assert len(session.speeches) == 1
+    assert session.speeches[0] is not None
 
 
-@pytest.mark.asyncio
 async def test_tts_bytes_async_aggregates_and_emits():
     tts = DummyTTSBytesAsync()
     tts.set_output_format(sample_rate=16000, channels=1)
+    session = TTSSession(tts)
 
-    chunks: List[bytes] = []
-
-    @tts.events.subscribe
-    async def _on_audio(ev: TTSAudioEvent):
-        if isinstance(ev, TTSAudioEvent) and ev.audio_data:
-            chunks.append(ev.audio_data)
-
-    await asyncio.sleep(0.01)
     await tts.send("hi")
     await tts.events.wait()
 
-    # Should emit at least one aligned chunk
-    assert len(chunks) >= 1
-    # Sum of bytes equals or exceeds first unaligned chunk (due to padding/next chunk)
-    assert sum(len(c) for c in chunks) >= 2 * 33  # approx check
+    assert len(session.speeches) >= 1
+    assert sum(len(c) for c in session.speeches) >= 2 * 33  # approx check
 
 
-@pytest.mark.asyncio
 async def test_tts_iter_sync_emits_multiple_chunks():
     tts = DummyTTSIterSync()
     tts.set_output_format(sample_rate=16000, channels=1)
+    session = TTSSession(tts)
 
-    chunks: List[bytes] = []
-
-    @tts.events.subscribe
-    async def _on_audio(ev: TTSAudioEvent):
-        if ev.audio_data:
-            chunks.append(ev.audio_data)
-
-    await asyncio.sleep(0.01)
     await tts.send("hello")
     await tts.events.wait()
-    assert len(chunks) >= 2
+    assert len(session.speeches) >= 2
 
 
-@pytest.mark.asyncio
 async def test_tts_stereo_to_mono_halves_bytes():
     tts = DummyTTSPcmStereoToMono()
     # desired mono, same sample rate
     tts.set_output_format(sample_rate=16000, channels=1)
+    session = TTSSession(tts)
 
-    emitted: List[bytes] = []
-
-    @tts.events.subscribe
-    async def _on_audio(ev: TTSAudioEvent):
-        if ev.audio_data:
-            emitted.append(ev.audio_data)
-
-    await asyncio.sleep(0.01)
     await tts.send("x")
     await tts.events.wait()
-    assert len(emitted) == 1
+    assert len(session.speeches) == 1
     # Original interleaved data length was 400 bytes; mono should be ~200 bytes
-    assert 180 <= len(emitted[0]) <= 220
+    assert 180 <= len(session.speeches[0]) <= 220
 
 
-@pytest.mark.asyncio
 async def test_tts_resample_changes_size_reasonably():
     tts = DummyTTSPcmResample()
     # Resample from 16k -> 8k, mono
     tts.set_output_format(sample_rate=8000, channels=1)
+    session = TTSSession(tts)
 
-    emitted: List[bytes] = []
-
-    @tts.events.subscribe
-    async def _on_audio(ev: TTSAudioEvent):
-        if ev.audio_data:
-            emitted.append(ev.audio_data)
-
-    await asyncio.sleep(0.01)
     await tts.send("y")
     await tts.events.wait()
-    assert len(emitted) == 1
+    assert len(session.speeches) == 1
     # Input had 200 samples (400 bytes); at 8k this should be roughly half
-    assert 150 <= len(emitted[0]) <= 250
+    assert 150 <= len(session.speeches[0]) <= 250
 
 
-@pytest.mark.asyncio
 async def test_tts_error_emits_and_raises():
     tts = DummyTTSError()
+    session = TTSSession(tts)
 
-    errors: List[TTSErrorEvent] = []
-
-    @tts.events.subscribe
-    async def _on_error(ev: TTSErrorEvent):
-        if isinstance(ev, TTSErrorEvent):
-            errors.append(ev)
-
-    await asyncio.sleep(0.01)
     with pytest.raises(RuntimeError):
         await tts.send("boom")
     await tts.events.wait()
-    assert len(errors) >= 1
+    assert len(session.errors) >= 1
