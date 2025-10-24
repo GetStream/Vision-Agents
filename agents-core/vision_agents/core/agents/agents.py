@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 from uuid import uuid4
 
 import aiortc
@@ -313,8 +313,6 @@ class Agent:
         async def _on_tts_audio(event: TTSAudioEvent):
             try:
                 if self._audio_track and event.audio_data:
-                    from typing import Any, cast
-
                     track_any = cast(Any, self._audio_track)
                     await track_any.write(event.audio_data)
             except Exception as e:
@@ -1043,13 +1041,10 @@ class Agent:
                 # Inform TTS of desired output format so it can resample accordingly
                 if self.tts:
                     channels = 2 if stereo else 1
-                    try:
-                        self.tts.set_output_format(
-                            sample_rate=framerate,
-                            channels=channels,
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"Failed to set TTS output format: {e}")
+                    self.tts.set_output_format(
+                        sample_rate=framerate,
+                        channels=channels,
+                    )
 
         # Set up video track if video publishers are available
         if self.publish_video:

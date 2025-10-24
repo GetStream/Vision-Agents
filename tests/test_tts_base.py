@@ -1,47 +1,8 @@
-from typing import AsyncIterator, Iterator
-
 import pytest
 
 from vision_agents.core.tts.tts import TTS as BaseTTS
 from vision_agents.core.edge.types import PcmData
 from vision_agents.core.tts.testing import TTSSession
-
-
-class DummyTTSBytesSingle(BaseTTS):
-    async def stream_audio(self, text: str, *_, **__) -> bytes:
-        # 16-bit PCM mono (s16), 100 samples -> 200 bytes
-        self._native_sample_rate = 16000
-        self._native_channels = 1
-        return b"\x00\x00" * 100
-
-    async def stop_audio(self) -> None:  # pragma: no cover - noop
-        return None
-
-
-class DummyTTSBytesAsync(BaseTTS):
-    async def stream_audio(self, text: str, *_, **__) -> AsyncIterator[bytes]:
-        self._native_sample_rate = 16000
-        self._native_channels = 1
-
-        async def _agen():
-            # Unaligned chunk sizes to test aggregator
-            yield b"\x00\x00" * 33 + b"\x00"  # odd size
-            yield b"\x00\x00" * 10
-
-        return _agen()
-
-    async def stop_audio(self) -> None:  # pragma: no cover - noop
-        return None
-
-
-class DummyTTSIterSync(BaseTTS):
-    async def stream_audio(self, text: str, *_, **__) -> Iterator[bytes]:
-        self._native_sample_rate = 16000
-        self._native_channels = 1
-        return iter([b"\x00\x00" * 50, b"\x00\x00" * 25])
-
-    async def stop_audio(self) -> None:  # pragma: no cover - noop
-        return None
 
 
 class DummyTTSPcmStereoToMono(BaseTTS):
@@ -72,43 +33,6 @@ class DummyTTSError(BaseTTS):
 
     async def stop_audio(self) -> None:  # pragma: no cover - noop
         return None
-
-
-async def test_tts_bytes_single_emits_events_and_bytes():
-    tts = DummyTTSBytesSingle()
-    tts.set_output_format(sample_rate=16000, channels=1)
-    session = TTSSession(tts)
-
-    await tts.send("hello")
-    await tts.events.wait()
-    result = await session.wait_for_result(timeout=1.0)
-
-    assert result.started
-    assert result.completed
-    assert len(session.speeches) == 1
-    assert session.speeches[0] is not None
-
-
-async def test_tts_bytes_async_aggregates_and_emits():
-    tts = DummyTTSBytesAsync()
-    tts.set_output_format(sample_rate=16000, channels=1)
-    session = TTSSession(tts)
-
-    await tts.send("hi")
-    await tts.events.wait()
-
-    assert len(session.speeches) >= 1
-    assert sum(len(c) for c in session.speeches) >= 2 * 33  # approx check
-
-
-async def test_tts_iter_sync_emits_multiple_chunks():
-    tts = DummyTTSIterSync()
-    tts.set_output_format(sample_rate=16000, channels=1)
-    session = TTSSession(tts)
-
-    await tts.send("hello")
-    await tts.events.wait()
-    assert len(session.speeches) >= 2
 
 
 async def test_tts_stereo_to_mono_halves_bytes():

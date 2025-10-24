@@ -89,11 +89,6 @@ class TTS(abc.ABC):
         self._desired_channels = int(channels)
         self._desired_format = audio_format
 
-    # Backwards-compatibility helper if any subclass still calls it
-    def set_native_format(self, sample_rate: int, channels: int = 1) -> None:
-        self._native_sample_rate = int(sample_rate)
-        self._native_channels = int(channels)
-
     def _normalize_to_pcm(self, item: Union[bytes, bytearray, PcmData, Any]) -> PcmData:
         """Normalize a chunk to PcmData using the native provider format."""
         if isinstance(item, PcmData):
