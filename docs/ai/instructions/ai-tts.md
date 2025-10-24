@@ -24,7 +24,16 @@ Build a TTS plugin that streams audio and emits events. Keep it minimal and foll
       return PcmData.from_bytes(audio_bytes, sample_rate=16000, channels=1, format="s16")
   ```
 
-- `stop_audio` can be a no-op 
+- `stop_audio` can be a no-op
+
+## __init__
+
+The plugin constructor should:
+
+1. Rely on env vars to fetch credentials
+2. export kwargs that allow developers to pass important params to the model itself (eg. model name, voice ID, API URL, ...)
+3. if applicable the model or client instance
+4. have defaults for all params when possible so that ENV var is enough
 
 ## Testing and examples
 

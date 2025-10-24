@@ -1,6 +1,5 @@
-import os
-
 import pytest
+import pytest_asyncio
 from dotenv import load_dotenv
 
 from vision_agents.plugins import fish
@@ -12,16 +11,12 @@ load_dotenv()
 
 
 class TestFishTTS:
-    @pytest.fixture
+    @pytest_asyncio.fixture
     def tts(self) -> fish.TTS:
         return fish.TTS()
 
     @pytest.mark.integration
     async def test_fish_tts_convert_text_to_audio_manual_test(self, tts: fish.TTS):
-        if not (os.environ.get("FISH_API_KEY") or os.environ.get("FISH_AUDIO_API_KEY")):
-            pytest.skip(
-                "FISH_API_KEY/FISH_AUDIO_API_KEY not set; skipping manual playback test."
-            )
         await manual_tts_to_wav(tts, sample_rate=16000, channels=1)
 
     @pytest.mark.integration
