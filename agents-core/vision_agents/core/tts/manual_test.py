@@ -20,11 +20,11 @@ async def manual_tts_to_wav(
 ) -> str:
     """Generate TTS audio to a WAV file and optionally play with ffplay.
 
-    - Creates the TTS instance via `tts_factory()`.
-    - Sets desired output format via `set_output_format(sample_rate, channels)`.
+    - Receives a TTS instance.
+    - Configures desired output format via `set_output_format(sample_rate, channels)`.
     - Sends `text` and captures TTSAudioEvent chunks.
     - Writes a WAV (s16) file and returns the path.
-    - If env `play_env` is set to "1" and `ffplay` exists, it plays the file.
+    - If `ffplay` exists, it plays the file.
 
     Args:
         tts: the TTS instance.
@@ -33,7 +33,6 @@ async def manual_tts_to_wav(
         text: text to synthesize.
         outfile_path: optional absolute path for the WAV file; if None, temp path.
         timeout_s: timeout for first audio to arrive.
-        play_env: env var name controlling playback (default: FFPLAY).
 
     Returns:
         Path to written WAV file.

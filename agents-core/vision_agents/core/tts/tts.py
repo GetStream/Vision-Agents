@@ -144,11 +144,21 @@ class TTS(abc.ABC):
         # Async iterable
         if hasattr(resp, "__aiter__"):
             async for item in resp:
+                if not isinstance(item, PcmData):
+                    raise TypeError(
+                        "stream_audio must yield PcmData; wrap provider bytes via PcmData.from_response in the plugin"
+                    )
                 yield item
             return
         # Sync iterable
-        if hasattr(resp, "__iter__"):
+        if hasattr(resp, "__iter__") and not isinstance(
+            resp, (bytes, bytearray, memoryview, str)
+        ):
             for item in resp:
+                if not isinstance(item, PcmData):
+                    raise TypeError(
+                        "stream_audio must yield PcmData; wrap provider bytes via PcmData.from_response in the plugin"
+                    )
                 yield item
             return
         raise TypeError(f"Unsupported return type from stream_audio: {type(resp)}")
