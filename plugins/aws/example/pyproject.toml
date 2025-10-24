@@ -1,15 +1,15 @@
 [project]
-name = "gemini-live-realtime-example"
+name = "aws-bedrock-realtime-example"
 version = "0.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
 # put only what this example needs
 dependencies = [
   "python-dotenv>=1.0",
-  "vision-agents-plugins-gemini",
+  "vision-agents-plugins-aws",
   "vision-agents-plugins-getstream",
   "vision-agents",
-  "google-genai>=1.33.0",
+  "boto3>=1.26.0",
   "opentelemetry-exporter-otlp>=1.37.0",
   "opentelemetry-exporter-prometheus>=0.58b0",
   "prometheus-client>=0.23.1",
@@ -17,6 +17,6 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-"vision-agents-plugins-getstream" = {path = "../../../plugins/getstream", editable=true}
-"vision-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
+"vision-agents-plugins-aws" = {path = "..", editable=true}
 "vision-agents" = {path = "../../../agents-core", editable=true}

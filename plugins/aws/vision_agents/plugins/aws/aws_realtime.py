@@ -5,6 +5,8 @@ import logging
 import uuid
 from typing import Optional, List, Dict, Any
 from getstream.video.rtc.audio_track import AudioStreamTrack
+from getstream.audio.utils import resample_audio
+import numpy as np
 
 from vision_agents.core.llm import realtime
 from aws_sdk_bedrock_runtime.client import BedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
@@ -26,15 +28,15 @@ DEFAULT_SAMPLE_RATE = 16000
 
 
 """
-TODO:
-- Implement & cleanup function calling
-- Cleanup chat integration
+AWS Bedrock Realtime with Nova Sonic support.
+
+Supports real-time audio/video streaming and function calling (tool use).
 """
 
 
 class Realtime(realtime.Realtime):
     """
-    Realtime on AWS with support for audio/video streaming (uses AWS Bedrock).
+    Realtime on AWS with support for audio/video streaming and function calling (uses AWS Bedrock).
 
     A few things are different about Nova compared to other STS solutions
 
@@ -42,6 +44,12 @@ class Realtime(realtime.Realtime):
         2. promptName basically works like a unique identifier. it's created client side and sent to nova
         3. input/text events are wrapped. so its common to do start event, text event, stop event
         4. on close there is an session and a prompt end event
+
+    Function Calling:
+        This implementation supports AWS Nova's tool use feature. Register functions using
+        the @llm.register_function decorator and they will be automatically made available
+        to the model. When the model calls a function, it will be executed and the result
+        sent back to continue the conversation.
 
     AWS Nova samples are the best docs:
 
@@ -66,6 +74,14 @@ class Realtime(realtime.Realtime):
             model="us.amazon.nova-sonic-v1:0",
             region_name="us-east-1"
         )
+        
+        # Register a custom function
+        @llm.register_function(
+            name="get_weather",
+            description="Get weather for a city"
+        )
+        def get_weather(city: str) -> dict:
+            return {"city": city, "temp": 72, "condition": "sunny"}
         
         # Connect to the session
         await llm.connect()
@@ -166,9 +182,31 @@ class Realtime(realtime.Realtime):
         """Send audio data to the model for processing."""
         if not self.connected:
             self.logger.warning("realtime is not active. can't call simple_audio_response")
+            return
 
         # Resample from 48kHz to 24kHz if needed
-        pcm = pcm.resample(24000)
+        if pcm.sample_rate != 24000:
+            # Convert to float32 for resampling
+            if pcm.samples.dtype == np.int16:
+                audio_float = pcm.samples.astype(np.float32) / 32768.0
+            else:
+                audio_float = pcm.samples.astype(np.float32)
+            
+            # Resample
+            resampled_float = resample_audio(audio_float, pcm.sample_rate, 24000)
+            
+            # Convert back to int16
+            resampled_samples = (resampled_float * 32768.0).astype(np.int16)
+            
+            # Create new PcmData with resampled audio
+            pcm = PcmData(
+                format=pcm.format,
+                sample_rate=24000,
+                samples=resampled_samples,
+                pts=pcm.pts,
+                dts=pcm.dts,
+                time_base=pcm.time_base
+            )
         
         content_name = str(uuid.uuid4())
 
@@ -274,7 +312,21 @@ class Realtime(realtime.Realtime):
             }
           }
         }
-        # TODO: tool support
+        
+        # Add tool configuration if tools are available
+        tools = self._convert_tools_to_provider_format(self.get_available_functions())
+        if tools:
+            import json as json_lib
+            self.logger.info(f"Adding tool configuration with {len(tools)} tools")
+            self.logger.info(f"Tool schemas: {json_lib.dumps(tools, indent=2)}")
+            event["event"]["promptStart"]["toolUseOutputConfiguration"] = {
+                "mediaType": "application/json"
+            }
+            event["event"]["promptStart"]["toolConfiguration"] = {
+                "tools": tools
+            }
+            self.logger.info(f"Full promptStart event: {json_lib.dumps(event, indent=2)}")
+        
         await self.send_event(event)
 
 
@@ -325,6 +377,155 @@ class Realtime(realtime.Realtime):
             value=BidirectionalInputPayloadPart(bytes_=event_json.encode('utf-8'))
         )
         await self.stream.input_stream.send(event)
+
+    def _convert_tools_to_provider_format(self, tools: List[Any]) -> List[Dict[str, Any]]:
+        """Convert ToolSchema objects to AWS Nova Realtime format.
+        
+        Args:
+            tools: List of ToolSchema objects from the function registry
+            
+        Returns:
+            List of tools in AWS Nova Realtime format
+        """
+        aws_tools = []
+        for tool in tools or []:
+            name = tool.get("name", "unnamed_tool")
+            description = tool.get("description", "") or ""
+            params = tool.get("parameters_schema") or tool.get("parameters") or {}
+            
+            self.logger.info(f"Tool {name} raw params: {json.dumps(params, indent=2)}")
+            
+            # Normalize to a valid JSON Schema object
+            if not isinstance(params, dict):
+                params = {}
+            
+            # Ensure it has the required JSON Schema structure
+            if "type" not in params:
+                # Extract required fields from properties if they exist
+                properties = params if params else {}
+                required = list(properties.keys()) if properties else []
+                
+                params = {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": False
+                }
+            else:
+                # Already has type, but ensure additionalProperties is set
+                if "additionalProperties" not in params:
+                    params["additionalProperties"] = False
+            
+            # AWS Nova expects toolSpec format with inputSchema.json as a DICT (not a string)
+            # Reference: https://docs.aws.amazon.com/nova/latest/userguide/input-events.html
+            aws_tool = {
+                "toolSpec": {
+                    "name": name,
+                    "description": description,
+                    "inputSchema": {
+                        "json": params  # This is a dict, not a JSON string
+                    }
+                }
+            }
+            aws_tools.append(aws_tool)
+        return aws_tools
+
+    async def send_tool_content_start(self, content_name: str, tool_use_id: str):
+        """Send tool content start event.
+        
+        Args:
+            content_name: Unique content identifier
+            tool_use_id: The tool use ID from the toolUse event
+        """
+        event = {
+            "event": {
+                "contentStart": {
+                    "promptName": self.session_id,
+                    "contentName": content_name,
+                    "type": "TOOL",
+                    "interactive": False,
+                    "role": "TOOL",
+                    "toolResultInputConfiguration": {
+                        "toolUseId": tool_use_id,
+                        "type": "TEXT",
+                        "textInputConfiguration": {
+                            "mediaType": "text/plain"
+                        }
+                    }
+                }
+            }
+        }
+        await self.send_event(event)
+
+    async def send_tool_result(self, content_name: str, result: Any):
+        """Send tool result event.
+        
+        Args:
+            content_name: Unique content identifier
+            result: The result from executing the tool (will be stringified as JSON)
+        """
+        # AWS Nova expects content as a stringified JSON string
+        # Reference: https://docs.aws.amazon.com/nova/latest/userguide/input-events.html
+        if isinstance(result, str):
+            content_str = result
+        else:
+            content_str = json.dumps(result)
+        
+        event = {
+            "event": {
+                "toolResult": {
+                    "promptName": self.session_id,
+                    "contentName": content_name,
+                    "content": content_str  # Stringified JSON, not an object/array
+                }
+            }
+        }
+        await self.send_event(event)
+
+    async def _handle_tool_call(self, tool_name: str, tool_use_id: str, tool_input: Dict[str, Any]):
+        """Handle tool call from AWS Bedrock.
+        
+        Args:
+            tool_name: Name of the tool to execute
+            tool_use_id: The tool use ID from AWS
+            tool_input: Input arguments for the tool
+        """
+        try:
+            # Create normalized tool call
+            tool_call = {
+                "type": "tool_call",
+                "id": tool_use_id,
+                "name": tool_name,
+                "arguments_json": tool_input,
+            }
+            
+            logger.info(f"Executing tool call: {tool_name} with args: {tool_input}")
+            
+            # Execute using existing tool execution infrastructure from base LLM
+            tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
+            
+            # Prepare response data
+            if error:
+                response_data = {"error": str(error)}
+                logger.error(f"Tool call {tool_name} failed: {error}")
+            else:
+                # Keep result as-is for AWS
+                response_data = result
+                logger.info(f"Tool call {tool_name} succeeded: {response_data}")
+            
+            # Send tool result back to AWS using Nova's format
+            content_name = str(uuid.uuid4())
+            await self.send_tool_content_start(content_name, tool_use_id)
+            await self.send_tool_result(content_name, response_data)
+            await self.content_end(content_name)
+            
+        except Exception as e:
+            logger.error(f"Error handling tool call: {e}")
+            # Send error response back
+            content_name = str(uuid.uuid4())
+            await self.send_tool_content_start(content_name, tool_use_id)
+            await self.send_tool_result(content_name, {"error": str(e)})
+            await self.content_end(content_name)
 
     async def close(self):
         if not self.connected:
@@ -406,25 +607,17 @@ class Realtime(realtime.Realtime):
 
                                 elif 'toolUse' in json_data['event']:
                                     logger.info(f"Tool use from AWS Bedrock: {json_data['event']['toolUse']}")
-                                    self.toolUseContent = json_data['event']['toolUse']
-                                    self.toolName = json_data['event']['toolUse']['toolName']
-                                    self.toolUseId = json_data['event']['toolUse']['toolUseId']
-                                    # Add tool use to chat history
-                                    # TODO
-                                    #self.chat_history.add_tool_call(
-                                    #    tool_use_content=self.toolUseContent
-                                    #)
-                                elif 'contentEnd' in json_data['event'] and json_data['event'].get('contentEnd',
-                                                                                                   {}).get(
-                                        'type') == 'TOOL':
-                                    logger.info(f"Tool end from AWS Bedrock: {json_data['event']['contentEnd']}")
-                                    # TODO: Implement tool support
-                                    # toolResult = await self.processToolUse(self.toolName, self.toolUseContent)
-                                    # self.chat_history.add_tool_result(self.toolUseId, toolResult)
-                                    # toolContent = str(uuid.uuid4())
-                                    # await self.send_tool_start_event(toolContent)
-                                    # await self.send_tool_result_event(toolContent, toolResult)
-                                    # await self.send_tool_content_end_event(toolContent)
+                                    tool_use_data = json_data['event']['toolUse']
+                                    tool_name = tool_use_data['toolName']
+                                    tool_use_id = tool_use_data['toolUseId']
+                                    tool_input = tool_use_data.get('input', {})
+                                    
+                                    # Execute the tool immediately (don't wait for contentEnd)
+                                    asyncio.create_task(self._handle_tool_call(
+                                        tool_name=tool_name,
+                                        tool_use_id=tool_use_id,
+                                        tool_input=tool_input
+                                    ))
                                 elif 'contentEnd' in json_data['event']:
 
 

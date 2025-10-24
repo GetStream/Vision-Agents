@@ -28,9 +28,9 @@ agent = Agent(
 
 The full example is available in example/aws_qwen_example.py
 
-### Realtime Text/Image Usage
+### Realtime Audio Usage
 
-Nova sonic audio realtime STS is also supported:
+Nova Sonic audio realtime STS is also supported:
 
 ```python    
 agent = Agent(
@@ -40,6 +40,62 @@ agent = Agent(
     llm=aws.Realtime(),
 )
 ```
+
+## Function Calling
+
+### Standard LLM (aws.LLM)
+
+The standard LLM implementation **fully supports** function calling. Register functions using the `@llm.register_function` decorator:
+
+```python
+from vision_agents.plugins import aws
+
+llm = aws.LLM(
+    model="qwen.qwen3-32b-v1:0",
+    region_name="us-east-1"
+)
+
+@llm.register_function(
+    name="get_weather",
+    description="Get the current weather for a given city"
+)
+def get_weather(city: str) -> dict:
+    """Get weather information for a city."""
+    return {
+        "city": city,
+        "temperature": 72,
+        "condition": "Sunny"
+    }
+```
+
+### Realtime (aws.Realtime)
+
+The Realtime implementation **fully supports** function calling with AWS Nova Sonic. Register functions using the `@llm.register_function` decorator:
+
+```python
+from vision_agents.plugins import aws
+
+llm = aws.Realtime(
+    model="amazon.nova-sonic-v1:0",
+    region_name="us-east-1"
+)
+
+@llm.register_function(
+    name="get_weather",
+    description="Get the current weather for a given city"
+)
+def get_weather(city: str) -> dict:
+    """Get weather information for a city."""
+    return {
+        "city": city,
+        "temperature": 72,
+        "condition": "Sunny"
+    }
+
+# The function will be automatically called when the model decides to use it
+```
+
+See `example/aws_realtime_function_calling_example.py` for a complete example.
 
 ## Running the examples
 
