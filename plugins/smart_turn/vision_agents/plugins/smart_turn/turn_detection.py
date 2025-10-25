@@ -1,23 +1,22 @@
-"""
-Smart Turn detection implementation using the FAL AI smart-turn model.
-
-This module provides integration with the FAL AI smart-turn model to detect
-when a speaker has completed their turn in a conversation.
-"""
 
 import asyncio
-import os
+import base64
+import io
 import logging
+import os
 import tempfile
 import time
 import wave
-from typing import Dict, Optional, Any
 from pathlib import Path
+from typing import Dict, Optional, Any
 
 import fal_client
 import numpy as np
 from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
+
+from vision_agents.core.agents import Conversation
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.utils.utils import to_mono
 from vision_agents.core.turn_detection.turn_detection import (
     TurnDetector,
@@ -33,19 +32,15 @@ def _resample(samples: np.ndarray) -> np.ndarray:
 
 class TurnDetection(TurnDetector):
     """
-    Turn detection implementation using FAL AI's smart-turn model.
-
-    This implementation:
-    1. Buffers incoming audio from participants
-    2. Periodically uploads audio chunks to FAL API
-    3. Processes smart-turn predictions to emit turn events
-    4. Manages turn state based on model predictions
+    Turn detection implementation using FAL AI + smart-turn model.
+    https://github.com/pipecat-ai/smart-turn
+    https://pypi.org/project/fal-client/
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        buffer_duration: float = 2.0,
+        buffer_in_seconds: float = 2.0, # seconds
         confidence_threshold: float = 0.5,
         sample_rate: int = 16000,
         channels: int = 1,
@@ -55,7 +50,7 @@ class TurnDetection(TurnDetector):
 
         Args:
             api_key: FAL API key (if None, uses FAL_KEY env var)
-            buffer_duration: Duration in seconds to buffer audio before processing
+            buffer_in_seconds: Duration in seconds to buffer audio before processing
             confidence_threshold: Probability threshold for "complete" predictions
             sample_rate: Audio sample rate (Hz)
             channels: Number of audio channels
@@ -66,17 +61,18 @@ class TurnDetection(TurnDetector):
         )
         self.logger = logging.getLogger("SmartTurnDetection")
         self.api_key = api_key
-        self.buffer_duration = buffer_duration
+        self.buffer_duration = buffer_in_seconds
         self.sample_rate = sample_rate
         self.channels = channels
 
-        # Audio buffering per user
-        self._user_buffers: Dict[str, bytearray] = {}
+        # Audio buffering per user - stores resampled samples (16kHz int16)
+        self._user_buffers: Dict[str, list[np.ndarray]] = {}
         self._user_last_audio: Dict[str, float] = {}
         self._current_speaker: Optional[str] = None
 
-        # Processing state
-        self._processing_tasks: Dict[str, asyncio.Task] = {}
+        # Processing state - queue for ordered processing
+        self._processing_queue: asyncio.Queue = asyncio.Queue()
+        self._worker_task: Optional[asyncio.Task] = None
         self._temp_dir = Path(tempfile.gettempdir()) / "smart_turn_detection"
         self._temp_dir.mkdir(exist_ok=True)
 
@@ -85,43 +81,44 @@ class TurnDetection(TurnDetector):
             os.environ["FAL_KEY"] = self.api_key
 
         self.logger.info(
-            f"Initialized Smart Turn detection (buffer: {buffer_duration}s, threshold: {confidence_threshold})"
+            f"Initialized Smart Turn detection (buffer: {buffer_in_seconds}s, threshold: {confidence_threshold})"
         )
 
-    def _infer_channels(self, format_str: str) -> int:
-        """Infer number of channels from PcmData format string."""
-        format_str = format_str.lower()
-        if "stereo" in format_str:
-            return 2
-        elif any(f in format_str for f in ["mono", "s16", "int16", "pcm_s16le"]):
-            return 1
-        else:
-            self.logger.warning(
-                f"Unknown format string: {format_str}. Assuming mono."
-            )
-            return 1
+    def start(self) -> None:
+        """Start turn detection and processing worker."""
+        super().start()
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = asyncio.create_task(self._processing_worker())
+            self.logger.info("Started processing worker task")
 
-    def is_detecting(self) -> bool:
-        """Check if turn detection is currently active."""
-        return self._is_detecting
+    async def _processing_worker(self) -> None:
+        """Worker task that processes audio chunks from the queue in order."""
+        self.logger.info("Processing worker started")
+        while self.is_active:
+            try:
+                # Wait for items with timeout so we can check is_active periodically
+                user_id, samples = await asyncio.wait_for(
+                    self._processing_queue.get(), timeout=1.0
+                )
+                await self._process_extracted_audio(user_id, samples)
+                self._processing_queue.task_done()
+            except asyncio.TimeoutError:
+                # No items in queue, continue loop to check is_active
+                continue
+            except Exception as e:
+                self.logger.error("Error in processing worker: %s", e, exc_info=True)
+        self.logger.info("Processing worker stopped")
 
     async def process_audio(
         self,
         audio_data: PcmData,
-        user_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        participant: Participant,
+        conversation: Optional[Conversation] = None,
     ) -> None:
-        """
-        Process incoming audio data for turn detection.
-
-        Args:
-            audio_data: PCM audio data from Stream
-            user_id: ID of the user speaking
-            metadata: Optional metadata about the audio
-        """
-        if not self.is_detecting():
+        if not self.is_active:
             return
 
+        user_id = participant.user_id
         # Validate sample format
         valid_formats = ["int16", "s16", "pcm_s16le"]
         if audio_data.format not in valid_formats:
@@ -139,86 +136,69 @@ class TurnDetection(TurnDetector):
             return
 
         # Resample from 48 kHz to 16 kHz
-        try:
-            samples = _resample(audio_data.samples)
-        except Exception as e:
-            self.logger.error(f"Failed to resample audio: {e}")
-            return
-
-        # Infer number of channels (default to mono)
-        num_channels = (
-            metadata.get("channels", self._infer_channels(audio_data.format))
-            if metadata
-            else self._infer_channels(audio_data.format)
-        )
-        if num_channels != 1:
-            self.logger.debug(f"Converting {num_channels}-channel audio to mono")
-            try:
-                samples = to_mono(samples, num_channels)
-            except ValueError as e:
-                self.logger.error(f"Failed to convert to mono: {e}")
-                return
+        samples = _resample(audio_data.samples)
 
         # Initialize buffer for new user
-        self._user_buffers.setdefault(user_id, bytearray())
+        self._user_buffers.setdefault(user_id, [])
         self._user_last_audio[user_id] = time.time()
 
-        # Convert samples to bytes and append to buffer
-        self._user_buffers[user_id].extend(samples.tobytes())
+        # Append samples to buffer
+        self._user_buffers[user_id].append(samples)
 
-        # Process audio if buffer is large enough and no task is running
-        buffer_size = len(self._user_buffers[user_id])
-        required_bytes = int(
-            self.buffer_duration * self.sample_rate * 2
-        )  # 2 bytes per int16 sample
-        if buffer_size >= required_bytes and (
-            user_id not in self._processing_tasks
-            or self._processing_tasks[user_id].done()
-        ):
-            self._processing_tasks[user_id] = asyncio.create_task(
-                self._process_user_audio(user_id)
-            )
+        # Calculate total buffered samples
+        total_samples = sum(len(chunk) for chunk in self._user_buffers[user_id])
+        required_samples = int(self.buffer_duration * self.sample_rate)
 
-    async def _process_user_audio(self, user_id: str) -> None:
+        if total_samples >= required_samples:
+            # Extract the data from buffer immediately, before spawning the task
+            # This allows the buffer to accumulate more data while the task processes
+            audio_buffer = self._user_buffers[user_id]
+            
+            # Collect samples until we have enough
+            process_chunks = []
+            samples_collected = 0
+            while audio_buffer and samples_collected < required_samples:
+                chunk = audio_buffer.pop(0)
+                samples_needed = required_samples - samples_collected
+                
+                if len(chunk) <= samples_needed:
+                    # Use the entire chunk
+                    process_chunks.append(chunk)
+                    samples_collected += len(chunk)
+                else:
+                    # Split the chunk - take what we need and put the rest back
+                    process_chunks.append(chunk[:samples_needed])
+                    audio_buffer.insert(0, chunk[samples_needed:])
+                    samples_collected += samples_needed
+            
+            # Concatenate all chunks into a single array
+            process_samples = np.concatenate(process_chunks)
+            
+            # Put in queue for ordered processing by worker task
+            await self._processing_queue.put((user_id, process_samples))
+
+    async def _process_extracted_audio(self, user_id: str, process_samples: np.ndarray) -> None:
         """
-        Process buffered audio for a specific user through FAL API.
+        Process extracted audio samples for a specific user through FAL API.
 
         Args:
             user_id: ID of the user whose audio to process
+            process_samples: The audio samples (np.ndarray of int16) to process
         """
         try:
-            # Extract audio buffer
-            if user_id not in self._user_buffers:
-                return
-
-            audio_buffer = self._user_buffers[user_id]
-            required_bytes = int(
-                self.buffer_duration * self.sample_rate * 2
-            )  # 2 bytes per int16 sample
-
-            if len(audio_buffer) < required_bytes:
-                return
-
-            # Take the required bytes and clear processed portion
-            process_bytes = bytes(audio_buffer[:required_bytes])
-            del audio_buffer[:required_bytes]
-
-            # Convert bytes back to samples for WAV creation
-            process_samples = np.frombuffer(process_bytes, dtype=np.int16).tolist()
-
-            self.logger.debug(
-                f"Processing {len(process_samples)} audio samples for user {user_id}"
-            )
-
-            # Create temporary audio file
-            temp_file = await self._create_audio_file(process_samples, user_id)
-
+            # Create WAV in memory
+            wav_bytes = self._create_wav_bytes(process_samples)
+            
+            # Save to temporary file for upload
+            temp_file = self._temp_dir / f"audio_{user_id}_{int(time.time() * 1000)}.wav"
+            temp_file.write_bytes(wav_bytes)
+            
             try:
-                # Upload to FAL
-                audio_url = await fal_client.upload_file_async(temp_file)
-                self.logger.debug(
-                    f"Uploaded audio file for user {user_id}: {audio_url}"
-                )
+                # Upload file to FAL CDN
+                # Note: We tried encode_file() for data URIs but the smart-turn API
+                # returns 500 errors when processing them, so we use file upload instead
+                audio_url = await fal_client.upload_file_async(str(temp_file))
+                self.logger.debug(f"Uploaded audio file for user {user_id}: {audio_url}")
 
                 # Submit to smart-turn model
                 handler = await fal_client.submit_async(
@@ -228,53 +208,42 @@ class TurnDetection(TurnDetector):
                 # Get result
                 result = await handler.get()
                 await self._process_turn_prediction(user_id, result)
-
             finally:
                 # Clean up temp file
                 try:
                     temp_file.unlink()
                 except Exception as e:
-                    self.logger.warning(
-                        f"Failed to clean up temp file {temp_file}: {e}"
-                    )
+                    self.logger.warning(f"Failed to clean up temp file {temp_file}: {e}")
 
         except Exception as e:
             self.logger.error(
                 f"Error processing audio for user {user_id}: {e}", exc_info=True
             )
 
-    async def _create_audio_file(self, samples: list, user_id: str) -> Path:
+    def _create_wav_bytes(self, samples: np.ndarray) -> bytes:
         """
-        Create a temporary WAV file from audio samples.
+        Create WAV file bytes from audio samples.
 
         Args:
-            samples: List of audio samples
-            user_id: User ID for unique filename
+            samples: numpy array of int16 audio samples
 
         Returns:
-            Path to the created audio file
+            WAV file bytes
         """
-        timestamp = int(time.time() * 1000)
-        filename = f"audio_{user_id}_{timestamp}.wav"
-        filepath = self._temp_dir / filename
-
-        # Convert samples to bytes - samples are already a list of int16 values
-        audio_bytes_array = bytearray()
-        for sample in samples:
-            audio_bytes_array.extend(
-                sample.to_bytes(2, byteorder="little", signed=True)
-            )
-        audio_bytes = bytes(audio_bytes_array)
-
-        # Create WAV file
-        with wave.open(str(filepath), "wb") as wav_file:
+        # Create WAV file in memory
+        wav_buffer = io.BytesIO()
+        
+        with wave.open(wav_buffer, "wb") as wav_file:
             wav_file.setnchannels(self.channels)
             wav_file.setsampwidth(2)  # 16-bit audio
             wav_file.setframerate(self.sample_rate)
-            wav_file.writeframes(audio_bytes)
-
-        self.logger.debug(f"Created audio file: {filepath} ({len(samples)} samples)")
-        return filepath
+            wav_file.writeframes(samples.tobytes())
+        
+        # Get the WAV bytes
+        wav_bytes = wav_buffer.getvalue()
+        
+        self.logger.debug(f"Created WAV bytes ({len(samples)} samples, {len(wav_bytes)} bytes)")
+        return wav_bytes
 
     async def _process_turn_prediction(
         self, user_id: str, result: Dict[str, Any]
@@ -345,24 +314,23 @@ class TurnDetection(TurnDetector):
                 f"Error processing turn prediction for {user_id}: {e}", exc_info=True
             )
 
-    def start(self) -> None:
-        """Start turn detection."""
-        if self._is_detecting:
-            return
-        self._is_detecting = True
-        self.logger.info("Smart Turn detection started")
 
     def stop(self) -> None:
-        """Stop turn detection and clean up."""
-        if not self._is_detecting:
-            return
-        self._is_detecting = False
+        """Stop turn detection and clean up resources."""
+        super().stop()
 
-        # Cancel any running processing tasks
-        for task in self._processing_tasks.values():
-            if not task.done():
-                task.cancel()
-        self._processing_tasks.clear()
+        # Cancel worker task
+        if self._worker_task and not self._worker_task.done():
+            self._worker_task.cancel()
+            self.logger.info("Cancelled worker task")
+
+        # Clear the queue
+        while not self._processing_queue.empty():
+            try:
+                self._processing_queue.get_nowait()
+                self._processing_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
 
         # Clear buffers
         for buffer in self._user_buffers.values():

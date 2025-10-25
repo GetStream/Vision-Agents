@@ -173,6 +173,66 @@ def mia_audio_48khz():
 
 
 @pytest.fixture
+def mia_audio_48khz_chunked():
+    """Load mia.mp3 and yield 48kHz PCM data in 20ms chunks."""
+    audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
+    
+    # Load audio file using PyAV
+    container = av.open(audio_file_path)
+    audio_stream = container.streams.audio[0]
+    original_sample_rate = audio_stream.sample_rate
+    target_rate = 48000
+
+    # Create resampler if needed
+    resampler = None
+    if original_sample_rate != target_rate:
+        resampler = av.AudioResampler(
+            format='s16',
+            layout='mono',
+            rate=target_rate
+        )
+
+    # Read all audio frames
+    samples = []
+    for frame in container.decode(audio_stream):
+        # Resample if needed
+        if resampler:
+            frame = resampler.resample(frame)[0]
+
+        # Convert to numpy array
+        frame_array = frame.to_ndarray()
+        if len(frame_array.shape) > 1:
+            # Convert stereo to mono
+            frame_array = np.mean(frame_array, axis=0)
+        samples.append(frame_array)
+
+    # Concatenate all samples
+    samples = np.concatenate(samples)
+
+    # Convert to int16
+    samples = samples.astype(np.int16)
+    container.close()
+
+    # Calculate chunk size for 20ms at 48kHz
+    chunk_size = int(target_rate * 0.020)  # 960 samples per 20ms
+
+    # Yield chunks of audio
+    chunks = []
+    for i in range(0, len(samples), chunk_size):
+        chunk_samples = samples[i:i + chunk_size]
+        
+        # Create PCM data for this chunk
+        pcm_chunk = PcmData(
+            samples=chunk_samples,
+            sample_rate=target_rate,
+            format="s16"
+        )
+        chunks.append(pcm_chunk)
+    
+    return chunks
+
+
+@pytest.fixture
 def golf_swing_image():
     """Load golf_swing.png image and return as bytes."""
     image_file_path = os.path.join(get_assets_dir(), "golf_swing.png")

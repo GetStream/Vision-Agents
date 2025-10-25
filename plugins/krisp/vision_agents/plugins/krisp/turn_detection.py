@@ -8,6 +8,8 @@ import krisp_audio
 import numpy as np
 from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
+from vision_agents.core.agents import Conversation
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
@@ -60,6 +62,7 @@ class TurnDetection(TurnDetector):
         self._krisp_instance = None
         self._buffer: Optional[bytearray] = None
         self._turn_in_progress = False
+        self._is_detecting = False
 
     def _initialize_krisp(self):
         try:
@@ -85,8 +88,8 @@ class TurnDetection(TurnDetector):
     async def process_audio(
         self,
         audio_data: PcmData,
-        user_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        participant: Participant,
+        conversation: Optional[Conversation] = None,
     ) -> None:
         if not self.is_detecting():
             return
@@ -94,6 +97,9 @@ class TurnDetection(TurnDetector):
         if self._krisp_instance is None:
             self.logger.error("Krisp instance is not initialized. Call start() first.")
             return
+        
+        user_id = participant.user_id
+        metadata = None  # Can be extended if needed from participant/conversation
 
         # Validate sample format
         valid_formats = ["int16", "s16", "pcm_s16le"]

@@ -2,7 +2,6 @@ from .turn_detection import (
     TurnEvent,
     TurnEventData,
     TurnDetector,
-    TurnDetection,
 )
 from .events import (
     TurnStartedEvent,

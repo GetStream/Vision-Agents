@@ -22,7 +22,7 @@ async def start_agent() -> None:
         llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
-        turn_detection=smart_turn.TurnDetection(buffer_duration=2.0, confidence_threshold=0.5),
+        turn_detection=smart_turn.TurnDetection(buffer_in_seconds=2.0, confidence_threshold=0.5),
         # Enable turn detection with FAL/ Smart turn
     )
     await agent.create_user()

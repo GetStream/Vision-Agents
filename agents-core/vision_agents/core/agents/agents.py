@@ -662,7 +662,7 @@ class Agent:
                 return
 
             if self.turn_detection is not None:
-                await self.turn_detection.process_audio(pcm, participant.user_id)
+                await self.turn_detection.process_audio(pcm, participant, conversation=self.conversation)
 
             await self._reply_to_audio(pcm, participant)
 

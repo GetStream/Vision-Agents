@@ -23,6 +23,14 @@ vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-krisp = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
+vision-agents-plugins-vogent = { workspace = true }
+
+[tool.uv]
+# Workspace-level override to resolve numpy version conflicts
+# vogent-turn requires numpy<2.0, so we override to use 1.26.x
+override-dependencies = [
+    "numpy>=1.26.0,<2.0"
+]
 
 [tool.uv.workspace]
 members = [
@@ -44,7 +52,8 @@ members = [
     "plugins/ultralytics",
     "plugins/krisp",
     "plugins/smart_turn",
-    "plugins/wizper"
+    "plugins/wizper",
+    "plugins/vogent"
 ]
 exclude = [
 "**/__pycache__",
