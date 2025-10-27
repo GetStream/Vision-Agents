@@ -22,9 +22,6 @@ async def start_agent() -> None:
         llm=llm,
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
-        turn_detection=smart_turn.TurnDetection(
-            buffer_duration=2.0, confidence_threshold=0.5
-        ),  # Enable turn detection with FAL/ Smart turn
         # vad=silero.VAD(),
         # realtime version (vad, tts and stt not needed)
         # llm=openai.Realtime()
