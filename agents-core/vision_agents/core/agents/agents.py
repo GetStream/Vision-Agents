@@ -14,7 +14,7 @@ from opentelemetry.trace import Tracer
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from ..edge import sfu_events
 from ..edge.events import AudioReceivedEvent, TrackAddedEvent, TrackRemovedEvent, CallEndedEvent
-from ..edge.types import Connection, Participant, PcmData, User
+from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
 from ..events.manager import EventManager
 from ..llm import events as llm_events
 from ..llm.events import (

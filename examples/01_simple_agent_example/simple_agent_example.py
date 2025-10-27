@@ -3,7 +3,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import cartesia, deepgram, getstream, smart_turn, gemini
+from vision_agents.plugins import cartesia, deepgram, getstream, gemini
 
 load_dotenv()
 
