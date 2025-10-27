@@ -4,7 +4,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import getstream, ultralytics, gemini
+from vision_agents.plugins import getstream, ultralytics, gemini, moondream
 
 load_dotenv()
 
@@ -16,7 +16,8 @@ async def start_agent() -> None:
         instructions="Read @golf_coach.md", # read the golf coach markdown instructions
         llm=gemini.Realtime(fps=10), # Careful with FPS can get expensive
         # llm=openai.Realtime(fps=10), use this to switch to openai
-        processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")], # realtime pose detection with yolo
+        # processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")], # realtime pose detection with yolo
+        processors=[moondream.MoondreamProcessor(mode="cloud", skills=["detection"])]
     )
 
     await agent.create_user()

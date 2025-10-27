@@ -29,11 +29,7 @@ DEFAULT_HEIGHT = 480
 
 # Moondream API Configuration
 MOONDREAM_API_BASE = "https://api.moondream.ai/v1"
-MOONDREAM_API_ENDPOINTS = {
-    "detect": "/detect",
-    "query": "/query",
-    "caption": "/caption",
-}
+MOONDREAM_API_ENDPOINT = "/detect"
 MOONDREAM_TIMEOUT = 30.0
 
 
@@ -128,18 +124,16 @@ class MoondreamVideoTrack(VideoStreamTrack):
 
 class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """
-    Moondream 3 vision processor.
+    Moondream 3 vision processor for object detection.
     
-    Supports object detection, VQA, counting, and captioning with multiple inference modes.
+    Performs real-time zero-shot object detection on video streams.
     
     Args:
         mode: Inference mode ("cloud", "local", or "fal")
-        skills: List of skills to enable (detection, vqa, counting, caption)
         api_key: API key for cloud/FAL modes. If not provided, will attempt to read
                 from MOONDREAM_API_KEY environment variable.
         model_path: Path to local model (for local mode)
         conf_threshold: Confidence threshold for detections
-        vqa_prompt: Default question for VQA skill
         detect_objects: Object(s) to detect. Moondream uses zero-shot detection,
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
@@ -152,11 +146,9 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     def __init__(
         self,
         mode: str = "cloud",
-        skills: Optional[List[str]] = None,
         api_key: Optional[str] = None,
         model_path: Optional[str] = None,
         conf_threshold: float = 0.3,
-        vqa_prompt: str = "What do you see?",
         detect_objects: Union[str, List[str]] = "person",
         fps: int = 30,
         interval: int = 0,
@@ -168,14 +160,12 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
         
         self.mode = mode
-        self.skills = skills or ["detection"]
         
         # Auto-load API key from environment if not provided
         self.api_key = api_key or os.getenv("MOONDREAM_API_KEY")
         
         self.model_path = model_path
         self.conf_threshold = conf_threshold
-        self.vqa_prompt = vqa_prompt
         self.fps = fps
         self.device = device
         self.max_workers = max_workers
@@ -210,7 +200,7 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
                 raise ValueError("api_key is required for cloud mode")
             logger.info("✅ Cloud mode configured with API key")
         
-        logger.info(f"🌙 Moondream Processor initialized with mode: {mode}, skills: {self.skills}")
+        logger.info(f"🌙 Moondream Processor initialized with mode: {mode}")
         logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
     
     async def process_video(
@@ -291,7 +281,7 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             frame_array: Input frame as numpy array (RGB format)
             
         Returns:
-            Dictionary containing results for all enabled skills
+            Dictionary containing detection results
         """
         if self.mode == "cloud":
             return await self._cloud_inference(frame_array)
@@ -304,13 +294,13 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     
     async def _cloud_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
         """
-        Call Moondream Cloud API.
+        Call Moondream Cloud API for object detection.
         
         Args:
             frame_array: Input frame as numpy array
             
         Returns:
-            Dictionary with inference results
+            Dictionary with detection results
         """
         try:
             # Convert frame to PIL Image
@@ -321,25 +311,11 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             image.save(buffered, format="JPEG", quality=85)
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
             
-            results = {}
-            
-            # Run inference for each enabled skill
+            # Run detection
             async with aiohttp.ClientSession() as session:
-                for skill in self.skills:
-                    if skill == "detection":
-                        result = await self._call_detection_api(session, img_base64)
-                        results["detections"] = result
-                    elif skill == "vqa":
-                        result = await self._call_vqa_api(session, img_base64, self.vqa_prompt)
-                        results["vqa_response"] = result
-                    elif skill == "counting":
-                        result = await self._call_counting_api(session, img_base64)
-                        results["count"] = result
-                    elif skill == "caption":
-                        result = await self._call_caption_api(session, img_base64)
-                        results["caption"] = result
+                detections = await self._call_detection_api(session, img_base64)
             
-            return results
+            return {"detections": detections}
         except Exception as e:
             logger.error(f"❌ Cloud inference failed: {e}")
             return {}
@@ -357,7 +333,7 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         
         # Call API for each configured object type
         for object_type in self.detect_objects:
-            url = f"{MOONDREAM_API_BASE}{MOONDREAM_API_ENDPOINTS['detect']}"
+            url = f"{MOONDREAM_API_BASE}{MOONDREAM_API_ENDPOINT}"
             headers = {
                 "X-Moondream-Auth": self.api_key,
                 "Content-Type": "application/json"
@@ -418,24 +394,6 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         
         logger.debug(f"🔍 Detection API returned {len(all_detections)} objects across {len(self.detect_objects)} types")
         return all_detections
-    
-    async def _call_vqa_api(self, session: aiohttp.ClientSession, img_base64: str, question: str) -> str:
-        """Call Moondream VQA API."""
-        # TODO: Implement live API after detection is working
-        logger.debug(f"❓ Calling VQA API with question: {question} (mock)")
-        return ""
-    
-    async def _call_counting_api(self, session: aiohttp.ClientSession, img_base64: str) -> int:
-        """Call Moondream counting API."""
-        # TODO: Implement live API after detection is working
-        logger.debug("🔢 Calling counting API (mock)")
-        return 0
-    
-    async def _call_caption_api(self, session: aiohttp.ClientSession, img_base64: str) -> str:
-        """Call Moondream caption API."""
-        # TODO: Implement live API after detection is working
-        logger.debug("📝 Calling caption API (mock)")
-        return ""
     
     async def _local_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
         """
@@ -532,8 +490,8 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             self._last_frame_time = asyncio.get_event_loop().time()
             self._last_frame_pil = Image.fromarray(frame_array)
             
-            # Annotate frame if detection skill enabled
-            if "detection" in self.skills and results.get("detections"):
+            # Annotate frame with detections
+            if results.get("detections"):
                 frame_array = self._annotate_detections(frame_array, results)
             
             # Convert back to av.VideoFrame and publish
@@ -648,17 +606,14 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     
     def state(self) -> dict:
         """
-        Return latest inference results for LLM context.
-        
-        This enables LLM to access visual understanding including:
-        - VQA responses (answers to visual questions)
-        - Counting results
-        - Image captions
-        - Detection summaries
-        - Last frame as PIL Image
+        Return latest detection results for LLM context.
         
         Returns:
-            Dictionary containing latest inference results
+            Dictionary containing:
+            - last_frame_timestamp: When the frame was processed
+            - last_image: PIL Image for LLM vision models
+            - detections_summary: Human-readable detection summary
+            - detections_count: Number of objects detected
         """
         if not hasattr(self, "_last_results"):
             return {}
@@ -673,16 +628,7 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         if hasattr(self, "_last_frame_pil"):
             state_dict["last_image"] = self._last_frame_pil
         
-        # Add skill-specific results
-        if "vqa_response" in self._last_results:
-            state_dict["vqa_response"] = self._last_results["vqa_response"]
-        
-        if "count" in self._last_results:
-            state_dict["count"] = self._last_results["count"]
-        
-        if "caption" in self._last_results:
-            state_dict["caption"] = self._last_results["caption"]
-        
+        # Add detection results
         if "detections" in self._last_results:
             detections = self._last_results["detections"]
             state_dict["detections_summary"] = self._summarize_detections(detections)
