@@ -62,9 +62,10 @@ class TurnDetection(TurnDetector):
         """
 
         super().__init__(
-            confidence_threshold=confidence_threshold, provider_name="SmartTurnDetection"
+            confidence_threshold=confidence_threshold,
+            provider_name="SmartTurnDetection",
         )
-        self.logger = logging.getLogger("SmartTurnDetection")
+        self.logger = logging.getLogger(__name__)
         self.api_key = api_key
         self.buffer_duration = buffer_duration
         self.sample_rate = sample_rate
@@ -96,9 +97,7 @@ class TurnDetection(TurnDetector):
         elif any(f in format_str for f in ["mono", "s16", "int16", "pcm_s16le"]):
             return 1
         else:
-            self.logger.warning(
-                f"Unknown format string: {format_str}. Assuming mono."
-            )
+            self.logger.warning(f"Unknown format string: {format_str}. Assuming mono.")
             return 1
 
     def is_detecting(self) -> bool:
@@ -379,4 +378,3 @@ class TurnDetection(TurnDetector):
             self.logger.warning(f"Failed to clean up temp files: {e}")
 
         self.logger.info("Smart Turn detection stopped")
-
