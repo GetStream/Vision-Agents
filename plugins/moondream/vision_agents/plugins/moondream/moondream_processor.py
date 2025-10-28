@@ -1,12 +1,9 @@
 import asyncio
-import base64
-import io
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Union
 
-import aiohttp
 import aiortc
 import av
 import cv2
@@ -21,36 +18,13 @@ from vision_agents.core.processors.base_processor import (
 )
 from vision_agents.core.utils.queue import LatestNQueue
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+import moondream as md
+
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WIDTH = 640
 DEFAULT_HEIGHT = 480
-
-# Moondream API Configuration
-MOONDREAM_API_BASE = "https://api.moondream.ai/v1"
-MOONDREAM_API_ENDPOINT = "/detect"
-MOONDREAM_TIMEOUT = 30.0
-
-
-class MoondreamAPIError(Exception):
-    """Base exception for Moondream API errors."""
-    pass
-
-
-class MoondreamAuthError(MoondreamAPIError):
-    """Invalid API key or authentication failed."""
-    pass
-
-
-class MoondreamRateLimitError(MoondreamAPIError):
-    """Rate limit exceeded."""
-    pass
-
-
-class MoondreamBadRequestError(MoondreamAPIError):
-    """Bad request (invalid image format or parameters)."""
-    pass
 
 
 class MoondreamVideoTrack(VideoStreamTrack):
@@ -190,15 +164,8 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         self._video_track: MoondreamVideoTrack = MoondreamVideoTrack()
         self._video_forwarder: Optional[VideoForwarder] = None
         
-        # Initialize model for local mode
-        if mode == "local":
-            self._load_local_model()
-        
-        # Validate cloud mode requirements
-        if self.mode == "cloud":
-            if not self.api_key:
-                raise ValueError("api_key is required for cloud mode")
-            logger.info("✅ Cloud mode configured with API key")
+        # Initialize model
+        self._load_model()
         
         logger.info(f"🌙 Moondream Processor initialized with mode: {mode}")
         logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
@@ -262,16 +229,36 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         logger.info("📹 publish_video_track called")
         return self._video_track
     
-    def _load_local_model(self):
-        """Load Moondream local model."""
+    def _load_model(self):
+        """Load Moondream model using the official SDK."""
         try:
-            # Import moondream SDK
-            # from moondream import Moondream
-            # self.model = Moondream(self.model_path, device=self.device)
-            logger.info(f"✅ Local model loading not yet implemented")
+
+            if self.mode == "cloud":
+                # Validate API key for cloud mode
+                if not self.api_key:
+                    raise ValueError("api_key is required for cloud mode")
+                
+                # Initialize cloud model
+                self.model = md.vl(api_key=self.api_key)
+                logger.info("✅ Moondream SDK initialized in cloud mode")
+                
+            elif self.mode == "local":
+                # Initialize local model (requires running Moondream server)
+                endpoint = self.model_path or "http://localhost:2020/v1"
+                self.model = md.vl(endpoint=endpoint)
+                logger.info(f"✅ Moondream SDK initialized in local mode: {endpoint}")
+                
+            else:
+                raise ValueError(f"Unknown mode: {self.mode}")
+                
+        except ImportError:
+            raise ImportError(
+                "moondream SDK is not installed. "
+                "Please install it: pip install moondream"
+            )
         except Exception as e:
-            logger.warning(f"⚠️ Could not load local model: {e}")
-            self.model = None
+            logger.error(f"❌ Failed to load Moondream model: {e}")
+            raise
     
     async def run_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
         """
@@ -294,7 +281,7 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     
     async def _cloud_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
         """
-        Call Moondream Cloud API for object detection.
+        Call Moondream Cloud API for object detection using SDK.
         
         Args:
             frame_array: Input frame as numpy array
@@ -306,141 +293,69 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             # Convert frame to PIL Image
             image = Image.fromarray(frame_array)
             
-            # Encode image to base64
-            buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=85)
-            img_base64 = base64.b64encode(buffered.getvalue()).decode()
+            # Call SDK for each object type
+            # The SDK's detect() is synchronous, so wrap in executor
+            loop = asyncio.get_event_loop()
+            all_detections = await loop.run_in_executor(
+                self.executor, self._run_detection_sync, image
+            )
             
-            # Run detection
-            async with aiohttp.ClientSession() as session:
-                detections = await self._call_detection_api(session, img_base64)
-            
-            return {"detections": detections}
+            return {"detections": all_detections}
         except Exception as e:
             logger.error(f"❌ Cloud inference failed: {e}")
             return {}
     
-    async def _call_detection_api(self, session: aiohttp.ClientSession, img_base64: str) -> List[Dict]:
+    def _run_detection_sync(self, image: Image.Image) -> List[Dict]:
         """
-        Call Moondream detection API for all configured object types.
+        Synchronous detection using Moondream SDK (runs in thread pool).
         
-        Note: Moondream's "detect" endpoint is actually a "point" API that finds
-        specific objects. It expects an image_url and object parameter.
-        Each object type requires a separate API call.
+        Args:
+            image: PIL Image to run detection on
+            
+        Returns:
+            List of detection dictionaries
         """
+        if self._shutdown:
+            return []
+        
         all_detections = []
-        image_data_uri = f"data:image/jpeg;base64,{img_base64}"
         
-        # Call API for each configured object type
+        # Call SDK for each object type
         for object_type in self.detect_objects:
-            url = f"{MOONDREAM_API_BASE}{MOONDREAM_API_ENDPOINT}"
-            headers = {
-                "X-Moondream-Auth": self.api_key,
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "image_url": image_data_uri,
-                "object": object_type  # The object to detect
-            }
-            
             try:
-                logger.debug(f"🔍 Detecting '{object_type}' via Moondream API")
+                logger.debug(f"🔍 Detecting '{object_type}' via Moondream SDK")
                 
-                async with session.post(
-                    url,
-                    json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=MOONDREAM_TIMEOUT)
-                ) as response:
-                    # Handle error status codes
-                    if response.status == 401:
-                        raise MoondreamAuthError("Invalid API key. Check your MOONDREAM_API_KEY.")
-                    elif response.status == 429:
-                        raise MoondreamRateLimitError("Rate limit exceeded. Please wait and try again.")
-                    elif response.status == 400:
-                        error_text = await response.text()
-                        raise MoondreamBadRequestError(f"Bad request: {error_text}")
-                    elif response.status >= 500:
-                        raise MoondreamAPIError(f"Moondream server error: {response.status}")
-                    
-                    response.raise_for_status()
-                    data = await response.json()
-                    
-                    # Moondream's detect/point API returns bounding boxes for the specified object
-                    # Convert to our detection format
-                    if "objects" in data and isinstance(data["objects"], list):
-                        for obj in data["objects"]:
-                            # Moondream returns x_min, y_min, x_max, y_max (normalized 0-1)
-                            bbox = [
-                                obj.get("x_min", 0),
-                                obj.get("y_min", 0),
-                                obj.get("x_max", 0),
-                                obj.get("y_max", 0)
-                            ]
-                            all_detections.append({
-                                "label": object_type,  # The object we searched for
-                                "bbox": bbox,
-                                "confidence": obj.get("confidence", 1.0)
-                            })
-                    
-            except MoondreamAPIError:
-                # Re-raise our custom exceptions
-                raise
-            except aiohttp.ClientError as e:
+                # Call SDK's detect method
+                result = self.model.detect(image, object_type)
+                
+                # Parse SDK response format
+                # SDK returns: {"objects": [{"x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}, ...]}
+                if "objects" in result and isinstance(result["objects"], list):
+                    for obj in result["objects"]:
+                        # Convert to our standard format
+                        bbox = [
+                            obj.get("x_min", 0),
+                            obj.get("y_min", 0),
+                            obj.get("x_max", 0),
+                            obj.get("y_max", 0)
+                        ]
+                        all_detections.append({
+                            "label": object_type,
+                            "bbox": bbox,
+                            "confidence": obj.get("confidence", 1.0)
+                        })
+                        
+            except Exception as e:
                 logger.warning(f"⚠️ Failed to detect '{object_type}': {e}")
                 # Continue with other objects
                 continue
         
-        logger.debug(f"🔍 Detection API returned {len(all_detections)} objects across {len(self.detect_objects)} types")
+        logger.debug(f"🔍 SDK returned {len(all_detections)} objects across {len(self.detect_objects)} types")
         return all_detections
     
     async def _local_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
         """
-        Run local Moondream model inference.
-        
-        Args:
-            frame_array: Input frame as numpy array
-            
-        Returns:
-            Dictionary with inference results
-        """
-        loop = asyncio.get_event_loop()
-        try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    self.executor, self._local_inference_sync, frame_array
-                ),
-                timeout=5.0
-            )
-            return result
-        except asyncio.TimeoutError:
-            logger.warning("⏰ Local inference TIMEOUT")
-            return {}
-        except Exception as e:
-            logger.error(f"❌ Local inference error: {e}")
-            return {}
-    
-    def _local_inference_sync(self, frame_array: np.ndarray) -> Dict[str, Any]:
-        """
-        Synchronous local inference (runs in thread pool).
-        
-        Args:
-            frame_array: Input frame as numpy array
-            
-        Returns:
-            Dictionary with inference results
-        """
-        if self._shutdown:
-            return {}
-        
-        # Placeholder - actual local model inference
-        logger.debug("🤖 Running local inference (not yet implemented)")
-        return {}
-    
-    async def _fal_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
-        """
-        Call FAL.ai Moondream API.
+        Run local Moondream model inference using SDK.
         
         Args:
             frame_array: Input frame as numpy array
@@ -452,17 +367,34 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             # Convert frame to PIL Image
             image = Image.fromarray(frame_array)
             
-            # Encode image to base64
-            buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=85)
-            img_base64 = base64.b64encode(buffered.getvalue()).decode()
+            # Call SDK for detection (same as cloud, but uses local endpoint)
+            loop = asyncio.get_event_loop()
+            all_detections = await asyncio.wait_for(
+                loop.run_in_executor(
+                    self.executor, self._run_detection_sync, image
+                ),
+                timeout=5.0
+            )
             
-            # Placeholder - actual FAL.ai API call
-            logger.debug("🚀 Calling FAL.ai API (not yet implemented)")
+            return {"detections": all_detections}
+        except asyncio.TimeoutError:
+            logger.warning("⏰ Local inference TIMEOUT")
             return {}
         except Exception as e:
-            logger.error(f"❌ FAL inference failed: {e}")
+            logger.error(f"❌ Local inference error: {e}")
             return {}
+    
+    async def _fal_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
+        """
+        Call FAL.ai Moondream API.
+        
+        Args:
+            frame_array: Input frame as numpy array
+            
+        Returns:
+            Dictionary with inference results
+        """
+        raise NotImplementedError("FAL.ai mode is not yet supported")
     
     async def _process_and_add_frame(self, frame: av.VideoFrame):
         """

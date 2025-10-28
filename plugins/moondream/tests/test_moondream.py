@@ -20,10 +20,6 @@ from PIL import Image
 from vision_agents.plugins.moondream import (
     MoondreamProcessor,
     MoondreamVideoTrack,
-    MoondreamAPIError,
-    MoondreamAuthError,
-    MoondreamRateLimitError,
-    MoondreamBadRequestError,
 )
 
 
@@ -101,11 +97,11 @@ async def test_cloud_inference_structure(sample_image):
     """Test that cloud inference returns proper structure."""
     processor = MoondreamProcessor(mode="cloud", api_key="test_key")
     
-    # Mock the API call to avoid making a real HTTP request
-    async def mock_detection_api(session, img_base64):
+    # Mock the SDK detection call
+    def mock_detection_sync(image):
         return [{"label": "test", "bbox": [0.1, 0.1, 0.5, 0.5], "confidence": 0.9}]
     
-    processor._call_detection_api = mock_detection_api
+    processor._run_detection_sync = mock_detection_sync
     
     frame_array = np.array(sample_image)
     result = await processor._cloud_inference(frame_array)
@@ -129,14 +125,10 @@ async def test_local_inference_structure(sample_image):
 
 @pytest.mark.asyncio
 async def test_fal_inference_structure(sample_image):
-    """Test that FAL inference returns proper structure."""
-    processor = MoondreamProcessor(mode="fal")
-    
-    frame_array = np.array(sample_image)
-    result = await processor._fal_inference(frame_array)
-    
-    assert isinstance(result, dict)
-    processor.close()
+    """Test that FAL inference raises NotImplementedError."""
+    # FAL mode is not yet supported and should be caught during initialization
+    with pytest.raises(NotImplementedError):
+        processor = MoondreamProcessor(mode="fal")
 
 
 @pytest.mark.asyncio
@@ -144,23 +136,27 @@ async def test_run_inference_routing(sample_image):
     """Test that run_inference routes to correct backend."""
     frame_array = np.array(sample_image)
     
+    # Mock SDK detection for all tests
+    def mock_detection_sync(image):
+        return []
+    
     # Test cloud mode
     processor_cloud = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor_cloud._run_detection_sync = mock_detection_sync
     result = await processor_cloud.run_inference(frame_array)
     assert isinstance(result, dict)
     processor_cloud.close()
     
     # Test local mode
     processor_local = MoondreamProcessor(mode="local")
+    processor_local._run_detection_sync = mock_detection_sync
     result = await processor_local.run_inference(frame_array)
     assert isinstance(result, dict)
     processor_local.close()
     
-    # Test fal mode
-    processor_fal = MoondreamProcessor(mode="fal")
-    result = await processor_fal.run_inference(frame_array)
-    assert isinstance(result, dict)
-    processor_fal.close()
+    # Test fal mode - should raise NotImplementedError during initialization
+    with pytest.raises(NotImplementedError):
+        processor_fal = MoondreamProcessor(mode="fal")
 
 
 # Phase 4 Tests: Frame Processing + Annotation
