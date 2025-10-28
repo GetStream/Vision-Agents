@@ -12,6 +12,8 @@ dependencies = [
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-openai",
   "vision-agents-plugins-smart-turn",
+  "vision-agents-plugins-cartesia",
+  "vision-agents-plugins-gemini",
   "vision-agents",
   "openai>=1.101.0",
   "anthropic>=0.66.0",
@@ -26,5 +28,7 @@ dependencies = [
 "vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
 "vision-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
 "vision-agents-plugins-smart-turn" = {path = "../../plugins/smart_turn", editable=true}
+"vision-agents-plugins-cartesia" = {path = "../../plugins/cartesia", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../plugins/gemini", editable=true}
 
 "vision-agents" = {path = "../../agents-core", editable=true}
