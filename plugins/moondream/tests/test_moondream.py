@@ -37,15 +37,14 @@ def sample_frame(sample_image):
 
 def test_processor_initialization():
     """Test that processor can be initialized with basic config."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     assert processor is not None
-    assert processor.mode == "cloud"
     processor.close()
 
 
 def test_processor_state():
     """Test that processor returns empty state initially."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     state = processor.state()
     assert isinstance(state, dict)
     processor.close()
@@ -67,7 +66,7 @@ async def test_video_track_frame_queuing(sample_frame):
 
 def test_processor_publishes_track():
     """Test that processor publishes a MoondreamVideoTrack."""
-    processor = MoondreamProcessor(mode="local")  # local mode doesn't require API key
+    processor = MoondreamProcessor(api_key="test_key")
     track = processor.publish_video_track()
     assert isinstance(track, MoondreamVideoTrack)
     processor.close()
@@ -95,7 +94,7 @@ async def test_video_track_multiple_frames(sample_image):
 @pytest.mark.asyncio
 async def test_cloud_inference_structure(sample_image):
     """Test that cloud inference returns proper structure."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     
     # Mock the SDK detection call
     def mock_detection_sync(image):
@@ -104,7 +103,7 @@ async def test_cloud_inference_structure(sample_image):
     processor._run_detection_sync = mock_detection_sync
     
     frame_array = np.array(sample_image)
-    result = await processor._cloud_inference(frame_array)
+    result = await processor._run_inference(frame_array)
     
     assert isinstance(result, dict)
     assert "detections" in result
@@ -112,58 +111,27 @@ async def test_cloud_inference_structure(sample_image):
 
 
 @pytest.mark.asyncio
-async def test_local_inference_structure(sample_image):
-    """Test that local inference returns proper structure."""
-    processor = MoondreamProcessor(mode="local")
-    
-    frame_array = np.array(sample_image)
-    result = await processor._local_inference(frame_array)
-    
-    assert isinstance(result, dict)
-    processor.close()
-
-
-@pytest.mark.asyncio
-async def test_fal_inference_structure(sample_image):
-    """Test that FAL inference raises NotImplementedError."""
-    # FAL mode is not yet supported and should be caught during initialization
-    with pytest.raises(NotImplementedError):
-        processor = MoondreamProcessor(mode="fal")
-
-
-@pytest.mark.asyncio
-async def test_run_inference_routing(sample_image):
-    """Test that run_inference routes to correct backend."""
+async def test_run_inference(sample_image):
+    """Test that run_inference works correctly."""
     frame_array = np.array(sample_image)
     
-    # Mock SDK detection for all tests
+    # Mock SDK detection
     def mock_detection_sync(image):
         return []
     
-    # Test cloud mode
-    processor_cloud = MoondreamProcessor(mode="cloud", api_key="test_key")
-    processor_cloud._run_detection_sync = mock_detection_sync
-    result = await processor_cloud.run_inference(frame_array)
+    # Test inference
+    processor = MoondreamProcessor(api_key="test_key")
+    processor._run_detection_sync = mock_detection_sync
+    result = await processor._run_inference(frame_array)
     assert isinstance(result, dict)
-    processor_cloud.close()
-    
-    # Test local mode
-    processor_local = MoondreamProcessor(mode="local")
-    processor_local._run_detection_sync = mock_detection_sync
-    result = await processor_local.run_inference(frame_array)
-    assert isinstance(result, dict)
-    processor_local.close()
-    
-    # Test fal mode - should raise NotImplementedError during initialization
-    with pytest.raises(NotImplementedError):
-        processor_fal = MoondreamProcessor(mode="fal")
+    processor.close()
 
 
 # Phase 4 Tests: Frame Processing + Annotation
 
 def test_annotate_detections_with_normalized_coords(sample_image):
     """Test annotation with normalized coordinates."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -184,7 +152,7 @@ def test_annotate_detections_with_normalized_coords(sample_image):
 
 def test_annotate_detections_with_pixel_coords(sample_image):
     """Test annotation with pixel coordinates."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -205,7 +173,7 @@ def test_annotate_detections_with_pixel_coords(sample_image):
 
 def test_annotate_detections_multiple_objects(sample_image):
     """Test annotation with multiple detections."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -227,7 +195,7 @@ def test_annotate_detections_multiple_objects(sample_image):
 
 def test_annotate_detections_empty_results(sample_image):
     """Test annotation with no detections."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
     mock_results = {"detections": []}
@@ -242,7 +210,7 @@ def test_annotate_detections_empty_results(sample_image):
 @pytest.mark.asyncio
 async def test_process_and_add_frame(sample_frame):
     """Test the full frame processing pipeline."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     
     # Mock the run_inference method to return test data
     async def mock_inference(frame_array):
@@ -263,7 +231,7 @@ async def test_process_and_add_frame(sample_frame):
 
 def test_state_exposes_detection_results():
     """Test that state() provides detection data for LLM."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     
     # Simulate inference results
     processor._last_results = {
@@ -281,7 +249,7 @@ def test_state_exposes_detection_results():
 
 def test_state_empty_before_processing():
     """Test that state is empty before any processing."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     state = processor.state()
     assert state == {}
     processor.close()
@@ -289,7 +257,7 @@ def test_state_empty_before_processing():
 
 def test_summarize_detections():
     """Test detection summarization for LLM."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     
     detections = [
         {"label": "person", "confidence": 0.95},
@@ -305,7 +273,7 @@ def test_summarize_detections():
 
 def test_summarize_empty_detections():
     """Test detection summary with no detections."""
-    processor = MoondreamProcessor(mode="cloud", api_key="test_key")
+    processor = MoondreamProcessor(api_key="test_key")
     summary = processor._summarize_detections([])
     assert summary == "No objects detected"
     processor.close()
@@ -319,7 +287,6 @@ def test_summarize_empty_detections():
 async def test_live_detection_api():
     """Test live detection API with real Moondream service."""
     processor = MoondreamProcessor(
-        mode="cloud",
         api_key=os.getenv("MOONDREAM_API_KEY"),
         conf_threshold=0.5
     )
@@ -359,7 +326,6 @@ async def test_live_detection_api():
 async def test_live_detection_with_annotation():
     """Test that detection results are properly annotated on frames."""
     processor = MoondreamProcessor(
-        mode="cloud",
         api_key=os.getenv("MOONDREAM_API_KEY")
     )
     
@@ -389,14 +355,14 @@ def test_missing_api_key(monkeypatch):
     monkeypatch.delenv("MOONDREAM_API_KEY", raising=False)
     
     with pytest.raises(ValueError, match="api_key is required"):
-        MoondreamProcessor(mode="cloud", api_key=None)
+        MoondreamProcessor(api_key=None)
 
 
 def test_api_key_from_env(monkeypatch):
     """Test that API key is loaded from environment variable."""
     monkeypatch.setenv("MOONDREAM_API_KEY", "test_env_key")
     
-    processor = MoondreamProcessor(mode="cloud")
+    processor = MoondreamProcessor()
     assert processor.api_key == "test_env_key"
     processor.close()
 
@@ -405,7 +371,7 @@ def test_api_key_explicit_override(monkeypatch):
     """Test that explicit API key overrides environment variable."""
     monkeypatch.setenv("MOONDREAM_API_KEY", "env_key")
     
-    processor = MoondreamProcessor(mode="cloud", api_key="explicit_key")
+    processor = MoondreamProcessor(api_key="explicit_key")
     assert processor.api_key == "explicit_key"
     processor.close()
 
@@ -414,7 +380,7 @@ def test_api_key_explicit_override(monkeypatch):
 
 def test_detect_objects_default():
     """Test default detect_objects is 'person'."""
-    processor = MoondreamProcessor(mode="local")
+    processor = MoondreamProcessor(api_key="test_key")
     assert processor.detect_objects == ["person"]
     processor.close()
 
@@ -422,7 +388,7 @@ def test_detect_objects_default():
 def test_detect_objects_single_string():
     """Test detect_objects with single string."""
     processor = MoondreamProcessor(
-        mode="local",
+        api_key="test_key",
         detect_objects="car"
     )
     assert processor.detect_objects == ["car"]
@@ -432,7 +398,7 @@ def test_detect_objects_single_string():
 def test_detect_objects_list():
     """Test detect_objects with list."""
     processor = MoondreamProcessor(
-        mode="local",
+        api_key="test_key",
         detect_objects=["person", "car", "dog"]
     )
     assert processor.detect_objects == ["person", "car", "dog"]
@@ -443,7 +409,7 @@ def test_detect_objects_invalid_type():
     """Test detect_objects with invalid type raises error."""
     with pytest.raises(ValueError, match="detect_objects must be str or list"):
         MoondreamProcessor(
-            mode="local",
+            api_key="test_key",
             detect_objects=123  # Invalid: not a string or list
         )
 
@@ -452,7 +418,7 @@ def test_detect_objects_invalid_list_contents():
     """Test detect_objects with non-string list items raises error."""
     with pytest.raises(ValueError, match="detect_objects must be str or list"):
         MoondreamProcessor(
-            mode="local",
+            api_key="test_key",
             detect_objects=["person", 123, "car"]  # Invalid: contains non-string
         )
 
@@ -463,7 +429,6 @@ def test_detect_objects_invalid_list_contents():
 async def test_custom_object_detection():
     """Test detection with custom object type (not 'person')."""
     processor = MoondreamProcessor(
-        mode="cloud",
         api_key=os.getenv("MOONDREAM_API_KEY"),
         detect_objects="car"  # Detect cars instead of persons
     )
@@ -501,7 +466,6 @@ async def test_custom_object_detection():
 async def test_multiple_object_detection():
     """Test detection with multiple object types."""
     processor = MoondreamProcessor(
-        mode="cloud",
         api_key=os.getenv("MOONDREAM_API_KEY"),
         detect_objects=["person", "grass", "sky"]  # Multiple types
     )
