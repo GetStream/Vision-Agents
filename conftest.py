@@ -12,7 +12,6 @@ import av
 import numpy as np
 import pytest
 from dotenv import load_dotenv
-from torchvision.io.video import av
 
 from vision_agents.core.edge.types import PcmData
 from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
