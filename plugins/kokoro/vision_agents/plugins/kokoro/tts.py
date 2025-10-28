@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import AsyncIterator, Iterator, List, Optional
 
 import numpy as np
-from typing import AsyncIterator, List, Optional
 
 from vision_agents.core import tts
-from getstream.video.rtc.audio_track import AudioStreamTrack
+from vision_agents.core.edge.types import PcmData
 
 try:
     from kokoro import KPipeline  # type: ignore
@@ -44,22 +44,9 @@ class TTS(tts.TTS):
         self.sample_rate = sample_rate
         self.client = client if client is not None else self._pipeline
 
-    def get_required_framerate(self) -> int:
-        """Get the required framerate for Kokoro TTS."""
-        return self.sample_rate
-
-    def get_required_stereo(self) -> bool:
-        """Get whether Kokoro TTS requires stereo audio."""
-        return False  # Kokoro returns mono audio
-
-    def set_output_track(self, track: AudioStreamTrack) -> None:  # noqa: D401
-        if track.framerate != self.sample_rate:
-            raise TypeError(
-                f"Invalid framerate {track.framerate}, Kokoro requires {self.sample_rate} Hz"
-            )
-        super().set_output_track(track)
-
-    async def stream_audio(self, text: str, *_, **__) -> AsyncIterator[bytes]:  # noqa: D401
+    async def stream_audio(
+        self, text: str, *_, **__
+    ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:  # noqa: D401
         loop = asyncio.get_event_loop()
         chunks: List[bytes] = await loop.run_in_executor(
             None, lambda: list(self._generate_chunks(text))
@@ -67,7 +54,9 @@ class TTS(tts.TTS):
 
         async def _aiter():
             for chunk in chunks:
-                yield chunk
+                yield PcmData.from_bytes(
+                    chunk, sample_rate=self.sample_rate, channels=1, format="s16"
+                )
 
         return _aiter()
 
@@ -76,11 +65,7 @@ class TTS(tts.TTS):
         Clears the queue and stops playing audio.
 
         """
-        try:
-            await self.track.flush()
-            return
-        except Exception as e:
-            logging.error(f"Error flushing audio track: {e}")
+        logging.info("🎤 Kokoro TTS stop requested (no-op)")
 
     def _generate_chunks(self, text: str):
         for _gs, _ps, audio in self._pipeline(

@@ -1,6 +1,16 @@
 
 # Plugin Development Guide
 
+## 1. Copy the example plugin folder
+
+A sample plugin is located in `plugins/sample_plugin`. Start by copying the sample plugin and renaming it
+
+## 2. Update your new plugin
+
+After you copy the example be sure to:
+
+- Open `pyproject.toml` and update the name, description etc
+
 ## Folder Structure
 
 Every plugin should follow this structure, an example for the plugin named elevenlabs:
@@ -10,6 +20,8 @@ Every plugin should follow this structure, an example for the plugin named eleve
 - pyproject.toml
 - README.md
 - py.typed
+- tests
+- example
 - vision_agents/plugins/
   - elevenlabs/
     - __init__.py
@@ -31,23 +43,13 @@ tts = elevenlabs.TTS()
 llm = anthropic.LLM()
 ```
 
-## Example Plugin
-
-An example plugin is located in `plugins/example`. Copying the example is the best way to create a new plugin. After copying the example be sure to:
-
-- Update the folder name "example" to your plugin's name
-- Open `pyproject.toml` and update the name, description etc
-- Update the event types in your `events.py` file
-- Register your events in the plugin's `__init__` method
-
 ## Guidelines
 
 When building the plugin read these guides:
 
 - **TTS**: [ai-tts.md](ai-tts.md)
 - **STT**: [ai-stt.md](ai-stt.md)  
-- **STS/realtime/LLM**: [ai-llm.md](ai-llm.md)
-- **Video processor**: [ai-video-processor.md](ai-video-processor.md)
+- **STS/realtime/LLM**: [ai-llm.md](ai-llm.md) or [ai-realtime-llm.md](ai-realtime-llm.md)
 
 ## Update pyproject.toml
 

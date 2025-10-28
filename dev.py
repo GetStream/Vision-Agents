@@ -95,7 +95,6 @@ def mypy_plugins():
         "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
     )
 
-
 @cli.command()
 def check():
     """Run full check: ruff, mypy, and unit tests."""
@@ -103,7 +102,7 @@ def check():
 
     # Run ruff
     click.echo("\n=== 1. Ruff Linting ===")
-    run("uv run ruff check .")
+    run("uv run ruff check . --fix")
 
     # Run mypy on main package
     click.echo("\n=== 2. MyPy Type Checking ===")

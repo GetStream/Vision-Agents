@@ -1,0 +1,165 @@
+---
+# Core Framework Components
+agents-core:
+  - agents-core/**
+  - '!agents-core/**/tests/**'
+  - '!agents-core/**/__pycache__/**'
+
+# Plugin System
+plugins:
+  - plugins/**
+  - '!plugins/**/tests/**'
+  - '!plugins/**/__pycache__/**'
+
+# Specific Plugin Labels
+plugin-getstream:
+  - plugins/getstream/**
+  - '!plugins/getstream/**/tests/**'
+
+plugin-openai:
+  - plugins/openai/**
+  - '!plugins/openai/**/tests/**'
+
+plugin-gemini:
+  - plugins/gemini/**
+  - '!plugins/gemini/**/tests/**'
+
+plugin-deepgram:
+  - plugins/deepgram/**
+  - '!plugins/deepgram/**/tests/**'
+
+plugin-ultralytics:
+  - plugins/ultralytics/**
+  - '!plugins/ultralytics/**/tests/**'
+
+plugin-elevenlabs:
+  - plugins/elevenlabs/**
+  - '!plugins/elevenlabs/**/tests/**'
+
+plugin-cartesia:
+  - plugins/cartesia/**
+  - '!plugins/cartesia/**/tests/**'
+
+plugin-kokoro:
+  - plugins/kokoro/**
+  - '!plugins/kokoro/**/tests/**'
+
+plugin-moonshine:
+  - plugins/moonshine/**
+  - '!plugins/moonshine/**/tests/**'
+
+plugin-silero:
+  - plugins/silero/**
+  - '!plugins/silero/**/tests/**'
+
+plugin-smart-turn:
+  - plugins/smart_turn/**
+  - '!plugins/smart_turn/**/tests/**'
+
+plugin-wizper:
+  - plugins/wizper/**
+  - '!plugins/wizper/**/tests/**'
+
+plugin-xai:
+  - plugins/xai/**
+  - '!plugins/xai/**/tests/**'
+
+plugin-krisp:
+  - plugins/krisp/**
+  - '!plugins/krisp/**/tests/**'
+
+plugin-anthropic:
+  - plugins/anthropic/**
+  - '!plugins/anthropic/**/tests/**'
+
+# Examples and Demos
+examples:
+  - examples/**
+  - '!examples/**/tests/**'
+  - '!examples/**/__pycache__/**'
+
+# Testing
+tests:
+  - tests/**
+  - '**/tests/**'
+  - '**/test_*.py'
+  - '**/*_test.py'
+
+# Documentation
+docs:
+  - docs/**
+  - '*.md'
+  - '!README.md'
+
+# Configuration and Build
+config:
+  - '*.toml'
+  - '*.yml'
+  - '*.yaml'
+  - '*.json'
+  - '*.ini'
+  - '*.cfg'
+  - 'pyproject.toml'
+  - 'pytest.ini'
+  - 'conftest.py'
+
+# CI/CD and GitHub
+ci:
+  - '.github/**'
+  - '*.yml'
+  - '*.yaml'
+
+# Core Agent System
+core-agents:
+  - agents-core/vision_agents/core/agents/**
+  - agents-core/vision_agents/core/events/**
+  - agents-core/vision_agents/core/edge/**
+
+# Core Infrastructure
+core-infrastructure:
+  - agents-core/vision_agents/core/llm/**
+  - agents-core/vision_agents/core/stt/**
+  - agents-core/vision_agents/core/tts/**
+  - agents-core/vision_agents/core/vad/**
+  - agents-core/vision_agents/core/turn_detection/**
+  - agents-core/vision_agents/core/processors/**
+  - agents-core/vision_agents/core/mcp/**
+  - agents-core/vision_agents/core/observability/**
+  - agents-core/vision_agents/core/utils/**
+
+# CLI and Development Tools
+cli:
+  - agents-core/vision_agents/core/cli.py
+  - dev.py
+  - DEVELOPMENT.md
+
+# Dependencies
+dependencies:
+  - 'uv.lock'
+  - 'requirements*.txt'
+  - 'poetry.lock'
+  - 'Pipfile.lock'
+
+# Assets and Resources
+assets:
+  - assets/**
+  - '*.png'
+  - '*.jpg'
+  - '*.jpeg'
+  - '*.gif'
+  - '*.mp4'
+  - '*.wav'
+  - '*.mp3'
+
+# License and Legal
+legal:
+  - LICENSE
+  - LICENSE.*
+  - '*.license'
+
+# README and Project Info
+project-info:
+  - README.md
+  - CHANGELOG.md
+  - CONTRIBUTING.md
+  - SECURITY.md

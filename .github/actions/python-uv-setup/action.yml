@@ -17,12 +17,20 @@ runs:
   using: composite
   steps:
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@v6
+      uses: astral-sh/setup-uv@v7
       with:
         python-version: "3.13"
         version: "latest"
         enable-cache: true
-        cache-dependency-glob: "uv.lock"
+        cache-dependency-glob: |
+          **/pyproject.toml
+          **/uv.lock
+    - name: Log cache status
+      shell: bash
+      env:
+        UV_CACHE_HIT: "${{ steps.setup_uv.outputs['cache-hit'] }}"
+      run: |
+        echo "setup-uv cache hit: ${UV_CACHE_HIT}"
 
     - name: Install the project
       shell: bash

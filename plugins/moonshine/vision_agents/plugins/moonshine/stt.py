@@ -1,21 +1,23 @@
-import os
 import logging
+import os
 import time
-from typing import Dict, Any, Optional, Tuple, List, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Tuple
+
+import numpy as np
+import soundfile as sf
+from getstream.audio.pcm_utils import (
+    log_audio_processing_info,
+    pcm_to_numpy_array,
+    validate_sample_rate_compatibility,
+)
+from getstream.audio.utils import resample_audio
+from getstream.video.rtc.track_util import PcmData
+
+from vision_agents.core import stt
+from vision_agents.core.stt import TranscriptResponse
 
 if TYPE_CHECKING:
     from vision_agents.core.edge.types import Participant
-import numpy as np
-import soundfile as sf
-
-from vision_agents.core import stt
-from getstream.video.rtc.track_util import PcmData
-from getstream.audio.utils import resample_audio
-from getstream.audio.pcm_utils import (
-    pcm_to_numpy_array,
-    validate_sample_rate_compatibility,
-    log_audio_processing_info,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,6 @@ class STT(stt.STT):
     def __init__(
         self,
         model_name: str = "moonshine/base",
-        sample_rate: int = 16000,
         min_audio_length_ms: int = 100,
         target_dbfs: float = -26.0,
     ):
@@ -68,11 +69,13 @@ class STT(stt.STT):
 
         Args:
             model_name: Moonshine model to use ("moonshine/tiny" or "moonshine/base")
-            sample_rate: Sample rate of the audio in Hz (default: 16000, Moonshine's native rate)
             min_audio_length_ms: Minimum audio length required for transcription
             target_dbfs: Target RMS level in dBFS for audio normalization (default: -26.0, Moonshine's optimal level)
         """
-        super().__init__(sample_rate=sample_rate)
+        super().__init__(provider_name="moonshine")
+        
+        # Moonshine's native sample rate
+        self.sample_rate = 16000
 
         # Check if moonshine_onnx is available
         if not MOONSHINE_AVAILABLE:
@@ -91,17 +94,12 @@ class STT(stt.STT):
         self.min_audio_length_ms = min_audio_length_ms
         self.target_dbfs = target_dbfs
 
-        # Track current user context
-        self._current_user: Optional[Dict[str, Any]] = None
-        # Local explicit state flags for mypy visibility
-        self._is_closed: bool = False
-
         logger.info(
             "Initialized Moonshine STT",
             extra={
                 "model_name": model_name,
                 "canonical_model": self.model_name,
-                "sample_rate": sample_rate,
+                "sample_rate": self.sample_rate,
                 "min_audio_length_ms": min_audio_length_ms,
                 "target_dbfs": target_dbfs,
             },
@@ -262,30 +260,21 @@ class STT(stt.STT):
             logger.error("Error during transcription", exc_info=e)
             return None
 
-    async def _process_audio_impl(
-        self, pcm_data: PcmData, user_metadata: Optional[Union[Dict[str, Any], "Participant"]] = None
-    ) -> Optional[List[Tuple[bool, str, Dict[str, Any]]]]:
+    async def process_audio(
+        self,
+        pcm_data: PcmData,
+        participant: Optional["Participant"] = None,
+    ):
         """
         Process audio data through Moonshine for transcription.
 
-        Moonshine operates in synchronous mode - it processes audio immediately and
-        returns results to the base class for event emission.
-
         Args:
-            pcm_data: The PCM audio data to process.
-            user_metadata: Additional metadata about the user or session.
-
-        Returns:
-            List of tuples (is_final, text, metadata) representing transcription results,
-            or None if no results are available. Moonshine returns final results only
-            since it doesn't support streaming transcription.
+            pcm_data: The PCM audio data to process
+            participant: Optional participant metadata
         """
-        if self._is_closed:
+        if self.closed:
             logger.warning("Moonshine STT is closed, ignoring audio")
-            return None
-
-        # Store the current user context
-        self._current_user = user_metadata  # type: ignore[assignment]
+            return
 
         try:
             # Log incoming audio details for debugging using shared utility
@@ -318,44 +307,25 @@ class STT(stt.STT):
                     text = result
                     processing_time_ms = 0.0  # Default for mocked tests
 
-                # Create metadata
-                metadata = {
-                    "model_name": self.model_name,
-                    "audio_duration_ms": (len(audio_array) / self.sample_rate) * 1000,
-                    "processing_time_ms": processing_time_ms,
-                    # Moonshine doesn't provide confidence scores, so we don't set it
-                    "original_sample_rate": pcm_data.sample_rate,
-                    "target_sample_rate": self.sample_rate,
-                    "resampled": pcm_data.sample_rate != self.sample_rate,
-                }
+                # Create response metadata
+                response_metadata = TranscriptResponse(
+                    model_name=self.model_name,
+                    audio_duration_ms=(len(audio_array) / self.sample_rate) * 1000,
+                    processing_time_ms=processing_time_ms,
+                )
 
-                # Return as final transcript (Moonshine doesn't support streaming)
-                return [(True, text, metadata)]
-
-            return None
+                # Emit transcript event
+                self._emit_transcript_event(text, participant, response_metadata)
 
         except Exception as e:
             # Use the base class helper for consistent error handling
             self._emit_error_event(e, "Moonshine audio processing")
-            return None
-
-    async def flush(self):
-        """
-        Flush any remaining audio in the buffer and process it.
-
-        Note: This is a no-op since we no longer buffer audio.
-        """
-        # No buffering, so nothing to flush
-        pass
 
     async def close(self):
         """Close the Moonshine STT service and clean up resources."""
-        if self._is_closed:
+        if self.closed:
             logger.debug("Moonshine STT service already closed")
             return
 
         logger.info("Closing Moonshine STT service")
-        self._is_closed = True
-
-        # No buffers to clear since we don't buffer anymore
-        logger.debug("Moonshine STT service closed successfully")
+        await super().close()

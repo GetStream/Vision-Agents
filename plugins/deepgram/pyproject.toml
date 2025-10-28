@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "deepgram-sdk==4.8.1",
+    "deepgram-sdk>=5.0.0,<5.1",
     "numpy>=2.2.6,<2.3",
 ]
 
@@ -39,6 +39,6 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "soundfile>=0.13.1",
-    "torchaudio>=2.7.1",
+    "torchvision>=0.20.0",
     "scipy>=1.15.3,<1.16",
 ]

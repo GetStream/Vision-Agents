@@ -24,6 +24,9 @@ jobs:
         run: uv run mypy --install-types --non-interactive agents-core/vision_agents
       - name: Mypy plugins
         run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
+      - name: Show environment name
+        run: |
+          echo "Environment: ${{ job.environment }}"
 
   test:
     name: Test "${{ inputs.marker }}"
@@ -40,11 +43,24 @@ jobs:
       STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
       STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      AWS_BEARER_TOKEN_BEDROCK: "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
+      _BEARER_TOKEN_BEDROCK: "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5
       - uses: ./.github/actions/python-uv-setup
+      - name: Export AWS_BEARER_TOKEN_BEDROCK (heredoc)
+        shell: bash
+        run: |
+          {
+            echo 'AWS_BEARER_TOKEN_BEDROCK<<EOF'
+            echo "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
+            echo 'EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Verify presence
+        run: uv run python -c "import os; v=os.getenv('AWS_BEARER_TOKEN_BEDROCK'); print('exists', v is not None, 'len', 0 if v is None else len(v))"
       - name: Run test
         run: uv run pytest -n auto -m "${{ inputs.marker }}"
       - name: Run plugin test

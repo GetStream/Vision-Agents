@@ -15,8 +15,8 @@ from .metrics import (
     tts_first_byte_ms,
     tts_bytes_streamed,
     tts_errors,
+    tts_events_emitted,
     inflight_ops,
-    CALL_ATTRS,
 )
 
 __all__ = [
@@ -30,6 +30,6 @@ __all__ = [
     "tts_first_byte_ms",
     "tts_bytes_streamed",
     "tts_errors",
+    "tts_events_emitted",
     "inflight_ops",
-    "CALL_ATTRS",
 ]

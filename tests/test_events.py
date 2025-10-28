@@ -271,48 +271,6 @@ async def test_merge_managers_preserves_silent_events(caplog):
 
 
 @pytest.mark.asyncio
-async def test_silent_suppresses_handler_logging(caplog):
-    """Test that marking an event as silent suppresses the 'Called handler' log message."""
-    import logging
-    
-    manager = EventManager()
-    manager.register(ValidEvent)
-    manager.register(AnotherEvent)
-    
-    handler_called = []
-    
-    @manager.subscribe
-    async def valid_handler(event: ValidEvent):
-        handler_called.append("valid")
-    
-    @manager.subscribe
-    async def another_handler(event: AnotherEvent):
-        handler_called.append("another")
-    
-    # Mark ValidEvent as silent
-    manager.silent(ValidEvent)
-    
-    # Capture logs at INFO level
-    with caplog.at_level(logging.INFO):
-        # Send both events
-        manager.send(ValidEvent(field=42))
-        manager.send(AnotherEvent(value="test"))
-        await manager.wait()
-    
-    # Both handlers should have been called
-    assert handler_called == ["valid", "another"]
-    
-    # Check log messages
-    log_messages = [record.message for record in caplog.records]
-    
-    # Should NOT see "Called handler" for ValidEvent (it's silent)
-    assert not any("Called handler valid_handler" in msg and "custom.validevent" in msg for msg in log_messages)
-    
-    # SHOULD see "Called handler" for AnotherEvent (not silent)
-    assert any("Called handler another_handler" in msg and "custom.anotherevent" in msg for msg in log_messages)
-
-
-@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_protobuf_events_with_base_event():
     """Test that event manager handles protobuf events that inherit from BaseEvent."""

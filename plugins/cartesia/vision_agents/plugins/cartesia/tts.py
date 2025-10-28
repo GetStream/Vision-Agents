@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional, cast
+from typing import Optional, cast, AsyncIterator, Iterator
 
 from cartesia import AsyncCartesia
 from cartesia.tts import (
@@ -12,7 +12,7 @@ from cartesia.tts import (
 )
 
 from vision_agents.core import tts
-from getstream.video.rtc.audio_track import AudioStreamTrack
+from vision_agents.core.edge.types import PcmData
 
 
 class TTS(tts.TTS):
@@ -51,23 +51,10 @@ class TTS(tts.TTS):
         )
         self.sample_rate = sample_rate
 
-    def get_required_framerate(self) -> int:
-        """Get the required framerate for Cartesia TTS."""
-        return self.sample_rate
-
-    def get_required_stereo(self) -> bool:
-        """Get whether Cartesia TTS requires stereo audio."""
-        return False  # Cartesia returns mono audio
-
-    def set_output_track(self, track: AudioStreamTrack) -> None:  # noqa: D401
-        if track.framerate != self.sample_rate:
-            raise TypeError(
-                f"Track framerate {track.framerate} ≠ expected {self.sample_rate}"
-            )
-        super().set_output_track(track)
-
-    async def stream_audio(self, text: str, *_, **__) -> bytes:  # noqa: D401
-        """Generate speech and yield raw PCM chunks."""
+    async def stream_audio(
+        self, text: str, *_, **__
+    ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:  # noqa: D401
+        """Generate speech and return a stream of PcmData."""
 
         output_format: OutputFormat_RawParams = {
             "container": "raw",
@@ -90,11 +77,9 @@ class TTS(tts.TTS):
             voice=voice_param,
         )
 
-        async def _audio_chunk_stream():  # noqa: D401
-            async for chunk in response:
-                yield bytes(chunk)
-
-        return _audio_chunk_stream()
+        return PcmData.from_response(
+            response, sample_rate=self.sample_rate, channels=1, format="s16"
+        )
 
     async def stop_audio(self) -> None:
         """
@@ -104,9 +89,4 @@ class TTS(tts.TTS):
         Returns:
             None
         """
-        try:
-            (await self.track.flush(),)
-            logging.info("🎤 Stopping audio track for TTS")
-            return
-        except Exception as e:
-            logging.error(f"Error flushing audio track: {e}")
+        logging.info("🎤 Cartesia TTS stop requested (no-op)")

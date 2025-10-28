@@ -9,6 +9,7 @@ from dataclasses_json import DataClassJsonMixin
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
+
 class ConnectionState(Enum):
     """Connection states for streaming plugins."""
 
@@ -32,11 +33,17 @@ class AudioFormat(Enum):
 @dataclass
 class BaseEvent(DataClassJsonMixin):
     """Base class for all events."""
+
     type: str
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     session_id: Optional[str] = None
     user_metadata: Optional[Participant] = None
+
+    def user_id(self) -> Optional[str]:
+        if self.user_metadata is None:
+            return None
+        return getattr(self.user_metadata, "user_id")
 
 
 @dataclass
@@ -83,11 +90,12 @@ class PluginErrorEvent(PluginBaseEvent):
     def error_message(self) -> str:
         return str(self.error) if self.error else "Unknown error"
 
+
 @dataclasses.dataclass
 class ExceptionEvent:
     exc: Exception
     handler: FunctionType
-    type: str = 'base.exception'
+    type: str = "base.exception"
 
 
 @dataclasses.dataclass
@@ -95,24 +103,24 @@ class HealthCheckEvent(DataClassJsonMixin):
     connection_id: str
     created_at: int
     custom: dict
-    type: str = 'health.check'
+    type: str = "health.check"
 
 
 @dataclass
 class ConnectionOkEvent(BaseEvent):
     """Event emitted when WebSocket connection is established."""
-    
+
     type: str = field(default="connection.ok", init=False)
     connection_id: Optional[str] = None
     server_time: Optional[str] = None
     api_key: Optional[str] = None
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None  # type: ignore[assignment]
 
 
 @dataclass
 class ConnectionErrorEvent(BaseEvent):
     """Event emitted when WebSocket connection encounters an error."""
-    
+
     type: str = field(default="connection.error", init=False)
     error_code: Optional[str] = None
     error_message: Optional[str] = None
@@ -122,7 +130,7 @@ class ConnectionErrorEvent(BaseEvent):
 @dataclass
 class ConnectionClosedEvent(BaseEvent):
     """Event emitted when WebSocket connection is closed."""
-    
+
     type: str = field(default="connection.closed", init=False)
     code: Optional[int] = None
     reason: Optional[str] = None

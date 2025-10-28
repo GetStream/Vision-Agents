@@ -5,14 +5,17 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 vision-agents = { workspace = true }
 vision-agents-plugins-anthropic = { workspace = true }
+vision-agents-plugins-aws = { workspace = true }
 vision-agents-plugins-cartesia = { workspace = true }
 vision-agents-plugins-deepgram = { workspace = true }
 vision-agents-plugins-elevenlabs = { workspace = true }
 vision-agents-plugins-fal = { workspace = true }
+vision-agents-plugins-fish = { workspace = true }
 vision-agents-plugins-gemini = { workspace = true }
 vision-agents-plugins-kokoro = { workspace = true }
 vision-agents-plugins-moonshine = { workspace = true }
 vision-agents-plugins-openai = { workspace = true }
+vision-agents-plugins-openrouter = { workspace = true }
 vision-agents-plugins-silero = { workspace = true }
 vision-agents-plugins-xai = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
@@ -26,13 +29,16 @@ vision-agents-plugins-moondream = { workspace = true }
 members = [
     "agents-core",
     "plugins/anthropic",
+    "plugins/aws",
     "plugins/cartesia",
     "plugins/deepgram",
     "plugins/elevenlabs",
+    "plugins/fish",
     "plugins/gemini",
     "plugins/kokoro",
     "plugins/moonshine",
     "plugins/openai",
+    "plugins/openrouter",
     "plugins/silero",
     "plugins/xai",
     "plugins/getstream",

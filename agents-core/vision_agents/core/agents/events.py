@@ -6,9 +6,10 @@ from typing import Optional, Any, Dict
 @dataclass
 class AgentSayEvent(PluginBaseEvent):
     """Event emitted when the agent wants to say something."""
-    type: str = field(default='agent.say', init=False)
+
+    type: str = field(default="agent.say", init=False)
     text: str = ""
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None  # type: ignore[assignment]
     metadata: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
@@ -19,18 +20,20 @@ class AgentSayEvent(PluginBaseEvent):
 @dataclass
 class AgentSayStartedEvent(PluginBaseEvent):
     """Event emitted when agent speech synthesis starts."""
-    type: str = field(default='agent.say_started', init=False)
+
+    type: str = field(default="agent.say_started", init=False)
     text: str = ""
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None  # type: ignore[assignment]
     synthesis_id: Optional[str] = None
 
 
 @dataclass
 class AgentSayCompletedEvent(PluginBaseEvent):
     """Event emitted when agent speech synthesis completes."""
-    type: str = field(default='agent.say_completed', init=False)
+
+    type: str = field(default="agent.say_completed", init=False)
     text: str = ""
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None  # type: ignore[assignment]
     synthesis_id: Optional[str] = None
     duration_ms: Optional[float] = None
 
@@ -38,9 +41,10 @@ class AgentSayCompletedEvent(PluginBaseEvent):
 @dataclass
 class AgentSayErrorEvent(PluginBaseEvent):
     """Event emitted when agent speech synthesis encounters an error."""
-    type: str = field(default='agent.say_error', init=False)
+
+    type: str = field(default="agent.say_error", init=False)
     text: str = ""
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None  # type: ignore[assignment]
     error: Optional[Exception] = None
 
     @property

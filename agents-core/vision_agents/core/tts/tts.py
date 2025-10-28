@@ -1,11 +1,10 @@
 import abc
+import av
 import logging
-import inspect
 import time
 import uuid
-from typing import Optional, Dict, Any, Union, Iterator, AsyncIterator
+from typing import Optional, Dict, Union, Iterator, AsyncIterator, AsyncGenerator, Any
 
-from getstream.video.rtc.audio_track import AudioStreamTrack
 from vision_agents.core.events.manager import EventManager
 
 from . import events
@@ -15,7 +14,17 @@ from .events import (
     TTSSynthesisCompleteEvent,
     TTSErrorEvent,
 )
-from vision_agents.core.events import PluginInitializedEvent, PluginClosedEvent
+from vision_agents.core.events import (
+    PluginClosedEvent,
+    AudioFormat,
+)
+from ..observability import (
+    tts_latency_ms,
+    tts_bytes_streamed,
+    tts_errors,
+    tts_events_emitted,
+)
+from ..edge.types import PcmData
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +36,7 @@ class TTS(abc.ABC):
     This abstract class provides the interface for text-to-speech implementations.
     It handles:
     - Converting text to speech
-    - Sending audio data to an output track
+    - Resampling and rechanneling audio to a desired format
     - Emitting audio events
 
     Events:
@@ -47,60 +56,162 @@ class TTS(abc.ABC):
             provider_name: Name of the TTS provider (e.g., "cartesia", "elevenlabs")
         """
         super().__init__()
-        self._track: Optional[AudioStreamTrack] = None
         self.session_id = str(uuid.uuid4())
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
-        self.events.send(PluginInitializedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            plugin_type="TTS",
-            provider=self.provider_name,
-        ))
 
-    def set_output_track(self, track: AudioStreamTrack) -> None:
-        """
-        Set the audio track to output speech to.
+        # Desired output audio format (what downstream audio track expects)
+        self._desired_sample_rate: int = 16000
+        self._desired_channels: int = 1
+        self._desired_format: AudioFormat = AudioFormat.PCM_S16
+
+        # Persistent resampler to avoid discontinuities between chunks
+        self._resampler: Optional[av.AudioResampler] = None
+        self._resampler_input_rate: Optional[int] = None
+        self._resampler_input_channels: Optional[int] = None
+
+    def set_output_format(
+        self,
+        sample_rate: int,
+        channels: int = 1,
+        audio_format: AudioFormat = AudioFormat.PCM_S16,
+    ) -> None:
+        """Set the desired output audio format for emitted events.
+
+        The agent should call this with its output track properties so this
+        TTS instance can resample and rechannel audio appropriately.
 
         Args:
-            track: The audio track object that will receive speech audio
+            sample_rate: Desired sample rate in Hz (e.g., 48000)
+            channels: Desired channel count (1 for mono, 2 for stereo)
+            audio_format: Desired audio format (defaults to PCM S16)
         """
-        self._track = track
+        self._desired_sample_rate = int(sample_rate)
+        self._desired_channels = int(channels)
+        self._desired_format = audio_format
 
-    @property
-    def track(self):
-        """Get the current output track."""
-        return self._track
+        self._resampler = None
+        self._resampler_input_rate = None
+        self._resampler_input_channels = None
 
-    def get_required_framerate(self) -> int:
-        """
-        Get the required framerate for the audio track.
-        
-        This method should be overridden by subclasses to return their specific
-        framerate requirement. Defaults to 16000 Hz.
-        
+    def _get_resampler(self, input_rate: int, input_channels: int):
+        """Get or create a persistent resampler for the given input format.
+
+        This avoids creating a new resampler for each chunk, which causes
+        discontinuities and clicking artifacts in the output audio.
+
+        Args:
+            input_rate: Input sample rate
+            input_channels: Input channel count
+
         Returns:
-            The required framerate in Hz
+            PyAV AudioResampler instance
         """
-        return 16000
 
-    def get_required_stereo(self) -> bool:
-        """
-        Get whether the audio track should be stereo or mono.
-        
-        This method should be overridden by subclasses to return their specific
-        stereo requirement. Defaults to False (mono).
-        
-        Returns:
-            True if stereo is required, False for mono
-        """
-        return False
+        if (
+            self._resampler is not None
+            and self._resampler_input_rate == input_rate
+            and self._resampler_input_channels == input_channels
+        ):
+            return self._resampler
+
+        in_layout = "mono" if input_channels == 1 else "stereo"
+        out_layout = "mono" if self._desired_channels == 1 else "stereo"
+
+        self._resampler = av.AudioResampler(
+            format="s16", layout=out_layout, rate=self._desired_sample_rate
+        )
+        self._resampler_input_rate = input_rate
+        self._resampler_input_channels = input_channels
+
+        logger.debug(
+            "Created persistent resampler: %s@%dHz -> %s@%dHz",
+            in_layout,
+            input_rate,
+            out_layout,
+            self._desired_sample_rate,
+        )
+
+        return self._resampler
+
+    async def _iter_pcm(self, resp: Any) -> AsyncGenerator[PcmData, None]:
+        """Yield PcmData chunks from a provider response of various shapes."""
+        # Single buffer or PcmData
+        if isinstance(resp, (PcmData,)):
+            yield resp
+            return
+        # Async iterable
+        if hasattr(resp, "__aiter__"):
+            async for item in resp:
+                if not isinstance(item, PcmData):
+                    raise TypeError(
+                        "stream_audio must yield PcmData; wrap provider bytes via PcmData.from_response in the plugin"
+                    )
+                yield item
+            return
+        # Sync iterable
+        if hasattr(resp, "__iter__") and not isinstance(
+            resp, (bytes, bytearray, memoryview, str)
+        ):
+            for item in resp:
+                if not isinstance(item, PcmData):
+                    raise TypeError(
+                        "stream_audio must yield PcmData; wrap provider bytes via PcmData.from_response in the plugin"
+                    )
+                yield item
+            return
+        raise TypeError(f"Unsupported return type from stream_audio: {type(resp)}")
+
+    def _emit_chunk(
+        self,
+        pcm: PcmData,
+        idx: int,
+        is_final: bool,
+        synthesis_id: str,
+        text: str,
+        user: Optional[Dict[str, Any]],
+    ) -> tuple[int, float]:
+        """Resample, serialize, emit TTSAudioEvent; return (bytes_len, duration_ms)."""
+        # Resample using persistent resampler to avoid discontinuities between chunks
+        resampler = self._get_resampler(pcm.sample_rate, pcm.channels)
+        pcm_out = pcm.resample(
+            self._desired_sample_rate, self._desired_channels, resampler=resampler
+        )
+
+        payload = pcm_out.to_bytes()
+        # Metrics: counters per chunk
+        attrs = {"tts_class": self.__class__.__name__}
+        tts_bytes_streamed.add(len(payload), attributes=attrs)
+        tts_events_emitted.add(1, attributes=attrs)
+        self.events.send(
+            TTSAudioEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                audio_data=payload,
+                synthesis_id=synthesis_id,
+                text_source=text,
+                user_metadata=user,
+                chunk_index=idx,
+                is_final_chunk=is_final,
+                audio_format=self._desired_format,
+                sample_rate=self._desired_sample_rate,
+                channels=self._desired_channels,
+            )
+        )
+        return len(payload), pcm_out.duration_ms
 
     @abc.abstractmethod
     async def stream_audio(
         self, text: str, *args, **kwargs
-    ) -> Union[bytes, Iterator[bytes], AsyncIterator[bytes]]:
+    ) -> Union[
+        bytes,
+        Iterator[bytes],
+        AsyncIterator[bytes],
+        PcmData,
+        Iterator[PcmData],
+        AsyncIterator[PcmData],
+    ]:
         """
         Convert text to speech audio data.
 
@@ -134,126 +245,67 @@ class TTS(abc.ABC):
         self, text: str, user: Optional[Dict[str, Any]] = None, *args, **kwargs
     ):
         """
-        Convert text to speech, send to the output track, and emit an audio event.
+        Convert text to speech and emit audio events with the desired format.
 
         Args:
             text: The text to convert to speech
             user: Optional user metadata to include with the audio event
             *args: Additional arguments
             **kwargs: Additional keyword arguments
-
-        Raises:
-            ValueError: If no output track has been set
         """
-        if self._track is None:
-            raise ValueError("No output track set. Call set_output_track() first.")
 
-        try:
-            # Log start of synthesis
-            start_time = time.time()
-            synthesis_id = str(uuid.uuid4())
+        start_time = time.time()
+        synthesis_id = str(uuid.uuid4())
 
-            logger.debug(
-                "Starting text-to-speech synthesis", extra={"text_length": len(text)}
-            )
+        # Reset resampler for each new synthesis to ensure clean state
+        self._resampler = None
+        self._resampler_input_rate = None
+        self._resampler_input_channels = None
 
-            self.events.send(TTSSynthesisStartEvent(
+        logger.debug(
+            "Starting text-to-speech synthesis", extra={"text_length": len(text)}
+        )
+
+        self.events.send(
+            TTSSynthesisStartEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 text=text,
                 synthesis_id=synthesis_id,
                 user_metadata=user,
-            ))
+            )
+        )
 
-            # Synthesize audio
-            audio_data = await self.stream_audio(text, *args, **kwargs)
+        try:
+            # Synthesize audio in provider-native format
+            response = await self.stream_audio(text, *args, **kwargs)
 
-            # Calculate synthesis time
+            # Calculate synthesis setup time
             synthesis_time = time.time() - start_time
 
-            # Track total audio duration and bytes
             total_audio_bytes = 0
-            audio_chunks = 0
+            total_audio_ms = 0.0
+            chunk_index = 0
 
-            if isinstance(audio_data, bytes):
-                total_audio_bytes = len(audio_data)
-                audio_chunks = 1
-                await self._track.write(audio_data)
-
-                audio_event = TTSAudioEvent(
-                    session_id=self.session_id,
-                    plugin_name=self.provider_name,
-                    audio_data=audio_data,
-                    synthesis_id=synthesis_id,
-                    text_source=text,
-                    user_metadata=user,
-                    sample_rate=self._track.framerate if self._track else 16000,
+            # Fast-path: single buffer -> mark final
+            if isinstance(response, (PcmData,)):
+                bytes_len, dur_ms = self._emit_chunk(
+                    response, 0, True, synthesis_id, text, user
                 )
-                self.events.send(audio_event)  # Structured event
-            elif inspect.isasyncgen(audio_data):
-                async for chunk in audio_data:
-                    if isinstance(chunk, bytes):
-                        total_audio_bytes += len(chunk)
-                        audio_chunks += 1
-                        await self._track.write(chunk)
-
-                        # Emit structured audio event
-                        self.events.send(TTSAudioEvent(
-                            session_id=self.session_id,
-                            plugin_name=self.provider_name,
-                            audio_data=chunk,
-                            synthesis_id=synthesis_id,
-                            text_source=text,
-                            user_metadata=user,
-                            chunk_index=audio_chunks - 1,
-                            is_final_chunk=False,  # We don't know if it's final yet
-                            sample_rate=self._track.framerate if self._track else 16000,
-                        ))
-                    else:  # assume it's a Cartesia TTS chunk object
-                        total_audio_bytes += len(chunk.data)
-                        audio_chunks += 1
-                        await self._track.write(chunk.data)
-
-                        self.events.send(TTSAudioEvent(
-                            session_id=self.session_id,
-                            plugin_name=self.provider_name,
-                            audio_data=chunk.data,
-                            synthesis_id=synthesis_id,
-                            text_source=text,
-                            user_metadata=user,
-                            chunk_index=audio_chunks - 1,
-                            is_final_chunk=False,  # We don't know if it's final yet
-                            sample_rate=self._track.framerate if self._track else 16000,
-                        ))
-            elif hasattr(audio_data, "__iter__") and not isinstance(
-                audio_data, (str, bytes, bytearray)
-            ):
-                for chunk in audio_data:
-                    total_audio_bytes += len(chunk)
-                    audio_chunks += 1
-                    await self._track.write(chunk)
-
-                    self.events.send(TTSAudioEvent(
-                        session_id=self.session_id,
-                        plugin_name=self.provider_name,
-                        audio_data=chunk,
-                        synthesis_id=synthesis_id,
-                        text_source=text,
-                        user_metadata=user,
-                        chunk_index=audio_chunks - 1,
-                        is_final_chunk=False,  # We don't know if it's final yet
-                        sample_rate=self._track.framerate if self._track else 16000,
-                    ))
+                total_audio_bytes += bytes_len
+                total_audio_ms += dur_ms
+                chunk_index = 1
             else:
-                raise TypeError(
-                    f"Unsupported return type from synthesize: {type(audio_data)}"
-                )
+                async for pcm in self._iter_pcm(response):
+                    bytes_len, dur_ms = self._emit_chunk(
+                        pcm, chunk_index, False, synthesis_id, text, user
+                    )
+                    total_audio_bytes += bytes_len
+                    total_audio_ms += dur_ms
+                    chunk_index += 1
 
-            # Estimate audio duration - this is approximate without knowing format details
-            # Use track framerate if available, otherwise assume 16kHz
-            sample_rate = self._track.framerate if self._track else 16000
-            # For s16 format (16-bit samples), each byte is half a sample
-            estimated_audio_duration_ms = (total_audio_bytes / 2) / (sample_rate / 1000)
+            # Use accumulated PcmData duration for total audio duration
+            estimated_audio_duration_ms = total_audio_ms
 
             real_time_factor = (
                 (synthesis_time * 1000) / estimated_audio_duration_ms
@@ -261,38 +313,50 @@ class TTS(abc.ABC):
                 else None
             )
 
-            self.events.send(TTSSynthesisCompleteEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                synthesis_id=synthesis_id,
-                text=text,
-                user_metadata=user,
-                total_audio_bytes=total_audio_bytes,
-                synthesis_time_ms=synthesis_time * 1000,
-                audio_duration_ms=estimated_audio_duration_ms,
-                chunk_count=audio_chunks,
-                real_time_factor=real_time_factor,
-            ))
+            self.events.send(
+                TTSSynthesisCompleteEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    synthesis_id=synthesis_id,
+                    text=text,
+                    user_metadata=user,
+                    total_audio_bytes=total_audio_bytes,
+                    synthesis_time_ms=synthesis_time * 1000,
+                    audio_duration_ms=estimated_audio_duration_ms,
+                    chunk_count=chunk_index,
+                    real_time_factor=real_time_factor,
+                )
+            )
         except Exception as e:
-            self.events.send(TTSErrorEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                error=e,
-                context="synthesis",
-                text_source=text,
-                synthesis_id=synthesis_id,
-                user_metadata=user,
-            ))
-            # ASK: why ?
-            # Re-raise to allow the caller to handle the error
+            # Metrics: error counter
+            tts_errors.add(1, attributes={"tts_class": self.__class__.__name__})
+            self.events.send(
+                TTSErrorEvent(
+                    session_id=self.session_id,
+                    plugin_name=self.provider_name,
+                    error=e,
+                    context="synthesis",
+                    text_source=text,
+                    synthesis_id=synthesis_id or None,
+                    user_metadata=user,
+                )
+            )
             raise
+        finally:
+            # Metrics: latency histogram for the entire send call
+            elapsed_ms = (time.time() - start_time) * 1000.0
+            tts_latency_ms.record(
+                elapsed_ms, attributes={"tts_class": self.__class__.__name__}
+            )
 
     async def close(self):
         """Close the TTS service and release any resources."""
-        self.events.send(PluginClosedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            plugin_type="TTS",
-            provider=self.provider_name,
-            cleanup_successful=True,
-        ))
+        self.events.send(
+            PluginClosedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                plugin_type="TTS",
+                provider=self.provider_name,
+                cleanup_successful=True,
+            )
+        )

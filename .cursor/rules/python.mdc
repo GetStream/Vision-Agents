@@ -15,3 +15,11 @@ integration tests use
 @pytest.mark.integration
 
 @pytest.mark.asyncio is not needed (its automatic)
+
+---
+description: when running python or tests
+globs:
+alwaysApply: true
+---
+
+we use uv on this project, no python -m non-sense please. If you get in trouble with deps just stop and ask, better to have the human resolve things (no sudo brew kind of stuff please)

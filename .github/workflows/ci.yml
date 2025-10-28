@@ -10,7 +10,7 @@ jobs:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'not integration'
-
+    secrets: inherit
 
 # Cancel in-flight runs for the same branch/PR when new commits arrive
 concurrency:
