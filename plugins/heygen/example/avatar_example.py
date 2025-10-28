@@ -56,6 +56,11 @@ async def start_avatar_agent() -> None:
     
     # Join the call
     with await agent.join(call):
+        # Forward agent's audio to HeyGen for lip-sync
+        avatar_publisher = agent.video_publishers[0]
+        if hasattr(avatar_publisher, 'set_agent_audio_track') and agent._audio_track:
+            avatar_publisher.set_agent_audio_track(agent._audio_track)
+        
         # Open demo UI
         await agent.edge.open_demo(call)
         

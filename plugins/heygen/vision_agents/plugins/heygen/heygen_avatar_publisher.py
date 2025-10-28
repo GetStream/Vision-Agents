@@ -58,7 +58,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin):
         """
         super().__init__(
             interval=interval,
-            receive_audio=False,
+            receive_audio=True,  # Receive audio to forward to HeyGen for lip-sync
             receive_video=False,
             **kwargs
         )
@@ -84,6 +84,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin):
         # Connection state
         self._connected = False
         self._connection_task: Optional[asyncio.Task] = None
+        self._audio_track_set = False
         
         logger.info(
             f"🎭 HeyGen AvatarPublisher initialized "
@@ -115,6 +116,43 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin):
         """
         logger.info("📹 Received video track from HeyGen, starting frame forwarding")
         await self._video_track.start_receiving(track)
+
+    async def _forward_audio_track(self, audio_track: Any) -> None:
+        """Forward agent's audio track to HeyGen for lip-sync.
+        
+        Args:
+            audio_track: The agent's audio output track.
+        """
+        if self._audio_track_set:
+            return  # Already forwarded
+        
+        logger.info("🎤 Forwarding agent's audio output to HeyGen for lip-sync")
+        
+        # Wait for HeyGen connection
+        if not self._connected:
+            if self._connection_task:
+                try:
+                    await asyncio.wait_for(self._connection_task, timeout=10.0)
+                except asyncio.TimeoutError:
+                    logger.error("Timeout waiting for HeyGen connection")
+                    return
+            else:
+                logger.error("HeyGen connection not started")
+                return
+        
+        # Forward the agent's audio track to HeyGen
+        await self.rtc_manager.send_audio_track(audio_track)
+        self._audio_track_set = True
+
+    def set_agent_audio_track(self, audio_track: Any) -> None:
+        """Set the agent's audio track for forwarding to HeyGen.
+        
+        This should be called by the agent after audio track is created.
+        
+        Args:
+            audio_track: The agent's audio output track for TTS/Realtime.
+        """
+        asyncio.create_task(self._forward_audio_track(audio_track))
 
     def publish_video_track(self):
         """Publish the HeyGen avatar video track.

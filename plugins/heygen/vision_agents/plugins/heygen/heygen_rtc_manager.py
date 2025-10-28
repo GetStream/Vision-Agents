@@ -46,6 +46,9 @@ class HeyGenRTCManager:
         # Video track callback for receiving avatar video
         self._video_callback: Optional[Callable[[MediaStreamTrack], Any]] = None
         
+        # Audio track for sending to HeyGen
+        self._audio_sender: Optional[Any] = None
+        
         self._connected = False
         self._connection_ready = asyncio.Event()
 
@@ -117,6 +120,13 @@ class HeyGenRTCManager:
             # HeyGen's offer already includes tracks, so transceivers are auto-created
             # We just need to create our answer
             logger.debug(f"Transceivers after setRemoteDescription: {len(self.pc.getTransceivers())}")
+            
+            # Find and store the audio sender so we can send audio to HeyGen later
+            for sender in self.pc.getSenders():
+                if sender.track and sender.track.kind == "audio":
+                    self._audio_sender = sender
+                    logger.debug("Found audio sender for HeyGen")
+                    break
             
             # Create our answer
             answer = await self.pc.createAnswer()
@@ -214,6 +224,22 @@ class HeyGenRTCManager:
             callback: Async function to handle video track.
         """
         self._video_callback = callback
+
+    async def send_audio_track(self, audio_track: MediaStreamTrack) -> None:
+        """Send audio track to HeyGen for lip-sync.
+        
+        Args:
+            audio_track: Audio track containing agent's speech.
+        """
+        if not self._audio_sender:
+            logger.warning("No audio sender available - connection may not be established")
+            return
+        
+        try:
+            await self._audio_sender.replaceTrack(audio_track)
+            logger.info("🎤 Audio track sent to HeyGen for lip-sync")
+        except Exception as e:
+            logger.error(f"Failed to send audio track to HeyGen: {e}")
 
     @property
     def is_connected(self) -> bool:
