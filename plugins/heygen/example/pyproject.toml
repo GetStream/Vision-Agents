@@ -6,20 +6,14 @@ requires-python = ">=3.10"
 dependencies = [
     "vision-agents",
     "vision-agents-plugins-heygen",
-    "vision-agents-plugins-kokoro",
-    "vision-agents-plugins-deepgram",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
-    "vision-agents-plugins-smart-turn",
     "python-dotenv",
 ]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
 vision-agents-plugins-heygen = { workspace = true }
-vision-agents-plugins-kokoro = { workspace = true }
-vision-agents-plugins-deepgram = { workspace = true }
 vision-agents-plugins-gemini = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
-vision-agents-plugins-smart-turn = { workspace = true }
 
