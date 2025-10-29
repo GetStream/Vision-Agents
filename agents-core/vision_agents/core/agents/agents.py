@@ -542,13 +542,13 @@ class Agent:
         Subscribes to the edge transport's `call_ended` event and awaits it. If
         no connection is active, returns immediately.
         """
-        # If connection is None or already closed, return immediately
         if not self._connection:
             self.logger.info(
                 "🔚 Agent connection is already closed, finishing immediately"
             )
             return
 
+        running_event = asyncio.Event()
         with self.span("agent.finish"):
             # If connection is None or already closed, return immediately
             if not self._connection:
@@ -559,15 +559,16 @@ class Agent:
 
             @self.edge.events.subscribe
             async def on_ended(event: CallEndedEvent):
+                running_event.set()
                 self._is_running = False
+        # TODO: add members count check (particiapnts left + count = 1 timeout 2 minutes)
 
-            while self._is_running:
-                try:
-                    await asyncio.sleep(0.0001)
-                except asyncio.CancelledError:
-                    self._is_running = False
+        try:
+            await running_event.wait()
+        except asyncio.CancelledError:
+            running_event.clear()
 
-            await asyncio.shield(self.close())
+        await asyncio.shield(self.close())
 
     async def close(self):
         """Clean up all connections and resources.

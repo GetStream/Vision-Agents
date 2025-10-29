@@ -1,6 +1,7 @@
 import asyncio
 from uuid import uuid4
 from dotenv import load_dotenv
+import pyinstrument
 
 from vision_agents.core import User, Agent
 from vision_agents.plugins import cartesia, deepgram, getstream, gemini, vogent
@@ -9,6 +10,8 @@ load_dotenv()
 
 
 async def start_agent() -> None:
+    profiler = pyinstrument.Profiler()
+    profiler.start()
     llm = gemini.LLM("gemini-2.0-flash")
     # create an agent to run with Stream's edge, openAI llm
     agent = Agent(
@@ -55,6 +58,10 @@ async def start_agent() -> None:
 
         # run till the call ends
         await agent.finish()
+
+    profiler.stop()
+    with open('profiled.html', 'w') as f:
+        f.write(profiler.output_html())
 
 
 def setup_telemetry():
