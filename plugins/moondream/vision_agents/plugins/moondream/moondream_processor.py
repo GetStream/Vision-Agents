@@ -49,12 +49,6 @@ class MoondreamVideoTrack(VideoStreamTrack):
         self._stopped = False
     
     async def add_frame(self, frame: av.VideoFrame):
-        """
-        Add a processed frame to the queue for publishing.
-        
-        Args:
-            frame: Processed video frame with annotations
-        """
         if self._stopped:
             return
         
@@ -132,6 +126,18 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         self.max_workers = max_workers
         self._shutdown = False
         
+        # Initialize state tracking attributes
+        self._last_results = {}
+        self._last_frame_time = None
+        self._last_frame_pil = None
+        
+        # Font configuration constants for drawing efficiency
+        self._font = cv2.FONT_HERSHEY_SIMPLEX
+        self._font_scale = 0.5
+        self._font_thickness = 2
+        self._bbox_color = (0, 255, 0)
+        self._text_color = (0, 0, 0)
+        
         # Normalize detect_objects to list of strings
         if isinstance(detect_objects, str):
             self.detect_objects = [detect_objects]
@@ -170,11 +176,6 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         1. Uses shared VideoForwarder if provided, otherwise creates own
         2. Starts event consumer that calls _process_and_add_frame for each frame
         3. Frames are processed, annotated, and published via the video track
-        
-        Args:
-            incoming_track: Incoming video stream from participant
-            participant: Participant information
-            shared_forwarder: Optional shared VideoForwarder to use
         """
         logger.info("✅ Moondream process_video starting")
         
@@ -207,17 +208,10 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         logger.info("✅ Moondream video processing pipeline started")
     
     def publish_video_track(self):
-        """
-        Publish processed video track with annotations.
-        
-        Returns:
-            VideoStreamTrack with Moondream annotations
-        """
         logger.info("📹 publish_video_track called")
         return self._video_track
     
     def _load_model(self):
-        """Load Moondream model using the official SDK."""
         try:
             # Validate API key
             if not self.api_key:
@@ -237,15 +231,6 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             raise
     
     async def _run_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
-        """
-        Run inference using Moondream SDK.
-        
-        Args:
-            frame_array: Input frame as numpy array (RGB format)
-            
-        Returns:
-            Dictionary containing detection results
-        """
         try:
             # Convert frame to PIL Image
             image = Image.fromarray(frame_array)
@@ -263,15 +248,6 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             return {}
     
     def _run_detection_sync(self, image: Image.Image) -> List[Dict]:
-        """
-        Synchronous detection using Moondream SDK (runs in thread pool).
-        
-        Args:
-            image: PIL Image to run detection on
-            
-        Returns:
-            List of detection dictionaries
-        """
         if self._shutdown:
             return []
         
@@ -287,7 +263,7 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
                 
                 # Parse SDK response format
                 # SDK returns: {"objects": [{"x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}, ...]}
-                if "objects" in result and isinstance(result["objects"], list):
+                if "objects" in result:
                     for obj in result["objects"]:
                         detection = self._parse_detection_bbox(obj, object_type)
                         if detection:
@@ -301,16 +277,6 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         return all_detections
     
     def _parse_detection_bbox(self, obj: Dict, object_type: str) -> Optional[Dict]:
-        """
-        Parse and format a detection result from the SDK.
-        
-        Args:
-            obj: Detection object from SDK
-            object_type: Type of object being detected
-            
-        Returns:
-            Formatted detection dictionary, or None if below confidence threshold
-        """
         confidence = obj.get("confidence", 1.0)
         
         # Filter by confidence threshold
@@ -331,17 +297,6 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         }
     
     def _normalize_bbox_coordinates(self, bbox: List[float], width: int, height: int) -> tuple:
-        """
-        Normalize bounding box coordinates to pixel values.
-        
-        Args:
-            bbox: Bounding box [x1, y1, x2, y2] (may be normalized or pixel coords)
-            width: Frame width in pixels
-            height: Frame height in pixels
-            
-        Returns:
-            Tuple of (x1, y1, x2, y2) as pixel coordinates
-        """
         if len(bbox) != 4:
             return (0, 0, 0, 0)
         
@@ -356,19 +311,6 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             return (int(x1), int(y1), int(x2), int(y2))
     
     async def _process_and_add_frame(self, frame: av.VideoFrame):
-        """
-        Callback for VideoForwarder - process frame and publish.
-        
-        This is the main processing pipeline:
-        1. Convert frame to numpy array
-        2. Run inference
-        3. Store results for state() method
-        4. Annotate frame if detection enabled
-        5. Publish processed frame
-        
-        Args:
-            frame: Input video frame from VideoForwarder
-        """
         try:
             # Convert to numpy array
             frame_array = frame.to_ndarray(format="rgb24")
@@ -395,16 +337,6 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             await self._video_track.add_frame(frame)
     
     def _annotate_detections(self, frame_array: np.ndarray, results: Dict[str, Any]) -> np.ndarray:
-        """
-        Draw bounding boxes and labels on frame.
-        
-        Args:
-            frame_array: Input frame as numpy array
-            results: Inference results containing detections
-            
-        Returns:
-            Annotated frame as numpy array
-        """
         annotated = frame_array.copy()
         
         detections = results.get("detections", [])
@@ -412,6 +344,12 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             return annotated
         
         height, width = frame_array.shape[:2]
+        
+        # Pre-calculate baseline text metrics once per frame for efficiency
+        sample_text = "object 0.00"  # Representative text for baseline calculation
+        (_, text_height), baseline = cv2.getTextSize(
+            sample_text, self._font, self._font_scale, self._font_thickness
+        )
         
         for detection in detections:
             # Parse bounding box and normalize to pixel coordinates
@@ -426,45 +364,36 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             label = detection.get("label", "object")
             conf = detection.get("confidence", 0.0)
             
-            # Draw bounding box
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), self._bbox_color, 2)
             
             # Draw label background
             label_text = f"{label} {conf:.2f}"
-            (text_width, text_height), baseline = cv2.getTextSize(
-                label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
+            # Calculate text width for this specific label (varies by content)
+            (text_width, _), _ = cv2.getTextSize(
+                label_text, self._font, self._font_scale, self._font_thickness
             )
             cv2.rectangle(
                 annotated,
                 (x1, y1 - text_height - baseline - 5),
                 (x1 + text_width, y1),
-                (0, 255, 0),
+                self._bbox_color,
                 -1
             )
             
-            # Draw label text
+            # Draw label text using cached parameters
             cv2.putText(
                 annotated,
                 label_text,
                 (x1, y1 - baseline - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 0),
-                2
+                self._font,
+                self._font_scale,
+                self._text_color,
+                self._font_thickness
             )
         
         return annotated
     
     def _summarize_detections(self, detections: List[Dict]) -> str:
-        """
-        Create text summary of detections for LLM.
-        
-        Args:
-            detections: List of detection dictionaries
-            
-        Returns:
-            Human-readable summary string
-        """
         if not detections:
             return "No objects detected"
         
@@ -495,17 +424,17 @@ class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             - detections_summary: Human-readable detection summary
             - detections_count: Number of objects detected
         """
-        if not hasattr(self, "_last_results"):
+        if not self._last_results:
             return {}
         
         state_dict = {}
         
         # Add timestamp
-        if hasattr(self, "_last_frame_time"):
+        if self._last_frame_time is not None:
             state_dict["last_frame_timestamp"] = self._last_frame_time
         
         # Add last image for LLM vision models
-        if hasattr(self, "_last_frame_pil"):
+        if self._last_frame_pil is not None:
             state_dict["last_image"] = self._last_frame_pil
         
         # Add detection results
