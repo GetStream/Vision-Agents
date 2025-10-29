@@ -117,16 +117,27 @@ class HeyGenRTCManager:
             offer = RTCSessionDescription(sdp=offer_sdp, type="offer")
             await self.pc.setRemoteDescription(offer)
             
-            # HeyGen's offer already includes tracks, so transceivers are auto-created
-            # We just need to create our answer
+            # HeyGen's offer includes tracks for video/audio they send us
+            # Check transceivers to see if we have an audio sender
             logger.debug(f"Transceivers after setRemoteDescription: {len(self.pc.getTransceivers())}")
             
-            # Find and store the audio sender so we can send audio to HeyGen later
-            for sender in self.pc.getSenders():
-                if sender.track and sender.track.kind == "audio":
-                    self._audio_sender = sender
-                    logger.debug("Found audio sender for HeyGen")
-                    break
+            # Find the audio transceiver and modify it to allow sending
+            logger.info(f"🔍 Checking {len(self.pc.getTransceivers())} transceivers for audio")
+            for idx, transceiver in enumerate(self.pc.getTransceivers()):
+                logger.info(f"  Transceiver {idx}: mid={transceiver.mid}, direction={transceiver.direction}")
+                if transceiver.receiver and transceiver.receiver.track:
+                    logger.info(f"    Receiver track: kind={transceiver.receiver.track.kind}")
+                    if transceiver.receiver.track.kind == "audio":
+                        # Found the audio transceiver - modify its direction to allow sending
+                        logger.info(f"    🔧 Modifying audio transceiver direction from {transceiver.direction} to sendrecv")
+                        transceiver.direction = "sendrecv"
+                        self._audio_sender = transceiver.sender
+                        logger.info("✅ Audio transceiver modified for lip-sync")
+                        break
+            
+            # If no audio transceiver found, log warning
+            if not self._audio_sender:
+                logger.warning("⚠️ No audio transceiver found - lip-sync may not work")
             
             # Create our answer
             answer = await self.pc.createAnswer()
@@ -236,10 +247,22 @@ class HeyGenRTCManager:
             return
         
         try:
-            await self._audio_sender.replaceTrack(audio_track)
-            logger.info("🎤 Audio track sent to HeyGen for lip-sync")
+            logger.info(f"🎤 Attempting to send audio track to HeyGen: {audio_track}")
+            logger.info(f"   Audio track kind: {audio_track.kind if hasattr(audio_track, 'kind') else 'unknown'}")
+            logger.info(f"   Current sender track: {self._audio_sender.track}")
+            
+            # replaceTrack is not async in aiortc
+            result = self._audio_sender.replaceTrack(audio_track)
+            # If it returns a coroutine, await it; otherwise just use the result
+            if hasattr(result, '__await__'):
+                await result
+            
+            logger.info(f"✅ Audio track successfully set on sender")
+            logger.info(f"   New sender track: {self._audio_sender.track}")
         except Exception as e:
-            logger.error(f"Failed to send audio track to HeyGen: {e}")
+            logger.error(f"❌ Failed to send audio track to HeyGen: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     @property
     def is_connected(self) -> bool:

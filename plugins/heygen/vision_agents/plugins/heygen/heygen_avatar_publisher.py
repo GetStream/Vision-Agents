@@ -85,11 +85,27 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin):
         self._connected = False
         self._connection_task: Optional[asyncio.Task] = None
         self._audio_track_set = False
+        self._agent = None  # Will be set by the agent
+        
+        # Create a custom audio track for HeyGen that we can write to
+        from .heygen_audio_track import HeyGenAudioTrack
+        self._heygen_audio_track = HeyGenAudioTrack(sample_rate=24000)
         
         logger.info(
             f"🎭 HeyGen AvatarPublisher initialized "
             f"(avatar: {avatar_id}, quality: {quality}, resolution: {resolution})"
         )
+    
+    def set_agent(self, agent: Any) -> None:
+        """Set the agent reference for event subscription.
+        
+        This is called by the agent when the processor is attached.
+        
+        Args:
+            agent: The agent instance.
+        """
+        self._agent = agent
+        logger.info("🔗 Agent reference set for HeyGen avatar publisher")
 
     async def _connect_to_heygen(self) -> None:
         """Establish connection to HeyGen and start receiving video."""
@@ -102,11 +118,38 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin):
             
             self._connected = True
             logger.info("✅ Connected to HeyGen, avatar streaming active")
+            
+            # Subscribe to audio output events from the LLM for lip-sync
+            self._subscribe_to_audio_events()
         
         except Exception as e:
             logger.error(f"❌ Failed to connect to HeyGen: {e}")
             self._connected = False
             raise
+    
+    def _subscribe_to_audio_events(self) -> None:
+        """Subscribe to audio output events from the LLM."""
+        try:
+            # Import the event type
+            from vision_agents.core.llm.events import RealtimeAudioOutputEvent
+            
+            # Get the agent's event manager
+            # Note: This will be set when the processor is attached to an agent
+            if hasattr(self, '_agent') and self._agent:
+                @self._agent.events.subscribe
+                async def on_audio_output(event: RealtimeAudioOutputEvent):
+                    logger.debug(f"📢 Received audio output event: {len(event.audio_data)} bytes at {event.sample_rate}Hz")
+                    await self._on_audio_output(event.audio_data, event.sample_rate)
+                logger.info("🎧 Subscribed to LLM audio output events for lip-sync")
+                
+                # Also log what events are registered
+                logger.info(f"   Event manager has {len(self._agent.events._handlers)} event handlers")
+            else:
+                logger.warning("⚠️ Cannot subscribe to audio events - no agent attached yet")
+        except Exception as e:
+            logger.error(f"Failed to subscribe to audio events: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     async def _on_video_track(self, track: Any) -> None:
         """Callback when video track is received from HeyGen.
@@ -117,16 +160,12 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin):
         logger.info("📹 Received video track from HeyGen, starting frame forwarding")
         await self._video_track.start_receiving(track)
 
-    async def _forward_audio_track(self, audio_track: Any) -> None:
-        """Forward agent's audio track to HeyGen for lip-sync.
-        
-        Args:
-            audio_track: The agent's audio output track.
-        """
+    async def _setup_audio_forwarding(self) -> None:
+        """Set up audio forwarding from agent to HeyGen for lip-sync."""
         if self._audio_track_set:
-            return  # Already forwarded
+            return  # Already set up
         
-        logger.info("🎤 Forwarding agent's audio output to HeyGen for lip-sync")
+        logger.info("🎤 Setting up audio forwarding to HeyGen for lip-sync")
         
         # Wait for HeyGen connection
         if not self._connected:
@@ -140,19 +179,39 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin):
                 logger.error("HeyGen connection not started")
                 return
         
-        # Forward the agent's audio track to HeyGen
-        await self.rtc_manager.send_audio_track(audio_track)
+        # Set our custom audio track on the HeyGen sender
+        await self.rtc_manager.send_audio_track(self._heygen_audio_track)
         self._audio_track_set = True
+        logger.info("✅ Audio track set up for HeyGen lip-sync")
+
+    async def _on_audio_output(self, audio_data: bytes, sample_rate: int) -> None:
+        """Handle audio output from the LLM and forward to HeyGen.
+        
+        Args:
+            audio_data: Raw PCM audio data from the LLM.
+            sample_rate: Sample rate of the audio data.
+        """
+        logger.debug(f"🎵 _on_audio_output called: {len(audio_data)} bytes at {sample_rate}Hz")
+        
+        if not self._audio_track_set:
+            # Set up audio forwarding on first audio output
+            logger.info("🔧 Setting up audio forwarding on first audio output")
+            await self._setup_audio_forwarding()
+        
+        # Write audio data to our custom track for HeyGen
+        logger.info(f"✍️ Writing {len(audio_data)} bytes to HeyGen audio track")
+        self._heygen_audio_track.write_audio(audio_data)
 
     def set_agent_audio_track(self, audio_track: Any) -> None:
         """Set the agent's audio track for forwarding to HeyGen.
         
-        This should be called by the agent after audio track is created.
+        DEPRECATED: This method is no longer needed. Audio is now forwarded
+        via event listening instead of track sharing.
         
         Args:
-            audio_track: The agent's audio output track for TTS/Realtime.
+            audio_track: The agent's audio output track (unused).
         """
-        asyncio.create_task(self._forward_audio_track(audio_track))
+        logger.warning("set_agent_audio_track is deprecated - audio forwarding is automatic via events")
 
     def publish_video_track(self):
         """Publish the HeyGen avatar video track.
