@@ -4,7 +4,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import getstream, ultralytics, gemini, moondream
+from vision_agents.plugins import getstream, ultralytics, gemini
 
 load_dotenv()
 
@@ -17,7 +17,7 @@ async def start_agent() -> None:
         llm=gemini.Realtime(fps=3),  # Careful with FPS can get expensive
         # llm=openai.Realtime(fps=10), use this to switch to openai
         processors=[
-            moondream.MoondreamProcessor(detect_objects=["watch", "eyes", "face"])
+            ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
         ],  # realtime pose detection with yolo
     )
 

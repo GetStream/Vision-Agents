@@ -21,7 +21,7 @@ class TTS(tts.TTS):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_id: str = "sonic-2",
+        model_id: str = "sonic-3",
         voice_id: str | None = "f9836c6e-a0bd-460e-9d3c-f7299fa60f94",
         sample_rate: int = 16000,
         client: Optional[AsyncCartesia] = None,
@@ -30,7 +30,7 @@ class TTS(tts.TTS):
 
         Args:
             api_key: Cartesia API key – falls back to ``CARTESIA_API_KEY`` env var.
-            model_id: Which model to use (default ``sonic-2``).
+            model_id: Which model to use (default ``sonic-3``).
             voice_id: Cartesia voice ID. When ``None`` the model default is used.
             sample_rate: PCM sample-rate you want back (must match output track).
         """
