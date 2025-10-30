@@ -7,7 +7,7 @@ from typing import AsyncIterator, Iterator, List, Optional
 import numpy as np
 
 from vision_agents.core import tts
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 try:
     from kokoro import KPipeline  # type: ignore
@@ -55,7 +55,10 @@ class TTS(tts.TTS):
         async def _aiter():
             for chunk in chunks:
                 yield PcmData.from_bytes(
-                    chunk, sample_rate=self.sample_rate, channels=1, format="s16"
+                    chunk,
+                    sample_rate=self.sample_rate,
+                    channels=1,
+                    format=AudioFormat.S16,
                 )
 
         return _aiter()

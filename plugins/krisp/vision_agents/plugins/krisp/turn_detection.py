@@ -1,21 +1,18 @@
 import logging
 import os
-import time
 from typing import Optional, Dict, Any
 import asyncio
 
 import krisp_audio
 import numpy as np
-from getstream.audio.utils import resample_audio
 from getstream.video.rtc.track_util import PcmData
+from vision_agents.core.agents import Conversation
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
     TurnEndedEvent,
-    TurnEvent,
-    TurnEventData,
 )
-from vision_agents.core.utils.utils import to_mono
 
 
 def _int_to_frame_duration(frame_dur: int):
@@ -28,11 +25,6 @@ def _int_to_frame_duration(frame_dur: int):
         32: krisp_audio.FrameDuration.Fd32ms,
     }
     return durations[frame_dur]
-
-
-def _resample(samples: np.ndarray) -> np.ndarray:
-    """Resample audio from 48 kHz to 16 kHz."""
-    return resample_audio(samples, 48000, 16000).astype(np.int16)
 
 
 def log_callback(log_message, log_level):
@@ -48,7 +40,7 @@ class TurnDetection(TurnDetector):
     ):
         super().__init__(
             confidence_threshold=confidence_threshold,
-            provider_name="KrispTurnDetection"
+            provider_name="KrispTurnDetection",
         )
         self.logger = logging.getLogger("KrispTurnDetection")
         self.model_path = model_path
@@ -60,6 +52,7 @@ class TurnDetection(TurnDetector):
         self._krisp_instance = None
         self._buffer: Optional[bytearray] = None
         self._turn_in_progress = False
+        self._is_detecting = False
 
     def _initialize_krisp(self):
         try:
@@ -85,8 +78,8 @@ class TurnDetection(TurnDetector):
     async def process_audio(
         self,
         audio_data: PcmData,
-        user_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        participant: Participant,
+        conversation: Optional[Conversation] = None,
     ) -> None:
         if not self.is_detecting():
             return
@@ -94,6 +87,9 @@ class TurnDetection(TurnDetector):
         if self._krisp_instance is None:
             self.logger.error("Krisp instance is not initialized. Call start() first.")
             return
+
+        user_id = participant.user_id
+        metadata = None  # Can be extended if needed from participant/conversation
 
         # Validate sample format
         valid_formats = ["int16", "s16", "pcm_s16le"]
@@ -111,36 +107,8 @@ class TurnDetection(TurnDetector):
             )
             return
 
-        # Resample from 48 kHz to 16 kHz
-        try:
-            samples = _resample(audio_data.samples)
-        except Exception as e:
-            self.logger.error(f"Failed to resample audio: {e}")
-            return
-
-        # Infer number of channels (default to mono)
-        num_channels = (
-            metadata.get("channels", self._infer_channels(audio_data.format))
-            if metadata
-            else self._infer_channels(audio_data.format)
-        )
-        if num_channels != 1:
-            self.logger.debug(f"Converting {num_channels}-channel audio to mono")
-            try:
-                samples = to_mono(samples, num_channels)
-            except ValueError as e:
-                self.logger.error(f"Failed to convert to mono: {e}")
-                return
-
-        # Create a new PcmData object with resampled data
-        resampled_pcm = PcmData(
-            format=audio_data.format,
-            sample_rate=16000,
-            samples=samples,
-            pts=audio_data.pts,
-            dts=audio_data.dts,
-            time_base=audio_data.time_base,
-        )
+        # Resample to 16 kHz mono
+        resampled_pcm = audio_data.resample(16_000, 1).samples
 
         try:
             loop = asyncio.get_event_loop()
@@ -193,14 +161,6 @@ class TurnDetection(TurnDetector):
                         custom=metadata or {},
                     )
                     self.events.send(event)
-                    # Emit deprecated event for backward compatibility
-                    event_data = TurnEventData(
-                        timestamp=time.time(),
-                        speaker_id=user_id,
-                        confidence=score,
-                        custom=metadata or {},
-                    )
-                    self._emit_turn_event(TurnEvent.TURN_STARTED, event_data)
                 elif self._turn_in_progress and score > self.turn_end_threshold:
                     self._turn_in_progress = False
                     # Emit new event
@@ -212,14 +172,6 @@ class TurnDetection(TurnDetector):
                         custom=metadata or {},
                     )
                     self.events.send(event)
-                    # Emit deprecated event for backward compatibility
-                    event_data = TurnEventData(
-                        timestamp=time.time(),
-                        speaker_id=user_id,
-                        confidence=score,
-                        custom=metadata or {},
-                    )
-                    self._emit_turn_event(TurnEvent.TURN_ENDED, event_data)
 
         self._buffer.extend(pcm.samples.tobytes())
         while len(self._buffer) >= frame_bytes:
@@ -228,7 +180,7 @@ class TurnDetection(TurnDetector):
             frame = np.frombuffer(frame_b, dtype=np.int16)
             process_frame(frame)
 
-    def start(self) -> None:
+    async def start(self) -> None:
         if self._is_detecting:
             return
         self._initialize_krisp()
@@ -236,7 +188,7 @@ class TurnDetection(TurnDetector):
         self._is_detecting = True
         self.logger.info("KrispTurnDetection started")
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         if not self._is_detecting:
             return
         self._is_detecting = False

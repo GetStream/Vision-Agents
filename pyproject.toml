@@ -13,16 +13,22 @@ vision-agents-plugins-fal = { workspace = true }
 vision-agents-plugins-fish = { workspace = true }
 vision-agents-plugins-gemini = { workspace = true }
 vision-agents-plugins-kokoro = { workspace = true }
-vision-agents-plugins-moonshine = { workspace = true }
 vision-agents-plugins-openai = { workspace = true }
 vision-agents-plugins-openrouter = { workspace = true }
-vision-agents-plugins-silero = { workspace = true }
 vision-agents-plugins-xai = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-krisp = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
+vision-agents-plugins-vogent = { workspace = true }
+
+[tool.uv]
+# Workspace-level override to resolve numpy version conflicts
+# vogent-turn requires numpy<2.0, so we override to use 1.26.x
+override-dependencies = [
+    "numpy>=1.26.0,<2.0"
+]
 
 [tool.uv.workspace]
 members = [
@@ -35,16 +41,15 @@ members = [
     "plugins/fish",
     "plugins/gemini",
     "plugins/kokoro",
-    "plugins/moonshine",
     "plugins/openai",
     "plugins/openrouter",
-    "plugins/silero",
     "plugins/xai",
     "plugins/getstream",
     "plugins/ultralytics",
     "plugins/krisp",
     "plugins/smart_turn",
-    "plugins/wizper"
+    "plugins/wizper",
+    "plugins/vogent"
 ]
 exclude = [
 "**/__pycache__",

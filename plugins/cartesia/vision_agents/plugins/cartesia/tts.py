@@ -12,7 +12,7 @@ from cartesia.tts import (
 )
 
 from vision_agents.core import tts
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 
 class TTS(tts.TTS):
@@ -78,7 +78,7 @@ class TTS(tts.TTS):
         )
 
         return PcmData.from_response(
-            response, sample_rate=self.sample_rate, channels=1, format="s16"
+            response, sample_rate=self.sample_rate, channels=1, format=AudioFormat.S16
         )
 
     async def stop_audio(self) -> None:

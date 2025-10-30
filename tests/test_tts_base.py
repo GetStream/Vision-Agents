@@ -1,7 +1,7 @@
 import pytest
 
 from vision_agents.core.tts.tts import TTS as BaseTTS
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
 from vision_agents.core.tts.testing import TTSSession
 
 
@@ -9,7 +9,9 @@ class DummyTTSPcmStereoToMono(BaseTTS):
     async def stream_audio(self, text: str, *_, **__) -> PcmData:
         # 2 channels interleaved: 100 frames (per channel) -> 200 samples -> 400 bytes
         frames = b"\x01\x00\x01\x00" * 100  # L(1), R(1)
-        pcm = PcmData.from_bytes(frames, sample_rate=16000, channels=2, format="s16")
+        pcm = PcmData.from_bytes(
+            frames, sample_rate=16000, channels=2, format=AudioFormat.S16
+        )
         return pcm
 
     async def stop_audio(self) -> None:  # pragma: no cover - noop
@@ -20,7 +22,9 @@ class DummyTTSPcmResample(BaseTTS):
     async def stream_audio(self, text: str, *_, **__) -> PcmData:
         # 16k mono, 200 samples (duration = 200/16000 s)
         data = b"\x00\x00" * 200
-        pcm = PcmData.from_bytes(data, sample_rate=16000, channels=1, format="s16")
+        pcm = PcmData.from_bytes(
+            data, sample_rate=16000, channels=1, format=AudioFormat.S16
+        )
         return pcm
 
     async def stop_audio(self) -> None:  # pragma: no cover - noop

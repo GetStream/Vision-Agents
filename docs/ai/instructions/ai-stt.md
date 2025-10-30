@@ -5,7 +5,7 @@ from vision_agents.core import stt
 from vision_agents.core.stt.events import TranscriptResponse
 
 class MySTT(stt.STT):
-    
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -26,8 +26,8 @@ class MySTT(stt.STT):
         full_text = ""
         for part in parts:
             response = TranscriptResponse(
-                confidence=0.9, 
-                language='en', 
+                confidence=0.9,
+                language='en',
                 processing_time_ms=300,
                 audio_duration_ms=2000,
                 other={}
@@ -35,7 +35,7 @@ class MySTT(stt.STT):
             # parts that aren't finished
             self._emit_partial_transcript_event(part, participant, response)
             full_text += part
-            
+
         # the full text
         self._emit_transcript_event(full_text, participant, response)
 
@@ -44,3 +44,8 @@ class MySTT(stt.STT):
 ## Testing the STT
 
 A good example of testing the STT can be found in plugins/fish/tests/test_fish_stt.py
+
+## PCM / Audio management
+
+Use `PcmData` and other utils available from the `getstream.video.rtc.track_util` module.
+Do not write code that directly manipulates PCM, use the audio utilities instead.

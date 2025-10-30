@@ -32,7 +32,7 @@ async def start_agent() -> None:
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         turn_detection=smart_turn.TurnDetection(
-            buffer_duration=2.0, confidence_threshold=0.5
+            buffer_in_seconds=2.0, confidence_threshold=0.5
         )
     )
     await agent.create_user()
