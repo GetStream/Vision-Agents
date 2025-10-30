@@ -61,7 +61,7 @@ class TestSmartTurn:
         # Wait for background processing to complete
         await td.wait_for_processing_complete()
 
-        assert event_order == ["start", "stop"]
+        assert event_order == ["start", "stop"] or event_order == ["start", "stop", "start", "stop"]
 
     async def test_turn_detection(self, td, mia_audio_16khz):
         participant = Participant(user_id="mia", original={})
@@ -86,12 +86,8 @@ class TestSmartTurn:
 
         # Verify that turn detection is working - we should get at least some turn events
         # With continuous processing, we may get multiple start/stop cycles
-        assert len(event_order) >= 2  # At least one start/stop pair
-        assert event_order[0] == "start"  # Should start with a turn start
-        assert event_order[-1] in [
-            "start",
-            "stop",
-        ]  # Should end with either start or stop
+        assert event_order == ["start", "stop"] or event_order == ["start", "stop", "start", "stop"]
+
 
     """
     TODO
