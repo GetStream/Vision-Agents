@@ -1,0 +1,12 @@
+[project]
+name = "vertex-ai-example"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "vision-agents-plugins-vertex-ai",
+    "python-dotenv>=1.1.1",
+]
+
+[tool.uv.sources]
+vision-agents-plugins-vertex-ai = { workspace = true }
+vision-agents = { workspace = true }
