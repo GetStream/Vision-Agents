@@ -23,6 +23,7 @@ vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-krisp = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
+vision-agents-plugins-vertex-ai = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -44,7 +45,8 @@ members = [
     "plugins/ultralytics",
     "plugins/krisp",
     "plugins/smart_turn",
-    "plugins/wizper"
+    "plugins/wizper",
+    "plugins/vertex_ai"
 ]
 exclude = [
 "**/__pycache__",
