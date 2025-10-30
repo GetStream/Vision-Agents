@@ -12,11 +12,9 @@ from .metrics import (
     stt_bytes_streamed,
     stt_errors,
     tts_latency_ms,
-    tts_first_byte_ms,
-    tts_bytes_streamed,
     tts_errors,
+    tts_events_emitted,
     inflight_ops,
-    CALL_ATTRS,
 )
 
 __all__ = [
@@ -27,9 +25,7 @@ __all__ = [
     "stt_bytes_streamed",
     "stt_errors",
     "tts_latency_ms",
-    "tts_first_byte_ms",
-    "tts_bytes_streamed",
     "tts_errors",
+    "tts_events_emitted",
     "inflight_ops",
-    "CALL_ATTRS",
 ]

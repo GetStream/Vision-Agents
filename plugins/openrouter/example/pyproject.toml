@@ -1,0 +1,26 @@
+[project]
+name = "openrouter-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents-plugins-openrouter",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-elevenlabs",
+  "vision-agents-plugins-deepgram",
+  "vision-agents-plugins-cartesia",
+  "vision-agents-plugins-smart-turn",
+  "vision-agents",
+]
+
+[tool.uv.sources]
+"vision-agents-plugins-openrouter" = {path = "..", editable=true}
+"vision-agents-plugins-openai" = {path = "../../openai", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
+"vision-agents-plugins-elevenlabs" = {path = "../../elevenlabs", editable=true}
+"vision-agents-plugins-deepgram" = {path = "../../deepgram", editable=true}
+"vision-agents-plugins-cartesia" = {path = "../../cartesia", editable=true}
+"vision-agents-plugins-smart-turn" = {path = "../../smart_turn", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}
+

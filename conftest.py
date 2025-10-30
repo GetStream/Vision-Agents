@@ -10,9 +10,74 @@ import os
 
 import numpy as np
 import pytest
+from dotenv import load_dotenv
 from torchvision.io.video import av
 
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
+
+load_dotenv()
+
+
+class STTSession:
+    """Helper class for testing STT implementations.
+
+    Automatically subscribes to transcript and error events,
+    collects them, and provides a convenient wait method.
+    """
+
+    def __init__(self, stt):
+        """Initialize STT session with an STT object.
+
+        Args:
+            stt: STT implementation to monitor
+        """
+        self.stt = stt
+        self.transcripts = []
+        self.partial_transcripts = []
+        self.errors = []
+        self._event = asyncio.Event()
+
+        # Subscribe to events
+        @stt.events.subscribe
+        async def on_transcript(event: STTTranscriptEvent):
+            self.transcripts.append(event)
+            self._event.set()
+
+        @stt.events.subscribe
+        async def on_partial_transcript(event: STTPartialTranscriptEvent):
+            self.partial_transcripts.append(event)
+
+        @stt.events.subscribe
+        async def on_error(event: STTErrorEvent):
+            self.errors.append(event.error)
+            self._event.set()
+
+        self._on_transcript = on_transcript
+        self._on_error = on_error
+
+    async def wait_for_result(self, timeout: float = 30.0):
+        """Wait for either a transcript or error event.
+
+        Args:
+            timeout: Maximum time to wait in seconds
+
+        Raises:
+            asyncio.TimeoutError: If no result received within timeout
+        """
+        # Allow event subscriptions to be processed
+        await asyncio.sleep(0.01)
+
+        # Wait for an event
+        await asyncio.wait_for(self._event.wait(), timeout=timeout)
+
+    def get_full_transcript(self) -> str:
+        """Get full transcription text from all transcript events.
+
+        Returns:
+            Combined text from all transcripts
+        """
+        return " ".join(t.text for t in self.transcripts)
 
 
 def get_assets_dir():
@@ -30,7 +95,7 @@ def assets_dir():
 def mia_audio_16khz():
     """Load mia.mp3 and convert to 16kHz PCM data."""
     audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
-    
+
     # Load audio file using PyAV
     container = av.open(audio_file_path)
     audio_stream = container.streams.audio[0]
@@ -40,11 +105,7 @@ def mia_audio_16khz():
     # Create resampler if needed
     resampler = None
     if original_sample_rate != target_rate:
-        resampler = av.AudioResampler(
-            format='s16',
-            layout='mono',
-            rate=target_rate
-        )
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
 
     # Read all audio frames
     samples = []
@@ -68,23 +129,134 @@ def mia_audio_16khz():
     container.close()
 
     # Create PCM data
-    pcm = PcmData(
-        samples=samples,
-        sample_rate=target_rate,
-        format="s16"
-    )
+    pcm = PcmData(samples=samples, sample_rate=target_rate, format=AudioFormat.S16)
 
     return pcm
+
+
+@pytest.fixture
+def mia_audio_48khz():
+    """Load mia.mp3 and convert to 48kHz PCM data."""
+    audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
+
+    # Load audio file using PyAV
+    container = av.open(audio_file_path)
+    audio_stream = container.streams.audio[0]
+    original_sample_rate = audio_stream.sample_rate
+    target_rate = 48000
+
+    # Create resampler if needed
+    resampler = None
+    if original_sample_rate != target_rate:
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
+
+    # Read all audio frames
+    samples = []
+    for frame in container.decode(audio_stream):
+        # Resample if needed
+        if resampler:
+            frame = resampler.resample(frame)[0]
+
+        # Convert to numpy array
+        frame_array = frame.to_ndarray()
+        if len(frame_array.shape) > 1:
+            # Convert stereo to mono
+            frame_array = np.mean(frame_array, axis=0)
+        samples.append(frame_array)
+
+    # Concatenate all samples
+    samples = np.concatenate(samples)
+
+    # Convert to int16
+    samples = samples.astype(np.int16)
+    container.close()
+
+    # Create PCM data
+    pcm = PcmData(samples=samples, sample_rate=target_rate, format=AudioFormat.S16)
+
+    return pcm
+
+
+@pytest.fixture
+def silence_2s_48khz():
+    """Generate 2 seconds of silence at 48kHz PCM data."""
+    sample_rate = 48000
+    duration_seconds = 2.0
+    
+    # Calculate number of samples for 2 seconds
+    num_samples = int(sample_rate * duration_seconds)
+    
+    # Create silence (zeros) as int16
+    samples = np.zeros(num_samples, dtype=np.int16)
+    
+    # Create PCM data
+    pcm = PcmData(samples=samples, sample_rate=sample_rate, format=AudioFormat.S16)
+    
+    return pcm
+
+
+@pytest.fixture
+def mia_audio_48khz_chunked():
+    """Load mia.mp3 and yield 48kHz PCM data in 20ms chunks."""
+    audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
+
+    # Load audio file using PyAV
+    container = av.open(audio_file_path)
+    audio_stream = container.streams.audio[0]
+    original_sample_rate = audio_stream.sample_rate
+    target_rate = 48000
+
+    # Create resampler if needed
+    resampler = None
+    if original_sample_rate != target_rate:
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
+
+    # Read all audio frames
+    samples = []
+    for frame in container.decode(audio_stream):
+        # Resample if needed
+        if resampler:
+            frame = resampler.resample(frame)[0]
+
+        # Convert to numpy array
+        frame_array = frame.to_ndarray()
+        if len(frame_array.shape) > 1:
+            # Convert stereo to mono
+            frame_array = np.mean(frame_array, axis=0)
+        samples.append(frame_array)
+
+    # Concatenate all samples
+    samples = np.concatenate(samples)
+
+    # Convert to int16
+    samples = samples.astype(np.int16)
+    container.close()
+
+    # Calculate chunk size for 20ms at 48kHz
+    chunk_size = int(target_rate * 0.020)  # 960 samples per 20ms
+
+    # Yield chunks of audio
+    chunks = []
+    for i in range(0, len(samples), chunk_size):
+        chunk_samples = samples[i : i + chunk_size]
+
+        # Create PCM data for this chunk
+        pcm_chunk = PcmData(
+            samples=chunk_samples, sample_rate=target_rate, format=AudioFormat.S16
+        )
+        chunks.append(pcm_chunk)
+
+    return chunks
 
 
 @pytest.fixture
 def golf_swing_image():
     """Load golf_swing.png image and return as bytes."""
     image_file_path = os.path.join(get_assets_dir(), "golf_swing.png")
-    
+
     with open(image_file_path, "rb") as f:
         image_bytes = f.read()
-    
+
     return image_bytes
 
 
@@ -92,7 +264,7 @@ def golf_swing_image():
 async def bunny_video_track():
     """Create RealVideoTrack from video file."""
     from aiortc import VideoStreamTrack
-    
+
     video_file_path = os.path.join(get_assets_dir(), "bunny_3s.mp4")
 
     class RealVideoTrack(VideoStreamTrack):
@@ -112,12 +284,12 @@ async def bunny_video_track():
                 for frame in self.container.decode(self.video_stream):
                     if frame is None:
                         raise asyncio.CancelledError("End of video stream")
-                    
+
                     self.frame_count += 1
                     frame = frame.to_rgb()
                     await asyncio.sleep(self.frame_duration)
                     return frame
-                
+
                 raise asyncio.CancelledError("End of video stream")
 
             except asyncio.CancelledError:
@@ -134,4 +306,3 @@ async def bunny_video_track():
         yield track
     finally:
         track.container.close()
-

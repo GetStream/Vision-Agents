@@ -16,7 +16,7 @@ from vision_agents.plugins import openai, getstream
 from vision_agents.core.agents import Agent
 from getstream import AsyncStream
 
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()

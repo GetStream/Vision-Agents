@@ -53,6 +53,7 @@ class OpenAILLM(LLM):
         self,
         model: str,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         client: Optional[AsyncOpenAI] = None,
     ):
         """
@@ -72,9 +73,9 @@ class OpenAILLM(LLM):
         if client is not None:
             self.client = client
         elif api_key is not None and api_key != "":
-            self.client = AsyncOpenAI(api_key=api_key)
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         else:
-            self.client = AsyncOpenAI()
+            self.client = AsyncOpenAI(base_url=base_url)
 
     async def simple_response(
         self,
@@ -106,6 +107,14 @@ class OpenAILLM(LLM):
             instructions=instructions,
         )
 
+    async def create_conversation(self):
+        if not self.openai_conversation:
+            self.openai_conversation = await self.client.conversations.create()
+
+    def add_conversation_history(self, kwargs):
+        if self.openai_conversation:
+            kwargs["conversation"] = self.openai_conversation.id
+
     async def create_response(
         self, *args: Any, **kwargs: Any
     ) -> LLMResponseEvent[OpenAIResponse]:
@@ -118,9 +127,9 @@ class OpenAILLM(LLM):
         if "stream" not in kwargs:
             kwargs["stream"] = True
 
-        if not self.openai_conversation:
-            self.openai_conversation = await self.client.conversations.create()
-        kwargs["conversation"] = self.openai_conversation.id
+        # create the conversation if needed and add the required args
+        await self.create_conversation()
+        self.add_conversation_history(kwargs)
 
         # Add tools if available - convert to OpenAI format
         tools_spec = self._get_tools_for_provider()

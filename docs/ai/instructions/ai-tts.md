@@ -1,40 +1,57 @@
-## TTS 
+## TTS Plugin Guide
 
-Here's a minimal example for building a new TTS plugin
+Build a TTS plugin that streams audio and emits events. Keep it minimal and follow the project’s layout conventions.
 
-```python
+## What to create
 
+- Make sure to follow PEP 420: Do NOT add `__init__.py` in plugin folders. Use this layout:
+  - `plugins/<provider>/pyproject.toml` (depends on `vision-agents`)
+  - `plugins/<provider>/vision_agents/plugins/<provider>/tts.py`
+  - `plugins/<provider>/tests/test_tts.py` (pytest tests at plugin root)
+  - `plugins/<provider>/example/` (optional, see `plugins/fish/example/fish_tts_example.py`)
 
-class MyTTS(tts.TTS):
-    def __init__(
-        self,
-        voice_id: str = "VR6AewLTigWG4xSOukaG",  # Default ElevenLabs voice
-        model_id: str = "eleven_multilingual_v2",
-        client: Optional[MyClient] = None,
-    ):
-        # it should be possible to pass the client (makes it easier for users to customize things)
-        # settings that are common to change, like voice id or model id should be configurable as well
-        super().__init__()
-        self.voice_id = voice_id
-        self.client = client if client is not None else MyClient(api_key=api_key)
+## Implementation essentials
 
-    async def stream_audio(self, text: str, *_, **__) -> AsyncIterator[bytes]:
+- Inherit from `vision_agents.core.tts.tts.TTS`.
+- Implement `stream_audio(self, text, ...)` and return a single `PcmData`.
 
-        audio_stream = self.client.text_to_speech.stream(
-            text=text,
-            voice_id=self.voice_id,
-            output_format=self.output_format,
-            model_id=self.model_id,
-            request_options={"chunk_size": 64000},
-        )
+  ```python
+  from getstream.video.rtc.track_util import PcmData
 
-        return audio_stream
+  async def stream_audio(self, text: str, *_, **__) -> PcmData:
+      audio_bytes = await my_sdk.tts.bytes(text=..., ...)
+      # sample_rate, channels and format depend on what the TTS model returns
+      return PcmData.from_bytes(audio_bytes, sample_rate=16000, channels=1, format="s16")
+  ```
 
-```
+- `stop_audio` can be a no-op
 
-TODO: the stop part can be generic
-TODO: Track handling can be improved
+## __init__
 
-## Testing your TTS
+The plugin constructor should:
 
-TOOD: no good test suite yet
+1. Rely on env vars to fetch credentials
+2. export kwargs that allow developers to pass important params to the model itself (eg. model name, voice ID, API URL, ...)
+3. if applicable the model or client instance
+4. have defaults for all params when possible so that ENV var is enough
+
+## Testing and examples
+
+- Look at `plugins/fish/tests/test_fish_tts.py` as a reference of what tests for a TTS plugins should look like
+- Add pytest tests at `plugins/<provider>/tests/test_tts.py`. Keep them simple: assert that `stream_audio` yields `PcmData` and that `send()` emits `TTSAudioEvent`.
+- Do not write spec tests with mocks, this is usually not necessary
+- Make sure to write at least a couple of integration tests, use `TTSSession` to avoid boiler-plate code in testing
+- Verify your implementation does not block the event loop. Import and call `assert_tts_send_non_blocking`:
+
+  ```python
+  from vision_agents.core.tts.testing import assert_tts_send_non_blocking
+
+  @pytest.mark.integration
+  async def test_provider_non_blocking(tts):
+      await assert_tts_send_non_blocking(tts, "Hello from TTS")
+  ```
+- Include a minimal example in `plugins/<provider>/example/` (see `fish_tts_example.py`).
+
+## PCM / Audio management
+
+Use `PcmData` and other utils available from the `getstream.video.rtc.track_util` module. Do not write code that directly manipulates PCM, use the audio utilities instead.

@@ -1,14 +1,15 @@
 
 # Plugin Development Guide
 
-## Example Plugin
+## 1. Copy the example plugin folder
 
-An example plugin is located in `plugins/example`. Copying the example is the best way to create a new plugin. After copying the example be sure to:
+A sample plugin is located in `plugins/sample_plugin`. Start by copying the sample plugin and renaming it
 
-- Update the folder name "example" to your plugin's name
+## 2. Update your new plugin
+
+After you copy the example be sure to:
+
 - Open `pyproject.toml` and update the name, description etc
-- Update the event types in your `events.py` file
-- Register your events in the plugin's `__init__` method
 
 ## Folder Structure
 
@@ -47,7 +48,7 @@ llm = anthropic.LLM()
 When building the plugin read these guides:
 
 - **TTS**: [ai-tts.md](ai-tts.md)
-- **STT**: [ai-stt.md](ai-stt.md)  
+- **STT**: [ai-stt.md](ai-stt.md)
 - **STS/realtime/LLM**: [ai-llm.md](ai-llm.md) or [ai-realtime-llm.md](ai-realtime-llm.md)
 
 ## Update pyproject.toml
@@ -65,3 +66,7 @@ members = [
     # ... other plugins
 ]
 ```
+
+## PCM / Audio management
+
+Use `PcmData` and other utils available from the `getstream.video.rtc.track_util` module. Do not write code that directly manipulates PCM, use the audio utilities instead.

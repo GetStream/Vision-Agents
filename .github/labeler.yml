@@ -1,0 +1,82 @@
+# Core Framework Components
+agents-core:
+  - changed-files:
+      - any-glob-to-any-file: 'agents-core/**'
+
+# Plugin System
+plugins:
+  - changed-files:
+      - any-glob-to-any-file: 'plugins/**'
+
+
+# Examples and Demos
+examples:
+  - changed-files:
+      - any-glob-to-any-file: 'examples/**'
+
+# Documentation
+docs:
+  - changed-files:
+      - any-glob-to-any-file: 'docs/**'
+      - any-glob-to-any-file: '**/*.md'
+
+# Configuration and Build
+config:
+  - changed-files:
+      - any-glob-to-any-file: '**/*.toml'
+      - any-glob-to-any-file: '**/*.yml'
+      - any-glob-to-any-file: '**/*.yaml'
+      - any-glob-to-any-file: '**/*.json'
+      - any-glob-to-any-file: '**/*.ini'
+      - any-glob-to-any-file: '**/*.cfg'
+      - any-glob-to-any-file: '**/pyproject.toml'
+      - any-glob-to-any-file: '**/pytest.ini'
+      - any-glob-to-any-file: '**/conftest.py'
+
+# CI/CD and GitHub
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+
+
+# CLI and Development Tools
+cli:
+  - changed-files:
+      - any-glob-to-any-file: '**/cli.py'
+      - any-glob-to-any-file: '**/dev.py'
+      - any-glob-to-any-file: '**/DEVELOPMENT.md'
+
+# Dependencies
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: '**/uv.lock'
+      - any-glob-to-any-file: '**/requirements*.txt'
+      - any-glob-to-any-file: '**/poetry.lock'
+      - any-glob-to-any-file: '**/Pipfile.lock'
+
+# Assets and Resources
+assets:
+  - changed-files:
+      - any-glob-to-any-file: 'assets/**'
+      - any-glob-to-any-file: '**/*.png'
+      - any-glob-to-any-file: '**/*.jpg'
+      - any-glob-to-any-file: '**/*.jpeg'
+      - any-glob-to-any-file: '**/*.gif'
+      - any-glob-to-any-file: '**/*.mp4'
+      - any-glob-to-any-file: '**/*.wav'
+      - any-glob-to-any-file: '**/*.mp3'
+
+# License and Legal
+legal:
+  - changed-files:
+      - any-glob-to-any-file: 'LICENSE'
+      - any-glob-to-any-file: '**/LICENSE.*'
+      - any-glob-to-any-file: '**/*.license'
+
+# README and Project Info
+project-info:
+  - changed-files:
+      - any-glob-to-any-file: '**/README.md'
+      - any-glob-to-any-file: '**/CHANGELOG.md'
+      - any-glob-to-any-file: '**/CONTRIBUTING.md'
+      - any-glob-to-any-file: '**/SECURITY.md'

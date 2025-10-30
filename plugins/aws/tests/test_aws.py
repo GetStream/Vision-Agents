@@ -38,18 +38,13 @@ class TestBedrockLLM:
         """Test BedrockLLM initialization with a provided client."""
         llm = BedrockLLM(model="qwen.qwen3-32b-v1:0", region_name="us-east-1")
         if not os.environ.get("AWS_BEARER_TOKEN_BEDROCK"):
-            print(len(os.environ.get("_BEARER_TOKEN_BEDROCK")))
-            token = os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
-            other = os.environ.get("ANTHROPIC_API_KEY")
-            raise Exception(
-                f"Please set AWS_BEARER_TOKEN_BEDROCK {len(token)}, {type(token)}. {len(other)}, {type(other)}"
-            )
+            pytest.skip("AWS_BEARER_TOKEN_BEDROCK not set – skipping Bedrock tests")
 
         llm._conversation = InMemoryConversation("be friendly", [])
         return llm
 
     @pytest.mark.asyncio
-    async def test_message(self, llm: BedrockLLM):
+    async def test_message(self):
         messages = BedrockLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
         message = messages[0]
@@ -57,7 +52,7 @@ class TestBedrockLLM:
         assert message.content == "say hi"
 
     @pytest.mark.asyncio
-    async def test_advanced_message(self, llm: BedrockLLM):
+    async def test_advanced_message(self):
         advanced = {
             "role": "user",
             "content": [{"text": "Explain quantum entanglement in simple terms."}],

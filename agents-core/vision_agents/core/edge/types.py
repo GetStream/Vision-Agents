@@ -1,12 +1,19 @@
-#from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Optional, NamedTuple
+from typing import (
+    Any,
+    Optional,
+    Protocol,
+    runtime_checkable,
+)
 import logging
 
-import numpy as np
-from numpy._typing import NDArray
+from getstream.video.rtc.track_util import PcmData
 from pyee.asyncio import AsyncIOEventEmitter
-import av
+import asyncio
+import os
+import shutil
+import tempfile
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -30,154 +37,75 @@ class Connection(AsyncIOEventEmitter):
     and a way to receive a callback when the call is ended
     In the future we might want to forward more events
     """
+
     async def close(self):
         pass
 
 
-class PcmData(NamedTuple):
+@runtime_checkable
+class OutputAudioTrack(Protocol):
     """
-    A named tuple representing PCM audio data.
-
-    Attributes:
-        format: The format of the audio data.
-        sample_rate: The sample rate of the audio data.
-        samples: The audio samples as a numpy array.
-        pts: The presentation timestamp of the audio data.
-        dts: The decode timestamp of the audio data.
-        time_base: The time base for converting timestamps to seconds.
+    A protocol describing an output audio track, the actual implementation depends on the edge transported used
+    eg. getstream.video.rtc.audio_track.AudioStreamTrack
     """
 
-    format: str
-    sample_rate: int
-    samples: NDArray
-    pts: Optional[int] = None  # Presentation timestamp
-    dts: Optional[int] = None  # Decode timestamp
-    time_base: Optional[float] = None  # Time base for converting timestamps to seconds
+    async def write(self, data: bytes) -> None: ...
 
-    @property
-    def duration(self) -> float:
-        """
-        Calculate the duration of the audio data in seconds.
+    def stop(self) -> None: ...
 
-        Returns:
-            float: Duration in seconds.
-        """
-        # The samples field contains a numpy array of audio samples
-        # For s16 format, each element in the array is one sample (int16)
-        # For f32 format, each element in the array is one sample (float32)
 
-        if isinstance(self.samples, np.ndarray):
-            # Direct count of samples in the numpy array
-            num_samples = len(self.samples)
-        elif isinstance(self.samples, bytes):
-            # If samples is bytes, calculate based on format
-            if self.format == "s16":
-                # For s16 format, each sample is 2 bytes (16 bits)
-                num_samples = len(self.samples) // 2
-            elif self.format == "f32":
-                # For f32 format, each sample is 4 bytes (32 bits)
-                num_samples = len(self.samples) // 4
-            else:
-                # Default assumption for other formats (treat as raw bytes)
-                num_samples = len(self.samples)
-        else:
-            # Fallback: try to get length
-            try:
-                num_samples = len(self.samples)
-            except TypeError:
-                logger.warning(
-                    f"Cannot determine sample count for type {type(self.samples)}"
-                )
-                return 0.0
+async def play_pcm_with_ffplay(
+    pcm: PcmData,
+    outfile_path: Optional[str] = None,
+    timeout_s: float = 30.0,
+) -> str:
+    """Write PcmData to a WAV file and optionally play it with ffplay.
 
-        # Calculate duration based on sample rate
-        return num_samples / self.sample_rate
+    This is a utility function for testing and debugging audio output.
 
-    @property
-    def pts_seconds(self) -> Optional[float]:
-        if self.pts is not None and self.time_base is not None:
-            return self.pts * self.time_base
-        return None
+    Args:
+        pcm: PcmData object to play
+        outfile_path: Optional path for the WAV file. If None, creates a temp file.
+        timeout_s: Timeout in seconds for ffplay playback (default: 30.0)
 
-    @property
-    def dts_seconds(self) -> Optional[float]:
-        if self.dts is not None and self.time_base is not None:
-            return self.dts * self.time_base
-        return None
+    Returns:
+        Path to the written WAV file
 
-    @classmethod
-    def from_bytes(
-        cls, 
-        audio_bytes: bytes, 
-        sample_rate: int = 16000, 
-        format: str = "s16"
-    ) -> "PcmData":
-        """
-        Create PcmData from raw audio bytes.
-        
-        Args:
-            audio_bytes: Raw audio data as bytes
-            sample_rate: Sample rate in Hz
-            format: Audio format (e.g., "s16", "f32")
-            
-        Returns:
-            PcmData object
-        """
-        audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
-        return cls(samples=audio_array, sample_rate=sample_rate, format=format)
+    Example:
+        pcm = PcmData.from_bytes(audio_bytes, sample_rate=48000, channels=2)
+        wav_path = await play_pcm_with_ffplay(pcm)
+    """
 
-    def resample(self, target_sample_rate: int) -> "PcmData":
-        """
-        Resample PcmData to a different sample rate using AV library.
-        
-        Args:
-            target_sample_rate: Target sample rate in Hz
-            
-        Returns:
-            New PcmData object with resampled audio
-        """
-        if self.sample_rate == target_sample_rate:
-            return self
-        
-        # Ensure samples are 2D for AV library (channels, samples)
-        samples = self.samples
-        if samples.ndim == 1:
-            # Reshape 1D array to 2D (1 channel, samples)
-            samples = samples.reshape(1, -1)
-        
-        # Create AV audio frame from the samples
-        frame = av.AudioFrame.from_ndarray(samples, format='s16', layout='mono')
-        frame.sample_rate = self.sample_rate
-        
-        # Create resampler
-        resampler = av.AudioResampler(
-            format='s16',
-            layout='mono',
-            rate=target_sample_rate
+    # Generate output path if not provided
+    if outfile_path is None:
+        tmpdir = tempfile.gettempdir()
+        timestamp = int(time.time())
+        outfile_path = os.path.join(tmpdir, f"pcm_playback_{timestamp}.wav")
+
+    # Write WAV file
+    with open(outfile_path, "wb") as f:
+        f.write(pcm.to_wav_bytes())
+
+    logger.info(f"Wrote WAV file: {outfile_path}")
+
+    # Optional playback with ffplay
+    if shutil.which("ffplay"):
+        logger.info("Playing audio with ffplay...")
+        proc = await asyncio.create_subprocess_exec(
+            "ffplay",
+            "-autoexit",
+            "-nodisp",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            outfile_path,
         )
-        
-        # Resample the frame
-        resampled_frames = resampler.resample(frame)
-        if resampled_frames:
-            resampled_frame = resampled_frames[0]
-            resampled_samples = resampled_frame.to_ndarray()
-            
-            # AV returns (channels, samples), so for mono we want the first (and only) channel
-            if len(resampled_samples.shape) > 1:
-                # Take the first channel (mono)
-                resampled_samples = resampled_samples[0]
-            
-            # Convert to int16
-            resampled_samples = resampled_samples.astype(np.int16)
-            
-            return PcmData(
-                samples=resampled_samples,
-                sample_rate=target_sample_rate,
-                format=self.format,
-                pts=self.pts,
-                dts=self.dts,
-                time_base=self.time_base
-            )
-        else:
-            # If resampling failed, return original data
-            return self
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning(f"ffplay timed out after {timeout_s}s, killing process")
+            proc.kill()
+    else:
+        logger.warning("ffplay not found in PATH, skipping playback")
+
+    return outfile_path

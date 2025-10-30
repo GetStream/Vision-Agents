@@ -109,6 +109,79 @@ To see how the agent work open up agents.py
 * The LLM uses the VideoForwarder to write the video to a websocket or webrtc connection
 * The STS writes the reply on agent.llm.audio_track and the RealtimeTranscriptEvent / RealtimePartialTranscriptEvent
 
+## Audio management
+
+Some important things about audio inside the library:
+
+1. WebRTC uses Opus 48khz stereo but inside the library audio is always in PCM format
+2. Plugins / AI models work with different PCM formats, usually 16khz mono
+3. PCM data is always passed around using the `PcmData` object which contains information about sample rate, channels and format
+4. Text-to-speech plugins automatically return PCM in the format needed by WebRTC. This is exposed via the `set_output_format` method
+5. Audio resampling can be done using `PcmData.resample` method
+6. When resampling audio in chunks, it is important to re-use the same `av.AudioResampler` resampler (see `PcmData.resample` and `core.tts.TTS`)
+7. Adjusting from stereo to mono and vice-versa can be done using the `PcmData.resample` method
+
+Some ground rules:
+
+1. Do not build code to resample / adjust audio unless it is not covered already by `PcmData`
+2. Do not pass PCM as plain bytes around and write code that assumes specific sample rate or format. Use `PcmData` instead
+
+## Example
+
+```python
+import asyncio
+from getstream.video.rtc.track_util import PcmData
+from openai import AsyncOpenAI
+
+async def example():
+    client = AsyncOpenAI(api_key="sk-42")
+
+    resp = await client.audio.speech.create(
+        model="gpt-4o-mini-tts",
+        voice="alloy",
+        input="pcm is cool, give me some of that please",
+        response_format="pcm",
+    )
+
+    # load response into PcmData, note that you need to specify sample_rate, channels and format
+    pcm_data = PcmData.from_bytes(
+        resp.content, sample_rate=24_000, channels=1, format="s16"
+    )
+
+    # check if pcm_data is stereo (it's not in this case ofc)
+    print(pcm_data.stereo)
+
+    # write the pcm to file
+    with open("test.wav", "wb") as f:
+        f.write(pcm_data.to_wav_bytes())
+
+    # resample pcm to be 48khz stereo
+    resampled_pcm = pcm_data.resample(48_000, 2)
+
+    # play-out pcm using ffplay
+    from vision_agents.core.edge.types import play_pcm_with_ffplay
+
+    await play_pcm_with_ffplay(resampled_pcm)
+
+if __name__ == "__main__":
+    asyncio.run(example())
+```
+
+Other things that you get from the audio utilities:
+
+1. Changing PCM format
+2. Iterate over audio chunks (`PcmData.chunks`)
+3. Process audio with pre/post buffers (`AudioSegmentCollector`)
+4. Accumulating audio (`PcmData.append`)
+
+### Testing audio manually
+
+Sometimes you need to test audio manually, here's some tips:
+
+1. Do not use earplugs when testing PCM playback ;)
+2. You can use the `PcmData.to_wav_bytes` method to convert PCM into wav bytes (see `manual_tts_to_wav` for an example)
+3. If you have `ffplay` installed, you can playback pcm directly to check if audio is correct
+
 ## Dev / Contributor Guidelines
 
 ### Light wrapping
@@ -246,3 +319,26 @@ You can now see the metrics at `http://localhost:9464/metrics` (make sure that y
 
 - Track.recv errors will fail silently. The API is to return a frame. Never return None. and wait till the next frame is available
 - When using frame.to_ndarray(format="rgb24") specify the format. Typically you want rgb24 when connecting/sending to Yolo etc
+
+
+## Onboarding Plan for new contributors
+
+**Audio Formats**
+
+You'll notice that audio comes in many formats. PCM, wav, mp3. 16khz, 48khz. 
+Encoded as i16 or f32. Note that webrtc by default is 48khz.
+
+A good first intro to audio formats can be found here:
+
+**Using Cursor**
+
+You can ask cursor something like "read @ai-plugin and build me a plugin called fish"
+See the docs folder for other ai instruction files
+
+**Learning Roadmap**
+
+1. Quick refresher on audio formats
+2. Build a TTS integration
+3. Build a STT integration
+4. Build an LLM integration
+5. Write a pytest test with a fixture

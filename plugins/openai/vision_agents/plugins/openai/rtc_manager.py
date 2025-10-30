@@ -648,7 +648,6 @@ class RTCManager:
 
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""
-        print(f"_handle_event {event['type']}")
         cb = self._event_callback
         if cb is not None:
             await cb(event)
