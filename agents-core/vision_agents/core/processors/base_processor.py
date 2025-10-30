@@ -19,6 +19,9 @@ TODO:
 """
 
 
+logger = logging.getLogger(__name__)
+
+
 class ProcessorType(Enum):
     """Enum for different processor types based on mixins."""
 
@@ -152,7 +155,7 @@ class AudioLogger(AudioVideoProcessor, AudioProcessorMixin):
         if self.should_process():
             self.audio_count += 1
 
-            logging.info(
+            logger.info(
                 f"🎵 Audio #{self.audio_count} from {user_id}: {len(audio_data)} bytes"
             )
 
@@ -169,7 +172,7 @@ class ImageCapture(AudioVideoProcessor, ImageProcessorMixin):
 
         # Create output directory
         self.output_dir.mkdir(exist_ok=True)
-        logging.info(f"📁 Saving captured frames to: {self.output_dir.absolute()}")
+        logger.info(f"📁 Saving captured frames to: {self.output_dir.absolute()}")
 
     async def process_image(
         self,
@@ -181,7 +184,7 @@ class ImageCapture(AudioVideoProcessor, ImageProcessorMixin):
         if not self.should_process():
             return None
 
-        logging.info(f"📸 ImageCapture running process_image for user {user_id}")
+        logger.info(f"📸 ImageCapture running process_image for user {user_id}")
 
         timestamp = int(asyncio.get_event_loop().time())
         filename = f"frame_{user_id}_{timestamp}_{self.frame_count:04d}.jpg"
@@ -191,7 +194,7 @@ class ImageCapture(AudioVideoProcessor, ImageProcessorMixin):
         image.save(filepath, "JPEG", quality=90)
 
         self.frame_count += 1
-        logging.info(
+        logger.info(
             f"📸 Captured frame {self.frame_count}: {filename} ({image.width}x{image.height})"
         )
 

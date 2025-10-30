@@ -14,6 +14,8 @@ from cartesia.tts import (
 from vision_agents.core import tts
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 
+logger = logging.getLogger(__name__)
+
 
 class TTS(tts.TTS):
     """Text-to-Speech plugin backed by the Cartesia Sonic model."""
@@ -89,4 +91,4 @@ class TTS(tts.TTS):
         Returns:
             None
         """
-        logging.info("🎤 Cartesia TTS stop requested (no-op)")
+        logger.info("🎤 Cartesia TTS stop requested (no-op)")

@@ -15,7 +15,12 @@ from getstream.video.rtc import Call
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 
 from ..edge import sfu_events
-from ..edge.events import AudioReceivedEvent, TrackAddedEvent, TrackRemovedEvent, CallEndedEvent
+from ..edge.events import (
+    AudioReceivedEvent,
+    TrackAddedEvent,
+    TrackRemovedEvent,
+    CallEndedEvent,
+)
 from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
 from ..events.manager import EventManager
 from ..llm import events as llm_events
@@ -27,7 +32,6 @@ from ..llm.events import (
 )
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
-from ..logging_utils import CallContextToken, clear_call_context, set_call_context
 from ..mcp import MCPBaseServer, MCPManager
 from ..processors.base_processor import Processor, ProcessorType, filter_processors
 from ..stt.events import STTTranscriptEvent, STTErrorEvent
@@ -35,6 +39,12 @@ from ..stt.stt import STT
 from ..tts.tts import TTS
 from ..tts.events import TTSAudioEvent
 from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
+from ..utils.logging import (
+    CallContextToken,
+    clear_call_context,
+    set_call_context,
+    configure_default_logging,
+)
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_utils import ensure_even_dimensions
 from ..vad import VAD
@@ -64,6 +74,16 @@ def _log_task_exception(task: asyncio.Task):
     except Exception:
         logger.exception("Error in background task")
 
+
+class _AgentLoggerAdapter(logging.LoggerAdapter):
+    """
+    A logger adapter to include the agent_id to the logs
+    """
+
+    def process(self, msg: str, kwargs):
+        if self.extra:
+            return "[Agent: %s] | %s" % (self.extra["agent_id"], msg), kwargs
+        return super(_AgentLoggerAdapter, self).process(msg, kwargs)
 
 # TODO: move me
 @dataclass
@@ -132,22 +152,29 @@ class Agent:
         # MCP servers for external tool and resource access
         mcp_servers: Optional[List[MCPBaseServer]] = None,
         options: Optional[AgentOptions] = None,
+        tracer: Tracer = trace.get_tracer("agents"),
+        # Configure the default logging for the sdk here. Pass None to leave the config intact.
+        log_level: Optional[int] = logging.INFO,
     ):
+        if log_level is not None:
+            configure_default_logging(level=log_level)
         if options is None:
             options = default_agent_options()
         else:
             options = default_agent_options().update(options)
         self.options = options
+
         self.instructions = instructions
         self.edge = edge
         self.agent_user = agent_user
         self._agent_user_initialized = False
 
         # only needed in case we spin threads
+        self.tracer = tracer
         self._root_span: Optional[Span] = None
         self._root_ctx: Optional[Context] = None
 
-        self.logger = logging.getLogger(f"Agent[{self.agent_user.id}]")
+        self.logger = _AgentLoggerAdapter(logger, {"agent_id": self.agent_user.id})
 
         self.events = EventManager()
         self.events.register_events_from_module(getstream.models, "call.")
@@ -183,7 +210,7 @@ class Agent:
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, vad, llm, edge]:
             if plugin and hasattr(plugin, "events"):
-                self.logger.info(f"Registered plugin {plugin}")
+                self.logger.debug(f"Register events from plugin {plugin}")
                 self.events.merge(plugin.events)
 
         self.llm._attach_agent(self)
@@ -242,8 +269,8 @@ class Agent:
         """
         Overwrite simple_response if you want to change how the Agent class calls the LLM
         """
-        logger.info("asking LLM to reply to %s", text)
-        with self.span("simple_response") as span:
+        self.logger.info('🤖 Asking LLM to reply to "%s"', text)
+        with self.tracer.start_as_current_span("simple_response") as span:
             response = await self.llm.simple_response(
                 text=text, processors=self.processors, participant=participant
             )
@@ -504,6 +531,13 @@ class Agent:
         Subscribes to the edge transport's `call_ended` event and awaits it. If
         no connection is active, returns immediately.
         """
+        # If connection is None or already closed, return immediately
+        if not self._connection:
+            self.logger.info(
+                "🔚 Agent connection is already closed, finishing immediately"
+            )
+            return
+
 
         with self.span("agent.finish"):
             # If connection is None or already closed, return immediately
@@ -631,7 +665,7 @@ class Agent:
         return None
 
     def _on_vad_audio(self, event: VADAudioEvent):
-        self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
+        self.logger.debug(f"Vad audio event {self._truncate_for_logging(event)}")
 
     def _on_rtc_reconnect(self):
         # update the code to listen?
@@ -677,7 +711,7 @@ class Agent:
                     )
                 )
 
-                self.logger.info(f"Agent said: {event.text}")
+                self.logger.info(f"🤖 Agent said: {event.text}")
             else:
                 self.logger.warning("No TTS available, cannot synthesize speech")
 
@@ -764,14 +798,18 @@ class Agent:
             # If track is already being processed, just switch to it
             if track_id in self._active_video_tracks:
                 track_type_name = TrackType.Name(track_type)
-                self.logger.info(f"🎥 Track re-added: {track_type_name} ({track_id}), switching to it")
-                
+                self.logger.info(
+                    f"🎥 Track re-added: {track_type_name} ({track_id}), switching to it"
+                )
+
                 if self.realtime_mode and isinstance(self.llm, Realtime):
                     # Get the existing forwarder and switch to this track
                     _, _, forwarder = self._active_video_tracks[track_id]
                     track = self.edge.add_track_subscriber(track_id)
                     if track and forwarder:
-                        await self.llm._watch_video_track(track, shared_forwarder=forwarder)
+                        await self.llm._watch_video_track(
+                            track, shared_forwarder=forwarder
+                        )
                         self._current_video_track_id = track_id
                 return
 
@@ -796,10 +834,16 @@ class Agent:
 
             # Clean up track metadata
             self._active_video_tracks.pop(track_id, None)
-            
+
             # If this was the active track, switch to any other available track
-            if track_id == self._current_video_track_id and self.realtime_mode and isinstance(self.llm, Realtime):
-                self.logger.info("🎥 Active video track removed, switching to next available")
+            if (
+                track_id == self._current_video_track_id
+                and self.realtime_mode
+                and isinstance(self.llm, Realtime)
+            ):
+                self.logger.info(
+                    "🎥 Active video track removed, switching to next available"
+                )
                 self._current_video_track_id = None
                 await self._switch_to_next_available_track()
 
@@ -839,16 +883,23 @@ class Agent:
             self.logger.info("🎥 No video tracks available")
             self._current_video_track_id = None
             return
-        
+
         # Just pick the first available video track
-        for track_id, (track_type, participant, forwarder) in self._active_video_tracks.items():
+        for track_id, (
+            track_type,
+            participant,
+            forwarder,
+        ) in self._active_video_tracks.items():
             # Only consider video tracks (camera or screenshare)
-            if track_type not in (TrackType.TRACK_TYPE_VIDEO, TrackType.TRACK_TYPE_SCREEN_SHARE):
+            if track_type not in (
+                TrackType.TRACK_TYPE_VIDEO,
+                TrackType.TRACK_TYPE_SCREEN_SHARE,
+            ):
                 continue
-            
+
             track_type_name = TrackType.Name(track_type)
             self.logger.info(f"🎥 Switching to track: {track_type_name} ({track_id})")
-            
+
             # Get the track and forwarder
             track = self.edge.add_track_subscriber(track_id)
             if track and forwarder and isinstance(self.llm, Realtime):
@@ -858,16 +909,19 @@ class Agent:
                 return
             else:
                 self.logger.error(f"Failed to switch to track {track_id}")
-        
+
         self.logger.warning("🎥 No suitable video tracks found")
 
     async def _process_track(self, track_id: str, track_type: int, participant):
         raw_forwarder = None
         processed_forwarder = None
-        
+
         try:
             # we only process video tracks (camera video or screenshare)
-            if track_type not in (TrackType.TRACK_TYPE_VIDEO, TrackType.TRACK_TYPE_SCREEN_SHARE):
+            if track_type not in (
+                TrackType.TRACK_TYPE_VIDEO,
+                TrackType.TRACK_TYPE_SCREEN_SHARE,
+            ):
                 return
 
             # subscribe to the video track
@@ -877,14 +931,16 @@ class Agent:
                 return
 
             # Wrap screenshare tracks to ensure even dimensions for H.264 encoding
-            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE:            
+            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE:
+
                 class _EvenDimensionsTrack(VideoStreamTrack):
-                    def __init__(self, src): 
+                    def __init__(self, src):
                         super().__init__()
                         self.src = src
-                    async def recv(self): 
+
+                    async def recv(self):
                         return ensure_even_dimensions(await self.src.recv())
-                
+
                 track = _EvenDimensionsTrack(track)  # type: ignore[arg-type]
 
             # Create a SHARED VideoForwarder for the RAW incoming track
@@ -896,17 +952,21 @@ class Agent:
                 name=f"raw_video_forwarder_{track_id}",
             )
             await raw_forwarder.start()
-            self.logger.info("🎥 Created raw VideoForwarder for track %s", track_id)
+            self.logger.debug("🎥 Created raw VideoForwarder for track %s", track_id)
 
             # Track forwarders for cleanup
             self._video_forwarders.append(raw_forwarder)
 
             # Store track metadata
-            self._active_video_tracks[track_id] = (track_type, participant, raw_forwarder)
+            self._active_video_tracks[track_id] = (
+                track_type,
+                participant,
+                raw_forwarder,
+            )
 
             # If Realtime provider supports video, switch to this new track
             track_type_name = TrackType.Name(track_type)
-            
+
             if self.realtime_mode:
                 if self._video_track:
                     # We have a video publisher (e.g., YOLO processor)
@@ -931,7 +991,9 @@ class Agent:
                         self._current_video_track_id = track_id
                 else:
                     # No video publisher, send raw frames - switch to this new track
-                    self.logger.info(f"🎥 Switching to {track_type_name} track: {track_id}")
+                    self.logger.info(
+                        f"🎥 Switching to {track_type_name} track: {track_id}"
+                    )
                     if isinstance(self.llm, Realtime):
                         await self.llm._watch_video_track(
                             track, shared_forwarder=raw_forwarder
@@ -978,7 +1040,9 @@ class Agent:
 
                             for processor in self.image_processors:
                                 try:
-                                    await processor.process_image(img, participant.user_id)
+                                    await processor.process_image(
+                                        img, participant.user_id
+                                    )
                                 except Exception as e:
                                     self.logger.error(
                                         f"Error in image processor {type(processor).__name__}: {e}"
@@ -999,26 +1063,28 @@ class Agent:
         except asyncio.CancelledError:
             # Task was cancelled (e.g., track removed)
             # Clean up forwarders that were created for this track
-            self.logger.debug(f"🎥 Cleaning up forwarders for cancelled track {track_id}")
-            
+            self.logger.debug(
+                f"🎥 Cleaning up forwarders for cancelled track {track_id}"
+            )
+
             # Stop and remove the raw forwarder if it was created
-            if raw_forwarder is not None and hasattr(self, '_video_forwarders'):
+            if raw_forwarder is not None and hasattr(self, "_video_forwarders"):
                 if raw_forwarder in self._video_forwarders:
                     try:
                         await raw_forwarder.stop()
                         self._video_forwarders.remove(raw_forwarder)
                     except Exception as e:
                         self.logger.error(f"Error stopping raw forwarder: {e}")
-            
+
             # Stop and remove processed forwarder if it was created
-            if processed_forwarder is not None and hasattr(self, '_video_forwarders'):
+            if processed_forwarder is not None and hasattr(self, "_video_forwarders"):
                 if processed_forwarder in self._video_forwarders:
                     try:
                         await processed_forwarder.stop()
                         self._video_forwarders.remove(processed_forwarder)
                     except Exception as e:
                         self.logger.error(f"Error stopping processed forwarder: {e}")
-            
+
             return
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
