@@ -4,7 +4,8 @@ import os
 from typing import Optional, Any
 
 from deepgram import AsyncDeepgramClient
-from deepgram.extensions.types.sockets import ListenV2ControlMessage, ListenV1ControlMessage, ListenV2MediaMessage
+from deepgram.core import EventType
+from deepgram.extensions.types.sockets import ListenV2ControlMessage
 from deepgram.listen.v2.socket_client import AsyncV2SocketClient
 from getstream.video.rtc.track_util import PcmData
 
@@ -144,10 +145,10 @@ class STT(stt.STT):
 
         # Register event handlers
         if self.connection is not None:
-            self.connection.on("open", self._on_open)
-            self.connection.on("message", self._on_message)
-            self.connection.on("error", self._on_error)
-            self.connection.on("close", self._on_close)
+            self.connection.on(EventType.OPEN, self._on_open)
+            self.connection.on(EventType.MESSAGE, self._on_message)
+            self.connection.on(EventType.ERROR, self._on_error)
+            self.connection.on(EventType.CLOSE, self._on_close)
             
             # Start listening for events
             self._listen_task = asyncio.create_task(self.connection.start_listening())

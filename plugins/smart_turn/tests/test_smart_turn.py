@@ -30,11 +30,13 @@ class TestSmartTurn:
         await ensure_model(path, SILERO_ONNX_URL)
         vad = SileroVAD(path)
 
-        for pcm_chunk in mia_audio_16khz.chunks(chunk_size=1024):
+        for pcm_chunk in mia_audio_16khz.chunks(chunk_size=512):
+            if len(pcm_chunk.samples) != 512:
+                continue
             result = await vad.predict_speech(
                 pcm_chunk.resample(target_sample_rate=16000).to_float32().samples
             )
-            print(result)
+            assert 1.0 > result > 0.0
 
     async def test_turn_detection_chunks(self, td, mia_audio_16khz):
         participant = Participant(user_id="mia", original={})
