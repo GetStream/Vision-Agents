@@ -353,7 +353,7 @@ class EventManager:
                     subscribed = True
                     self._handlers.setdefault(event_type, []).append(function)
                     module_name = getattr(function, "__module__", "unknown")
-                    logger.info(
+                    logger.debug(
                         f"Handler {function.__name__} from {module_name} registered for event {event_type}"
                     )
                 elif not self._ignore_unknown_events:
@@ -362,7 +362,7 @@ class EventManager:
                     )
                 else:
                     module_name = getattr(function, "__module__", "unknown")
-                    logger.info(
+                    logger.debug(
                         f"Event {sub_event} - {event_type} is not registered – skipping handler {function.__name__} from {module_name}."
                     )
         return function
@@ -400,7 +400,7 @@ class EventManager:
             else:
                 # No matching event class found
                 if self._ignore_unknown_events:
-                    logger.info(f"Protobuf event not registered: {proto_type}")
+                    logger.debug(f"Protobuf event not registered: {proto_type}")
                     return
                 else:
                     raise RuntimeError(f"Protobuf event not registered: {proto_type}")
@@ -410,7 +410,7 @@ class EventManager:
             # logger.info(f"Received event {_truncate_event_for_logging(event)}")
             return event
         elif self._ignore_unknown_events:
-            logger.info(f"Event not registered {_truncate_event_for_logging(event)}")
+            logger.debug(f"Event not registered {_truncate_event_for_logging(event)}")
         else:
             raise RuntimeError(f"Event not registered {event}")
 
@@ -507,7 +507,7 @@ class EventManager:
                     await self._process_single_event(event)
                 except asyncio.CancelledError as exc:
                     cancelled_exc = exc
-                    logger.info(
+                    logger.debug(
                         f"Event processing task was cancelled, processing remaining events, {len(self._queue)}"
                     )
                     await self._process_single_event(event)

@@ -164,7 +164,7 @@ class Agent:
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, vad, llm, edge]:
             if plugin and hasattr(plugin, "events"):
-                self.logger.info(f"Registered plugin {plugin}")
+                self.logger.debug(f"Register events from plugin {plugin}")
                 self.events.merge(plugin.events)
 
         self.llm._attach_agent(self)
@@ -199,7 +199,7 @@ class Agent:
         """
         Overwrite simple_response if you want to change how the Agent class calls the LLM
         """
-        logger.info("asking LLM to reply to %s", text)
+        self.logger.info('🤖 Asking LLM to reply to "%s"', text)
         with self.tracer.start_as_current_span("simple_response") as span:
             response = await self.llm.simple_response(
                 text=text, processors=self.processors, participant=participant
@@ -442,7 +442,9 @@ class Agent:
         """
         # If connection is None or already closed, return immediately
         if not self._connection:
-            logging.info("🔚 Agent connection already closed, finishing immediately")
+            self.logger.info(
+                "🔚 Agent connection is already closed, finishing immediately"
+            )
             return
 
         @self.edge.events.subscribe
@@ -562,7 +564,7 @@ class Agent:
         return None
 
     def _on_vad_audio(self, event: VADAudioEvent):
-        self.logger.info(f"Vad audio event {self._truncate_for_logging(event)}")
+        self.logger.debug(f"Vad audio event {self._truncate_for_logging(event)}")
 
     def _on_rtc_reconnect(self):
         # update the code to listen?
@@ -608,7 +610,7 @@ class Agent:
                     )
                 )
 
-                self.logger.info(f"Agent said: {event.text}")
+                self.logger.info(f"🤖 Agent said: {event.text}")
             else:
                 self.logger.warning("No TTS available, cannot synthesize speech")
 
@@ -846,7 +848,7 @@ class Agent:
                 name=f"raw_video_forwarder_{track_id}",
             )
             await raw_forwarder.start()
-            self.logger.info("🎥 Created raw VideoForwarder for track %s", track_id)
+            self.logger.debug("🎥 Created raw VideoForwarder for track %s", track_id)
 
             # Track forwarders for cleanup
             self._video_forwarders.append(raw_forwarder)

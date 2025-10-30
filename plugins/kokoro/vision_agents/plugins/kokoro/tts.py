@@ -15,6 +15,9 @@ except ModuleNotFoundError:  # pragma: no cover – mocked during CI
     KPipeline = None  # type: ignore  # noqa: N816
 
 
+logger = logging.getLogger(__name__)
+
+
 class TTS(tts.TTS):
     """Text-to-Speech plugin backed by the Kokoro-82M model."""
 
@@ -65,7 +68,7 @@ class TTS(tts.TTS):
         Clears the queue and stops playing audio.
 
         """
-        logging.info("🎤 Kokoro TTS stop requested (no-op)")
+        logger.info("🎤 Kokoro TTS stop requested (no-op)")
 
     def _generate_chunks(self, text: str):
         for _gs, _ps, audio in self._pipeline(

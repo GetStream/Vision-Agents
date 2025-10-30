@@ -408,13 +408,13 @@ class StreamEdge(EdgeTransport):
         }
 
         url = f"{base_url}{call.id}?{urlencode(params)}"
-        print(f"🌐 Opening browser to: {url}")
+        logger.info(f"🌐 Opening browser to: {url}")
 
         try:
             webbrowser.open(url)
-            print("✅ Browser opened successfully!")
+            logger.info("✅ Browser opened successfully!")
         except Exception as e:
-            print(f"❌ Failed to open browser: {e}")
-            print(f"Please manually open this URL: {url}")
+            logger.error(f"❌ Failed to open browser: {e}")
+            logger.warning(f"Please manually open this URL: {url}")
 
         return url

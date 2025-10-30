@@ -80,7 +80,7 @@ class STT(stt.STT):
                 )
 
         # Initialize DeepgramClient with the API key
-        logger.info("Initializing Deepgram client")
+        logger.debug("Initializing Deepgram client")
         self.deepgram = (
             client if client is not None else AsyncDeepgramClient(api_key=api_key)
         )
@@ -133,7 +133,7 @@ class STT(stt.STT):
                 return None
 
             try:
-                logger.info("Creating a Deepgram connection with options %s", self.options)
+                logger.debug("Creating a Deepgram connection with options %s", self.options)
                 dg_connection = await self._stack.enter_async_context(
                     self.deepgram.listen.v1.connect(**self.options)
                 )
@@ -248,7 +248,7 @@ class STT(stt.STT):
         self._emit_error_event(error_obj, "Deepgram connection")
 
     async def _on_connection_close(self, message: Any):
-        logger.warning(f"Deepgram connection closed. message={message}")
+        logger.debug(f"Deepgram connection closed. message={message}")
         await self.close()
 
     async def process_audio(
@@ -312,7 +312,6 @@ class STT(stt.STT):
         """
         while not self.closed and self.dg_connection is not None:
             if self._last_sent_at + self._keep_alive_interval <= time.time():
-                logger.debug("Sending keepalive packet to Deepgram...")
                 # Send audio silence to keep the connection open
                 await self._send_audio(self._keep_alive_data)
                 # Send keep-alive message as well
