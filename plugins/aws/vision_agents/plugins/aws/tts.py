@@ -6,7 +6,7 @@ from typing import Optional, Union, Iterator, AsyncIterator, List, Any
 import boto3
 
 from vision_agents.core.tts.tts import TTS as BaseTTS
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 
 class TTS(BaseTTS):
@@ -90,7 +90,7 @@ class TTS(BaseTTS):
         audio_bytes = resp["AudioStream"].read()
 
         return PcmData.from_bytes(
-            audio_bytes, sample_rate=16000, channels=1, format="s16"
+            audio_bytes, sample_rate=16000, channels=1, format=AudioFormat.S16
         )
 
     async def stop_audio(self) -> None:

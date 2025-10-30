@@ -48,7 +48,7 @@ llm = anthropic.LLM()
 When building the plugin read these guides:
 
 - **TTS**: [ai-tts.md](ai-tts.md)
-- **STT**: [ai-stt.md](ai-stt.md)  
+- **STT**: [ai-stt.md](ai-stt.md)
 - **STS/realtime/LLM**: [ai-llm.md](ai-llm.md) or [ai-realtime-llm.md](ai-realtime-llm.md)
 
 ## Update pyproject.toml
@@ -66,3 +66,7 @@ members = [
     # ... other plugins
 ]
 ```
+
+## PCM / Audio management
+
+Use `PcmData` and other utils available from the `getstream.video.rtc.track_util` module. Do not write code that directly manipulates PCM, use the audio utilities instead.

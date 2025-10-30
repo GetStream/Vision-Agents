@@ -4,7 +4,7 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 from vision_agents.core.tts.tts import TTS as BaseTTS
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 
 class TTS(BaseTTS):
@@ -43,7 +43,7 @@ class TTS(BaseTTS):
         )
 
         return PcmData.from_bytes(
-            resp.content, sample_rate=24_000, channels=1, format="s16"
+            resp.content, sample_rate=24_000, channels=1, format=AudioFormat.S16
         )
 
     async def stop_audio(self) -> None:

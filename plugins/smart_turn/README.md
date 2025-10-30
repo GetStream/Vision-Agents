@@ -25,14 +25,17 @@ turn_detector = TurnDetection()
 # Or specify API key directly
 turn_detector = TurnDetection(api_key="your_fal_api_key")
 
+
 # Register event handlers
 @turn_detector.on("turn_started")
 def on_turn_started(event_data):
-    print(f"Turn started: {event_data.speaker_id}")
+    print(f"Turn started: {event_data.participant}")
+
 
 @turn_detector.on("turn_ended")
 def on_turn_ended(event_data):
-    print(f"Turn ended: {event_data.speaker_id} (confidence: {event_data.confidence:.3f})")
+    print(f"Turn ended: {event_data.participant} (confidence: {event_data.confidence:.3f})")
+
 
 # Start detection
 turn_detector.start()

@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.base import PluginBaseEvent
 
 
@@ -19,9 +20,8 @@ class TurnStartedEvent(PluginBaseEvent):
     """
     
     type: str = field(default="plugin.turn_started", init=False)
-    speaker_id: Optional[str] = None
+    participant: Optional[Participant] = None
     confidence: Optional[float] = None
-    duration: Optional[float] = None
     custom: Optional[Dict[str, Any]] = None
 
 
@@ -38,9 +38,10 @@ class TurnEndedEvent(PluginBaseEvent):
     """
     
     type: str = field(default="plugin.turn_ended", init=False)
-    speaker_id: Optional[str] = None
+    participant: Optional[Participant] = None
     confidence: Optional[float] = None
-    duration: Optional[float] = None
+    trailing_silence_ms: Optional[float] = None
+    duration_ms: Optional[float] = None
     custom: Optional[Dict[str, Any]] = None
 
 

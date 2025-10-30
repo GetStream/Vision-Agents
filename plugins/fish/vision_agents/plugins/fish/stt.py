@@ -1,7 +1,5 @@
-import io
 import logging
 import os
-import wave
 from typing import Optional
 
 import numpy as np
@@ -51,23 +49,6 @@ class STT(stt.STT):
 
         self.language = language
 
-    @staticmethod
-    def _pcm_to_wav_bytes(pcm_data: PcmData) -> bytes:
-        wav_buffer = io.BytesIO()
-
-        with wave.open(wav_buffer, "wb") as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(pcm_data.sample_rate)
-            
-            # Convert numpy array to bytes if needed
-            if isinstance(pcm_data.samples, np.ndarray):
-                wav_file.writeframes(pcm_data.samples.astype(np.int16).tobytes())
-            else:
-                wav_file.writeframes(pcm_data.samples)
-
-        return wav_buffer.getvalue()
-
     async def process_audio(
         self,
         pcm_data: PcmData,
@@ -102,8 +83,8 @@ class STT(stt.STT):
             return None
 
         try:
-            # Convert PCM to WAV format
-            wav_data = self._pcm_to_wav_bytes(pcm_data)
+            # Convert PCM to WAV format using shared PcmData method
+            wav_data = pcm_data.to_wav_bytes()
 
             # Build ASR request
             asr_request = ASRRequest(
@@ -123,7 +104,9 @@ class STT(stt.STT):
             transcript_text = response.text.strip()
 
             if not transcript_text:
-                logger.error("No transcript returned from Fish Audio %s", pcm_data.duration)
+                logger.error(
+                    "No transcript returned from Fish Audio %s", pcm_data.duration
+                )
                 return None
 
             # Build response metadata
@@ -141,7 +124,8 @@ class STT(stt.STT):
                 },
             )
 
-            self._emit_transcript_event(transcript_text, participant, response_metadata)
+            if participant is not None:
+                self._emit_transcript_event(transcript_text, participant, response_metadata)
 
         except Exception as e:
             logger.error(
@@ -150,4 +134,3 @@ class STT(stt.STT):
             )
             # Let the base class handle error emission
             raise
-

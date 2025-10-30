@@ -45,8 +45,8 @@ async def main():
     async def on_my_transcript(event: STTTranscriptEvent):
         # Extract user info from user_metadata
         user_info = "unknown"
-        if event.user_metadata:
-            user = event.user_metadata
+        if event.participant:
+            user = event.participant
             user_info = user.name if user.name else str(user)
 
         agent.logger.info(f"[{event.timestamp}] {user_info}: {event.text}")

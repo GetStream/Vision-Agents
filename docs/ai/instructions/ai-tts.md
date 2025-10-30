@@ -16,7 +16,7 @@ Build a TTS plugin that streams audio and emits events. Keep it minimal and foll
 - Implement `stream_audio(self, text, ...)` and return a single `PcmData`.
 
   ```python
-  from vision_agents.core.edge.types import PcmData
+  from getstream.video.rtc.track_util import PcmData
 
   async def stream_audio(self, text: str, *_, **__) -> PcmData:
       audio_bytes = await my_sdk.tts.bytes(text=..., ...)
@@ -51,3 +51,7 @@ The plugin constructor should:
       await assert_tts_send_non_blocking(tts, "Hello from TTS")
   ```
 - Include a minimal example in `plugins/<provider>/example/` (see `fish_tts_example.py`).
+
+## PCM / Audio management
+
+Use `PcmData` and other utils available from the `getstream.video.rtc.track_util` module. Do not write code that directly manipulates PCM, use the audio utilities instead.

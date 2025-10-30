@@ -1,7 +1,7 @@
 import abc
 import logging
 import uuid
-from typing import Optional, Dict, Any, Union
+from typing import Optional
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
@@ -24,6 +24,7 @@ class STT(abc.ABC):
     process_audio is currently called every 20ms. The integration with turn keeping could be improved
     """
     closed: bool = False
+    started: bool = False
 
     def __init__(
         self,
@@ -35,10 +36,11 @@ class STT(abc.ABC):
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
+
     def _emit_transcript_event(
         self,
         text: str,
-        participant: Optional[Union[Dict[str, Any], Participant]],
+        participant: Participant,
         response: TranscriptResponse,
     ):
         """
@@ -53,14 +55,14 @@ class STT(abc.ABC):
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
-            user_metadata=participant,
+            participant=participant,
             response=response,
         ))
 
     def _emit_partial_transcript_event(
         self,
         text: str,
-        participant: Optional[Union[Dict[str, Any], Participant]],
+        participant: Participant,
         response: TranscriptResponse,
     ):
         """
@@ -75,7 +77,7 @@ class STT(abc.ABC):
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
-            user_metadata=participant,
+            participant=participant,
             response=response,
         ))
 
@@ -83,7 +85,7 @@ class STT(abc.ABC):
         self,
         error: Exception,
         context: str = "",
-        participant: Optional[Union[Dict[str, Any], Participant]] = None,
+        participant: Optional[Participant] = None,
     ):
         """
         Emit an error event. Note this should only be emitted for temporary errors.
@@ -94,7 +96,7 @@ class STT(abc.ABC):
             plugin_name=self.provider_name,
             error=error,
             context=context,
-            user_metadata=participant,
+            participant=participant,
             error_code=getattr(error, "error_code", None),
             is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt)),
         ))
@@ -104,6 +106,11 @@ class STT(abc.ABC):
         self, pcm_data: PcmData, participant: Optional[Participant] = None,
     ):
         pass
+
+    async def start(self):
+        if self.started:
+            raise ValueError("STT is already started, dont call this method twice")
+        self.started = True
 
     async def close(self):
         self.closed = True

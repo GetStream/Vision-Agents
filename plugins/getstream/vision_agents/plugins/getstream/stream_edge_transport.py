@@ -19,7 +19,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
 )
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
-
+from vision_agents.core.agents.agents import tracer
 from vision_agents.core.edge import EdgeTransport, sfu_events
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 from vision_agents.core.edge.types import Connection, User, OutputAudioTrack
@@ -165,15 +165,19 @@ class StreamEdge(EdgeTransport):
                 f"Trackmap published: {track_type_int} from {user_id}, track_id: {track_id} (waited {elapsed:.2f}s)"
             )
 
-            # Emit TrackAddedEvent with correct type
-            self.events.send(
-                events.TrackAddedEvent(
-                    plugin_name="getstream",
-                    track_id=track_id,
-                    track_type=track_type_int,
-                    user=event.participant,
+            # Only emit TrackAddedEvent for remote participants, not for agent's own tracks
+            if not is_agent_track:
+                # NOW spawn TrackAddedEvent with correct type
+                self.events.send(
+                    events.TrackAddedEvent(
+                        plugin_name="getstream",
+                        track_id=track_id,
+                        track_type=track_type_int,
+                        user=event.participant,
+                        participant=event.participant,
+                    )
                 )
-            )
+
         else:
             raise TimeoutError(
                 f"Timeout waiting for pending track: {track_type_int} ({expected_kind}) from user {user_id}, "
@@ -226,6 +230,8 @@ class StreamEdge(EdgeTransport):
                         track_id=track_id,
                         track_type=track_type_int,
                         user=participant,
+                        # TODO: user=participant?
+                        participant=participant,
                     )
                 )
                 # Mark as unpublished instead of removing
@@ -339,6 +345,7 @@ class StreamEdge(EdgeTransport):
         # Note: Not calling super().close() as it's an abstract method with trivial body
         pass
 
+    @tracer.start_as_current_span("stream_edge.open_demo")
     async def open_demo(self, call: Call) -> str:
         client = call.client.stream
 
