@@ -1,169 +1,169 @@
 # Core Framework Components
 agents-core:
-  - changed-files:
-    - any-glob-to-any-file: 'agents-core/**'
+- changed-files:
+  - any-glob-to-any-file: 'agents-core/**'
 
 # Plugin System
 plugins:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/**'
 
 # Specific Plugin Labels
 plugin-getstream:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/getstream/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/getstream/**'
 
 plugin-openai:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/openai/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/openai/**'
 
 plugin-gemini:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/gemini/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/gemini/**'
 
 plugin-deepgram:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/deepgram/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/deepgram/**'
 
 plugin-ultralytics:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/ultralytics/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/ultralytics/**'
 
 plugin-elevenlabs:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/elevenlabs/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/elevenlabs/**'
 
 plugin-cartesia:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/cartesia/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/cartesia/**'
 
 plugin-kokoro:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/kokoro/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/kokoro/**'
 
 plugin-moonshine:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/moonshine/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/moonshine/**'
 
 plugin-silero:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/silero/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/silero/**'
 
 plugin-smart-turn:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/smart_turn/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/smart_turn/**'
 
 plugin-wizper:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/wizper/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/wizper/**'
 
 plugin-xai:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/xai/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/xai/**'
 
 plugin-krisp:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/krisp/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/krisp/**'
 
 plugin-anthropic:
-  - changed-files:
-    - any-glob-to-any-file: 'plugins/anthropic/**'
+- changed-files:
+  - any-glob-to-any-file: 'plugins/anthropic/**'
 
 # Examples and Demos
 examples:
-  - changed-files:
-    - any-glob-to-any-file: 'examples/**'
+- changed-files:
+  - any-glob-to-any-file: 'examples/**'
 
 # Testing
 tests:
-  - changed-files:
-    - any-glob-to-any-file: 'tests/**'
-    - any-glob-to-any-file: '**/tests/**'
-    - any-glob-to-any-file: '**/test_*.py'
-    - any-glob-to-any-file: '**/*_test.py'
+- changed-files:
+  - any-glob-to-any-file: 'tests/**'
+  - any-glob-to-any-file: '**/tests/**'
+  - any-glob-to-any-file: '**/test_*.py'
+  - any-glob-to-any-file: '**/*_test.py'
 
 # Documentation
 docs:
-  - changed-files:
-    - any-glob-to-any-file: 'docs/**'
-    - any-glob-to-any-file: '**/*.md'
+- changed-files:
+  - any-glob-to-any-file: 'docs/**'
+  - any-glob-to-any-file: '**/*.md'
 
 # Configuration and Build
 config:
-  - changed-files:
-    - any-glob-to-any-file: '**/*.toml'
-    - any-glob-to-any-file: '**/*.yml'
-    - any-glob-to-any-file: '**/*.yaml'
-    - any-glob-to-any-file: '**/*.json'
-    - any-glob-to-any-file: '**/*.ini'
-    - any-glob-to-any-file: '**/*.cfg'
-    - any-glob-to-any-file: '**/pyproject.toml'
-    - any-glob-to-any-file: '**/pytest.ini'
-    - any-glob-to-any-file: '**/conftest.py'
+- changed-files:
+  - any-glob-to-any-file: '**/*.toml'
+  - any-glob-to-any-file: '**/*.yml'
+  - any-glob-to-any-file: '**/*.yaml'
+  - any-glob-to-any-file: '**/*.json'
+  - any-glob-to-any-file: '**/*.ini'
+  - any-glob-to-any-file: '**/*.cfg'
+  - any-glob-to-any-file: '**/pyproject.toml'
+  - any-glob-to-any-file: '**/pytest.ini'
+  - any-glob-to-any-file: '**/conftest.py'
 
 # CI/CD and GitHub
 ci:
-  - changed-files:
-    - any-glob-to-any-file: '.github/**'
+- changed-files:
+  - any-glob-to-any-file: '.github/**'
 
 # Core Agent System
 core-agents:
-  - changed-files:
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/agents/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/events/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/edge/**'
+- changed-files:
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/agents/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/events/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/edge/**'
 
 # Core Infrastructure
 core-infrastructure:
-  - changed-files:
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/llm/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/stt/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/tts/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/vad/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/turn_detection/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/processors/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/mcp/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/observability/**'
-    - any-glob-to-any-file: 'agents-core/vision_agents/core/utils/**'
+- changed-files:
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/llm/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/stt/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/tts/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/vad/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/turn_detection/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/processors/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/mcp/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/observability/**'
+  - any-glob-to-any-file: 'agents-core/vision_agents/core/utils/**'
 
 # CLI and Development Tools
 cli:
-  - changed-files:
-    - any-glob-to-any-file: '**/cli.py'
-    - any-glob-to-any-file: '**/dev.py'
-    - any-glob-to-any-file: '**/DEVELOPMENT.md'
+- changed-files:
+  - any-glob-to-any-file: '**/cli.py'
+  - any-glob-to-any-file: '**/dev.py'
+  - any-glob-to-any-file: '**/DEVELOPMENT.md'
 
 # Dependencies
 dependencies:
-  - changed-files:
-    - any-glob-to-any-file: '**/uv.lock'
-    - any-glob-to-any-file: '**/requirements*.txt'
-    - any-glob-to-any-file: '**/poetry.lock'
-    - any-glob-to-any-file: '**/Pipfile.lock'
+- changed-files:
+  - any-glob-to-any-file: '**/uv.lock'
+  - any-glob-to-any-file: '**/requirements*.txt'
+  - any-glob-to-any-file: '**/poetry.lock'
+  - any-glob-to-any-file: '**/Pipfile.lock'
 
 # Assets and Resources
 assets:
-  - changed-files:
-    - any-glob-to-any-file: 'assets/**'
-    - any-glob-to-any-file: '**/*.png'
-    - any-glob-to-any-file: '**/*.jpg'
-    - any-glob-to-any-file: '**/*.jpeg'
-    - any-glob-to-any-file: '**/*.gif'
-    - any-glob-to-any-file: '**/*.mp4'
-    - any-glob-to-any-file: '**/*.wav'
-    - any-glob-to-any-file: '**/*.mp3'
+- changed-files:
+  - any-glob-to-any-file: 'assets/**'
+  - any-glob-to-any-file: '**/*.png'
+  - any-glob-to-any-file: '**/*.jpg'
+  - any-glob-to-any-file: '**/*.jpeg'
+  - any-glob-to-any-file: '**/*.gif'
+  - any-glob-to-any-file: '**/*.mp4'
+  - any-glob-to-any-file: '**/*.wav'
+  - any-glob-to-any-file: '**/*.mp3'
 
 # License and Legal
 legal:
-  - changed-files:
-    - any-glob-to-any-file: 'LICENSE'
-    - any-glob-to-any-file: '**/LICENSE.*'
-    - any-glob-to-any-file: '**/*.license'
+- changed-files:
+  - any-glob-to-any-file: 'LICENSE'
+  - any-glob-to-any-file: '**/LICENSE.*'
+  - any-glob-to-any-file: '**/*.license'
 
 # README and Project Info
 project-info:
-  - changed-files:
-    - any-glob-to-any-file: '**/README.md'
-    - any-glob-to-any-file: '**/CHANGELOG.md'
-    - any-glob-to-any-file: '**/CONTRIBUTING.md'
-    - any-glob-to-any-file: '**/SECURITY.md'
+- changed-files:
+  - any-glob-to-any-file: '**/README.md'
+  - any-glob-to-any-file: '**/CHANGELOG.md'
+  - any-glob-to-any-file: '**/CONTRIBUTING.md'
+  - any-glob-to-any-file: '**/SECURITY.md'
