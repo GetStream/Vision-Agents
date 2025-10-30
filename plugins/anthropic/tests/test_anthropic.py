@@ -1,18 +1,14 @@
 from dotenv import load_dotenv
-import sys
 import os
 
 import pytest
-
-# Add the plugin directory to the path so we can import the plugin
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # Load environment variables
 load_dotenv()
 
 
-class TestTavus:
-    """Integration tests for XAI plugin that make actual API calls."""
+class TestAnthropic:
+    """Integration tests for Anthropic plugin that make actual API calls."""
 
     async def test_not_integration(self):
         assert True
