@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -445,7 +445,7 @@ wheels = [
 
 [[package]]
 name = "cartesia"
-version = "2.0.9"
+version = "2.0.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -459,9 +459,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/d9/0ea051fb3119c22ea485f17b192526228fdaf450b8653abdf8edd60e9dcb/cartesia-2.0.9.tar.gz", hash = "sha256:e8b757b02a0ef228f610317de74aa22a7f047d178571527ecc069422d7c14639", size = 77772, upload-time = "2025-09-16T20:40:22.09Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/38/9cd79aa2ef511a1ab656983e0b79109f0902eae70b86e180ac0f323cec92/cartesia-2.0.15.tar.gz", hash = "sha256:6fad28e8fc5faf8d8b105dc872d0ee0af89f8fe67d1ccdb991ab28ad85b4d189", size = 78973, upload-time = "2025-10-29T16:44:15.312Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/4b/6fa06df64db4cd4274d18ad6584ba3f624a02def134312ec98c164073319/cartesia-2.0.9-py3-none-any.whl", hash = "sha256:7eca63c79264de050258f9015d649dc2b2486d147895647fa80d9e5c2d073cea", size = 150144, upload-time = "2025-09-16T20:40:20.38Z" },
+    { url = "https://files.pythonhosted.org/packages/45/d7/108f0faf2b6e7d253b60317ecbcff23d974546a2a74ad294007f07c7968a/cartesia-2.0.15-py3-none-any.whl", hash = "sha256:edfae98d149de90ce76b10d6db1c4523ddf94cdac6b904a29df87a403143ad5f", size = 152809, upload-time = "2025-10-29T16:44:13.825Z" },
 ]
 
 [[package]]
@@ -5031,7 +5031,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cartesia", specifier = ">=2.0.9" },
+    { name = "cartesia", specifier = ">=2.0.15" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
