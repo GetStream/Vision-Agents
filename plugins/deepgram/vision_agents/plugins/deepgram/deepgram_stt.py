@@ -172,9 +172,8 @@ class STT(stt.STT):
         if message.type == "TurnInfo":
             # Extract transcript text
             transcript_text = getattr(message, "transcript", "").strip()
-            
+
             if not transcript_text:
-                logger.warning(f"Received TurnInfo message with empty transcript: {message}")
                 return
 
             # Get event type to determine if final or partial
