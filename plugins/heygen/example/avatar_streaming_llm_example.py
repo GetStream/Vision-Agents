@@ -8,15 +8,17 @@ from vision_agents.plugins import getstream, gemini, heygen, deepgram
 load_dotenv()
 
 
-async def start_avatar_agent() -> None:
-    """Start an agent with HeyGen avatar using streaming LLM.
+async def start_avatar_agent_streaming() -> None:
+    """Start an agent with HeyGen avatar using streaming (non-Realtime) LLM.
     
     This example demonstrates how to use HeyGen's avatar streaming
-    with a regular streaming LLM. This approach has much lower latency
-    than using Realtime LLMs because text goes directly to HeyGen
-    without any transcription round-trip.
+    with a regular streaming LLM (gemini.LLM) + STT. HeyGen will handle
+    both TTS and video generation based on the LLM's text output.
     
-    HeyGen handles all TTS and lip-sync based on the LLM's text output.
+    This approach has lower latency than Realtime LLMs because:
+    - Text is sent to HeyGen immediately as it's generated
+    - No transcription round-trip (LLM → audio → transcription → HeyGen)
+    - HeyGen handles TTS and lip-sync simultaneously
     """
     
     # Create agent with HeyGen avatar and streaming LLM
@@ -32,20 +34,19 @@ async def start_avatar_agent() -> None:
             "Don't use special characters or formatting."
         ),
         
-        # Use regular streaming LLM (not Realtime) for lower latency
+        # Use regular streaming LLM (not Realtime)
         llm=gemini.LLM("gemini-2.0-flash-exp"),
         
         # Add STT for speech input
         stt=deepgram.STT(),
         
         # Add HeyGen avatar as a video publisher
-        # Note: mute_llm_audio is not needed since streaming LLM doesn't produce audio
+        # Note: mute_llm_audio is not needed here since gemini.LLM doesn't produce audio
         processors=[
             heygen.AvatarPublisher(
                 avatar_id="default",  # Use your HeyGen avatar ID
                 quality="high",       # Video quality: "low", "medium", "high"
                 resolution=(1920, 1080),  # Output resolution
-                mute_llm_audio=False,  # Not needed for streaming LLM
             )
         ]
     )
@@ -68,5 +69,5 @@ async def start_avatar_agent() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(start_avatar_agent())
+    asyncio.run(start_avatar_agent_streaming())
 

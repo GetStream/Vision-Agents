@@ -1008,9 +1008,12 @@ class Agent:
         """Whether the agent should publish an outbound audio track.
 
         Returns:
-            True if TTS is configured or when in Realtime mode.
+            True if TTS is configured, when in Realtime mode, or if there are audio publishers.
         """
         if self.tts is not None or self.realtime_mode:
+            return True
+        # Also publish audio if there are audio publishers (e.g., HeyGen avatar)
+        if self.audio_publishers:
             return True
         return False
 
@@ -1137,6 +1140,11 @@ class Agent:
             if self.realtime_mode and isinstance(self.llm, Realtime):
                 self._audio_track = self.llm.output_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
+            elif self.audio_publishers:
+                # Get the first audio publisher to create the track
+                audio_publisher = self.audio_publishers[0]
+                self._audio_track = audio_publisher.publish_audio_track()
+                self.logger.info("🎵 Audio track initialized from audio publisher")
             else:
                 # Default to WebRTC-friendly format unless configured differently
                 framerate = 48000

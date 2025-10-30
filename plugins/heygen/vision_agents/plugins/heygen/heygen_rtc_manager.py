@@ -46,8 +46,8 @@ class HeyGenRTCManager:
         # Video track callback for receiving avatar video
         self._video_callback: Optional[Callable[[MediaStreamTrack], Any]] = None
         
-        # Audio track for sending to HeyGen
-        self._audio_sender: Optional[Any] = None
+        # Audio track callback for receiving avatar audio
+        self._audio_callback: Optional[Callable[[MediaStreamTrack], Any]] = None
         
         self._connected = False
         self._connection_ready = asyncio.Event()
@@ -117,27 +117,8 @@ class HeyGenRTCManager:
             offer = RTCSessionDescription(sdp=offer_sdp, type="offer")
             await self.pc.setRemoteDescription(offer)
             
-            # HeyGen's offer includes tracks for video/audio they send us
-            # Check transceivers to see if we have an audio sender
+            # Log transceivers for debugging
             logger.debug(f"Transceivers after setRemoteDescription: {len(self.pc.getTransceivers())}")
-            
-            # Find the audio transceiver and modify it to allow sending
-            logger.info(f"🔍 Checking {len(self.pc.getTransceivers())} transceivers for audio")
-            for idx, transceiver in enumerate(self.pc.getTransceivers()):
-                logger.info(f"  Transceiver {idx}: mid={transceiver.mid}, direction={transceiver.direction}")
-                if transceiver.receiver and transceiver.receiver.track:
-                    logger.info(f"    Receiver track: kind={transceiver.receiver.track.kind}")
-                    if transceiver.receiver.track.kind == "audio":
-                        # Found the audio transceiver - modify its direction to allow sending
-                        logger.info(f"    🔧 Modifying audio transceiver direction from {transceiver.direction} to sendrecv")
-                        transceiver.direction = "sendrecv"
-                        self._audio_sender = transceiver.sender
-                        logger.info("✅ Audio transceiver modified for lip-sync")
-                        break
-            
-            # If no audio transceiver found, log warning
-            if not self._audio_sender:
-                logger.warning("⚠️ No audio transceiver found - lip-sync may not work")
             
             # Create our answer
             answer = await self.pc.createAnswer()
@@ -225,8 +206,12 @@ class HeyGenRTCManager:
             else:
                 logger.warning("Video track received but no callback registered")
         elif track.kind == "audio":
-            # Audio track from HeyGen (avatar speech) - currently not used
-            logger.debug("Audio track received from HeyGen (ignored)")
+            # Audio track from HeyGen (avatar speech with lip-synced TTS)
+            logger.info("🔊 Audio track received from HeyGen")
+            if self._audio_callback:
+                await self._audio_callback(track)
+            else:
+                logger.warning("⚠️ Audio track received but no callback registered")
 
     def set_video_callback(self, callback: Callable[[MediaStreamTrack], Any]) -> None:
         """Set callback for handling incoming video track.
@@ -236,33 +221,25 @@ class HeyGenRTCManager:
         """
         self._video_callback = callback
 
-    async def send_audio_track(self, audio_track: MediaStreamTrack) -> None:
-        """Send audio track to HeyGen for lip-sync.
+    def set_audio_callback(self, callback: Callable[[MediaStreamTrack], Any]) -> None:
+        """Set callback for handling incoming audio track.
         
         Args:
-            audio_track: Audio track containing agent's speech.
+            callback: Async function to handle audio track.
         """
-        if not self._audio_sender:
-            logger.warning("No audio sender available - connection may not be established")
-            return
+        self._audio_callback = callback
+
+    async def send_text(self, text: str, task_type: str = "repeat") -> None:
+        """Send text to HeyGen for the avatar to speak with lip-sync.
         
-        try:
-            logger.info(f"🎤 Attempting to send audio track to HeyGen: {audio_track}")
-            logger.info(f"   Audio track kind: {audio_track.kind if hasattr(audio_track, 'kind') else 'unknown'}")
-            logger.info(f"   Current sender track: {self._audio_sender.track}")
-            
-            # replaceTrack is not async in aiortc
-            result = self._audio_sender.replaceTrack(audio_track)
-            # If it returns a coroutine, await it; otherwise just use the result
-            if hasattr(result, '__await__'):
-                await result
-            
-            logger.info(f"✅ Audio track successfully set on sender")
-            logger.info(f"   New sender track: {self._audio_sender.track}")
-        except Exception as e:
-            logger.error(f"❌ Failed to send audio track to HeyGen: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        This is the correct way to achieve lip-sync with HeyGen - they handle
+        TTS and lip-sync server-side based on the text input.
+        
+        Args:
+            text: The text for the avatar to speak.
+            task_type: Either "repeat" or "talk" (default: "repeat").
+        """
+        await self.session_manager.send_task(text, task_type)
 
     @property
     def is_connected(self) -> bool:

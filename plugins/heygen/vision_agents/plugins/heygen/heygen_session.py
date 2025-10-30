@@ -134,6 +134,58 @@ class HeyGenSession:
             logger.error(f"❌ Failed to start HeyGen session: {e}")
             raise
 
+    async def send_task(self, text: str, task_type: str = "repeat") -> Dict[str, Any]:
+        """Send a text task to HeyGen for the avatar to speak.
+        
+        This is the proper way to achieve lip-sync with HeyGen - send text,
+        and HeyGen handles TTS and lip-sync server-side.
+        
+        Args:
+            text: The text for the avatar to speak.
+            task_type: Either "repeat" (avatar repeats text exactly) or 
+                      "talk" (processes through HeyGen's LLM first).
+            
+        Returns:
+            Task response from HeyGen.
+        """
+        if not self.session_id:
+            raise RuntimeError("Session not created. Call create_session() first.")
+        
+        if not self._http_session:
+            self._http_session = aiohttp.ClientSession()
+        
+        headers = {
+            "X-Api-Key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        
+        payload = {
+            "session_id": self.session_id,
+            "text": text,
+            "task_type": task_type,
+        }
+        
+        try:
+            async with self._http_session.post(
+                f"{self.base_url}/streaming.task",
+                json=payload,
+                headers=headers,
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.warning(
+                        f"Failed to send task to HeyGen: {response.status} - {error_text}"
+                    )
+                    return {}
+                
+                data = await response.json()
+                logger.debug(f"📤 Sent text to HeyGen: '{text[:50]}...'")
+                return data
+        
+        except Exception as e:
+            logger.error(f"❌ Error sending task to HeyGen: {e}")
+            return {}
+
     async def stop_session(self) -> None:
         """Stop the HeyGen streaming session."""
         if not self.session_id:

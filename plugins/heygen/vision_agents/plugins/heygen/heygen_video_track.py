@@ -31,8 +31,8 @@ class HeyGenVideoTrack(VideoStreamTrack):
         self.width = width
         self.height = height
         
-        # Queue for incoming frames from HeyGen
-        self.frame_queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=30)
+        # Queue for incoming frames from HeyGen - keep minimal for low latency
+        self.frame_queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=2)
         
         # Create placeholder frame for when no frames are available
         placeholder = Image.new("RGB", (self.width, self.height), color=(30, 30, 40))
