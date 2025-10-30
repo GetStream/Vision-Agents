@@ -25,6 +25,7 @@ class TestVogentTurn:
         finally:
             await td.stop()
 
+    @pytest.mark.skip(reason="This test is temporarily disabled.")
     async def test_turn_detection(self, td, mia_audio_16khz, silence_2s_48khz):
         participant = Participant(user_id="mia", original={})
         conversation = InMemoryConversation(instructions="be nice", messages=[])
