@@ -1,6 +1,9 @@
+import sys
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 import logging
+
+import colorlog
 
 logger = logging.getLogger(__name__)
 
@@ -8,6 +11,41 @@ call_id_ctx: ContextVar[str | None] = ContextVar("call_id", default=None)
 _CURRENT_CALL_ID: str | None = None
 _ORIGINAL_FACTORY = logging.getLogRecordFactory()
 _CALL_ID_ENABLED = True
+
+
+MAIN_LOGGER = logging.getLogger("vision_agents")
+GETSTREAM_LOGGER = logging.getLogger("getstream")
+
+
+def configure_default_logging(level: int) -> None:
+    """
+    Sets the default configuration for "vision_agents" and "getstream" loggers to have a nice formatting
+    if it's not already configured.
+    """
+    colored_formatter = colorlog.ColoredFormatter(
+        fmt="%(log_color)s%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
+        log_colors={
+            "DEBUG": "white",
+            "INFO": "light_white",
+            "WARNING": "yellow",
+            "ERROR": "red",
+            "CRITICAL": "bold_red",
+        },
+    )
+    default_handler = logging.StreamHandler(sys.stderr)
+    default_handler.setLevel(level)
+    default_handler.setFormatter(colored_formatter)
+
+    for _logger in [MAIN_LOGGER, GETSTREAM_LOGGER]:
+        # Set the default handler only if it's not already configured
+        if not _logger.handlers:
+            _logger.handlers = [default_handler]
+            _logger.propagate = False
+        # Do not override the level if it's set
+        if _logger.level == logging.NOTSET:
+            _logger.setLevel(level)
+
 
 @dataclass(slots=True)
 class CallContextToken:
@@ -61,8 +99,8 @@ def clear_call_context(token: CallContextToken) -> None:
 
     global _CURRENT_CALL_ID
 
-    #failing TODO: fix
-    #call_id_ctx.reset(token.context_token)
+    # failing TODO: fix
+    # call_id_ctx.reset(token.context_token)
     _CURRENT_CALL_ID = token.previous_global
 
 

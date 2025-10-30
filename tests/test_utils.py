@@ -1,10 +1,15 @@
+import logging
 import os
 import tempfile
+
 import numpy as np
 import av
+import pytest
+
 from vision_agents.core.utils.utils import parse_instructions, Instructions
 from vision_agents.core.utils.video_utils import ensure_even_dimensions
 from vision_agents.core.edge.types import PcmData
+from vision_agents.core.utils.logging import configure_default_logging
 
 
 class TestParseInstructions:
@@ -521,9 +526,69 @@ class TestEnsureEvenDimensions:
         frame = av.VideoFrame(width=1921, height=1081, format="yuv420p")
         frame.pts = 12345
         frame.time_base = Fraction(1, 30)
-        
+
         result = ensure_even_dimensions(frame)
-        
+
         assert result.pts == 12345
         assert result.time_base == Fraction(1, 30)
 
+
+@pytest.fixture()
+def make_logger():
+    """
+    A fixture to get logger and reset its settings back to the original state after the test.
+    """
+    loggers = []
+
+    def factory(name: str):
+        logger_ = logging.getLogger(name)
+        original_level = logger_.level
+        original_handlers = logger_.handlers[:]
+        original_filters = logger_.filters[:]
+        loggers.append((logger_, original_level, original_handlers, original_filters))
+        return logger_
+
+    yield factory
+    for logger, level, handlers, filters in loggers:
+        logger.setLevel(level)
+        logger.handlers = handlers
+        logger.filters = filters
+
+
+class TestLogging:
+    def test_configure_default_logging_configures(self, make_logger):
+        vision_agents_logger = make_logger("vision_agents")
+        getstream_logger = make_logger("getstream")
+
+        some_level = 23
+        assert vision_agents_logger.level != some_level
+        assert getstream_logger.level != some_level
+        configure_default_logging(level=some_level)
+        assert vision_agents_logger.level == some_level
+        assert getstream_logger.level == some_level
+
+    def test_configure_default_logging_handlers_already_configured(self, make_logger):
+        loggers = [make_logger("vision_agents"), make_logger("getstream")]
+        some_level = 23
+        null_handler = logging.NullHandler()
+
+        for logger in loggers:
+            logger.addHandler(null_handler)
+
+        configure_default_logging(level=some_level)
+
+        for logger in loggers:
+            assert logger.level == some_level
+            assert logger.handlers == [null_handler]
+
+    def test_configure_default_logging_level_already_set(self, make_logger):
+        loggers = [make_logger("vision_agents"), make_logger("getstream")]
+        for logger in loggers:
+            logger.setLevel(logging.DEBUG)
+            assert not logger.handlers
+
+        configure_default_logging(level=logging.INFO)
+
+        for logger in loggers:
+            assert logger.level == logging.DEBUG
+            assert logger.handlers

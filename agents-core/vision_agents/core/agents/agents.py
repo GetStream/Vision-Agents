@@ -30,7 +30,6 @@ from ..llm.events import (
 )
 from ..llm.llm import LLM
 from ..llm.realtime import Realtime
-from ..logging_utils import CallContextToken, clear_call_context, set_call_context
 from ..mcp import MCPBaseServer, MCPManager
 from ..processors.base_processor import Processor, ProcessorType, filter_processors
 from ..stt.events import STTTranscriptEvent, STTErrorEvent
@@ -38,6 +37,12 @@ from ..stt.stt import STT
 from ..tts.tts import TTS
 from ..tts.events import TTSAudioEvent
 from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
+from ..utils.logging import (
+    CallContextToken,
+    clear_call_context,
+    set_call_context,
+    configure_default_logging,
+)
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_utils import ensure_even_dimensions
 from ..vad import VAD
@@ -119,7 +124,11 @@ class Agent:
         # MCP servers for external tool and resource access
         mcp_servers: Optional[List[MCPBaseServer]] = None,
         tracer: Tracer = trace.get_tracer("agents"),
+        # Configure the default logging for the sdk here. Pass None to leave the config intact.
+        log_level: Optional[int] = logging.INFO,
     ):
+        if log_level is not None:
+            configure_default_logging(level=log_level)
         self.instructions = instructions
         self.edge = edge
         self.agent_user = agent_user
