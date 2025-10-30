@@ -23,7 +23,7 @@ def configure_default_logging(level: int) -> None:
     if it's not already configured.
     """
     colored_formatter = colorlog.ColoredFormatter(
-        fmt="%(log_color)s%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)s | %(message)s",
+        fmt="%(log_color)s%(asctime)s.%(msecs)03d | %(levelname)-8s | %(message)s",
         datefmt="%H:%M:%S",
         log_colors={
             "DEBUG": "white",
