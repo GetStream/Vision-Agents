@@ -47,7 +47,7 @@ class TTS(tts.TTS):
         self.model_id = model_id
         # Ensure voice_id is always provided for API typing and calls
         self.voice_id: str = (
-            voice_id if voice_id is not None else "f9836c6e-a0bd-460e-9d3c-f7299fa60f94"
+            voice_id if voice_id is not None else "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
         )
         self.sample_rate = sample_rate
 
