@@ -22,7 +22,7 @@ class TTS(tts.TTS):
         self,
         api_key: Optional[str] = None,
         model_id: str = "sonic-3",
-        voice_id: str | None = "f9836c6e-a0bd-460e-9d3c-f7299fa60f94",
+        voice_id: str | None = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
         sample_rate: int = 16000,
         client: Optional[AsyncCartesia] = None,
     ) -> None:
