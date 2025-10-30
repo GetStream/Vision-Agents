@@ -1,3 +1,8 @@
+"""
+Base VAD implementation. Avoids external audio utils and relies on PcmData
+for serialization where needed.
+"""
+
 import abc
 import logging
 import time
@@ -8,8 +13,6 @@ import numpy as np
 
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.events.manager import EventManager
-from getstream.audio.pcm_utils import pcm_to_numpy_array, numpy_array_to_bytes
-
 from ..edge.types import Participant
 
 from . import events
@@ -23,6 +26,7 @@ from .events import (
 from vision_agents.core.events import (
     PluginInitializedEvent,
     PluginClosedEvent,
+    AudioFormat,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +49,9 @@ class VAD(abc.ABC):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size: int = 512,
+        window_samples: int = 512,
+        channels: int = 1,
+        audio_format: AudioFormat = AudioFormat.PCM_S16,
         silence_threshold: float = 0.5,
         activation_th: float = 0.5,
         deactivation_th: float = 0.35,
@@ -72,8 +78,11 @@ class VAD(abc.ABC):
         """
         super().__init__()
 
-        self.sample_rate = sample_rate
-        self.frame_size = frame_size
+        # Model input spec
+        self.sample_rate = int(sample_rate)           # model sample rate (Hz)
+        self.channels = int(channels)                 # model channels (1=mono)
+        self.audio_format = audio_format              # model PCM format
+        self.frame_size = int(window_samples)         # window size at model rate
         # Keep silence_threshold for backward compatibility
         self.silence_threshold = silence_threshold
         self.activation_th = activation_th
@@ -88,14 +97,14 @@ class VAD(abc.ABC):
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
         # State variables
-        self.speech_buffer = (
-            bytearray()
-        )  # Use bytearray instead of list of numpy arrays
+        # Accumulated speech buffer as PcmData (model spec)
+        self.speech_buffer: Optional[PcmData] = None
         self.silence_counter = 0
         self.is_speech_active = False
         self.total_speech_frames = 0
         self.partial_counter = 0
-        self._leftover: np.ndarray = np.empty(0, np.int16)
+        # Rolling buffer of normalized audio at model spec awaiting windowing
+        self._model_buffer: Optional[PcmData] = None
         self._speech_start_time: Optional[float] = None
 
         # Emit initialization event
@@ -139,48 +148,45 @@ class VAD(abc.ABC):
             user: User metadata to include with emitted audio events
         """
 
-        if pcm_data.sample_rate != self.sample_rate:
-            raise TypeError(
-                f"vad is initialized with sample rate {self.sample_rate} but pcm data has sample rate {pcm_data.sample_rate}"
+        # Normalize samples to int16 ndarray for processing
+        if isinstance(pcm_data.samples, bytes):
+            samples = np.frombuffer(pcm_data.samples, dtype=np.int16)
+        elif isinstance(pcm_data.samples, np.ndarray):
+            samples = (
+                pcm_data.samples.astype(np.int16)
+                if pcm_data.samples.dtype != np.int16
+                else pcm_data.samples
             )
-
-        # Convert samples to numpy array using shared utility
-        samples = pcm_to_numpy_array(pcm_data)
-        pcm_data = PcmData(
-            samples=samples,
-            sample_rate=pcm_data.sample_rate,
-            format=pcm_data.format,
-        )
-
-        # Prepend leftover samples from previous call
-        if len(self._leftover) > 0:
-            buffer = np.concatenate([self._leftover, pcm_data.samples])
         else:
-            buffer = pcm_data.samples
+            raise TypeError(
+                f"Unsupported samples type: {type(pcm_data.samples)}; expected bytes or numpy.ndarray"
+            )
+        incoming = PcmData(samples=samples, sample_rate=pcm_data.sample_rate, format="s16")
+        # Resample to model spec
+        normalized = incoming.resample(self.sample_rate, self.channels)
+        # Append to rolling buffer
+        if self._model_buffer is None:
+            self._model_buffer = normalized
+        else:
+            self._model_buffer = self._model_buffer.append(normalized)
 
-        # Process audio in full frames only, without zero-padding
-        frame_start = 0
-        while frame_start + self.frame_size <= len(buffer):
-            frame = buffer[frame_start : frame_start + self.frame_size]
-            frame_start += self.frame_size
-
+        # Consume full windows
+        while (
+            self._model_buffer is not None
+            and isinstance(self._model_buffer.samples, np.ndarray)
+            and len(self._model_buffer.samples) >= self.frame_size
+        ):
+            window = self._model_buffer.samples[: self.frame_size]
+            remainder = self._model_buffer.samples[self.frame_size :]
+            self._model_buffer = (
+                PcmData(samples=remainder, sample_rate=self.sample_rate, format="s16")
+                if remainder.size > 0
+                else None
+            )
             await self._process_frame(
-                PcmData(
-                    samples=frame,
-                    sample_rate=pcm_data.sample_rate,
-                    format=pcm_data.format,
-                ),
+                PcmData(samples=window, sample_rate=self.sample_rate, format="s16"),
                 participant,
             )
-
-        # Store any remaining samples for the next call
-        if frame_start < len(buffer):
-            self._leftover = buffer[frame_start:]
-        else:
-            self._leftover = np.empty(0, np.int16)
-
-        if len(self._leftover) > 0:
-            logger.debug(f"Keeping {len(self._leftover)} samples for next processing")
 
     async def _process_frame(
         self, frame: PcmData, participant: Optional[Participant] = None
@@ -206,23 +212,34 @@ class VAD(abc.ABC):
 
         # Add frame to buffer in all cases during active speech
         if self.is_speech_active:
-            # Append the frame bytes to the bytearray buffer using shared utility
-            # Make a copy of samples to avoid BufferError due to memory view restrictions
-            frame_bytes = numpy_array_to_bytes(frame.samples)
-            self.speech_buffer.extend(frame_bytes)
+            # Append frame to the accumulated PcmData buffer
+            if self.speech_buffer is None:
+                self.speech_buffer = PcmData(
+                    samples=frame.samples,
+                    sample_rate=frame.sample_rate,
+                    format=frame.format,
+                )
+            else:
+                self.speech_buffer = self.speech_buffer.append(frame)
             self.total_speech_frames += 1
             self.partial_counter += 1
 
             # Emit partial event every N frames while in speech
             if self.partial_counter >= self.partial_frames:
-                # Create a copy of the current speech data
-                current_samples = np.frombuffer(
-                    self.speech_buffer, dtype=np.int16
-                ).copy()
-                current_bytes = numpy_array_to_bytes(current_samples)
-
-                # Calculate current duration
-                current_duration_ms = (len(current_samples) / self.sample_rate) * 1000
+                # Serialize current buffer to bytes for partial event
+                if self.speech_buffer is not None:
+                    current_bytes = self.speech_buffer.to_bytes()
+                    # Estimate sample count for frame_count
+                    current_samples_len = (
+                        len(self.speech_buffer.samples)
+                        if isinstance(self.speech_buffer.samples, np.ndarray)
+                        else len(current_bytes) // 2
+                    )
+                    current_duration_ms = self.speech_buffer.duration_ms
+                else:
+                    current_bytes = b""
+                    current_samples_len = 0
+                    current_duration_ms = 0.0
 
                 # Emit structured partial event
                 self.events.send(
@@ -231,13 +248,13 @@ class VAD(abc.ABC):
                         plugin_name=self.provider_name,
                         audio_data=current_bytes,
                         duration_ms=current_duration_ms,
-                        frame_count=len(current_samples) // self.frame_size,
-                        user_metadata=participant,
+                        frame_count=current_samples_len // self.frame_size,
+                        participant=participant,
                     )
                 )
 
                 logger.debug(
-                    f"Emitted partial event with {len(current_samples)} samples"
+                    f"Emitted partial event with {current_samples_len} samples"
                 )
                 self.partial_counter = 0
 
@@ -282,13 +299,12 @@ class VAD(abc.ABC):
                     speech_probability=speech_prob,
                     activation_threshold=self.activation_th,
                     frame_count=1,
-                    user_metadata=participant,
+                    participant=participant,
                 )
             )
 
-            # Add this frame to the buffer using shared utility
-            frame_bytes = numpy_array_to_bytes(frame.samples)
-            self.speech_buffer.extend(frame_bytes)
+            # Initialize the PcmData buffer with this frame
+            self.speech_buffer = PcmData(samples=frame.samples, sample_rate=frame.sample_rate, format=frame.format)
 
     async def _flush_speech_buffer(self, user: Optional[Union[Dict[str, Any], Participant]] = None) -> None:
         """
@@ -302,14 +318,23 @@ class VAD(abc.ABC):
             self.min_speech_ms * self.sample_rate / 1000 / self.frame_size
         )
 
-        # Convert bytearray to numpy array
-        speech_data = np.frombuffer(self.speech_buffer, dtype=np.int16).copy()
-        speech_bytes = numpy_array_to_bytes(speech_data)
+        # Serialize buffered speech to bytes
+        speech_bytes = b""
+        speech_samples = 0
+        if self.speech_buffer is not None:
+            speech_bytes = self.speech_buffer.to_bytes()
+            speech_samples = (
+                len(self.speech_buffer.samples)
+                if isinstance(self.speech_buffer.samples, np.ndarray)
+                else len(speech_bytes) // 2
+            )
 
         # Calculate speech duration
-        speech_duration_ms = (len(speech_data) / self.sample_rate) * 1000
+        speech_duration_ms = (
+            self.speech_buffer.duration_ms if self.speech_buffer is not None else 0.0
+        )
 
-        if len(speech_data) >= min_speech_frames * self.frame_size:
+        if speech_samples >= min_speech_frames * self.frame_size:
             # Emit structured audio event
             self.events.send(
                 VADAudioEvent(
@@ -317,12 +342,12 @@ class VAD(abc.ABC):
                     plugin_name=self.provider_name,
                     audio_data=speech_bytes,
                     duration_ms=speech_duration_ms,
-                    frame_count=len(speech_data) // self.frame_size,
-                    user_metadata=user,
+                    frame_count=speech_samples // self.frame_size,
+                    participant=user,
                 )
             )
 
-            logger.debug(f"Emitted audio event with {len(speech_data)} samples")
+            logger.debug(f"Emitted audio event with {speech_samples} samples")
 
         # Emit speech end event if we were actively detecting speech
         if self.is_speech_active and self._speech_start_time:
@@ -335,12 +360,12 @@ class VAD(abc.ABC):
                     deactivation_threshold=self.deactivation_th,
                     total_speech_duration_ms=total_speech_duration,
                     total_frames=self.total_speech_frames,
-                    user_metadata=user,
+                    participant=user,
                 )
             )
 
         # Reset state variables
-        self.speech_buffer = bytearray()
+        self.speech_buffer = None
         self.silence_counter = 0
         self.is_speech_active = False
         self.total_speech_frames = 0
@@ -358,12 +383,12 @@ class VAD(abc.ABC):
 
     async def reset(self) -> None:
         """Reset the VAD state."""
-        self.speech_buffer = bytearray()
+        self.speech_buffer = None
         self.silence_counter = 0
         self.is_speech_active = False
         self.total_speech_frames = 0
         self.partial_counter = 0
-        self._leftover = np.empty(0, np.int16)
+        self._model_buffer = None
         self._speech_start_time = None
 
     def _emit_error_event(
@@ -379,8 +404,14 @@ class VAD(abc.ABC):
                 plugin_name=self.provider_name,
                 error=error,
                 context=context,
-                user_metadata=user_metadata,
-                frame_data_available=len(self.speech_buffer) > 0,
+                participant=user_metadata,
+                frame_data_available=(
+                    self.speech_buffer is not None
+                    and (
+                        (isinstance(self.speech_buffer.samples, np.ndarray) and len(self.speech_buffer.samples) > 0)
+                        or (isinstance(self.speech_buffer.samples, (bytes, bytearray)) and len(self.speech_buffer.samples) > 0)
+                    )
+                ),
             )
         )
 

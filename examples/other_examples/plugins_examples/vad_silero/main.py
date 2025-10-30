@@ -39,8 +39,8 @@ async def main():
     async def handle_speech_detected(event: VADAudioEvent):
         # Extract user info from user_metadata
         user_info = "unknown"
-        if event.user_metadata:
-            user = event.user_metadata
+        if event.participant:
+            user = event.participant
             user_info = user.name if user.name else str(user)
         
         print(f"Speech detected from user: {user_info} - duration: {event.duration_ms:.2f}ms")

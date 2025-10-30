@@ -124,8 +124,8 @@ async def main():
     @agent.subscribe
     async def handle_speech_detected(event: VADAudioEvent):
         user_info = "unknown"
-        if event.user_metadata:
-            user = event.user_metadata
+        if event.participant:
+            user = event.participant
             user_info = user.name if user.name else str(user)
         print(f"{time.time()} Speech detected from user: {user_info} duration {event.duration_ms:.2f}ms")
 
@@ -134,8 +134,8 @@ async def main():
     async def handle_transcript(event: STTTranscriptEvent):
         timestamp = time.strftime("%H:%M:%S")
         user_info = "unknown"
-        if event.user_metadata:
-            user = event.user_metadata
+        if event.participant:
+            user = event.participant
             user_info = user.name if user.name else str(user)
         
         print(f"[{timestamp}] {user_info}: {event.text}")

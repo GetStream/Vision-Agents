@@ -21,7 +21,7 @@ classifiers = [
 
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc,telemetry]>=2.5.5",
+    "getstream[webrtc,telemetry]>=2.5.7",
     "python-dotenv>=1.1.1",
     "pillow>=11.3.0",
     "numpy>=1.24.0",
@@ -46,7 +46,6 @@ kokoro = ["vision-agents-plugins-kokoro"]
 krisp = ["vision-agents-plugins-krisp"]
 moonshine = ["vision-agents-plugins-moonshine"]
 openai = ["vision-agents-plugins-openai"]
-silero = ["vision-agents-plugins-silero"]
 smart_turn = ["vision-agents-plugins-smart-turn"]
 ultralytics = ["vision-agents-plugins-ultralytics"]
 wizper = ["vision-agents-plugins-wizper"]
@@ -62,7 +61,6 @@ all-plugins = [
   "vision-agents-plugins-krisp",
   "vision-agents-plugins-moonshine",
   "vision-agents-plugins-openai",
-  "vision-agents-plugins-silero",
   "vision-agents-plugins-smart-turn",
   "vision-agents-plugins-ultralytics",
   "vision-agents-plugins-wizper",

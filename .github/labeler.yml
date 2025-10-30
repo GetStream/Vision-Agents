@@ -8,79 +8,11 @@ plugins:
   - changed-files:
       - any-glob-to-any-file: 'plugins/**'
 
-# Specific Plugin Labels
-plugin-getstream:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/getstream/**'
-
-plugin-openai:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/openai/**'
-
-plugin-gemini:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/gemini/**'
-
-plugin-deepgram:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/deepgram/**'
-
-plugin-ultralytics:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/ultralytics/**'
-
-plugin-elevenlabs:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/elevenlabs/**'
-
-plugin-cartesia:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/cartesia/**'
-
-plugin-kokoro:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/kokoro/**'
-
-plugin-moonshine:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/moonshine/**'
-
-plugin-silero:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/silero/**'
-
-plugin-smart-turn:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/smart_turn/**'
-
-plugin-wizper:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/wizper/**'
-
-plugin-xai:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/xai/**'
-
-plugin-krisp:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/krisp/**'
-
-plugin-anthropic:
-  - changed-files:
-      - any-glob-to-any-file: 'plugins/anthropic/**'
 
 # Examples and Demos
 examples:
   - changed-files:
       - any-glob-to-any-file: 'examples/**'
-
-# Testing
-tests:
-  - changed-files:
-      - any-glob-to-any-file: 'tests/**'
-      - any-glob-to-any-file: '**/tests/**'
-      - any-glob-to-any-file: '**/test_*.py'
-      - any-glob-to-any-file: '**/*_test.py'
 
 # Documentation
 docs:
@@ -106,25 +38,6 @@ ci:
   - changed-files:
       - any-glob-to-any-file: '.github/**'
 
-# Core Agent System
-core-agents:
-  - changed-files:
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/agents/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/events/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/edge/**'
-
-# Core Infrastructure
-core-infrastructure:
-  - changed-files:
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/llm/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/stt/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/tts/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/vad/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/turn_detection/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/processors/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/mcp/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/observability/**'
-      - any-glob-to-any-file: 'agents-core/vision_agents/core/utils/**'
 
 # CLI and Development Tools
 cli:
