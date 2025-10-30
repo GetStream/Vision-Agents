@@ -35,7 +35,6 @@ async def start_agent() -> None:
         llm=aws.Realtime(
             model="amazon.nova-sonic-v1:0",
             region_name="us-east-1",
-            voice_id="matthew"
         ),
     )
     
@@ -115,24 +114,13 @@ async def start_agent() -> None:
         # Give the agent a moment to connect
         await asyncio.sleep(5)
         
-        # Test function calling with weather
-        logger.info("Testing weather function...")
         await agent.llm.simple_response(
             text="What's the weather like in Boulder? Please use the get_weather function."
         )
         
-        await asyncio.sleep(5)
+        # Wait for AWS Nova to process the request and call the function
+        await asyncio.sleep(15)
         
-        # Test function calling with calculation
-        logger.info("Testing calculation function...")
-        await agent.llm.simple_response(
-            text="Can you calculate 25 multiplied by 4 using the calculate function?"
-        )
-        
-        await asyncio.sleep(5)
-        
-        # Wait a bit before finishing
-        await asyncio.sleep(5)
         await agent.finish()
 
 
