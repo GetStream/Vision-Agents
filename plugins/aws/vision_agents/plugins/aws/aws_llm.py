@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Optional, List, TYPE_CHECKING, Any, Dict
+from typing import Optional, List, TYPE_CHECKING, Any, Dict, cast
 import json
 import boto3
 from botocore.exceptions import ClientError
@@ -161,8 +161,8 @@ class BedrockLLM(LLM):
                 while current_calls and rounds < MAX_ROUNDS:
                     # Execute calls concurrently with dedup
                     triples, seen = await self._dedup_and_execute(
-                        current_calls, seen=seen, max_concurrency=8, timeout_s=30
-                    )  # type: ignore[arg-type]
+                        cast(List[Dict[str, Any]], current_calls), seen=seen, max_concurrency=8, timeout_s=30
+                    )
 
                     if not triples:
                         self.logger.warning(
@@ -402,8 +402,8 @@ class BedrockLLM(LLM):
 
             while accumulated_calls and rounds < MAX_ROUNDS:
                 triples, seen = await self._dedup_and_execute(
-                    accumulated_calls, seen=seen, max_concurrency=8, timeout_s=30
-                )  # type: ignore[arg-type]
+                    cast(List[Dict[str, Any]], accumulated_calls), seen=seen, max_concurrency=8, timeout_s=30
+                )
 
                 if not triples:
                     self.logger.warning("No tool execution results despite tool calls")
@@ -595,7 +595,7 @@ class BedrockLLM(LLM):
         self, response: Dict[str, Any]
     ) -> List[NormalizedToolCallItem]:
         """Extract tool calls from AWS response."""
-        tool_calls = []
+        tool_calls: List[NormalizedToolCallItem] = []
 
         output = response.get("output", {})
         if not output:
