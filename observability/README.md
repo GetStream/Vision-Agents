@@ -40,11 +40,11 @@ uv run python simple_agent_example.py
 3. Navigate to **Dashboards** → **Vision Agents - Performance Metrics**
 
 The dashboard automatically displays:
+- **LLM Latency** (p50, p95, p99) by implementation
 - **STT Latency** (p50, p95, p99) by implementation
-- **STT Errors** rate by provider and error type
 - **TTS Latency** (p50, p95, p99) by implementation
-- **TTS Errors** rate by provider and error type
 - **Turn Detection Latency** (p50, p95, p99) by implementation
+- **All Errors Rate** - Combined view of LLM, STT, and TTS errors by provider and error type
 
 ### 4. View Traces in Jaeger
 
@@ -91,6 +91,12 @@ Jaeger UI (port 16686)
 ### Turn Detection Metrics
 - `turn_detection_latency_ms` - Histogram of turn detection latency
   - Labels: `class`
+
+### LLM Metrics
+- `llm_latency_ms` - Histogram of LLM response latency
+  - Labels: `llm_class`, `provider`
+- `llm_errors` - Counter of LLM errors
+  - Labels: `provider`, `error`
 
 ## Configuration
 

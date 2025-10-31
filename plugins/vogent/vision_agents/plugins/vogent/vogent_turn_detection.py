@@ -17,25 +17,22 @@ from vision_agents.core.turn_detection import (
     TurnStartedEvent,
     TurnEndedEvent,
 )
-from vision_agents.core.observability.metrics import Timer, meter
+from vision_agents.core.observability.metrics import (
+    Timer,
+    meter,
+    turn_vad_latency_ms,
+    turn_end_detection_latency_ms,
+)
 
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Metrics for Vogent turn detection
-vogent_vad_latency_ms = meter.create_histogram(
-    "vogent.vad.latency.ms", unit="ms", description="Vogent VAD prediction latency"
-)
+# Vogent-specific metric for Whisper transcription
 vogent_whisper_latency_ms = meter.create_histogram(
     "vogent.whisper.latency.ms",
     unit="ms",
     description="Vogent Whisper transcription latency",
-)
-vogent_turn_prediction_latency_ms = meter.create_histogram(
-    "vogent.turn_prediction.latency.ms",
-    unit="ms",
-    description="Vogent turn completion prediction latency",
 )
 
 # Silero VAD model (reused from smart_turn)
@@ -260,8 +257,9 @@ class VogentTurnDetection(TurnDetector):
             if self.vad is None:
                 continue
 
-            with Timer(vogent_vad_latency_ms) as timer:
+            with Timer(turn_vad_latency_ms) as timer:
                 timer.attributes["samples"] = len(chunk.samples)
+                timer.attributes["implementation"] = "vogent"
                 speech_probability = self.vad.predict_speech(chunk.samples)
             is_speech = speech_probability > self.speech_probability_threshold
 
@@ -421,12 +419,13 @@ class VogentTurnDetection(TurnDetector):
         Returns:
             True if turn is complete, False otherwise
         """
-        with Timer(vogent_turn_prediction_latency_ms) as timer:
+        with Timer(turn_end_detection_latency_ms) as timer:
             # Ensure it's 16khz and f32 format
             pcm = pcm.resample(16000).to_float32()
 
             # Truncate to 8 seconds
             audio_array = pcm.tail(8, False).samples
+            timer.attributes["implementation"] = "vogent"
             timer.attributes["audio_duration_ms"] = len(audio_array) / 16000 * 1000
             timer.attributes["prev_line_length"] = len(prev_line)
             timer.attributes["curr_line_length"] = len(curr_line)

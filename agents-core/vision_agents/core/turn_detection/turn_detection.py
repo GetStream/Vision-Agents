@@ -8,7 +8,7 @@ from . import events
 from .events import TurnStartedEvent, TurnEndedEvent
 from ..agents.conversation import Conversation
 from ..edge.types import Participant
-from ..observability.metrics import turn_detection_latency_ms, Timer
+from ..observability.metrics import turn_detection_latency_ms, turn_errors, Timer
 
 
 class TurnEvent(Enum):
@@ -41,7 +41,6 @@ class TurnDetector(ABC):
         event.plugin_name = self.provider_name
         self.events.send(event)
 
-    @Timer(turn_detection_latency_ms)
     async def process_audio(
         self,
         audio_data: PcmData,
@@ -55,8 +54,19 @@ class TurnDetector(ABC):
             participant: Participant that's speaking, includes user data
             conversation: Transcription/ chat history, sometimes useful for turn detection
         """
-
-        return await self.detect_turn(audio_data, participant, conversation)
+        with Timer(turn_detection_latency_ms) as timer:
+            timer.attributes["class"] = (
+                f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+            )
+            timer.attributes["provider"] = self.provider_name
+            try:
+                await self.detect_turn(audio_data, participant, conversation)
+            except Exception as e:
+                timer.attributes["error"] = type(e).__name__
+                turn_errors.add(
+                    1, {"provider": self.provider_name, "error_type": type(e).__name__}
+                )
+                raise
 
     @abstractmethod
     async def detect_turn(

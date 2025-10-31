@@ -43,6 +43,20 @@ turn_detection_latency_ms = meter.create_histogram(
     "turn.detection.latency.ms",
     unit="ms",
 )
+turn_vad_latency_ms = meter.create_histogram(
+    "turn.vad.latency.ms", unit="ms", description="Turn detection VAD latency"
+)
+turn_end_detection_latency_ms = meter.create_histogram(
+    "turn.end_detection.latency.ms",
+    unit="ms",
+    description="Turn end detection latency (Vogent/Smart Turn model)",
+)
+turn_errors = meter.create_counter("turn.errors", description="Turn detection errors")
+
+llm_latency_ms = meter.create_histogram(
+    "llm.latency.ms", unit="ms", description="Total LLM latency"
+)
+llm_errors = meter.create_counter("llm.errors", description="LLM errors")
 
 
 class Timer:

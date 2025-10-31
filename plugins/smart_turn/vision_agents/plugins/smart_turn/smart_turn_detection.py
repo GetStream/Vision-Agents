@@ -13,8 +13,11 @@ from transformers import WhisperFeatureExtractor
 from vision_agents.core.agents import Conversation
 from vision_agents.core.agents.agents import default_agent_options, AgentOptions
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.observability import meter
-from vision_agents.core.observability.metrics import Timer
+from vision_agents.core.observability.metrics import (
+    Timer,
+    turn_vad_latency_ms,
+    turn_end_detection_latency_ms,
+)
 
 from vision_agents.core.turn_detection import (
     TurnDetector,
@@ -39,17 +42,6 @@ CHUNK = 512  # Samples per chunk for VAD processing
 RATE = 16000  # Sample rate in Hz (16kHz)
 MAX_SEGMENT_DURATION_SECONDS = (
     8  # Maximum duration in seconds for a single audio segment
-)
-
-
-turn_silero_vad_latency_ms = meter.create_histogram(
-    "turn.silero.vad.latency.ms",
-    unit="ms",
-)
-
-turn_smart_turn_detection_latency_ms = meter.create_histogram(
-    "turn.smart_turn.detection.latency.ms",
-    unit="ms",
 )
 
 
@@ -248,8 +240,9 @@ class SmartTurnDetection(TurnDetector):
         # detect speech in small 512 chunks, gather to larger audio segments with speech
         for chunk in audio_chunks[:-1]:
             # predict if this segment has speech
-            with Timer(turn_silero_vad_latency_ms) as timer:
+            with Timer(turn_vad_latency_ms) as timer:
                 timer.attributes["samples"] = len(chunk.samples)
+                timer.attributes["implementation"] = "smart_turn"
                 speech_probability = await self.vad.predict_speech(chunk.samples)
             is_speech = speech_probability > self.speech_probability_threshold
 
@@ -289,7 +282,8 @@ class SmartTurnDetection(TurnDetector):
                     merged.append(self._active_segment)
                     merged = merged.tail(8, True, "start")
                     # see if we've completed the turn
-                    with Timer(turn_smart_turn_detection_latency_ms) as timer:
+                    with Timer(turn_end_detection_latency_ms) as timer:
+                        timer.attributes["implementation"] = "smart_turn"
                         timer.attributes["audio_duration_ms"] = merged.duration_ms
                         timer.attributes["samples"] = len(merged.samples)
                         timer.attributes["trailing_silence_ms"] = trailing_silence_ms

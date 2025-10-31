@@ -69,6 +69,7 @@ class OpenAILLM(LLM):
         self.model = model
         self.openai_conversation: Optional[Any] = None
         self.conversation = None
+        self.provider_name = "openai"
 
         if client is not None:
             self.client = client
@@ -77,7 +78,7 @@ class OpenAILLM(LLM):
         else:
             self.client = AsyncOpenAI(base_url=base_url)
 
-    async def simple_response(
+    async def _simple_response(
         self,
         text: str,
         processors: Optional[List[Processor]] = None,

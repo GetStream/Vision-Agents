@@ -106,8 +106,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
-          "legendFormat": "p50 - {{stt_class}}",
+          "expr": "histogram_quantile(0.50, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, llm_class))",
+          "legendFormat": "p50 - {{llm_class}}",
           "refId": "A"
         },
         {
@@ -115,8 +115,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
-          "legendFormat": "p95 - {{stt_class}}",
+          "expr": "histogram_quantile(0.95, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, llm_class))",
+          "legendFormat": "p95 - {{llm_class}}",
           "refId": "B"
         },
         {
@@ -124,12 +124,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
-          "legendFormat": "p99 - {{stt_class}}",
+          "expr": "histogram_quantile(0.99, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, llm_class))",
+          "legendFormat": "p99 - {{llm_class}}",
           "refId": "C"
         }
       ],
-      "title": "STT Latency (by implementation)",
+      "title": "LLM Latency",
       "type": "timeseries"
     },
     {
@@ -186,7 +186,7 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -199,7 +199,7 @@
       "id": 2,
       "options": {
         "legend": {
-          "calcs": ["sum"],
+          "calcs": ["mean", "max"],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -216,12 +216,30 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(stt_errors_total[5m])",
-          "legendFormat": "{{provider}} - {{error_type}}",
+          "expr": "histogram_quantile(0.50, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
+          "legendFormat": "p50 - {{stt_class}}",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
+          "legendFormat": "p95 - {{stt_class}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
+          "legendFormat": "p99 - {{stt_class}}",
+          "refId": "C"
         }
       ],
-      "title": "STT Errors Rate",
+      "title": "STT Latency",
       "type": "timeseries"
     },
     {
@@ -331,99 +349,7 @@
           "refId": "C"
         }
       ],
-      "title": "TTS Latency (by implementation)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "tooltip": false,
-              "viz": false,
-              "legend": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "id": 4,
-      "options": {
-        "legend": {
-          "calcs": ["sum"],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(tts_errors_total[5m])",
-          "legendFormat": "{{provider}} - {{error_type}}",
-          "refId": "A"
-        }
-      ],
-      "title": "TTS Errors Rate",
+      "title": "TTS Latency",
       "type": "timeseries"
     },
     {
@@ -486,7 +412,117 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(turn_detection_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p50 - {{provider}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(turn_detection_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p95 - {{provider}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(turn_detection_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p99 - {{provider}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Turn Detection Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
         "x": 0,
         "y": 16
       },
@@ -510,8 +546,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(turn_detection_latency_ms_milliseconds_bucket[5m])) by (le, class))",
-          "legendFormat": "p50 - {{class}}",
+          "expr": "histogram_quantile(0.50, sum(rate(turn_vad_latency_ms_milliseconds_bucket[5m])) by (le, implementation))",
+          "legendFormat": "p50 - {{implementation}}",
           "refId": "A"
         },
         {
@@ -519,8 +555,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(turn_detection_latency_ms_milliseconds_bucket[5m])) by (le, class))",
-          "legendFormat": "p95 - {{class}}",
+          "expr": "histogram_quantile(0.95, sum(rate(turn_vad_latency_ms_milliseconds_bucket[5m])) by (le, implementation))",
+          "legendFormat": "p95 - {{implementation}}",
           "refId": "B"
         },
         {
@@ -528,12 +564,241 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(turn_detection_latency_ms_milliseconds_bucket[5m])) by (le, class))",
-          "legendFormat": "p99 - {{class}}",
+          "expr": "histogram_quantile(0.99, sum(rate(turn_vad_latency_ms_milliseconds_bucket[5m])) by (le, implementation))",
+          "legendFormat": "p99 - {{implementation}}",
           "refId": "C"
         }
       ],
-      "title": "Turn Detection Latency (by implementation)",
+      "title": "Turn VAD Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(turn_end_detection_latency_ms_milliseconds_bucket[5m])) by (le, implementation))",
+          "legendFormat": "p50 - {{implementation}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(turn_end_detection_latency_ms_milliseconds_bucket[5m])) by (le, implementation))",
+          "legendFormat": "p95 - {{implementation}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(turn_end_detection_latency_ms_milliseconds_bucket[5m])) by (le, implementation))",
+          "legendFormat": "p99 - {{implementation}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Turn End Detection Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": ["sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(llm_errors_total[5m])",
+          "legendFormat": "LLM - {{provider}} - {{error}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(stt_errors_total[5m])",
+          "legendFormat": "STT - {{provider}} - {{error_type}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(tts_errors_total[5m])",
+          "legendFormat": "TTS - {{provider}} - {{error_type}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(turn_errors_total[5m])",
+          "legendFormat": "TURN - {{provider}} - {{error_type}}",
+          "refId": "D"
+        }
+      ],
+      "title": "All Errors Rate",
       "type": "timeseries"
     }
   ],

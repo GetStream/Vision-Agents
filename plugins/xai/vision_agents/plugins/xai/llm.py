@@ -5,7 +5,10 @@ from xai_sdk.proto import chat_pb2
 
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors import Processor
-from vision_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
+from vision_agents.core.llm.events import (
+    LLMResponseChunkEvent,
+    LLMResponseCompletedEvent,
+)
 from . import events
 
 if TYPE_CHECKING:
@@ -56,6 +59,7 @@ class XAILLM(LLM):
         self.model = model
         self.xai_chat: Optional["Chat"] = None
         self.conversation = None
+        self.provider_name = "xai"
 
         if client is not None:
             self.client = client
@@ -64,7 +68,7 @@ class XAILLM(LLM):
         else:
             self.client = AsyncClient()
 
-    async def simple_response(
+    async def _simple_response(
         self,
         text: str,
         processors: Optional[List[Processor]] = None,
@@ -91,7 +95,9 @@ class XAILLM(LLM):
             instructions=instructions,
         )
 
-    async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponseEvent[Response]:
+    async def create_response(
+        self, *args: Any, **kwargs: Any
+    ) -> LLMResponseEvent[Response]:
         """
         create_response gives you full support/access to the native xAI chat.sample() and chat.stream() methods
         this method wraps the xAI method and ensures we broadcast an event which the agent class hooks into
@@ -139,10 +145,11 @@ class XAILLM(LLM):
             self.xai_chat.append(response)
 
         if llm_response is not None:
-            self.events.send(LLMResponseCompletedEvent(
-                original=llm_response.original,
-                text=llm_response.text
-            ))
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    original=llm_response.original, text=llm_response.text
+                )
+            )
 
         return llm_response or LLMResponseEvent[Response](
             Response(chat_pb2.GetChatCompletionResponse(), 0), ""
@@ -170,31 +177,32 @@ class XAILLM(LLM):
         Forwards the chunk events and also send out a standardized version (the agent class hooks into that)
         """
         # Emit the raw chunk event
-        self.events.send(events.XAIChunkEvent(
-            plugin_name="xai",
-            chunk=chunk
-        ))
+        self.events.send(events.XAIChunkEvent(plugin_name="xai", chunk=chunk))
 
         # Emit standardized delta events for content
         if chunk.content:
-            self.events.send(LLMResponseChunkEvent(
-                content_index=0,  # xAI doesn't have content_index
-                item_id=chunk.proto.id if hasattr(chunk.proto, "id") else "",
-                output_index=0,  # xAI doesn't have output_index
-                sequence_number=0,  # xAI doesn't have sequence_number
-                delta=chunk.content,
-                plugin_name="xai",
-            ))
+            self.events.send(
+                LLMResponseChunkEvent(
+                    content_index=0,  # xAI doesn't have content_index
+                    item_id=chunk.proto.id if hasattr(chunk.proto, "id") else "",
+                    output_index=0,  # xAI doesn't have output_index
+                    sequence_number=0,  # xAI doesn't have sequence_number
+                    delta=chunk.content,
+                    plugin_name="xai",
+                )
+            )
 
         # Check if this is the final chunk (finish_reason indicates completion)
         if chunk.choices and chunk.choices[0].finish_reason:
             # This is the final chunk, return the complete response
             llm_response = LLMResponseEvent[Response](response, response.content)
-            self.events.send(LLMResponseCompletedEvent(
-                plugin_name="xai",
-                text=llm_response.text,
-                original=llm_response.original
-            ))
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    plugin_name="xai",
+                    text=llm_response.text,
+                    original=llm_response.original,
+                )
+            )
             return llm_response
 
         return None
