@@ -9,8 +9,14 @@ from getstream.audio.utils import resample_audio
 import numpy as np
 
 from vision_agents.core.llm import realtime
-from aws_sdk_bedrock_runtime.client import BedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
-from aws_sdk_bedrock_runtime.models import InvokeModelWithBidirectionalStreamInputChunk, BidirectionalInputPayloadPart
+from aws_sdk_bedrock_runtime.client import (
+    BedrockRuntimeClient,
+    InvokeModelWithBidirectionalStreamOperationInput,
+)
+from aws_sdk_bedrock_runtime.models import (
+    InvokeModelWithBidirectionalStreamInputChunk,
+    BidirectionalInputPayloadPart,
+)
 from aws_sdk_bedrock_runtime.config import Config
 from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 
@@ -22,10 +28,8 @@ from ...core.llm.events import RealtimeAudioOutputEvent
 
 logger = logging.getLogger(__name__)
 
-
 DEFAULT_MODEL = "amazon.nova-sonic-v1:0"
 DEFAULT_SAMPLE_RATE = 16000
-
 
 """
 AWS Bedrock Realtime with Nova Sonic support.
@@ -67,14 +71,14 @@ class Realtime(realtime.Realtime):
 
 
     Examples:
-    
+
         from vision_agents.plugins import aws
-        
+
         llm = aws.Realtime(
             model="us.amazon.nova-sonic-v1:0",
             region_name="us-east-1"
         )
-        
+
         # Register a custom function
         @llm.register_function(
             name="get_weather",
@@ -82,24 +86,25 @@ class Realtime(realtime.Realtime):
         )
         def get_weather(city: str) -> dict:
             return {"city": city, "temp": 72, "condition": "sunny"}
-        
+
         # Connect to the session
         await llm.connect()
-        
+
         # Simple text response
         await llm.simple_response("Describe what you see and say hi")
-        
+
         # Send audio
         await llm.simple_audio_response(pcm_data)
-        
+
         # Close when done
         await llm.close()
     """
-    connected : bool = False
-    voice_id : str
 
-    # Event templates 
-    TEXT_CONTENT_START_EVENT = '''{
+    connected: bool = False
+    voice_id: str
+
+    # Event templates
+    TEXT_CONTENT_START_EVENT = """{
         "event": {
             "contentStart": {
                 "promptName": "%s",
@@ -112,9 +117,9 @@ class Realtime(realtime.Realtime):
                 }
             }
         }
-    }'''
+    }"""
 
-    TEXT_INPUT_EVENT = '''{
+    TEXT_INPUT_EVENT = """{
         "event": {
             "textInput": {
                 "promptName": "%s",
@@ -122,27 +127,25 @@ class Realtime(realtime.Realtime):
                 "content": "%s"
             }
         }
-    }'''
+    }"""
 
-    CONTENT_END_EVENT = '''{
+    CONTENT_END_EVENT = """{
         "event": {
             "contentEnd": {
                 "promptName": "%s",
                 "contentName": "%s"
             }
         }
-    }'''
+    }"""
 
     def __init__(
-            self,
-            model: str = DEFAULT_MODEL,
-            region_name: str = "us-east-1",
-            voice_id: str = "matthew",
-            **kwargs
+        self,
+        model: str = DEFAULT_MODEL,
+        region_name: str = "us-east-1",
+        voice_id: str = "matthew",
+        **kwargs,
     ) -> None:
-        """
-
-        """
+        """ """
         super().__init__(**kwargs)
         self.model = model
         self.region_name = region_name
@@ -168,8 +171,12 @@ class Realtime(realtime.Realtime):
         self._is_connected = False
         self._message_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         self._conversation_messages: List[Dict[str, Any]] = []
-        self._pending_tool_uses: Dict[int, Dict[str, Any]] = {}  # Track tool calls across stream events
-        self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}  # Store tool calls until contentEnd: key=toolUseId
+        self._pending_tool_uses: Dict[
+            int, Dict[str, Any]
+        ] = {}  # Track tool calls across stream events
+        self._pending_tool_calls: Dict[
+            str, Dict[str, Any]
+        ] = {}  # Store tool calls until contentEnd: key=toolUseId
 
         # Audio streaming configuration
         self.prompt_name = self.session_id
@@ -208,10 +215,10 @@ class Realtime(realtime.Realtime):
             # send start and prompt event
             await self.start_session()
             logger.info("Sent session start event")
-            
+
             # Small delay between init events
             await asyncio.sleep(0.1)
-            
+
             await self.start_prompt()
             logger.info("Sent prompt start event")
 
@@ -222,12 +229,14 @@ class Realtime(realtime.Realtime):
             # next send system instructions
             system_instructions = self._build_enhanced_instructions()
             if not system_instructions:
-                raise Exception("AWS Bedrock requires system instructions before sending regular user input")
+                raise Exception(
+                    "AWS Bedrock requires system instructions before sending regular user input"
+                )
             await self.content_input(system_instructions, "SYSTEM")
             logger.info("Sent system instructions")
-            
+
             logger.info("AWS Bedrock connection setup complete")
-            
+
         except Exception as e:
             logger.error(f"Failed to connect to AWS Bedrock: {e}", exc_info=True)
             self.connected = False
@@ -238,7 +247,9 @@ class Realtime(realtime.Realtime):
     ):
         """Send audio data to the model for processing."""
         if not self.connected:
-            self.logger.warning("realtime is not active. can't call simple_audio_response")
+            self.logger.warning(
+                "realtime is not active. can't call simple_audio_response"
+            )
             return
 
         # Resample from 48kHz to 24kHz if needed
@@ -248,13 +259,13 @@ class Realtime(realtime.Realtime):
                 audio_float = pcm.samples.astype(np.float32) / 32768.0
             else:
                 audio_float = pcm.samples.astype(np.float32)
-            
+
             # Resample
             resampled_float = resample_audio(audio_float, pcm.sample_rate, 24000)
-            
+
             # Convert back to int16
             resampled_samples = (resampled_float * 32768.0).astype(np.int16)
-            
+
             # Create new PcmData with resampled audio
             pcm = PcmData(
                 format=pcm.format,
@@ -262,21 +273,25 @@ class Realtime(realtime.Realtime):
                 samples=resampled_samples,
                 pts=pcm.pts,
                 dts=pcm.dts,
-                time_base=pcm.time_base
+                time_base=pcm.time_base,
             )
-        
+
         content_name = str(uuid.uuid4())
 
         await self.audio_content_start(content_name)
         self._emit_audio_input_event(pcm.samples, sample_rate=pcm.sample_rate)
         # Convert PcmData to base64 encoded bytes
-        audio_base64 = base64.b64encode(pcm.samples).decode('utf-8')
+        audio_base64 = base64.b64encode(pcm.samples).decode("utf-8")
         await self.audio_input(content_name, audio_base64)
 
         await self.content_end(content_name)
 
-    async def simple_response(self, text: str, processors: Optional[List[Processor]] = None,
-                              participant: Optional[Participant] = None):
+    async def simple_response(
+        self,
+        text: str,
+        processors: Optional[List[Processor]] = None,
+        participant: Optional[Participant] = None,
+    ):
         """
         Simple response standardizes how to send a text instruction to this LLM.
 
@@ -305,37 +320,37 @@ class Realtime(realtime.Realtime):
                 "audioInput": {
                     "promptName": self.session_id,
                     "contentName": content_name,
-                    "content": audio_bytes
+                    "content": audio_bytes,
                 }
             }
         }
         await self.send_event(audio_event)
 
-    async def audio_content_start(self, content_name: str, role: str="USER"):
+    async def audio_content_start(self, content_name: str, role: str = "USER"):
         event = {
-          "event": {
-            "contentStart": {
-                "promptName": self.session_id,
-                "contentName": content_name,
-                "type": "AUDIO",
-                "interactive": True,
-                "role": role,
-                "audioInputConfiguration": {
-                    "mediaType": "audio/lpcm",
-                    "sampleRateHertz": 24000,
-                    "sampleSizeBits": 16,
-                    "channelCount": 1,
-                    "audioType": "SPEECH",
-                    "encoding": "base64"
+            "event": {
+                "contentStart": {
+                    "promptName": self.session_id,
+                    "contentName": content_name,
+                    "type": "AUDIO",
+                    "interactive": True,
+                    "role": role,
+                    "audioInputConfiguration": {
+                        "mediaType": "audio/lpcm",
+                        "sampleRateHertz": 24000,
+                        "sampleSizeBits": 16,
+                        "channelCount": 1,
+                        "audioType": "SPEECH",
+                        "encoding": "base64",
+                    },
                 }
             }
-          }
         }
         await self.send_event(event)
 
     async def start_session(self):
         # subclass this to change the session start
-        event_json = '''{
+        event_json = """{
           "event": {
             "sessionStart": {
               "inferenceConfiguration": {
@@ -345,45 +360,40 @@ class Realtime(realtime.Realtime):
               }
             }
           }
-        }'''
+        }"""
 
         await self.send_raw_event(event_json)
 
     async def start_prompt(self):
         prompt_name = self.session_id
-        
+
         # Add tool configuration if tools are available
         tools = self._convert_tools_to_provider_format(self.get_available_functions())
-        
+
         if tools:
             import json as json_lib
+
             self.logger.info(f"Adding tool configuration with {len(tools)} tools")
-            
+
             # Build the event with tools
             event = {
-              "event": {
-                "promptStart": {
-                  "promptName": prompt_name,
-                  "textOutputConfiguration": {
-                    "mediaType": "text/plain"
-                  },
-                  "audioOutputConfiguration": {
-                    "mediaType": "audio/lpcm",
-                    "sampleRateHertz": 24000,
-                    "sampleSizeBits": 16,
-                    "channelCount": 1,
-                    "voiceId": self.voice_id,
-                    "encoding": "base64",
-                    "audioType": "SPEECH"
-                  },
-                  "toolUseOutputConfiguration": {
-                    "mediaType": "application/json"
-                  },
-                  "toolConfiguration": {
-                    "tools": tools
-                  }
+                "event": {
+                    "promptStart": {
+                        "promptName": prompt_name,
+                        "textOutputConfiguration": {"mediaType": "text/plain"},
+                        "audioOutputConfiguration": {
+                            "mediaType": "audio/lpcm",
+                            "sampleRateHertz": 24000,
+                            "sampleSizeBits": 16,
+                            "channelCount": 1,
+                            "voiceId": self.voice_id,
+                            "encoding": "base64",
+                            "audioType": "SPEECH",
+                        },
+                        "toolUseOutputConfiguration": {"mediaType": "application/json"},
+                        "toolConfiguration": {"tools": tools},
+                    }
                 }
-              }
             }
             event_json = json_lib.dumps(event)
         else:
@@ -407,19 +417,27 @@ class Realtime(realtime.Realtime):
                 }}
               }}
             }}'''
-        
+
         await self.send_raw_event(event_json)
 
-
-
     async def text_content_start(self, content_name: str, role: str):
-        event_json = self.TEXT_CONTENT_START_EVENT % (self.session_id, content_name, role)
+        event_json = self.TEXT_CONTENT_START_EVENT % (
+            self.session_id,
+            content_name,
+            role,
+        )
         await self.send_raw_event(event_json)
 
     async def text_input(self, content_name: str, content: str):
         # Escape content for JSON
-        escaped_content = content.replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
-        event_json = self.TEXT_INPUT_EVENT % (self.session_id, content_name, escaped_content)
+        escaped_content = (
+            content.replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+        )
+        event_json = self.TEXT_INPUT_EVENT % (
+            self.session_id,
+            content_name,
+            escaped_content,
+        )
         await self.send_raw_event(event_json)
 
     async def content_end(self, content_name: str):
@@ -430,7 +448,7 @@ class Realtime(realtime.Realtime):
         try:
             event_json = json.dumps(event_data)
             event = InvokeModelWithBidirectionalStreamInputChunk(
-                value=BidirectionalInputPayloadPart(bytes_=event_json.encode('utf-8'))
+                value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
             )
             await self.stream.input_stream.send(event)
         except Exception as e:
@@ -442,7 +460,7 @@ class Realtime(realtime.Realtime):
         try:
             logger.debug(f"Sending raw event: {event_json}")
             event = InvokeModelWithBidirectionalStreamInputChunk(
-                value=BidirectionalInputPayloadPart(bytes_=event_json.encode('utf-8'))
+                value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
             )
             await self.stream.input_stream.send(event)
             logger.debug("Successfully sent raw event")
@@ -450,12 +468,14 @@ class Realtime(realtime.Realtime):
             logger.error(f"Failed to send raw event to AWS Nova: {e}")
             # Don't raise the exception, just log it to prevent connection reset
 
-    def _convert_tools_to_provider_format(self, tools: List[Any]) -> List[Dict[str, Any]]:
+    def _convert_tools_to_provider_format(
+        self, tools: List[Any]
+    ) -> List[Dict[str, Any]]:
         """Convert ToolSchema objects to AWS Nova Realtime format.
-        
+
         Args:
             tools: List of ToolSchema objects from the function registry
-            
+
         Returns:
             List of tools in AWS Nova Realtime format
         """
@@ -464,39 +484,39 @@ class Realtime(realtime.Realtime):
             name = tool.get("name", "unnamed_tool")
             description = tool.get("description", "") or ""
             params = tool.get("parameters_schema") or tool.get("parameters") or {}
-            
+
             # Normalize to a valid JSON Schema object
             if not isinstance(params, dict):
                 params = {}
-            
+
             # Ensure it has the required JSON Schema structure
             if "type" not in params:
                 # Extract required fields from properties if they exist
                 properties = params if params else {}
                 required = list(properties.keys()) if properties else []
-                
+
                 params = {
                     "type": "object",
                     "properties": properties,
                     "required": required,
-                    "additionalProperties": False
+                    "additionalProperties": False,
                 }
             else:
                 # Already has type, but ensure additionalProperties is set
                 if "additionalProperties" not in params:
                     params["additionalProperties"] = False
-            
+
             # AWS Nova expects toolSpec format with inputSchema.json as a JSON STRING (matching official example)
             # Convert the schema to a JSON string
             schema_json = json.dumps(params)
-            
+
             aws_tool = {
                 "toolSpec": {
                     "name": name,
                     "description": description,
                     "inputSchema": {
                         "json": schema_json  # This should be a JSON string, not a dict
-                    }
+                    },
                 }
             }
             aws_tools.append(aws_tool)
@@ -504,7 +524,7 @@ class Realtime(realtime.Realtime):
 
     async def send_tool_content_start(self, content_name: str, tool_use_id: str):
         """Send tool content start event.
-        
+
         Args:
             content_name: Unique content identifier
             tool_use_id: The tool use ID from the toolUse event
@@ -520,10 +540,8 @@ class Realtime(realtime.Realtime):
                     "toolResultInputConfiguration": {
                         "toolUseId": tool_use_id,
                         "type": "TEXT",
-                        "textInputConfiguration": {
-                            "mediaType": "text/plain"
-                        }
-                    }
+                        "textInputConfiguration": {"mediaType": "text/plain"},
+                    },
                 }
             }
         }
@@ -531,7 +549,7 @@ class Realtime(realtime.Realtime):
 
     async def send_tool_result(self, content_name: str, result: Any):
         """Send tool result event.
-        
+
         Args:
             content_name: Unique content identifier
             result: The result from executing the tool (will be stringified as JSON)
@@ -542,40 +560,46 @@ class Realtime(realtime.Realtime):
             content_str = result
         else:
             content_str = json.dumps(result)
-        
+
         event = {
             "event": {
                 "toolResult": {
                     "promptName": self.session_id,
                     "contentName": content_name,
-                    "content": content_str  # Stringified JSON, not an object/array
+                    "content": content_str,  # Stringified JSON, not an object/array
                 }
             }
         }
         await self.send_event(event)
 
-    async def _handle_tool_call(self, tool_name: str, tool_use_id: str, tool_use_content: Dict[str, Any]):
+    async def _handle_tool_call(
+        self, tool_name: str, tool_use_id: str, tool_use_content: Dict[str, Any]
+    ):
         """Handle tool call from AWS Bedrock.
-        
+
         Args:
             tool_name: Name of the tool to execute
             tool_use_id: The tool use ID from AWS
             tool_use_content: Full tool use content from AWS
         """
         try:
-            logger.info(f"Starting tool call execution: {tool_name} (id: {tool_use_id})")
-            
+            logger.info(
+                f"Starting tool call execution: {tool_name} (id: {tool_use_id})"
+            )
+
             # Extract tool input from the tool use content (matching working example)
             tool_input = {}
-            if 'content' in tool_use_content:
+            if "content" in tool_use_content:
                 try:
-                    tool_input = json.loads(tool_use_content['content'])
+                    tool_input = json.loads(tool_use_content["content"])
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Could not parse tool input from content: {tool_use_content.get('content')}")
+                    logger.warning(
+                        f"Could not parse tool input from content: {tool_use_content.get('content')}"
+                    )
                     tool_input = {}
-            elif 'input' in tool_use_content:
-                tool_input = tool_use_content['input']
-            
+            elif "input" in tool_use_content:
+                tool_input = tool_use_content["input"]
+
             # Create normalized tool call
             tool_call = {
                 "type": "tool_call",
@@ -583,24 +607,24 @@ class Realtime(realtime.Realtime):
                 "name": tool_name,
                 "arguments_json": tool_input,
             }
-            
+
             # Execute using existing tool execution infrastructure from base LLM
             tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
-            
+
             # Prepare response data
             if error:
                 response_data = {"error": str(error)}
                 logger.error(f"Tool call {tool_name} failed: {error}")
             else:
                 response_data = result
-            
+
             # Send tool result back to AWS using Nova's format
             content_name = str(uuid.uuid4())
-            
+
             await self.send_tool_content_start(content_name, tool_use_id)
             await self.send_tool_result(content_name, response_data)
             await self.content_end(content_name)
-            
+
         except Exception as e:
             logger.error(f"Error handling tool call {tool_name}: {e}", exc_info=True)
             # Send error response back
@@ -611,7 +635,10 @@ class Realtime(realtime.Realtime):
                 await self.content_end(content_name)
                 logger.info(f"Sent error response for failed tool call {tool_name}")
             except Exception as send_error:
-                logger.error(f"Failed to send error response for tool call {tool_name}: {send_error}", exc_info=True)
+                logger.error(
+                    f"Failed to send error response for tool call {tool_name}: {send_error}",
+                    exc_info=True,
+                )
 
     async def close(self):
         if not self.connected:
@@ -626,11 +653,7 @@ class Realtime(realtime.Realtime):
         }
         await self.send_event(prompt_end)
 
-        session_end: Dict[str, Any] = {
-            "event": {
-                "sessionEnd": {}
-            }
-        }
+        session_end: Dict[str, Any] = {"event": {"sessionEnd": {}}}
         await self.send_event(session_end)
 
         await self.stream.input_stream.close()
@@ -639,7 +662,6 @@ class Realtime(realtime.Realtime):
             self._stream_task.cancel()
 
         self.connected = False
-
 
     async def _handle_events(self):
         """Process incoming responses from AWS Bedrock."""
@@ -651,101 +673,145 @@ class Realtime(realtime.Realtime):
                     result = await output[1].receive()
                     if result.value and result.value.bytes_:
                         try:
-                            response_data = result.value.bytes_.decode('utf-8')
+                            response_data = result.value.bytes_.decode("utf-8")
                             json_data = json.loads(response_data)
                             logger.debug(f"Received event: {json_data}")
 
                             # Handle different response types
-                            if 'event' in json_data:
-                                if 'contentStart' in json_data['event']:
-                                    content_start = json_data['event']['contentStart']
-                                    logger.info(f"Content start from AWS Bedrock: {content_start}")
+                            if "event" in json_data:
+                                if "contentStart" in json_data["event"]:
+                                    content_start = json_data["event"]["contentStart"]
+                                    logger.info(
+                                        f"Content start from AWS Bedrock: {content_start}"
+                                    )
                                     # set role
-                                    self.role = content_start['role']
+                                    self.role = content_start["role"]
                                     # Check for speculative content
-                                    if 'additionalModelFields' in content_start:
+                                    if "additionalModelFields" in content_start:
                                         try:
-                                            additional_fields = json.loads(content_start['additionalModelFields'])
-                                            if additional_fields.get('generationStage') == 'SPECULATIVE':
+                                            additional_fields = json.loads(
+                                                content_start["additionalModelFields"]
+                                            )
+                                            if (
+                                                additional_fields.get("generationStage")
+                                                == "SPECULATIVE"
+                                            ):
                                                 self.display_assistant_text = True
                                             else:
                                                 self.display_assistant_text = False
                                         except json.JSONDecodeError:
                                             pass
-                                    
-                                elif 'textOutput' in json_data['event']:
-                                    text_content = json_data['event']['textOutput']['content']
-                                    #role = json_data['event']['textOutput']['role']
-                                    logger.info(f"Text output from AWS Bedrock: {text_content}")
-                                elif 'completionStart' in json_data['event']:
-                                    logger.info("Completion start from AWS Bedrock", json_data['event']['completionStart'])
-                                elif 'audioOutput' in json_data['event']:
-                                    audio_content = json_data['event']['audioOutput']['content']
+
+                                elif "textOutput" in json_data["event"]:
+                                    text_content = json_data["event"]["textOutput"][
+                                        "content"
+                                    ]
+                                    # role = json_data['event']['textOutput']['role']
+                                    logger.info(
+                                        f"Text output from AWS Bedrock: {text_content}"
+                                    )
+                                elif "completionStart" in json_data["event"]:
+                                    logger.info(
+                                        "Completion start from AWS Bedrock",
+                                        json_data["event"]["completionStart"],
+                                    )
+                                elif "audioOutput" in json_data["event"]:
+                                    audio_content = json_data["event"]["audioOutput"][
+                                        "content"
+                                    ]
                                     audio_bytes = base64.b64decode(audio_content)
-                                    #await self.audio_output_queue.put(audio_bytes)
+                                    # await self.audio_output_queue.put(audio_bytes)
 
                                     audio_event = RealtimeAudioOutputEvent(
                                         plugin_name="aws",
                                         audio_data=audio_bytes,
-                                        sample_rate=24000
+                                        sample_rate=24000,
                                     )
                                     self.events.send(audio_event)
 
                                     await self.output_track.write(audio_bytes)
 
+                                elif "toolUse" in json_data["event"]:
+                                    tool_use_data = json_data["event"]["toolUse"]
+                                    tool_name = tool_use_data.get("toolName")
+                                    tool_use_id = tool_use_data.get("toolUseId")
 
-                                elif 'toolUse' in json_data['event']:
-                                    tool_use_data = json_data['event']['toolUse']
-                                    tool_name = tool_use_data.get('toolName')
-                                    tool_use_id = tool_use_data.get('toolUseId')
-                                    
-                                    logger.info(f"Tool use event received: {tool_name} (id: {tool_use_id})")
-                                    
+                                    logger.info(
+                                        f"Tool use event received: {tool_name} (id: {tool_use_id})"
+                                    )
+
                                     # Store tool call info until contentEnd (matching working example)
                                     if tool_use_id and tool_name:
                                         self._pending_tool_calls[tool_use_id] = {
-                                            'toolName': tool_name,
-                                            'toolUseId': tool_use_id,
-                                            'toolUseContent': tool_use_data
+                                            "toolName": tool_name,
+                                            "toolUseId": tool_use_id,
+                                            "toolUseContent": tool_use_data,
                                         }
                                     else:
-                                        logger.warning(f"Invalid tool use event - missing toolName or toolUseId: {tool_use_data}")
-                                    
-                                elif 'contentEnd' in json_data['event']:
-                                    content_end_data = json_data['event']['contentEnd']
-                                    stopReason = content_end_data.get('stopReason')
-                                    content_type = content_end_data.get('type')
-                                    
-                                    logger.debug(f"Content end event: type={content_type}, stopReason={stopReason}")
-                                    
+                                        logger.warning(
+                                            f"Invalid tool use event - missing toolName or toolUseId: {tool_use_data}"
+                                        )
+
+                                elif "contentEnd" in json_data["event"]:
+                                    content_end_data = json_data["event"]["contentEnd"]
+                                    stopReason = content_end_data.get("stopReason")
+                                    content_type = content_end_data.get("type")
+
+                                    logger.debug(
+                                        f"Content end event: type={content_type}, stopReason={stopReason}"
+                                    )
+
                                     # Process tool calls on contentEnd with type == 'TOOL' (matching reference implementation)
-                                    if content_type == 'TOOL':
-                                        tool_use_id = content_end_data.get('toolUseId')
-                                        
+                                    if content_type == "TOOL":
+                                        tool_use_id = content_end_data.get("toolUseId")
+
                                         # If toolUseId not in contentEnd, process most recent pending tool call
                                         if not tool_use_id and self._pending_tool_calls:
                                             # Get the most recently added tool call
-                                            tool_use_id = list(self._pending_tool_calls.keys())[-1]
-                                        
-                                        if tool_use_id and tool_use_id in self._pending_tool_calls:
-                                            tool_call_info = self._pending_tool_calls.pop(tool_use_id)
-                                            asyncio.create_task(self._handle_tool_call(
-                                                tool_name=tool_call_info['toolName'],
-                                                tool_use_id=tool_call_info['toolUseId'],
-                                                tool_use_content=tool_call_info['toolUseContent']
-                                            ))
-                                    
+                                            tool_use_id = list(
+                                                self._pending_tool_calls.keys()
+                                            )[-1]
+
+                                        if (
+                                            tool_use_id
+                                            and tool_use_id in self._pending_tool_calls
+                                        ):
+                                            tool_call_info = (
+                                                self._pending_tool_calls.pop(
+                                                    tool_use_id
+                                                )
+                                            )
+                                            asyncio.create_task(
+                                                self._handle_tool_call(
+                                                    tool_name=tool_call_info[
+                                                        "toolName"
+                                                    ],
+                                                    tool_use_id=tool_call_info[
+                                                        "toolUseId"
+                                                    ],
+                                                    tool_use_content=tool_call_info[
+                                                        "toolUseContent"
+                                                    ],
+                                                )
+                                            )
+
                                     if stopReason == "INTERRUPTED":
                                         logger.info("TODO: should flush audio buffer")
-                                    logger.debug(f"Content end from AWS Bedrock {stopReason}: {content_end_data}")
+                                    logger.debug(
+                                        f"Content end from AWS Bedrock {stopReason}: {content_end_data}"
+                                    )
 
-                                elif 'completionEnd' in json_data['event']:
-                                    logger.info(f"Completion end from AWS Bedrock: {json_data['event']['completionEnd']}")
+                                elif "completionEnd" in json_data["event"]:
+                                    logger.info(
+                                        f"Completion end from AWS Bedrock: {json_data['event']['completionEnd']}"
+                                    )
                                     # Handle end of conversation, no more response will be generated
-                                elif "usageEvent" in json_data['event']:
+                                elif "usageEvent" in json_data["event"]:
                                     pass
                                 else:
-                                    logger.warning(f"Unhandled event: {json_data['event']}")
+                                    logger.warning(
+                                        f"Unhandled event: {json_data['event']}"
+                                    )
 
                         except json.JSONDecodeError as e:
                             logger.warning(f"Failed to parse JSON response: {e}")
@@ -775,4 +841,3 @@ class Realtime(realtime.Realtime):
                 logger.info("Event handling loop ended, connection still active")
             else:
                 logger.info("Event handling loop ended, connection was closed")
-
