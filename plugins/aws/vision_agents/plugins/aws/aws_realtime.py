@@ -168,9 +168,6 @@ class Realtime(realtime.Realtime):
         self._is_connected = False
         self._message_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         self._conversation_messages: List[Dict[str, Any]] = []
-        self._pending_tool_uses: Dict[
-            int, Dict[str, Any]
-        ] = {}  # Track tool calls across stream events
         self._pending_tool_calls: Dict[
             str, Dict[str, Any]
         ] = {}  # Store tool calls until contentEnd: key=toolUseId
@@ -203,25 +200,20 @@ class Realtime(realtime.Realtime):
                 InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model)
             )
             self.connected = True
-            logger.info("Successfully connected to AWS Bedrock stream")
 
             # Start listener task
             self._stream_task = asyncio.create_task(self._handle_events())
-            logger.info("Started event handling task")
 
             # send start and prompt event
             await self.start_session()
-            logger.info("Sent session start event")
 
             # Small delay between init events
             await asyncio.sleep(0.1)
 
             await self.start_prompt()
-            logger.info("Sent prompt start event")
 
             # Give AWS Nova a moment to process the prompt start event
             await asyncio.sleep(0.1)
-            logger.info("Waiting for AWS Nova to process prompt start...")
 
             # next send system instructions
             system_instructions = self._build_enhanced_instructions()
@@ -230,9 +222,8 @@ class Realtime(realtime.Realtime):
                     "AWS Bedrock requires system instructions before sending regular user input"
                 )
             await self.content_input(system_instructions, "SYSTEM")
-            logger.info("Sent system instructions")
 
-            logger.info("AWS Bedrock connection setup complete")
+            logger.info("AWS Bedrock connection established")
 
         except Exception as e:
             logger.error(f"Failed to connect to AWS Bedrock: {e}", exc_info=True)
@@ -286,7 +277,7 @@ class Realtime(realtime.Realtime):
         This method wraps the 3 events in one operation
         """
         content_name = str(uuid.uuid4())
-        logger.info(f"Sending content input: role={role}, content={content[:100]}...")
+        logger.debug(f"Sending content input: role={role}, content={content[:100]}...")
         await self.text_content_start(content_name, role)
         await self.text_input(content_name, content)
         await self.content_end(content_name)
@@ -435,12 +426,10 @@ class Realtime(realtime.Realtime):
     async def send_raw_event(self, event_json: str) -> None:
         """Send a raw JSON event string to AWS Nova (matching working example approach)."""
         try:
-            logger.debug(f"Sending raw event: {event_json}")
             event = InvokeModelWithBidirectionalStreamInputChunk(
                 value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
             )
             await self.stream.input_stream.send(event)
-            logger.debug("Successfully sent raw event")
         except Exception as e:
             logger.error(f"Failed to send raw event to AWS Nova: {e}")
             # Don't raise the exception, just log it to prevent connection reset
@@ -560,7 +549,7 @@ class Realtime(realtime.Realtime):
             tool_use_content: Full tool use content from AWS
         """
         try:
-            logger.info(
+            logger.debug(
                 f"Starting tool call execution: {tool_name} (id: {tool_use_id})"
             )
 
@@ -610,7 +599,6 @@ class Realtime(realtime.Realtime):
                 await self.send_tool_content_start(content_name, tool_use_id)
                 await self.send_tool_result(content_name, {"error": str(e)})
                 await self.content_end(content_name)
-                logger.info(f"Sent error response for failed tool call {tool_name}")
             except Exception as send_error:
                 logger.error(
                     f"Failed to send error response for tool call {tool_name}: {send_error}",
@@ -642,7 +630,6 @@ class Realtime(realtime.Realtime):
 
     async def _handle_events(self):
         """Process incoming responses from AWS Bedrock."""
-        logger.info("Starting event handling loop")
         try:
             while True:
                 try:
@@ -658,7 +645,7 @@ class Realtime(realtime.Realtime):
                             if "event" in json_data:
                                 if "contentStart" in json_data["event"]:
                                     content_start = json_data["event"]["contentStart"]
-                                    logger.info(
+                                    logger.debug(
                                         f"Content start from AWS Bedrock: {content_start}"
                                     )
                                     # set role
@@ -684,11 +671,11 @@ class Realtime(realtime.Realtime):
                                         "content"
                                     ]
                                     # role = json_data['event']['textOutput']['role']
-                                    logger.info(
+                                    logger.debug(
                                         f"Text output from AWS Bedrock: {text_content}"
                                     )
                                 elif "completionStart" in json_data["event"]:
-                                    logger.info(
+                                    logger.debug(
                                         "Completion start from AWS Bedrock",
                                         json_data["event"]["completionStart"],
                                     )
@@ -710,7 +697,7 @@ class Realtime(realtime.Realtime):
                                     tool_name = tool_use_data.get("toolName")
                                     tool_use_id = tool_use_data.get("toolUseId")
 
-                                    logger.info(
+                                    logger.debug(
                                         f"Tool use event received: {tool_name} (id: {tool_use_id})"
                                     )
 
@@ -770,13 +757,13 @@ class Realtime(realtime.Realtime):
                                             )
 
                                     if stopReason == "INTERRUPTED":
-                                        logger.info("TODO: should flush audio buffer")
+                                        logger.debug("TODO: should flush audio buffer")
                                     logger.debug(
                                         f"Content end from AWS Bedrock {stopReason}: {content_end_data}"
                                     )
 
                                 elif "completionEnd" in json_data["event"]:
-                                    logger.info(
+                                    logger.debug(
                                         f"Completion end from AWS Bedrock: {json_data['event']['completionEnd']}"
                                     )
                                     # Handle end of conversation, no more response will be generated
@@ -791,7 +778,7 @@ class Realtime(realtime.Realtime):
                             logger.warning(f"Failed to parse JSON response: {e}")
                 except StopAsyncIteration:
                     # Stream has ended normally
-                    logger.info("Stream ended normally")
+                    logger.debug("Stream ended normally")
                     break
                 except Exception as e:
                     logger.error("Error in event handling: %s", e)
@@ -806,12 +793,11 @@ class Realtime(realtime.Realtime):
 
         except Exception as e:
             logger.error("Critical error in event handling: %s", e)
-            logger.error("Response processing error: %s", e)
             # Only reset connection on critical errors
             self.connected = False
         finally:
             # Only log connection state, don't unconditionally reset
             if self.connected:
-                logger.info("Event handling loop ended, connection still active")
+                logger.debug("Event handling loop ended, connection still active")
             else:
-                logger.info("Event handling loop ended, connection was closed")
+                logger.debug("Event handling loop ended, connection was closed")
