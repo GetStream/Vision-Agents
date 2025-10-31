@@ -5,7 +5,6 @@ import logging
 import uuid
 from typing import Optional, List, Dict, Any
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from getstream.audio.utils import resample_audio
 import numpy as np
 
 from vision_agents.core.llm import realtime
@@ -252,29 +251,9 @@ class Realtime(realtime.Realtime):
             )
             return
 
-        # Resample from 48kHz to 24kHz if needed
+        # Resample to 24kHz if needed, as required by AWS Nova
         if pcm.sample_rate != 24000:
-            # Convert to float32 for resampling
-            if pcm.samples.dtype == np.int16:
-                audio_float = pcm.samples.astype(np.float32) / 32768.0
-            else:
-                audio_float = pcm.samples.astype(np.float32)
-
-            # Resample
-            resampled_float = resample_audio(audio_float, pcm.sample_rate, 24000)
-
-            # Convert back to int16
-            resampled_samples = (resampled_float * 32768.0).astype(np.int16)
-
-            # Create new PcmData with resampled audio
-            pcm = PcmData(
-                format=pcm.format,
-                sample_rate=24000,
-                samples=resampled_samples,
-                pts=pcm.pts,
-                dts=pcm.dts,
-                time_base=pcm.time_base,
-            )
+            pcm = pcm.resample(24000)
 
         content_name = str(uuid.uuid4())
 
