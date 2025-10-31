@@ -49,7 +49,7 @@ class STT(stt.STT):
 
         self.language = language
 
-    async def process_audio(
+    async def _process_audio(
         self,
         pcm_data: PcmData,
         participant: Optional[Participant] = None,
@@ -125,7 +125,9 @@ class STT(stt.STT):
             )
 
             if participant is not None:
-                self._emit_transcript_event(transcript_text, participant, response_metadata)
+                self._emit_transcript_event(
+                    transcript_text, participant, response_metadata
+                )
 
         except Exception as e:
             logger.error(

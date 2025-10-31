@@ -1,0 +1,4 @@
+# Ignore Docker volume data
+data/
+*.tmp
+*.log

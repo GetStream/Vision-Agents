@@ -188,17 +188,30 @@ class Timer:
 def _get_class_name_from_args(
     func: Callable[..., Any], args: tuple[Any, ...]
 ) -> Optional[str]:
-    """Return class name if first arg looks like a bound method (self or cls)."""
+    """Return fully qualified class path if first arg looks like a bound method (self or cls).
+
+    For instance methods (self), we return the runtime class path (module.Class), not just
+    the class name. This provides better identification in metrics, especially when multiple
+    plugins use the same class name (e.g., TTS).
+
+    Returns:
+        Fully qualified class path like "vision_agents.plugins.cartesia.tts.TTS"
+        or None if not a method call.
+    """
     if not args:
         return None
 
     first = args[0]
 
-    if hasattr(first, "__class__") and func.__qualname__.startswith(
-        first.__class__.__name__ + "."
-    ):
-        return first.__class__.__name__
+    # Check if this looks like an instance method call (self parameter)
+    if hasattr(first, "__class__") and not inspect.isclass(first):
+        # Verify it's actually a method by checking the function's qualname contains a dot
+        if "." in func.__qualname__:
+            # Return the fully qualified class path
+            return f"{first.__class__.__module__}.{first.__class__.__qualname__}"
 
+    # Check if this looks like a class method call (cls parameter)
     if inspect.isclass(first) and func.__qualname__.startswith(first.__name__ + "."):
-        return first.__name__
+        return f"{first.__module__}.{first.__qualname__}"
+
     return None

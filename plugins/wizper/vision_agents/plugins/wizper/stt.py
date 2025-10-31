@@ -57,7 +57,7 @@ class STT(stt.STT):
         self.target_language = target_language
         self._fal_client = client if client is not None else fal_client.AsyncClient()
 
-    async def process_audio(
+    async def _process_audio(
         self,
         pcm_data: PcmData,
         participant: Optional["Participant"] = None,

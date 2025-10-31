@@ -338,9 +338,9 @@ class TTS(abc.ABC):
             raise
         finally:
             elapsed_ms = (time.time() - start_time) * 1000.0
-            tts_latency_ms.record(
-                elapsed_ms, attributes={"tts_class": self.__class__.__name__}
-            )
+            # Use fully qualified class path for better identification
+            class_path = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+            tts_latency_ms.record(elapsed_ms, attributes={"tts_class": class_path})
 
     async def close(self):
         """Close the TTS service and release any resources."""
