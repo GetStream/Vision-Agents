@@ -6,6 +6,8 @@ from elevenlabs.client import AsyncElevenLabs
 from vision_agents.core import tts
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 
+logger = logging.getLogger(__name__)
+
 
 class TTS(tts.TTS):
     def __init__(
@@ -69,4 +71,4 @@ class TTS(tts.TTS):
         Returns:
             None
         """
-        logging.info("🎤 ElevenLabs TTS stop requested (no-op)")
+        logger.info("🎤 ElevenLabs TTS stop requested (no-op)")
