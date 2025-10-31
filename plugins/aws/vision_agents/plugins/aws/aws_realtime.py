@@ -23,7 +23,6 @@ from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.processors import Processor
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.edge.types import PcmData
-from ...core.llm.events import RealtimeAudioOutputEvent
 
 logger = logging.getLogger(__name__)
 
@@ -700,13 +699,10 @@ class Realtime(realtime.Realtime):
                                     ]
                                     audio_bytes = base64.b64decode(audio_content)
                                     # await self.audio_output_queue.put(audio_bytes)
-
-                                    audio_event = RealtimeAudioOutputEvent(
-                                        plugin_name="aws",
+                                    self._emit_audio_output_event(
                                         audio_data=audio_bytes,
                                         sample_rate=24000,
                                     )
-                                    self.events.send(audio_event)
 
                                     await self.output_track.write(audio_bytes)
 
