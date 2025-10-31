@@ -5,7 +5,6 @@ import logging
 import uuid
 from typing import Optional, List, Dict, Any
 from getstream.video.rtc.audio_track import AudioStreamTrack
-import numpy as np
 
 from vision_agents.core.llm import realtime
 from aws_sdk_bedrock_runtime.client import (
