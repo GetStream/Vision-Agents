@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from pathlib import Path
 from uuid import uuid4
 
 from dotenv import load_dotenv

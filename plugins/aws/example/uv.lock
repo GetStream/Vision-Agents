@@ -450,6 +450,18 @@ wheels = [
 ]
 
 [[package]]
+name = "colorlog"
+version = "6.10.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a2/61/f083b5ac52e505dfc1c624eafbf8c7589a0d7f32daa398d2e7590efa5fda/colorlog-6.10.1.tar.gz", hash = "sha256:eb4ae5cb65fe7fec7773c2306061a8e63e02efc2c72eba9d27b0fa23c94f1321", size = 17162, upload-time = "2025-10-16T16:14:11.978Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/c1/e419ef3723a074172b68aaa89c9f3de486ed4c2399e2dbd8113a4fdcaf9e/colorlog-6.10.1-py3-none-any.whl", hash = "sha256:2d7e8348291948af66122cff006c9f8da6255d224e7cf8e37d8de2df3bad8c9c", size = 11743, upload-time = "2025-10-16T16:14:10.512Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "46.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -645,7 +657,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.6"
+version = "2.5.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -659,7 +671,7 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/c6/e1226dbfa237f061e6ef729113d81ef1fe23a662a9a8d93504689327618b/getstream-2.5.6-py3-none-any.whl", hash = "sha256:303a0ec7589cc8ae2eddd34b999cd9d97c568de217b982f2d0ea4b978a433ea5", size = 232577, upload-time = "2025-10-16T10:46:52.904Z" },
+    { url = "https://files.pythonhosted.org/packages/de/7c/e592f640811f1ef14c41b6e648e817517ce079dfef55327bd635129b36d2/getstream-2.5.7-py3-none-any.whl", hash = "sha256:3c5af20e92f58076c1a6b033da88c5b12ebfb4c918fb0f61ed82260a55fda9cf", size = 239778, upload-time = "2025-10-30T13:58:09.714Z" },
 ]
 
 [package.optional-dependencies]
@@ -2604,6 +2616,7 @@ wheels = [
 name = "vision-agents"
 source = { editable = "../../../agents-core" }
 dependencies = [
+    { name = "colorlog" },
     { name = "getstream", extra = ["telemetry", "webrtc"] },
     { name = "mcp" },
     { name = "numpy" },
@@ -2614,7 +2627,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.5" },
+    { name = "colorlog", specifier = ">=6.10.1" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.7" },
     { name = "mcp", specifier = ">=1.16.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
@@ -2638,12 +2652,10 @@ requires-dist = [
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'kokoro'", editable = "../../kokoro" },
     { name = "vision-agents-plugins-krisp", marker = "extra == 'all-plugins'", editable = "../../krisp" },
     { name = "vision-agents-plugins-krisp", marker = "extra == 'krisp'", editable = "../../krisp" },
-    { name = "vision-agents-plugins-moonshine", marker = "extra == 'all-plugins'", editable = "../../moonshine" },
-    { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'", editable = "../../moonshine" },
+    { name = "vision-agents-plugins-moonshine", marker = "extra == 'all-plugins'" },
+    { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "../../openai" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "../../openai" },
-    { name = "vision-agents-plugins-silero", marker = "extra == 'all-plugins'", editable = "../../silero" },
-    { name = "vision-agents-plugins-silero", marker = "extra == 'silero'", editable = "../../silero" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "../../smart_turn" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "../../smart_turn" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'all-plugins'", editable = "../../ultralytics" },
@@ -2653,7 +2665,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "../../xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "../../xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "kokoro", "krisp", "moonshine", "openai", "silero", "smart-turn", "ultralytics", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "kokoro", "krisp", "moonshine", "openai", "smart-turn", "ultralytics", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-aws"

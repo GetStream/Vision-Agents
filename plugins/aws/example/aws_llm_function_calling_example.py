@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User
 from vision_agents.core.agents import Agent
-from vision_agents.plugins import aws, getstream, cartesia, deepgram, smart_turn
+from vision_agents.plugins import aws, getstream, cartesia, deepgram
 
 load_dotenv()
 
