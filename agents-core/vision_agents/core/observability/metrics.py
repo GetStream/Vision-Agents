@@ -1,51 +1,14 @@
-"""OpenTelemetry observability instrumentation for vision-agents library.
+from __future__ import annotations
 
-This module defines metrics and tracers for the vision-agents library. It does NOT
-configure OpenTelemetry providers - that is the responsibility of applications using
-this library.
-
-For applications using this library:
-    To enable telemetry, configure OpenTelemetry in your application before importing
-    vision-agents components:
-
-    ```python
-    from opentelemetry import trace, metrics
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-    from opentelemetry.sdk.resources import Resource
-
-    # Configure your service
-    resource = Resource.create({
-        "service.name": "my-voice-app",
-        "service.version": "1.0.0",
-    })
-
-    # Setup trace provider
-    trace_provider = TracerProvider(resource=resource)
-    trace_provider.add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4317"))
-    )
-    trace.set_tracer_provider(trace_provider)
-
-    # Setup metrics provider
-    metric_reader = PeriodicExportingMetricReader(
-        OTLPMetricExporter(endpoint="http://localhost:4317")
-    )
-    metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-    metrics.set_meter_provider(metrics_provider)
-
-    # Now import and use vision-agents
-    from vision_agents.core.tts import TTS
-    ```
-
-    If no providers are configured, metrics and traces will be no-ops.
-"""
+import functools
+import inspect
+from typing import Dict, Any, Optional, Mapping, Callable, Awaitable, TypeVar, Union
 
 from opentelemetry import trace, metrics
+from opentelemetry.metrics import Histogram
+import time
+
+R = TypeVar("R")
 
 # Get tracer and meter using the library name
 # These will use whatever providers the application has configured
@@ -75,3 +38,167 @@ tts_events_emitted = meter.create_counter(
 inflight_ops = meter.create_up_down_counter(
     "voice.ops.inflight", description="Inflight voice ops"
 )
+
+turn_detection_latency_ms = meter.create_histogram(
+    "turn.detection.latency.ms",
+    unit="ms",
+)
+
+
+class Timer:
+    """
+    Can be used as:
+        done = Timer(hist, {"attr": 1})
+        ...
+        done({"phase": "init"})
+
+        with Timer(hist, {"attr": 1}) as timer:
+            timer.attributes["dynamic_key"] = "dynamic_value"
+            ...
+
+        @Timer(hist, {"route": "/join"})
+        def handler(...): ...
+
+        @Timer(hist)
+        async def async_handler(...): ...
+
+    If decorating a method, automatically adds {"class": <cls.__name__>} to attributes.
+
+    When used as a context manager, you can add attributes dynamically via the
+    `attributes` property, which will be merged with base attributes when recording.
+    """
+
+    def __init__(
+        self,
+        hist: Histogram,
+        attributes: Optional[Mapping[str, Any]] = None,
+        *,
+        unit: str = "ms",
+        record_exceptions: bool = True,
+    ) -> None:
+        self._hist = hist
+        self._base_attrs: Dict[str, Any] = dict(attributes or {})
+        self._unit = unit
+        self._record_exceptions = record_exceptions
+
+        self._start_ns = time.perf_counter_ns()
+        self._stopped = False
+        self.last_elapsed_ms: Optional[float] = None
+
+        # Public attributes dictionary that can be modified during context manager usage
+        self.attributes: Dict[str, Any] = {}
+
+    def __call__(self, *args, **kwargs):
+        """If called with a function, act as a decorator; else record."""
+        if args and callable(args[0]) and len(args) == 1 and not kwargs:
+            func = args[0]
+            return self._decorate(func)
+        extra_attrs = args[0] if args else None
+        return self.stop(extra_attrs)
+
+    def __enter__(self) -> "Timer":
+        self._restart()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        attrs: Dict[str, Any] = {}
+        if self._record_exceptions:
+            attrs["exception"] = "true" if exc_type else "false"
+            if exc_type:
+                attrs["exception_type"] = getattr(exc_type, "__name__", str(exc_type))
+        self.stop(attrs)
+
+    def stop(self, extra_attributes: Optional[Mapping[str, Any]] = None) -> float:
+        """Idempotent: records only once per start."""
+        if not self._stopped:
+            self._stopped = True
+            elapsed = self.elapsed_ms()
+            self.last_elapsed_ms = elapsed
+
+            attrs = {**self._base_attrs}
+            # Merge the dynamic attributes set during context manager usage
+            attrs.update(self.attributes)
+            if extra_attributes:
+                attrs.update(dict(extra_attributes))
+
+            value = elapsed if self._unit == "ms" else elapsed / 1000.0
+            self._hist.record(value, attributes=attrs)
+
+        return self.last_elapsed_ms or 0.0
+
+    def elapsed_ms(self) -> float:
+        return (time.perf_counter_ns() - self._start_ns) / 1_000_000.0
+
+    def _restart(self) -> None:
+        self._start_ns = time.perf_counter_ns()
+        self._stopped = False
+        self.last_elapsed_ms = None
+        self.attributes = {}  # Reset dynamic attributes on restart
+
+    def _decorate(
+        self, func: Union[Callable[..., R], Callable[..., Awaitable[R]]]
+    ) -> Union[Callable[..., R], Callable[..., Awaitable[R]]]:
+        """
+        Decorate a function or method.
+        Automatically adds {"class": <ClassName>} if decorating a bound method.
+        """
+
+        is_async = inspect.iscoroutinefunction(func)
+
+        if is_async:
+            # Type-cast func as async for type checker
+            async_func: Callable[..., Awaitable[R]] = func  # type: ignore[assignment]
+
+            @functools.wraps(async_func)
+            async def async_wrapper(*args, **kwargs) -> R:
+                class_name = _get_class_name_from_args(async_func, args)
+                attrs = {**self._base_attrs}
+                if class_name:
+                    attrs["class"] = class_name
+                with Timer(
+                    self._hist,
+                    attrs,
+                    unit=self._unit,
+                    record_exceptions=self._record_exceptions,
+                ):
+                    return await async_func(*args, **kwargs)
+
+            return async_wrapper
+        else:
+            # Type-cast func as sync for type checker
+            sync_func: Callable[..., R] = func  # type: ignore[assignment]
+
+            @functools.wraps(sync_func)
+            def sync_wrapper(*args, **kwargs) -> R:
+                class_name = _get_class_name_from_args(sync_func, args)
+                attrs = {**self._base_attrs}
+                if class_name:
+                    attrs["class"] = class_name
+                with Timer(
+                    self._hist,
+                    attrs,
+                    unit=self._unit,
+                    record_exceptions=self._record_exceptions,
+                ):
+                    return sync_func(*args, **kwargs)
+
+            return sync_wrapper
+
+
+def _get_class_name_from_args(
+    func: Callable[..., Any], args: tuple[Any, ...]
+) -> Optional[str]:
+    """Return class name if first arg looks like a bound method (self or cls)."""
+    if not args:
+        return None
+
+    first = args[0]
+
+    if hasattr(first, "__class__") and func.__qualname__.startswith(
+        first.__class__.__name__ + "."
+    ):
+        return first.__class__.__name__
+
+    if inspect.isclass(first) and func.__qualname__.startswith(first.__name__ + "."):
+        return first.__name__
+    return None

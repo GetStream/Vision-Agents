@@ -13,13 +13,14 @@ from transformers import WhisperFeatureExtractor
 from vision_agents.core.agents import Conversation
 from vision_agents.core.agents.agents import default_agent_options, AgentOptions
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.observability import meter
+from vision_agents.core.observability.metrics import Timer
 
 from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
     TurnEndedEvent,
 )
-
 import logging
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,17 @@ CHUNK = 512  # Samples per chunk for VAD processing
 RATE = 16000  # Sample rate in Hz (16kHz)
 MAX_SEGMENT_DURATION_SECONDS = (
     8  # Maximum duration in seconds for a single audio segment
+)
+
+
+turn_silero_vad_latency_ms = meter.create_histogram(
+    "turn.silero.vad.latency.ms",
+    unit="ms",
+)
+
+turn_smart_turn_detection_latency_ms = meter.create_histogram(
+    "turn.smart_turn.detection.latency.ms",
+    unit="ms",
 )
 
 
@@ -109,7 +121,9 @@ class SmartTurnDetection(TurnDetector):
         self._audio_queue: asyncio.Queue[Any] = asyncio.Queue()
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown_event = asyncio.Event()
-        self._processing_active = asyncio.Event()  # Tracks if background task is processing
+        self._processing_active = (
+            asyncio.Event()
+        )  # Tracks if background task is processing
 
         if options is None:
             self.options = default_agent_options()
@@ -149,7 +163,7 @@ class SmartTurnDetection(TurnDetector):
             SileroVAD, path, reset_interval_seconds=self.vad_reset_interval_seconds
         )
 
-    async def process_audio(
+    async def detect_turn(
         self,
         audio_data: PcmData,
         participant: Participant,
@@ -177,7 +191,7 @@ class SmartTurnDetection(TurnDetector):
 
                 # Signal that we're actively processing
                 self._processing_active.set()
-                
+
                 try:
                     # Process the audio packet
                     await self._process_audio_packet(audio_data, participant)
@@ -234,7 +248,9 @@ class SmartTurnDetection(TurnDetector):
         # detect speech in small 512 chunks, gather to larger audio segments with speech
         for chunk in audio_chunks[:-1]:
             # predict if this segment has speech
-            speech_probability = await self.vad.predict_speech(chunk.samples)
+            with Timer(turn_silero_vad_latency_ms) as timer:
+                timer.attributes["samples"] = len(chunk.samples)
+                speech_probability = await self.vad.predict_speech(chunk.samples)
             is_speech = speech_probability > self.speech_probability_threshold
 
             if self._active_segment is not None:
@@ -252,7 +268,11 @@ class SmartTurnDetection(TurnDetector):
                 # TODO: make this testable
 
                 trailing_silence_ms = (
-                    self._silence.trailing_silence_chunks * 512 / 16000 * 1000 * 5 #DTX correction
+                    self._silence.trailing_silence_chunks
+                    * 512
+                    / 16000
+                    * 1000
+                    * 5  # DTX correction
                 )
                 long_silence = trailing_silence_ms > self._trailing_silence_ms
                 max_duration_reached = (
@@ -269,7 +289,15 @@ class SmartTurnDetection(TurnDetector):
                     merged.append(self._active_segment)
                     merged = merged.tail(8, True, "start")
                     # see if we've completed the turn
-                    prediction = await self._predict_turn_completed(merged, participant)
+                    with Timer(turn_smart_turn_detection_latency_ms) as timer:
+                        timer.attributes["audio_duration_ms"] = merged.duration_ms
+                        timer.attributes["samples"] = len(merged.samples)
+                        timer.attributes["trailing_silence_ms"] = trailing_silence_ms
+                        prediction = await self._predict_turn_completed(
+                            merged, participant
+                        )
+                        timer.attributes["prediction"] = prediction
+                        timer.attributes["turn_ended"] = prediction > 0.5
                     turn_ended = prediction > 0.5
                     if turn_ended:
                         self._emit_end_turn_event(
@@ -304,19 +332,19 @@ class SmartTurnDetection(TurnDetector):
     async def wait_for_processing_complete(self, timeout: float = 5.0) -> None:
         """Wait for all queued audio to be processed. Useful for testing."""
         start_time = time.time()
-        
+
         # Wait for queue to be empty AND no active processing
         while (time.time() - start_time) < timeout:
             queue_empty = self._audio_queue.qsize() == 0
             not_processing = not self._processing_active.is_set()
-            
+
             if queue_empty and not_processing:
                 # Give a small final buffer to ensure events are emitted
                 await asyncio.sleep(0.05)
                 return
-            
+
             await asyncio.sleep(0.01)
-        
+
         # Timeout reached
         logger.warning(f"wait_for_processing_complete timed out after {timeout}s")
 
@@ -380,16 +408,16 @@ class SmartTurnDetection(TurnDetector):
 
     def _build_smart_turn_session(self):
         path = os.path.join(self.options.model_dir, SMART_TURN_ONNX_FILENAME)
-        
+
         # Load model into memory to avoid multi-worker file access issues
         with open(path, "rb") as f:
             model_bytes = f.read()
-        
+
         so = ort.SessionOptions()
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         so.inter_op_num_threads = 1
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        
+
         # Load from memory instead of file path
         return ort.InferenceSession(model_bytes, sess_options=so)
 
@@ -408,10 +436,10 @@ class SileroVAD:
         # Load model into memory to avoid multi-worker file access issues
         with open(model_path, "rb") as f:
             model_bytes = f.read()
-        
+
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = 1
-        
+
         # Load from memory instead of file path
         self.session = ort.InferenceSession(model_bytes, sess_options=opts)
         self.context_size = 64  # Silero uses 64-sample context at 16 kHz

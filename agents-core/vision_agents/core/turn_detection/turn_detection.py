@@ -8,6 +8,7 @@ from . import events
 from .events import TurnStartedEvent, TurnEndedEvent
 from ..agents.conversation import Conversation
 from ..edge.types import Participant
+from ..observability.metrics import turn_detection_latency_ms, Timer
 
 
 class TurnEvent(Enum):
@@ -17,14 +18,11 @@ class TurnEvent(Enum):
     TURN_ENDED = "turn_ended"
 
 
-
 class TurnDetector(ABC):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(
-        self, 
-        confidence_threshold: float = 0.5,
-        provider_name: Optional[str] = None
+        self, confidence_threshold: float = 0.5, provider_name: Optional[str] = None
     ) -> None:
         self._confidence_threshold = confidence_threshold
         self.is_active = False
@@ -33,22 +31,35 @@ class TurnDetector(ABC):
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
-    def _emit_start_turn_event(
-        self, event: TurnStartedEvent
-    ) -> None:
+    def _emit_start_turn_event(self, event: TurnStartedEvent) -> None:
         event.session_id = self.session_id
         event.plugin_name = self.provider_name
         self.events.send(event)
 
-    def _emit_end_turn_event(
-        self, event: TurnEndedEvent
-    ) -> None:
+    def _emit_end_turn_event(self, event: TurnEndedEvent) -> None:
         event.session_id = self.session_id
         event.plugin_name = self.provider_name
         self.events.send(event)
+
+    @Timer(turn_detection_latency_ms)
+    async def process_audio(
+        self,
+        audio_data: PcmData,
+        participant: Participant,
+        conversation: Optional[Conversation],
+    ) -> None:
+        """Process the audio and trigger turn start or turn end events
+
+        Args:
+            audio_data: PcmData object containing audio samples from Stream
+            participant: Participant that's speaking, includes user data
+            conversation: Transcription/ chat history, sometimes useful for turn detection
+        """
+
+        return await self.detect_turn(audio_data, participant, conversation)
 
     @abstractmethod
-    async def process_audio(
+    async def detect_turn(
         self,
         audio_data: PcmData,
         participant: Participant,
