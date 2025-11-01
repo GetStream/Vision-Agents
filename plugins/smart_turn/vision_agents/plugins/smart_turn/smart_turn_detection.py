@@ -174,29 +174,38 @@ class SmartTurnDetection(TurnDetector):
         Background task that continuously processes audio from the queue.
         This is where the actual VAD and turn detection logic runs.
         """
-        while not self._shutdown_event.is_set():
-            try:
-                # Wait for audio packet with timeout to allow shutdown
-                audio_data, participant, conversation = await asyncio.wait_for(
-                    self._audio_queue.get(), timeout=1.0
-                )
-
-                # Signal that we're actively processing
-                self._processing_active.set()
-
+        try:
+            while not self._shutdown_event.is_set():
                 try:
-                    # Process the audio packet
-                    await self._process_audio_packet(audio_data, participant)
-                finally:
-                    # If queue is empty, clear the processing flag
-                    if self._audio_queue.empty():
-                        self._processing_active.clear()
+                    # Wait for audio packet with timeout to allow shutdown
+                    audio_data, participant, conversation = await asyncio.wait_for(
+                        self._audio_queue.get(), timeout=1.0
+                    )
 
-            except asyncio.TimeoutError:
-                # Timeout is expected - continue loop to check shutdown
-                continue
-            except Exception as e:
-                logger.error(f"Error processing audio: {e}")
+                    # Signal that we're actively processing
+                    self._processing_active.set()
+
+                    try:
+                        # Process the audio packet
+                        await self._process_audio_packet(audio_data, participant)
+                    finally:
+                        # If queue is empty, clear the processing flag
+                        if self._audio_queue.empty():
+                            self._processing_active.clear()
+
+                except asyncio.TimeoutError:
+                    # Timeout is expected - continue loop to check shutdown
+                    continue
+                except Exception as e:
+                    logger.error(f"Error processing audio: {e}")
+        except asyncio.CancelledError:
+            # Task was cancelled - ensure clean shutdown
+            logger.debug("Audio processing loop cancelled")
+            raise
+        finally:
+            # Always clear flags on shutdown to allow proper lifecycle transitions
+            self._processing_active.clear()
+            self._shutdown_event.clear()
 
     async def _process_audio_packet(
         self,
