@@ -6,6 +6,7 @@ from os import getenv
 
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+from hatch.cli import self
 from httpx import AsyncClient, HTTPStatusError
 import logging
 from getstream.video.rtc.track_util import PcmData
@@ -52,14 +53,19 @@ class RTCManager:
         self.session_info: Optional[dict] = None  # Store session information
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
-        self._mic_track: QueuedAudioTrack = QueuedAudioTrack()
+
+        # on this track we send audio to openAI
+        self._audio_to_openai_track: QueuedAudioTrack = QueuedAudioTrack(framerate=48000)
+        # video to openAI
+        self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack(width=640, height=480)
+
+
         self._audio_callback: Optional[Callable[[bytes], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
         self.send_video = send_video
-        self._video_track: Optional[VideoStreamTrack] = None
+
         self._video_sender_task: Optional[asyncio.Task] = None
-        self._forwarding_track: Optional[QueuedVideoTrack] = None
         self.instructions: Optional[str] = None
 
     async def connect(self) -> None:
@@ -72,7 +78,6 @@ class RTCManager:
         await self._add_data_channel()
 
         await self._set_audio_track()
-        logger.info("sending audio track")
 
         if self.send_video:
             await self._set_video_track()
@@ -152,16 +157,14 @@ class RTCManager:
                 logger.error(f"Failed to decode message: {e}")
 
     async def _set_audio_track(self) -> None:
-        self.pc.addTrack(self._mic_track)
+        self.pc.addTrack(self._audio_to_openai_track)
 
     async def _set_video_track(self) -> None:
-        self._video_track = VideoStreamTrack()
-        self._video_sender = self.pc.addTrack(self._video_track)
+        self._video_sender = self.pc.addTrack(self._video_to_openai_track)
 
     async def send_audio_pcm(self, pcm: PcmData) -> None:
-        pcm = pcm.resample(48000) # ensure we are at webrtc sample rate
-        logger.info(f"Sending audio pcm: {pcm.duration} seconds")
-        await self._mic_track.write(pcm.samples)
+        pcm = pcm.resample(48000, target_channels=1) # ensure we are at webrtc sample rate
+        await self._audio_to_openai_track.write(pcm.samples.tobytes())
 
     async def send_text(self, text: str, role: str = "user"):
         """Send a text message to OpenAI.
@@ -221,8 +224,7 @@ class RTCManager:
         Send a video frame to Gemini using send_realtime_input
         """
         logger.info(f"Sending video frame: {frame}")
-        if self._forwarding_track is not None:
-            await self._forwarding_track.add_frame(frame)
+        await self._video_to_openai_track.add_frame(frame)
 
     async def start_video_sender(
         self, stream_video_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None
@@ -259,7 +261,6 @@ class RTCManager:
             logger.info("🎥 Existing video sender task stopped")
 
         # Create forwarding track and start its forwarder
-        forwarding_track = QueuedVideoTrack(width=640, height=480)
         await shared_forwarder.start_event_consumer(
             self._send_video_frame, fps=float(fps), consumer_name="openai"
         )
@@ -268,8 +269,6 @@ class RTCManager:
         logger.info(
             "🎥 Replacing OpenAI dummy track with StreamVideoForwardingTrack"
         )
-        self._video_sender.replaceTrack(forwarding_track)
-        self._forwarding_track = self._forwarding_track
         logger.info(
             f"✅ Successfully replaced OpenAI track with Stream Video forwarding (fps={fps})"
         )
@@ -409,9 +408,9 @@ class RTCManager:
                 except Exception:
                     pass
                 self.data_channel = None
-            if self._mic_track is not None:
+            if self._audio_to_openai_track is not None:
                 try:
-                    self._mic_track.stop()
+                    self._audio_to_openai_track.stop()
                 except Exception:
                     pass
             await self.pc.close()
