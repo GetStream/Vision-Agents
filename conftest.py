@@ -314,3 +314,31 @@ async def bunny_video_track():
         yield track
     finally:
         track.container.close()
+
+
+@pytest.fixture
+async def audio_track_48khz():
+    """Create audio track that produces 48kHz audio frames."""
+    from getstream.video.rtc.audio_track import AudioStreamTrack
+
+    audio_file_path = os.path.join(get_assets_dir(), "formant_speech_48k.wav")
+
+    class TestAudioTrack(AudioStreamTrack):
+        def __init__(self, audio_path):
+            super().__init__()
+            self.container = av.open(audio_path)
+            self.audio_stream = self.container.streams.audio[0]
+            self.decoder = self.container.decode(self.audio_stream)
+
+        async def recv(self):
+            try:
+                frame = next(self.decoder)
+                return frame
+            except StopIteration:
+                raise asyncio.CancelledError("End of audio stream")
+
+    track = TestAudioTrack(audio_file_path)
+    try:
+        yield track
+    finally:
+        track.container.close()

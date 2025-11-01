@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Optional, Callable, Any, cast
 
+import av
 import numpy as np
 from av.frame import Frame
 from getstream.video.rtc.audio_track import AudioStreamTrack
@@ -52,7 +53,9 @@ class AudioForwarder:
         """Read audio frames from track and forward to callback."""
         while True:
             try:
-                frame = cast(AudioFrame, await asyncio.wait_for(self.track.recv(), timeout=1.0))
+                received = await asyncio.wait_for(self.track.recv(), timeout=1.0)
+                frame = cast(av.AudioFrame, received)
+
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
