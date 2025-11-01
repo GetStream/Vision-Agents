@@ -339,25 +339,13 @@ class RTCManager:
     async def close(self) -> None:
         """Close the WebRTC connection and clean up resources."""
         try:
-            # Clean up video sender task
-            if self._video_sender_task is not None:
-                self._video_sender_task.cancel()
-                try:
-                    await self._video_sender_task
-                except asyncio.CancelledError:
-                    pass
-
             if self.data_channel is not None:
-                try:
-                    self.data_channel.close()
-                except Exception:
-                    pass
+                self.data_channel.close()
                 self.data_channel = None
             if self._audio_to_openai_track is not None:
-                try:
-                    self._audio_to_openai_track.stop()
-                except Exception:
-                    pass
+                self._audio_to_openai_track.stop()
+            if self._video_to_openai_track is not None:
+                self._video_to_openai_track.stop()
             await self.pc.close()
         except Exception as e:
             logger.debug(f"RTCManager close error: {e}")
