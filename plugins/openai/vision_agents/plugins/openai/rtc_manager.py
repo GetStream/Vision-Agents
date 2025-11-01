@@ -1,21 +1,18 @@
 import asyncio
 import json
-import time
-from typing import Any, Optional, Callable, cast
+from typing import Any, Optional, Callable
 from os import getenv
 
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-from hatch.cli import self
 from httpx import AsyncClient, HTTPStatusError
 import logging
 from getstream.video.rtc.track_util import PcmData
 
-from aiortc.mediastreams import AudioStreamTrack, VideoStreamTrack, MediaStreamTrack
-from fractions import Fraction
-import numpy as np
-from av import AudioFrame, VideoFrame
+from aiortc.mediastreams import VideoStreamTrack, MediaStreamTrack
+from av import VideoFrame
 
+from vision_agents.core.utils.audio_forwarder import AudioForwarder
 from vision_agents.core.utils.audio_track import QueuedAudioTrack
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
@@ -60,12 +57,11 @@ class RTCManager:
         self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack(width=640, height=480)
 
 
-        self._audio_callback: Optional[Callable[[bytes], Any]] = None
+        self._audio_callback: Optional[Callable[[PcmData], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
         self.send_video = send_video
 
-        self._video_sender_task: Optional[asyncio.Task] = None
         self.instructions: Optional[str] = None
 
     async def connect(self) -> None:
@@ -242,41 +238,16 @@ class RTCManager:
         if not self.send_video:
             logger.error("❌ Video sending not enabled for this session")
             raise RuntimeError("Video sending not enabled for this session")
-        if self._video_sender is None:
-            logger.error(
-                "❌ Video sender not available; was video track negotiated?"
-            )
-            raise RuntimeError(
-                "Video sender not available; was video track negotiated?"
-            )
-
-        # Stop any existing video sender task
-        if self._video_sender_task is not None:
-            logger.info("🎥 Stopping existing video sender task...")
-            self._video_sender_task.cancel()
-            try:
-                await self._video_sender_task
-            except asyncio.CancelledError:
-                pass
-            logger.info("🎥 Existing video sender task stopped")
 
         # Create forwarding track and start its forwarder
         await shared_forwarder.start_event_consumer(
             self._send_video_frame, fps=float(fps), consumer_name="openai"
         )
 
-        # Replace the dummy track with the forwarding track
-        logger.info(
-            "🎥 Replacing OpenAI dummy track with StreamVideoForwardingTrack"
-        )
         logger.info(
             f"✅ Successfully replaced OpenAI track with Stream Video forwarding (fps={fps})"
         )
 
-
-    async def stop_video_sender(self) -> None:
-        logger.info("stop sending video for openai")
-        pass
 
     async def _setup_sdp_exchange(self) -> str:
         # Create local offer and exchange SDP
@@ -316,38 +287,12 @@ class RTCManager:
     # When you get a remote track (OpenAI) we write the audio from the track on the call.
     async def _handle_added_track(self, track: MediaStreamTrack) -> None:
         if track.kind == "audio":
-            logger.info("Remote audio track attached; starting audio reader")
-            # TODO: this needs to be moved to an audio forwarder
-
-            async def _reader():
-                while True:
-                    try:
-                        frame: AudioFrame = cast(
-                            AudioFrame,
-                            await asyncio.wait_for(track.recv(), timeout=1.0),
-                        )
-                    except asyncio.TimeoutError:
-                        continue
-                    except Exception as e:
-                        logger.debug(f"Remote audio track ended or error: {e}")
-                        break
-
-                    try:
-                        # TODO: why not use the utility methods for this on PcmData?
-                        # TODO: why do we even need this, audio tracks automatically handle it in some cases
-                        samples = frame.to_ndarray()
-                        if samples.ndim == 2 and samples.shape[0] > 1:
-                            samples = samples.mean(axis=0)
-                        if samples.dtype != np.int16:
-                            samples = (samples * 32767).astype(np.int16)
-                        audio_bytes = samples.tobytes()
-                        cb = self._audio_callback
-                        if cb is not None:
-                            await cb(audio_bytes)
-                    except Exception as e:
-                        logger.debug(f"Failed to process remote audio frame: {e}")
-
-            asyncio.create_task(_reader())
+            logger.info("Remote audio track attached; starting audio forwarder")
+            if self._audio_callback is None:
+                logger.warning("No audio callback set, cannot forward audio")
+                return
+            audio_forwarder = AudioForwarder(track, self._audio_callback)
+            await audio_forwarder.start()
 
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""
@@ -375,11 +320,11 @@ class RTCManager:
                 "No session information available yet. Waiting for session.created event."
             )
 
-    def set_audio_callback(self, callback: Callable[[bytes], Any]) -> None:
+    def set_audio_callback(self, callback: Callable[[PcmData], Any]) -> None:
         """Set callback for receiving audio data from OpenAI.
 
         Args:
-            callback: Function that receives raw audio bytes from OpenAI responses.
+            callback: Function that receives PcmData (16kHz, mono, int16) from OpenAI responses.
         """
         self._audio_callback = callback
 
