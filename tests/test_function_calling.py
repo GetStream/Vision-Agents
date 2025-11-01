@@ -4,12 +4,40 @@ Tests for function calling functionality.
 
 import pytest
 from unittest.mock import Mock, patch
+from typing import Any, Dict, Optional, AsyncIterator
 
 from vision_agents.core.llm import FunctionRegistry, function_registry
 from vision_agents.core.llm.llm import LLM
 from vision_agents.plugins.openai import LLM as OpenAILLM
 from vision_agents.plugins.anthropic import LLM as ClaudeLLM
 from vision_agents.plugins.gemini import LLM as GeminiLLM
+
+
+# Test implementation of LLM for unit tests
+class TestLLM(LLM):
+    """Concrete implementation of LLM for testing."""
+
+    async def _simple_response(
+        self,
+        text: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Mock simple response."""
+        return f"Mock response to: {text}"
+
+    async def _simple_response_stream(
+        self,
+        text: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[str]:
+        """Mock simple response stream."""
+        yield f"Mock response to: {text}"
 
 
 class TestFunctionRegistry:
@@ -131,7 +159,7 @@ class TestLLMFunctionCalling:
     @pytest.mark.asyncio
     async def test_llm_function_registration(self):
         """Test that LLM can register functions."""
-        llm = LLM()
+        llm = TestLLM()
         
         @llm.register_function(description="Test function")
         def test_func(x: int) -> int:
@@ -145,7 +173,7 @@ class TestLLMFunctionCalling:
     @pytest.mark.asyncio
     async def test_llm_get_available_functions(self):
         """Test getting available functions from LLM."""
-        llm = LLM()
+        llm = TestLLM()
         
         @llm.register_function(description="Function 1")
         def func1(x: int) -> int:
@@ -361,7 +389,7 @@ class TestFunctionCallingIntegration:
     @pytest.mark.asyncio
     async def test_tool_call_processing(self):
         """Test processing tool calls with multiple functions."""
-        llm = LLM()
+        llm = TestLLM()
         
         @llm.register_function(description="Get weather")
         def get_weather(location: str) -> str:
@@ -385,7 +413,7 @@ class TestFunctionCallingIntegration:
     @pytest.mark.asyncio
     async def test_error_handling_in_function_calls(self):
         """Test error handling in function calls."""
-        llm = LLM()
+        llm = TestLLM()
         
         @llm.register_function(description="Test function that raises error")
         def error_function(x: int) -> int:
@@ -404,7 +432,7 @@ class TestFunctionCallingIntegration:
     @pytest.mark.asyncio
     async def test_function_schema_generation(self):
         """Test that function schemas are generated correctly."""
-        llm = LLM()
+        llm = TestLLM()
         
         @llm.register_function(description="Complex function")
         def complex_function(
@@ -450,7 +478,7 @@ class TestConcurrentToolExecution:
     @pytest.mark.asyncio
     async def test_dedup_and_execute(self):
         """Test the _dedup_and_execute method."""
-        llm = LLM()
+        llm = TestLLM()
         
         @llm.register_function(description="Test function")
         def test_func(x: int) -> int:
@@ -479,8 +507,8 @@ class TestConcurrentToolExecution:
     async def test_tool_lifecycle_events(self):
         """Test that tool lifecycle events are emitted."""
         from vision_agents.core.llm.events import ToolStartEvent, ToolEndEvent
-        
-        llm = LLM()
+
+        llm = TestLLM()
         
         @llm.register_function(description="Test function")
         def test_func(x: int) -> int:
@@ -513,7 +541,7 @@ class TestConcurrentToolExecution:
     @pytest.mark.asyncio
     async def test_output_sanitization(self):
         """Test output sanitization for large responses."""
-        llm = LLM()
+        llm = TestLLM()
         
         # Test normal output
         normal_output = "Hello world"

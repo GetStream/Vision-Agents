@@ -118,6 +118,41 @@ class Realtime(realtime.Realtime):
         """
         await self.rtc.send_text(text)
 
+    async def _simple_response(
+        self,
+        text: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> str:
+        """
+        Internal simple response implementation required by LLM base class.
+
+        Note: OpenAI Realtime is event-driven and doesn't return responses directly.
+        This implementation sends the text and returns a placeholder.
+        """
+        await self.rtc.send_text(text)
+        return ""  # Realtime API doesn't return text synchronously
+
+    async def _simple_response_stream(
+        self,
+        text: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ):
+        """
+        Internal simple response stream implementation required by LLM base class.
+
+        Note: OpenAI Realtime is event-driven and doesn't stream responses in this manner.
+        This implementation sends the text but yields nothing.
+        """
+        await self.rtc.send_text(text)
+        return
+        yield  # Make this a generator
+
     async def simple_audio_response(
         self, audio: PcmData, participant: Optional[Participant] = None
     ):

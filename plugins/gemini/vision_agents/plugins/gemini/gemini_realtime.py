@@ -128,6 +128,41 @@ class Realtime(realtime.Realtime):
         self.logger.info("Simple response called with text: %s", text)
         await self.send_realtime_input(text=text)
 
+    async def _simple_response(
+        self,
+        text: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> str:
+        """
+        Internal simple response implementation required by LLM base class.
+
+        Note: Gemini Realtime is event-driven and doesn't return responses directly.
+        This implementation sends the text and returns a placeholder.
+        """
+        await self.send_realtime_input(text=text)
+        return ""  # Realtime API doesn't return text synchronously
+
+    async def _simple_response_stream(
+        self,
+        text: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ):
+        """
+        Internal simple response stream implementation required by LLM base class.
+
+        Note: Gemini Realtime is event-driven and doesn't stream responses in this manner.
+        This implementation sends the text but yields nothing.
+        """
+        await self.send_realtime_input(text=text)
+        return
+        yield  # Make this a generator
+
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
     ):
