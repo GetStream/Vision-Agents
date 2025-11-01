@@ -23,6 +23,8 @@ load_dotenv()
 
 
 async def start_agent() -> None:
+    loop = asyncio.get_running_loop()
+    loop.slow_callback_duration = 0.005 # warn if blocking >5ms
     # Set the call ID here to be used in the logging
     call_id = str(uuid4())
 
@@ -74,4 +76,7 @@ You are a voice assistant.
 
 
 if __name__ == "__main__":
-    asyncio.run(start_agent())
+    from blockbuster import BlockBuster
+    blockbuster = BlockBuster()
+    blockbuster.activate()
+    asyncio.run(start_agent(), debug=True)

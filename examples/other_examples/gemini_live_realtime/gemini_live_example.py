@@ -33,10 +33,11 @@ async def start_agent() -> None:
 
     call = client.video.call("default", str(uuid4()))
 
-    await agent.edge.open_demo(call)
+
 
     with await agent.join(call):
         await asyncio.sleep(5)
+        await agent.edge.open_demo(call)
         await agent.llm.simple_response(text="Describe what you see and say hi")
         await agent.finish()  # run till the call ends
 

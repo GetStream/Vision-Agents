@@ -18,6 +18,14 @@ from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, STT
 
 load_dotenv()
 
+from blockbuster import BlockBuster, blockbuster_ctx
+from typing import Iterator
+
+@pytest.fixture(autouse=True)
+def blockbuster() -> Iterator[BlockBuster]:
+    with blockbuster_ctx() as bb:
+        yield bb
+
 
 class STTSession:
     """Helper class for testing STT implementations.

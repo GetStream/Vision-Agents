@@ -418,7 +418,8 @@ class StreamEdge(EdgeTransport):
         logger.info(f"🌐 Opening browser to: {url}")
 
         try:
-            webbrowser.open(url)
+            # Run webbrowser.open in a separate thread to avoid blocking the event loop
+            await asyncio.to_thread(webbrowser.open, url)
             logger.info("✅ Browser opened successfully!")
         except Exception as e:
             logger.error(f"❌ Failed to open browser: {e}")
