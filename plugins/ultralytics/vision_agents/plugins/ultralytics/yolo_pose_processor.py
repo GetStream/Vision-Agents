@@ -20,6 +20,7 @@ from vision_agents.core.processors.base_processor import (
 )
 from vision_agents.core.utils.queue import LatestNQueue
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ TODO: video track & Queuing need more testing/ thought
 """
 
 
-class YOLOPoseVideoTrack(VideoStreamTrack):
+class YOLOPoseVideoTrack(QueuedVideoTrack):
     """
     The track has a async recv() method which is called repeatedly.
     The recv method should wait for FPS interval before providing the next frame...
@@ -48,68 +49,7 @@ class YOLOPoseVideoTrack(VideoStreamTrack):
     Ideally we'd do frame.to_ndarray -> process -> from.from_ndarray and skip image conversion
     """
 
-    def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT):
-        super().__init__()
-        logger.info("YPV: hi")
-        self.frame_queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=10)
-
-        # Set video quality parameters
-        self.width = width
-        self.height = height
-        empty_image = Image.new("RGB", (self.width, self.height), color="blue")
-        self.empty_frame = av.VideoFrame.from_image(empty_image)
-        self.last_frame: av.VideoFrame = self.empty_frame
-        self._stopped = False
-
-    async def add_frame(self, frame: av.VideoFrame):
-        # Resize the image and stick it on the queue
-        if self._stopped:
-            return
-
-        # TODO: where do we resize?
-        # Ensure the image is the correct size
-        # if image.size != (self.width, self.height):
-        #    image = image.resize(
-        #        (self.width, self.height), Image.Resampling.BILINEAR
-        #    )
-
-        self.frame_queue.put_latest_nowait(frame)
-
-    async def recv(self) -> av.frame.Frame:
-        """Receive the next video frame."""
-        if self._stopped:
-            raise Exception("Track stopped")
-
-        try:
-            # Try to get a frame from queue with short timeout
-            frame = await asyncio.wait_for(self.frame_queue.get(), timeout=0.02)
-            if frame:
-                self.last_frame = frame
-                logger.debug(f"📥 Got new frame from queue: {frame}")
-        except asyncio.TimeoutError:
-            pass
-        except Exception as e:
-            logger.warning(f"⚠️ Error getting frame from queue: {e}")
-
-        # Get timestamp for the frame
-
-        pts, time_base = await self.next_timestamp()
-
-        # Create av.VideoFrame from PIL Image
-        av_frame = self.last_frame
-
-        av_frame.pts = pts
-        av_frame.time_base = time_base
-
-        # if frame_received:
-        #    logger.info(f"Returning NEW video frame: {av_frame.width}x{av_frame.height}")
-        # else:
-        #    logger.info(f"Returning REPEATED video frame: {av_frame.width}x{av_frame.height}")
-        return av_frame
-
-    def stop(self):
-        self._stopped = True
-
+    pass
 
 class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """

@@ -319,7 +319,7 @@ You can now see the metrics at `http://localhost:9464/metrics` (make sure that y
 
 - Track.recv errors will fail silently. The API is to return a frame. Never return None. and wait till the next frame is available
 - When using frame.to_ndarray(format="rgb24") specify the format. Typically you want rgb24 when connecting/sending to Yolo etc
-
+- QueuedVideoTrack is a writable/queued video track implementation which is useful when forwarding video
 
 ## Onboarding Plan for new contributors
 
