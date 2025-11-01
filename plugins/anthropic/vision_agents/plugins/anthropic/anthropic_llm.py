@@ -368,7 +368,7 @@ class ClaudeLLM(LLM):
 
                 self.events.send(
                     LLMResponseChunkEvent(
-                        plugin_name="antrhopic",
+                        plugin_name="anthropic",
                         content_index=delta_event.index,
                         item_id="",
                         output_index=0,
