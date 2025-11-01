@@ -131,37 +131,20 @@ class Realtime(realtime.Realtime):
     async def _simple_response(
         self,
         text: str,
-        system_prompt: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        **kwargs: Any,
-    ) -> str:
+        processors: Optional[List[Processor]] = None,
+        participant: Optional[Participant] = None,
+    ):
         """
         Internal simple response implementation required by LLM base class.
 
         Note: Gemini Realtime is event-driven and doesn't return responses directly.
-        This implementation sends the text and returns a placeholder.
+        This implementation sends the text via the public simple_response method.
         """
-        await self.send_realtime_input(text=text)
-        return ""  # Realtime API doesn't return text synchronously
+        from vision_agents.core.llm.llm import LLMResponseEvent
 
-    async def _simple_response_stream(
-        self,
-        text: str,
-        system_prompt: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        **kwargs: Any,
-    ):
-        """
-        Internal simple response stream implementation required by LLM base class.
-
-        Note: Gemini Realtime is event-driven and doesn't stream responses in this manner.
-        This implementation sends the text but yields nothing.
-        """
-        await self.send_realtime_input(text=text)
-        return
-        yield  # Make this a generator
+        await self.simple_response(text, processors, participant)
+        # Return empty LLMResponseEvent since Realtime API is event-driven
+        return LLMResponseEvent(original=None, text="")
 
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
@@ -376,7 +359,9 @@ class Realtime(realtime.Realtime):
                         )
                         await self._handle_tool_call(server_message.tool_call)
                     else:
-                        self.logger.warning("Unrecognized event structure for gemini %s", server_message)
+                        self.logger.warning(
+                            "Unrecognized event structure for gemini %s", server_message
+                        )
         except CancelledError:
             logger.error("Stop async iteration exception")
             return

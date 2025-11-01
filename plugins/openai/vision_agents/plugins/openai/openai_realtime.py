@@ -121,37 +121,20 @@ class Realtime(realtime.Realtime):
     async def _simple_response(
         self,
         text: str,
-        system_prompt: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        **kwargs: Any,
-    ) -> str:
+        processors: Optional[List[Processor]] = None,
+        participant: Optional[Participant] = None,
+    ):
         """
         Internal simple response implementation required by LLM base class.
 
         Note: OpenAI Realtime is event-driven and doesn't return responses directly.
-        This implementation sends the text and returns a placeholder.
+        This implementation sends the text via the public simple_response method.
         """
-        await self.rtc.send_text(text)
-        return ""  # Realtime API doesn't return text synchronously
+        from vision_agents.core.llm.llm import LLMResponseEvent
 
-    async def _simple_response_stream(
-        self,
-        text: str,
-        system_prompt: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        **kwargs: Any,
-    ):
-        """
-        Internal simple response stream implementation required by LLM base class.
-
-        Note: OpenAI Realtime is event-driven and doesn't stream responses in this manner.
-        This implementation sends the text but yields nothing.
-        """
-        await self.rtc.send_text(text)
-        return
-        yield  # Make this a generator
+        await self.simple_response(text, processors, participant)
+        # Return empty LLMResponseEvent since Realtime API is event-driven
+        return LLMResponseEvent(original=None, text="")
 
     async def simple_audio_response(
         self, audio: PcmData, participant: Optional[Participant] = None
@@ -179,7 +162,6 @@ class Realtime(realtime.Realtime):
 
     async def close(self):
         await self.rtc.close()
-
 
     async def _handle_openai_event(self, event: dict) -> None:
         """Process events received from the OpenAI Realtime API.
