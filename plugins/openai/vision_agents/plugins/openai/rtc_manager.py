@@ -1,10 +1,11 @@
 import asyncio
 import json
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, cast
 from os import getenv
 
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+from getstream.video.rtc.audio_track import AudioStreamTrack
 from httpx import AsyncClient, HTTPStatusError
 import logging
 from getstream.video.rtc.track_util import PcmData
@@ -80,8 +81,12 @@ class RTCManager:
 
         @self.pc.on("track")
         async def on_track(track):
-            logger.info("receiving audio from openai")
-            await self._handle_added_track(track)
+            logger.info("receiving track from openai")
+            if track.kind == "audio":
+                track = cast(AudioStreamTrack, track)
+                logger.info("Remote audio track attached; starting audio forwarder")
+                audio_forwarder = AudioForwarder(track, self._audio_callback)
+                await audio_forwarder.start()
 
         answer_sdp = await self._setup_sdp_exchange()
 
@@ -284,15 +289,7 @@ class RTCManager:
             logger.error(f"SDP exchange failed: {e}")
             raise
 
-    # When you get a remote track (OpenAI) we write the audio from the track on the call.
-    async def _handle_added_track(self, track: MediaStreamTrack) -> None:
-        if track.kind == "audio":
-            logger.info("Remote audio track attached; starting audio forwarder")
-            if self._audio_callback is None:
-                logger.warning("No audio callback set, cannot forward audio")
-                return
-            audio_forwarder = AudioForwarder(track, self._audio_callback)
-            await audio_forwarder.start()
+
 
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""

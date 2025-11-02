@@ -240,7 +240,7 @@ class Realtime(realtime.Realtime):
             # Handle tool calls from OpenAI realtime
             await self._handle_tool_call_event(event)
 
-    async def _handle_audio_output(self, audio_bytes: bytes) -> None:
+    async def _handle_audio_output(self, pcm: PcmData) -> None:
         """Process audio output received from the OpenAI API.
 
         Forwards audio data to the output track for playback and emits audio output event.
@@ -251,9 +251,11 @@ class Realtime(realtime.Realtime):
         Note:
             Registered as callback with RTC manager.
         """
+        pcm = pcm.resample(48000, 1)
+        audio_bytes = pcm.samples.tobytes()
         # Emit audio output event
         self._emit_audio_output_event(
-            audio_data=audio_bytes,
+            audio_data=audio_bytes, # TODO: should use PCM we don't pass raw bytes
             sample_rate=48000,  # OpenAI Realtime uses 48kHz
         )
 
