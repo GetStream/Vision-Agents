@@ -15,6 +15,9 @@ dependencies = [
     "pillow>=10.4.0",
     "opencv-python>=4.8.0",
     "moondream>=0.1.1",  # Now compatible with vision-agents pillow>=10.4.0
+    "transformers>=4.40.0",  # For local model loading
+    "torch>=2.0.0",  # PyTorch for model inference
+    "accelerate>=0.20.0",  # Required for device_map and device management
 ]
 
 [project.urls]
