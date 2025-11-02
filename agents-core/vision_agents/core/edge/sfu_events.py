@@ -1483,6 +1483,7 @@ class ParticipantJoinedEvent(BaseEvent):
 
     type: str = field(default="stream.video.sfu.event.ParticipantJoined", init=False)
     payload: Optional[events_pb2.ParticipantJoined] = field(default=None, repr=False)
+    _participant: Optional[Participant] = field(init=False, default=None, repr=False)
 
     @property
     def call_cid(self) -> Optional[str]:
@@ -1491,13 +1492,19 @@ class ParticipantJoinedEvent(BaseEvent):
             return None
         return getattr(self.payload, "call_cid", None)
 
-    @property
-    def participant(self) -> Optional[Participant]:
+    @property  # type: ignore[misc]
+    def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
+    
+    @participant.setter  # type: ignore[misc]
+    def participant(self, value: Optional[Participant]) -> None:
+        """Setter for participant to satisfy dataclass __init__."""
+        # Store in _participant but don't use it (payload takes precedence)
+        self._participant = value
 
     @classmethod
     def from_proto(cls, proto_obj: events_pb2.ParticipantJoined, **extra):
@@ -1525,6 +1532,7 @@ class ParticipantLeftEvent(BaseEvent):
 
     type: str = field(default="stream.video.sfu.event.ParticipantLeft", init=False)
     payload: Optional[events_pb2.ParticipantLeft] = field(default=None, repr=False)
+    _participant: Optional[Participant] = field(init=False, default=None, repr=False)
 
     @property
     def call_cid(self) -> Optional[str]:
@@ -1533,13 +1541,19 @@ class ParticipantLeftEvent(BaseEvent):
             return None
         return getattr(self.payload, "call_cid", None)
 
-    @property
-    def participant(self) -> Optional[Participant]:
+    @property  # type: ignore[misc]
+    def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
+    
+    @participant.setter  # type: ignore[misc]
+    def participant(self, value: Optional[Participant]) -> None:
+        """Setter for participant to satisfy dataclass __init__."""
+        # Store in _participant but don't use it (payload takes precedence)
+        self._participant = value
 
     @classmethod
     def from_proto(cls, proto_obj: events_pb2.ParticipantLeft, **extra):
@@ -1598,6 +1612,7 @@ class ParticipantUpdatedEvent(BaseEvent):
 
     type: str = field(default="stream.video.sfu.event.ParticipantUpdated", init=False)
     payload: Optional[events_pb2.ParticipantUpdated] = field(default=None, repr=False)
+    _participant: Optional[Participant] = field(init=False, default=None, repr=False)
 
     @property
     def call_cid(self) -> Optional[str]:
@@ -1606,13 +1621,19 @@ class ParticipantUpdatedEvent(BaseEvent):
             return None
         return getattr(self.payload, "call_cid", None)
 
-    @property
-    def participant(self) -> Optional[Participant]:
+    @property  # type: ignore[misc]
+    def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
+    
+    @participant.setter  # type: ignore[misc]
+    def participant(self, value: Optional[Participant]) -> None:
+        """Setter for participant to satisfy dataclass __init__."""
+        # Store in _participant but don't use it (payload takes precedence)
+        self._participant = value
 
     @classmethod
     def from_proto(cls, proto_obj: events_pb2.ParticipantUpdated, **extra):
@@ -2066,6 +2087,7 @@ class TrackPublishedEvent(BaseEvent):
 
     type: str = field(default="stream.video.sfu.event.TrackPublished", init=False)
     payload: Optional[events_pb2.TrackPublished] = field(default=None, repr=False)
+    _participant: Optional[Participant] = field(init=False, default=None, repr=False)
 
     @property
     def user_id(self) -> Optional[str]:  # type: ignore[override]
@@ -2074,13 +2096,19 @@ class TrackPublishedEvent(BaseEvent):
             return None
         return getattr(self.payload, "user_id", None)
 
-    @property
-    def participant(self) -> Optional[Participant]:
+    @property  # type: ignore[misc]
+    def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
+    
+    @participant.setter  # type: ignore[misc]
+    def participant(self, value: Optional[Participant]) -> None:
+        """Setter for participant to satisfy dataclass __init__."""
+        # Store in _participant but don't use it (payload takes precedence)
+        self._participant = value
 
     @classmethod
     def from_proto(cls, proto_obj: events_pb2.TrackPublished, **extra):
@@ -2108,6 +2136,7 @@ class TrackUnpublishedEvent(BaseEvent):
 
     type: str = field(default="stream.video.sfu.event.TrackUnpublished", init=False)
     payload: Optional[events_pb2.TrackUnpublished] = field(default=None, repr=False)
+    _participant: Optional[Participant] = field(init=False, default=None, repr=False)
 
     @property
     def user_id(self) -> Optional[str]:  # type: ignore[override]
@@ -2123,13 +2152,19 @@ class TrackUnpublishedEvent(BaseEvent):
             return None
         return getattr(self.payload, "cause", None)
 
-    @property
-    def participant(self) -> Optional[Participant]:
+    @property  # type: ignore[misc]
+    def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
+    
+    @participant.setter  # type: ignore[misc]
+    def participant(self, value: Optional[Participant]) -> None:
+        """Setter for participant to satisfy dataclass __init__."""
+        # Store in _participant but don't use it (payload takes precedence)
+        self._participant = value
 
     @classmethod
     def from_proto(cls, proto_obj: events_pb2.TrackUnpublished, **extra):

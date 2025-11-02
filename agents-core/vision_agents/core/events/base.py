@@ -38,12 +38,14 @@ class BaseEvent(DataClassJsonMixin):
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     session_id: Optional[str] = None
-    user_metadata: Optional[Participant] = None
+    participant: Optional[Participant] = None
+    # TODO: this is ugly, review why we have this
+    user_metadata: Optional[Any] = None
 
     def user_id(self) -> Optional[str]:
-        if self.user_metadata is None:
+        if self.participant is None:
             return None
-        return getattr(self.user_metadata, "user_id")
+        return getattr(self.participant, "user_id")
 
 
 @dataclass

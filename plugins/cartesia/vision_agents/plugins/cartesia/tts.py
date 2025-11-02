@@ -12,7 +12,9 @@ from cartesia.tts import (
 )
 
 from vision_agents.core import tts
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
+
+logger = logging.getLogger(__name__)
 
 
 class TTS(tts.TTS):
@@ -22,7 +24,7 @@ class TTS(tts.TTS):
         self,
         api_key: Optional[str] = None,
         model_id: str = "sonic-3",
-        voice_id: str | None = "f9836c6e-a0bd-460e-9d3c-f7299fa60f94",
+        voice_id: str | None = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
         sample_rate: int = 16000,
         client: Optional[AsyncCartesia] = None,
     ) -> None:
@@ -47,7 +49,7 @@ class TTS(tts.TTS):
         self.model_id = model_id
         # Ensure voice_id is always provided for API typing and calls
         self.voice_id: str = (
-            voice_id if voice_id is not None else "f9836c6e-a0bd-460e-9d3c-f7299fa60f94"
+            voice_id if voice_id is not None else "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
         )
         self.sample_rate = sample_rate
 
@@ -78,7 +80,7 @@ class TTS(tts.TTS):
         )
 
         return PcmData.from_response(
-            response, sample_rate=self.sample_rate, channels=1, format="s16"
+            response, sample_rate=self.sample_rate, channels=1, format=AudioFormat.S16
         )
 
     async def stop_audio(self) -> None:
@@ -89,4 +91,4 @@ class TTS(tts.TTS):
         Returns:
             None
         """
-        logging.info("🎤 Cartesia TTS stop requested (no-op)")
+        logger.info("🎤 Cartesia TTS stop requested (no-op)")

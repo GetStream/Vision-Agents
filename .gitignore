@@ -84,3 +84,4 @@ stream-py/
 # Artifacts / assets
 *.pt
 *.kef
+*.onnx

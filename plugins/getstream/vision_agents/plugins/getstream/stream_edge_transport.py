@@ -19,7 +19,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
 )
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
-
+from vision_agents.core.agents.agents import tracer
 from vision_agents.core.edge import EdgeTransport, sfu_events
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 from vision_agents.core.edge.types import Connection, User, OutputAudioTrack
@@ -29,6 +29,8 @@ from vision_agents.core.utils import get_vision_agents_version
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
+
+logger = logging.getLogger(__name__)
 
 
 class StreamConnection(Connection):
@@ -54,7 +56,6 @@ class StreamEdge(EdgeTransport):
         super().__init__()
         version = get_vision_agents_version()
         self.client = AsyncStream(user_agent=f"vision-agents-{version}")
-        self.logger = logging.getLogger(self.__class__.__name__)
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(sfu_events)
@@ -108,17 +109,17 @@ class StreamEdge(EdgeTransport):
 
         # Skip processing the agent's own tracks - we don't subscribe to them
         if is_agent_track:
-            self.logger.debug(f"Skipping agent's own track: {track_type_int} from {user_id}")
+            logger.debug(f"Skipping agent's own track: {track_type_int} from {user_id}")
             return
 
         # First check if track already exists in map (e.g., from previous unpublish/republish)
         if track_key in self._track_map:
             self._track_map[track_key]["published"] = True
             track_id = self._track_map[track_key]["track_id"]
-            self.logger.info(
+            logger.info(
                 f"Track re-published: {track_type_int} from {user_id}, track_id: {track_id}"
             )
-            
+
             # Emit TrackAddedEvent so agent can switch to this track
             self.events.send(
                 events.TrackAddedEvent(
@@ -161,19 +162,23 @@ class StreamEdge(EdgeTransport):
         if track_id:
             # Store with correct type from SFU
             self._track_map[track_key] = {"track_id": track_id, "published": True}
-            self.logger.info(
+            logger.info(
                 f"Trackmap published: {track_type_int} from {user_id}, track_id: {track_id} (waited {elapsed:.2f}s)"
             )
 
-            # Emit TrackAddedEvent with correct type
-            self.events.send(
-                events.TrackAddedEvent(
-                    plugin_name="getstream",
-                    track_id=track_id,
-                    track_type=track_type_int,
-                    user=event.participant,
+            # Only emit TrackAddedEvent for remote participants, not for agent's own tracks
+            if not is_agent_track:
+                # NOW spawn TrackAddedEvent with correct type
+                self.events.send(
+                    events.TrackAddedEvent(
+                        plugin_name="getstream",
+                        track_id=track_id,
+                        track_type=track_type_int,
+                        user=event.participant,
+                        participant=event.participant,
+                    )
                 )
-            )
+
         else:
             raise TimeoutError(
                 f"Timeout waiting for pending track: {track_type_int} ({expected_kind}) from user {user_id}, "
@@ -211,7 +216,7 @@ class StreamEdge(EdgeTransport):
             event_desc = "Participant left"
 
         track_names = [TrackType.Name(t) for t in tracks_to_remove]
-        self.logger.info(f"{event_desc}: {user_id}, tracks: {track_names}")
+        logger.info(f"{event_desc}: {user_id}, tracks: {track_names}")
 
         # Mark each track as unpublished and send TrackRemovedEvent
         for track_type_int in tracks_to_remove:
@@ -226,12 +231,14 @@ class StreamEdge(EdgeTransport):
                         track_id=track_id,
                         track_type=track_type_int,
                         user=participant,
+                        # TODO: user=participant?
+                        participant=participant,
                     )
                 )
                 # Mark as unpublished instead of removing
                 self._track_map[track_key]["published"] = False
             else:
-                self.logger.warning(f"Track not found in map: {track_key}")
+                logger.warning(f"Track not found in map: {track_key}")
 
     async def create_conversation(self, call: Call, user, instructions):
         chat_client: ChatClient = call.client.stream.chat
@@ -275,7 +282,7 @@ class StreamEdge(EdgeTransport):
         async def on_track(track_id, track_type, user):
             # Store track in pending map - wait for SFU to confirm type before spawning TrackAddedEvent
             self._pending_tracks[track_id] = (user.user_id, user.session_id, track_type)
-            self.logger.info(
+            logger.info(
                 f"Track received from WebRTC (pending SFU confirmation): {track_id}, type: {track_type}, user: {user.user_id}"
             )
 
@@ -320,9 +327,9 @@ class StreamEdge(EdgeTransport):
         """
         await self._connection.add_tracks(audio=audio_track, video=video_track)
         if audio_track:
-            self.logger.info("🤖 Agent ready to speak")
+            logger.info("🤖 Agent ready to speak")
         if video_track:
-            self.logger.info("🎥 Agent ready to publish video")
+            logger.info("🎥 Agent ready to publish video")
         # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
     def _get_subscription_config(self):
@@ -339,6 +346,7 @@ class StreamEdge(EdgeTransport):
         # Note: Not calling super().close() as it's an abstract method with trivial body
         pass
 
+    @tracer.start_as_current_span("stream_edge.open_demo")
     async def open_demo(self, call: Call) -> str:
         client = call.client.stream
 
@@ -400,20 +408,20 @@ class StreamEdge(EdgeTransport):
             "skip_lobby": "true",
             "user_name": name,
             "video_encoder": "h264",  # Use H.264 instead of VP8 for better compatibility
-            "bitrate": 12000000,  
+            "bitrate": 12000000,
             "w": 1920,
-            "h": 1080,   
+            "h": 1080,
             "channel_type": self.channel_type,
         }
 
         url = f"{base_url}{call.id}?{urlencode(params)}"
-        print(f"🌐 Opening browser to: {url}")
+        logger.info(f"🌐 Opening browser to: {url}")
 
         try:
             webbrowser.open(url)
-            print("✅ Browser opened successfully!")
+            logger.info("✅ Browser opened successfully!")
         except Exception as e:
-            print(f"❌ Failed to open browser: {e}")
-            print(f"Please manually open this URL: {url}")
+            logger.error(f"❌ Failed to open browser: {e}")
+            logger.warning(f"Please manually open this URL: {url}")
 
         return url

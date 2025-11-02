@@ -4,32 +4,13 @@ Fal Wizper STT Plugin for Stream
 Provides real-time audio transcription and translation using fal-ai/wizper (Whisper v3).
 This plugin integrates with Stream's audio processing pipeline to provide high-quality
 speech-to-text capabilities.
-
-Example usage:
-    from vision_agents.plugins import fal
-
-    # For transcription
-    stt = fal.STT(task="transcribe")
-
-    # For translation to Portuguese
-    stt = fal.STT(task="translate", target_language="pt")
-
-    @stt.on("transcript")
-    async def on_transcript(text: str, user: Any, metadata: dict):
-        print(f"Transcript: {text}")
-
-    @stt.on("error")
-    async def on_error(error: str):
-        print(f"Error: {error}")
 """
 
-import io
 import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
-import wave
 
 import fal_client
 from getstream.video.rtc.track_util import PcmData
@@ -76,27 +57,6 @@ class STT(stt.STT):
         self.target_language = target_language
         self._fal_client = client if client is not None else fal_client.AsyncClient()
 
-    def _pcm_to_wav_bytes(self, pcm_data: PcmData) -> bytes:
-        """
-        Convert PCM data to WAV format bytes.
-
-        Args:
-            pcm_data: PCM audio data from Stream's audio pipeline
-
-        Returns:
-            WAV format audio data as bytes
-        """
-        wav_buffer = io.BytesIO()
-
-        with wave.open(wav_buffer, "wb") as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(self.sample_rate)
-            wav_file.writeframes(pcm_data.samples.tobytes())
-
-        wav_buffer.seek(0)
-        return wav_buffer.read()
-
     async def process_audio(
         self,
         pcm_data: PcmData,
@@ -122,8 +82,8 @@ class STT(stt.STT):
                 "Sending speech audio to fal-ai/wizper",
                 extra={"audio_bytes": pcm_data.samples.nbytes},
             )
-            # Convert PCM to WAV format for upload
-            wav_data = self._pcm_to_wav_bytes(pcm_data)
+            # Convert PCM to WAV format for upload using shared PcmData method
+            wav_data = pcm_data.to_wav_bytes()
 
             # Create temporary file for upload
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
@@ -151,7 +111,7 @@ class STT(stt.STT):
                 )
                 if "text" in result:
                     text = result["text"].strip()
-                    if text:
+                    if text and participant is not None:
                         response_metadata = TranscriptResponse()
                         self._emit_transcript_event(
                             text, participant, response_metadata

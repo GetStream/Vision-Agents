@@ -13,8 +13,8 @@ import pytest
 from dotenv import load_dotenv
 from torchvision.io.video import av
 
-from vision_agents.core.edge.types import PcmData
-from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
+from getstream.video.rtc.track_util import PcmData, AudioFormat
+from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
 
 load_dotenv()
 
@@ -34,6 +34,7 @@ class STTSession:
         """
         self.stt = stt
         self.transcripts = []
+        self.partial_transcripts = []
         self.errors = []
         self._event = asyncio.Event()
 
@@ -42,6 +43,10 @@ class STTSession:
         async def on_transcript(event: STTTranscriptEvent):
             self.transcripts.append(event)
             self._event.set()
+
+        @stt.events.subscribe
+        async def on_partial_transcript(event: STTPartialTranscriptEvent):
+            self.partial_transcripts.append(event)
 
         @stt.events.subscribe
         async def on_error(event: STTErrorEvent):
@@ -124,7 +129,7 @@ def mia_audio_16khz():
     container.close()
 
     # Create PCM data
-    pcm = PcmData(samples=samples, sample_rate=target_rate, format="s16")
+    pcm = PcmData(samples=samples, sample_rate=target_rate, format=AudioFormat.S16)
 
     return pcm
 
@@ -167,9 +172,81 @@ def mia_audio_48khz():
     container.close()
 
     # Create PCM data
-    pcm = PcmData(samples=samples, sample_rate=target_rate, format="s16")
+    pcm = PcmData(samples=samples, sample_rate=target_rate, format=AudioFormat.S16)
 
     return pcm
+
+
+@pytest.fixture
+def silence_2s_48khz():
+    """Generate 2 seconds of silence at 48kHz PCM data."""
+    sample_rate = 48000
+    duration_seconds = 2.0
+    
+    # Calculate number of samples for 2 seconds
+    num_samples = int(sample_rate * duration_seconds)
+    
+    # Create silence (zeros) as int16
+    samples = np.zeros(num_samples, dtype=np.int16)
+    
+    # Create PCM data
+    pcm = PcmData(samples=samples, sample_rate=sample_rate, format=AudioFormat.S16)
+    
+    return pcm
+
+
+@pytest.fixture
+def mia_audio_48khz_chunked():
+    """Load mia.mp3 and yield 48kHz PCM data in 20ms chunks."""
+    audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
+
+    # Load audio file using PyAV
+    container = av.open(audio_file_path)
+    audio_stream = container.streams.audio[0]
+    original_sample_rate = audio_stream.sample_rate
+    target_rate = 48000
+
+    # Create resampler if needed
+    resampler = None
+    if original_sample_rate != target_rate:
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
+
+    # Read all audio frames
+    samples = []
+    for frame in container.decode(audio_stream):
+        # Resample if needed
+        if resampler:
+            frame = resampler.resample(frame)[0]
+
+        # Convert to numpy array
+        frame_array = frame.to_ndarray()
+        if len(frame_array.shape) > 1:
+            # Convert stereo to mono
+            frame_array = np.mean(frame_array, axis=0)
+        samples.append(frame_array)
+
+    # Concatenate all samples
+    samples = np.concatenate(samples)
+
+    # Convert to int16
+    samples = samples.astype(np.int16)
+    container.close()
+
+    # Calculate chunk size for 20ms at 48kHz
+    chunk_size = int(target_rate * 0.020)  # 960 samples per 20ms
+
+    # Yield chunks of audio
+    chunks = []
+    for i in range(0, len(samples), chunk_size):
+        chunk_samples = samples[i : i + chunk_size]
+
+        # Create PCM data for this chunk
+        pcm_chunk = PcmData(
+            samples=chunk_samples, sample_rate=target_rate, format=AudioFormat.S16
+        )
+        chunks.append(pcm_chunk)
+
+    return chunks
 
 
 @pytest.fixture

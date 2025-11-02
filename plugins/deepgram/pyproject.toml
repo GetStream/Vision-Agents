@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "deepgram-sdk>=5.0.0,<5.1",
+    "deepgram-sdk==5.2.0",
     "numpy>=2.2.6,<2.3",
 ]
 

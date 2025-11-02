@@ -67,12 +67,6 @@ stt_errors = meter.create_counter("stt.errors", description="STT errors")
 tts_latency_ms = meter.create_histogram(
     "tts.latency.ms", unit="ms", description="Total TTS latency"
 )
-tts_first_byte_ms = meter.create_histogram(
-    "tts.first_byte.ms", unit="ms", description="TTS time to first audio byte"
-)
-tts_bytes_streamed = meter.create_counter(
-    "tts.bytes.streamed", unit="By", description="Bytes sent/received for TTS"
-)
 tts_errors = meter.create_counter("tts.errors", description="TTS errors")
 tts_events_emitted = meter.create_counter(
     "tts.events.emitted", description="Number of TTS events emitted"
