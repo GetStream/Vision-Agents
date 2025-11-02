@@ -4,7 +4,6 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Any
 
-import httpx
 import numpy as np
 from faster_whisper import WhisperModel
 from getstream.video.rtc.track_util import PcmData, AudioFormat

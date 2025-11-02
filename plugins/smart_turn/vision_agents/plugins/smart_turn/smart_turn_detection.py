@@ -4,7 +4,6 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Any
 
-import httpx
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 import numpy as np
 import onnxruntime as ort
