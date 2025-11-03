@@ -74,6 +74,8 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         self._bbox_color = (0, 255, 0)
         self._text_color = (0, 0, 0)
         
+        if not detect_objects:
+            raise ValueError("detect_objects must not be empty")
         # Normalize detect_objects to list of strings
         if isinstance(detect_objects, str):
             self.detect_objects = [detect_objects]
