@@ -310,7 +310,7 @@ class StreamEdge(EdgeTransport):
         self, framerate: int = 48000, stereo: bool = True
     ) -> OutputAudioTrack:
         return audio_track.AudioStreamTrack(
-            framerate=framerate, stereo=stereo
+            sample_rate=framerate, channels=stereo and 2 or 1
         )  # default to webrtc framerate
 
     def create_video_track(self):

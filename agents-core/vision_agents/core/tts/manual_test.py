@@ -6,7 +6,6 @@ from typing import Optional
 
 from vision_agents.core.tts import TTS
 from vision_agents.core.tts.testing import TTSSession
-from getstream.video.rtc.track_util import PcmData, AudioFormat
 from vision_agents.core.edge.types import play_pcm_with_ffplay
 
 
@@ -46,11 +45,11 @@ async def manual_tts_to_wav(
     if result.errors:
         raise RuntimeError(f"TTS errors: {result.errors}")
 
-    # Convert captured audio to PcmData
-    pcm_bytes = b"".join(result.speeches)
-    pcm = PcmData.from_bytes(
-        pcm_bytes, sample_rate=sample_rate, channels=channels, format=AudioFormat.S16
-    )
+    if len(result.speeches) == 0:
+        return ""
+
+    pcm = result.speeches[0]
+    [pcm.append(p) for p in result.speeches[1:]]
 
     # Generate a descriptive filename if not provided
     if outfile_path is None:

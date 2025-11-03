@@ -11,10 +11,11 @@ from .events import (
     TTSSynthesisCompleteEvent,
 )
 
+from getstream.video.rtc import PcmData
 
 @dataclass
 class TTSResult:
-    speeches: List[bytes] = field(default_factory=list)
+    speeches: List[PcmData] = field(default_factory=list)
     errors: List[Exception] = field(default_factory=list)
     started: bool = False
     completed: bool = False
@@ -33,7 +34,7 @@ class TTSSession:
 
     def __init__(self, tts: TTS):
         self._tts = tts
-        self._speeches: List[bytes] = []
+        self._speeches: List[PcmData] = []
         self._errors: List[Exception] = []
         self._started = False
         self._completed = False
@@ -45,8 +46,8 @@ class TTSSession:
 
         @tts.events.subscribe
         async def _on_audio(ev: TTSAudioEvent):  # type: ignore[name-defined]
-            if ev.audio_data:
-                self._speeches.append(ev.audio_data)
+            if ev.data:
+                self._speeches.append(ev.data)
             self._first_event.set()
 
         @tts.events.subscribe
@@ -60,7 +61,7 @@ class TTSSession:
             self._completed = True
 
     @property
-    def speeches(self) -> List[bytes]:
+    def speeches(self) -> List[PcmData]:
         return self._speeches
 
     @property

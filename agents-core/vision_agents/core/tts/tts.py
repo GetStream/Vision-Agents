@@ -1,9 +1,10 @@
 import abc
-import av
 import logging
 import time
 import uuid
 from typing import Optional, Dict, Union, Iterator, AsyncIterator, AsyncGenerator, Any
+
+import av
 
 from vision_agents.core.events.manager import EventManager
 
@@ -99,50 +100,6 @@ class TTS(abc.ABC):
         self._desired_channels = int(channels)
         self._desired_format = audio_format
 
-        self._resampler = None
-        self._resampler_input_rate = None
-        self._resampler_input_channels = None
-
-    def _get_resampler(self, input_rate: int, input_channels: int):
-        """Get or create a persistent resampler for the given input format.
-
-        This avoids creating a new resampler for each chunk, which causes
-        discontinuities and clicking artifacts in the output audio.
-
-        Args:
-            input_rate: Input sample rate
-            input_channels: Input channel count
-
-        Returns:
-            PyAV AudioResampler instance
-        """
-
-        if (
-            self._resampler is not None
-            and self._resampler_input_rate == input_rate
-            and self._resampler_input_channels == input_channels
-        ):
-            return self._resampler
-
-        in_layout = "mono" if input_channels == 1 else "stereo"
-        out_layout = "mono" if self._desired_channels == 1 else "stereo"
-
-        self._resampler = av.AudioResampler(
-            format="s16", layout=out_layout, rate=self._desired_sample_rate
-        )
-        self._resampler_input_rate = input_rate
-        self._resampler_input_channels = input_channels
-
-        logger.debug(
-            "Created persistent resampler: %s@%dHz -> %s@%dHz",
-            in_layout,
-            input_rate,
-            out_layout,
-            self._desired_sample_rate,
-        )
-
-        return self._resampler
-
     async def _iter_pcm(self, resp: Any) -> AsyncGenerator[PcmData, None]:
         """Yield PcmData chunks from a provider response of various shapes."""
         # Single buffer or PcmData
@@ -180,30 +137,21 @@ class TTS(abc.ABC):
         text: str,
         user: Optional[Dict[str, Any]],
     ) -> tuple[int, float]:
-        """Resample, serialize, emit TTSAudioEvent; return (bytes_len, duration_ms)."""
-        # Resample using persistent resampler to avoid discontinuities between chunks
-        resampler = self._get_resampler(pcm.sample_rate, pcm.channels)
-        pcm_out = pcm.resample(
-            self._desired_sample_rate, self._desired_channels, resampler=resampler
-        )
+        """Emit TTSAudioEvent; return (bytes_len, duration_ms)."""
 
-        payload = pcm_out.to_bytes()
         self.events.send(
             TTSAudioEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
-                audio_data=payload,
+                data=pcm,
                 synthesis_id=synthesis_id,
                 text_source=text,
                 participant=user,
                 chunk_index=idx,
                 is_final_chunk=is_final,
-                audio_format=self._desired_format,
-                sample_rate=self._desired_sample_rate,
-                channels=self._desired_channels,
             )
         )
-        return len(payload), pcm_out.duration_ms
+        return len(pcm.samples), pcm.duration_ms
 
     @abc.abstractmethod
     async def stream_audio(
@@ -260,11 +208,6 @@ class TTS(abc.ABC):
 
         start_time = time.time()
         synthesis_id = str(uuid.uuid4())
-
-        # Reset resampler for each new synthesis to ensure clean state
-        self._resampler = None
-        self._resampler_input_rate = None
-        self._resampler_input_channels = None
 
         logger.debug(
             "Starting text-to-speech synthesis", extra={"text_length": len(text)}
