@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 from vision_agents.plugins import openai, getstream
 from vision_agents.core.agents import Agent
 from getstream import AsyncStream
+from vision_agents.core.cli.cli_runner import example_cli
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -76,7 +76,4 @@ You are a voice assistant.
 
 
 if __name__ == "__main__":
-    from blockbuster import BlockBuster
-    blockbuster = BlockBuster()
-    blockbuster.activate()
-    asyncio.run(start_agent(), debug=True)
+    example_cli(start_agent)()
