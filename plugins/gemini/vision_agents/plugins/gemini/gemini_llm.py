@@ -3,7 +3,7 @@ import uuid
 from typing import Optional, List, TYPE_CHECKING, Any, Dict
 
 from google import genai
-from google.genai.client import AsyncClient
+from google.genai.client import AsyncClient, Client
 from google.genai import types
 from google.genai.types import GenerateContentResponse, GenerateContentConfig
 
@@ -59,7 +59,7 @@ class GeminiLLM(LLM):
         if client is not None:
             self.client = client
         else:
-            self.client = AsyncClient(api_key=api_key)
+            self.client = Client(api_key=api_key).aio
 
     async def simple_response(
         self,
@@ -134,14 +134,8 @@ class GeminiLLM(LLM):
         # Gemini API does not have an item_id, we create it here and add it to all events
         item_id = str(uuid.uuid4())
 
-        # Iterate over the stream in a thread pool to avoid blocking
-        chunks = await asyncio.to_thread(self._iterate_stream_blocking, iterator)
-
-        # Check if last element is an exception
-        if chunks and isinstance(chunks[-1], Exception):
-            raise chunks[-1]
-
-        for idx, chunk in enumerate(chunks):
+        idx = 0
+        async for chunk in iterator:
             response_chunk: GenerateContentResponse = chunk
             final_chunk = response_chunk
             self._standardize_and_emit_event(response_chunk, text_parts, item_id, idx)
@@ -152,6 +146,8 @@ class GeminiLLM(LLM):
                 pending_calls.extend(chunk_calls)
             except Exception:
                 pass  # Ignore errors in chunk processing
+
+            idx += 1
 
         # Check if there were function calls in the response
         if pending_calls:
