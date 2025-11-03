@@ -250,6 +250,8 @@ class Agent:
         self._prepare_rtc()
         self._setup_stt()
 
+        self.events.send(events.AgentInitEvent())
+
     @contextlib.contextmanager
     def span(self, name):
         with tracer.start_as_current_span(name, context=self._root_ctx) as span:
@@ -274,8 +276,6 @@ class Agent:
 
     def __aexit__(self, exc_type, exc_val, exc_tb):
         self.end_tracing()
-
-        self.events.send(events.AgentInitEvent())
 
     async def simple_response(
         self, text: str, participant: Optional[Participant] = None
