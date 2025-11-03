@@ -1,7 +1,7 @@
 import json
 from typing import Any, Optional, List, Dict
 
-from getstream.video.rtc.audio_track import AudioStreamTrack
+from getstream.video.rtc import AudioStreamTrack
 from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
     ResponseAudioTranscriptDoneEvent,
@@ -64,7 +64,9 @@ class Realtime(realtime.Realtime):
         # TODO: send video should depend on if the RTC connection with stream is sending video.
         self.rtc = RTCManager(self.model, self.voice, True)
         # audio output track?
-        self.output_track = AudioStreamTrack(framerate=48000, stereo=True, format="s16")
+        self.output_track = AudioStreamTrack(
+            sample_rate=48000, channels=2, format="s16"
+        )
         # Map conversation item_id to participant to handle multi-user scenarios
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
@@ -144,7 +146,6 @@ class Realtime(realtime.Realtime):
 
     async def close(self):
         await self.rtc.close()
-
 
     async def _handle_openai_event(self, event: dict) -> None:
         """Process events received from the OpenAI Realtime API.
@@ -244,23 +245,15 @@ class Realtime(realtime.Realtime):
         """Process audio output received from the OpenAI API.
 
         Forwards audio data to the output track for playback and emits audio output event.
-
-        Args:
-            audio_bytes: Raw audio data bytes from OpenAI session.
-
-        Note:
-            Registered as callback with RTC manager.
         """
-        pcm = pcm.resample(48000, 1)
-        audio_bytes = pcm.samples.tobytes()
+
         # Emit audio output event
         self._emit_audio_output_event(
-            audio_data=audio_bytes, # TODO: should use PCM we don't pass raw bytes
-            sample_rate=48000,  # OpenAI Realtime uses 48kHz
+            audio_data=pcm,
         )
 
         # Forward audio to output track for playback
-        await self.output_track.write(audio_bytes)
+        await self.output_track.write(pcm)
 
     async def _watch_video_track(self, track, **kwargs) -> None:
         shared_forwarder = kwargs.get("shared_forwarder")

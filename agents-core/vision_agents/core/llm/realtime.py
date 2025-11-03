@@ -54,7 +54,7 @@ class Realtime(LLM, abc.ABC):
         self.fps = fps
         # The most common style output track (webrtc)
         self.output_track: AudioStreamTrack = AudioStreamTrack(
-            framerate=48000, stereo=True, format="s16"
+            sample_rate=48000, channels=2, format="s16"
         )
         # Store current participant for user speech transcription events
         self._current_participant: Optional[Participant] = None
@@ -102,29 +102,25 @@ class Realtime(LLM, abc.ABC):
         )
         self.events.send(event)
 
-    def _emit_audio_input_event(
-        self, audio_data, sample_rate=16000, user_metadata=None
-    ):
+    def _emit_audio_input_event(self, audio_data: PcmData, user_metadata=None):
         """Emit a structured audio input event."""
         event = events.RealtimeAudioInputEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
-            audio_data=audio_data,
-            sample_rate=sample_rate,
+            data=audio_data,
             participant=user_metadata,
         )
         self.events.send(event)
 
     # TODO: discussion around event vs output_track... why do we have both?
     def _emit_audio_output_event(
-        self, audio_data, sample_rate=16000, response_id=None, user_metadata=None
+        self, audio_data: PcmData, response_id=None, user_metadata=None
     ):
         """Emit a structured audio output event."""
         event = events.RealtimeAudioOutputEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
-            audio_data=audio_data,
-            sample_rate=sample_rate,
+            data=audio_data,
             response_id=response_id,
             participant=user_metadata,
         )

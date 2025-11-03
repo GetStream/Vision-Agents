@@ -241,13 +241,13 @@ class Realtime(realtime.Realtime):
             return
 
         # Resample to 24kHz if needed, as required by AWS Nova
-        if pcm.sample_rate != 24000:
-            pcm = pcm.resample(24000)
+        pcm = pcm.resample(24000)
 
         content_name = str(uuid.uuid4())
 
         await self.audio_content_start(content_name)
-        self._emit_audio_input_event(pcm.samples, sample_rate=pcm.sample_rate)
+        self._emit_audio_input_event(pcm)
+
         # Convert PcmData to base64 encoded bytes
         audio_base64 = base64.b64encode(pcm.samples).decode("utf-8")
         await self.audio_input(content_name, audio_base64)
@@ -683,6 +683,9 @@ class Realtime(realtime.Realtime):
                                     audio_content = json_data["event"]["audioOutput"][
                                         "content"
                                     ]
+                                    raise NotImplementedError(
+                                        "this code path is not implemented yet"
+                                    )
                                     audio_bytes = base64.b64decode(audio_content)
                                     # await self.audio_output_queue.put(audio_bytes)
                                     self._emit_audio_output_event(

@@ -10,12 +10,10 @@ from httpx import AsyncClient, HTTPStatusError
 import logging
 from getstream.video.rtc.track_util import PcmData
 
-from aiortc.mediastreams import VideoStreamTrack, MediaStreamTrack
-from av import VideoFrame
+from aiortc.mediastreams import MediaStreamTrack
 
 from vision_agents.core.utils.audio_forwarder import AudioForwarder
 from vision_agents.core.utils.audio_track import QueuedAudioTrack
-from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
@@ -23,10 +21,6 @@ logger = logging.getLogger(__name__)
 # OpenAI Realtime endpoints
 OPENAI_REALTIME_BASE = "https://api.openai.com/v1/realtime"
 OPENAI_SESSIONS_URL = f"{OPENAI_REALTIME_BASE}/sessions"
-
-
-
-
 
 
 class RTCManager:
@@ -53,10 +47,13 @@ class RTCManager:
         self.data_channel: Optional[RTCDataChannel] = None
 
         # on this track we send audio to openAI
-        self._audio_to_openai_track: QueuedAudioTrack = QueuedAudioTrack(framerate=48000)
+        self._audio_to_openai_track: QueuedAudioTrack = QueuedAudioTrack(
+            sample_rate=48000
+        )
         # video to openAI
-        self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack(width=640, height=480)
-
+        self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack(
+            width=640, height=480
+        )
 
         self._audio_callback: Optional[Callable[[PcmData], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
@@ -164,8 +161,7 @@ class RTCManager:
         self._video_sender = self.pc.addTrack(self._video_to_openai_track)
 
     async def send_audio_pcm(self, pcm: PcmData) -> None:
-        pcm = pcm.resample(48000, target_channels=1) # ensure we are at webrtc sample rate
-        await self._audio_to_openai_track.write(pcm.samples.tobytes())
+        await self._audio_to_openai_track.write(pcm)
 
     async def send_text(self, text: str, role: str = "user"):
         """Send a text message to OpenAI.
@@ -253,7 +249,6 @@ class RTCManager:
             f"✅ Successfully replaced OpenAI track with Stream Video forwarding (fps={fps})"
         )
 
-
     async def _setup_sdp_exchange(self) -> str:
         # Create local offer and exchange SDP
         offer = await self.pc.createOffer()
@@ -289,8 +284,6 @@ class RTCManager:
             logger.error(f"SDP exchange failed: {e}")
             raise
 
-
-
     async def _handle_event(self, event: dict) -> None:
         """Minimal event handler for data channel messages."""
         cb = self._event_callback
@@ -301,7 +294,7 @@ class RTCManager:
         # FIXME Typing
         if event.get("type") == "session.created" and "session" in event:
             self.session_info = event["session"]
-            logger.error(f"Stored session info: {self.session_info}")
+            logger.info(f"Stored session info: {self.session_info}")
 
     async def request_session_info(self) -> None:
         """Request and log current session information.

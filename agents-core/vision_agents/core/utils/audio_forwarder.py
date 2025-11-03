@@ -3,25 +3,22 @@ import logging
 from typing import Optional, Callable, Any, cast
 
 import av
-import numpy as np
-from av.frame import Frame
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from getstream.video.rtc.recording import AudioFrame
-from getstream.video.rtc.track_util import PcmData, AudioFormat
+from getstream.video.rtc.track_util import PcmData
 
 logger = logging.getLogger(__name__)
 
 
 class AudioForwarder:
     """Forwards audio from a MediaStreamTrack to a callback.
-    
+
     Handles audio frame reading, resampling to 16kHz mono format,
     and forwarding to registered callbacks.
     """
 
     def __init__(self, track: AudioStreamTrack, callback: Callable[[PcmData], Any]):
         """Initialize the audio forwarder.
-        
+
         Args:
             track: Audio track to read frames from.
             callback: Async function that receives PcmData (16kHz, mono, int16).
@@ -63,24 +60,7 @@ class AudioForwarder:
                 break
 
             try:
-                # Convert Frame to numpy array
-                samples = frame.to_ndarray()
-                
-                # Convert stereo to mono if needed
-                if samples.ndim == 2 and samples.shape[0] > 1:
-                    samples = samples.mean(axis=0)
-                
-                # Ensure int16 format
-                if samples.dtype != np.int16:
-                    samples = samples.astype(np.int16)
-                
-                # Create PcmData from the frame
-                pcm = PcmData(samples=samples, sample_rate=frame.sample_rate, format=AudioFormat.S16)
-                
-                # Resample to 16kHz mono
-                pcm = pcm.resample(16000, 1)
-                
-                # Forward to callback
+                pcm = PcmData.from_av_frame(frame)
                 await self._callback(pcm)
             except Exception as e:
-                logger.debug(f"Failed to process audio frame: {e}")
+                logger.exception(f"Failed to process audio frame: {e}")
