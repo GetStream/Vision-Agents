@@ -158,34 +158,28 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             # Initialize cloud model
             self.model = md.vl(api_key=self.api_key)
             logger.info("✅ Moondream SDK initialized")
-                
-        except ImportError:
-            raise ImportError(
-                "moondream SDK is not installed. "
-                "Please install it: pip install moondream"
-            )
+
         except Exception as e:
-            logger.error(f"❌ Failed to load Moondream model: {e}")
+            logger.exception(f"❌ Failed to load Moondream model: {e}")
             raise
     
     async def _run_inference(self, frame_array: np.ndarray) -> Dict[str, Any]:
         try:
-            # Convert frame to PIL Image
-            image = Image.fromarray(frame_array)
-            
             # Call SDK for each object type
             # The SDK's detect() is synchronous, so wrap in executor
             loop = asyncio.get_event_loop()
             all_detections = await loop.run_in_executor(
-                self.executor, self._run_detection_sync, image
+                self.executor, self._run_detection_sync, frame_array
             )
             
             return {"detections": all_detections}
         except Exception as e:
-            logger.error(f"❌ Cloud inference failed: {e}")
+            logger.exception(f"❌ Cloud inference failed: {e}")
             return {}
     
-    def _run_detection_sync(self, image: Image.Image) -> List[Dict]:
+    def _run_detection_sync(self, frame_array: np.ndarray) -> List[Dict]:
+        image = Image.fromarray(frame_array)
+
         if self._shutdown:
             return []
         
@@ -267,7 +261,7 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             await self._video_track.add_frame(processed_frame)
             
         except Exception as e:
-            logger.error(f"❌ Frame processing failed: {e}")
+            logger.exception(f"❌ Frame processing failed: {e}")
             # Pass through original frame on error
             await self._video_track.add_frame(frame)
     
@@ -327,26 +321,7 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             )
         
         return annotated
-    
-    def _summarize_detections(self, detections: List[Dict]) -> str:
-        if not detections:
-            return "No objects detected"
-        
-        # Count occurrences of each label
-        label_counts: Dict[str, int] = {}
-        for det in detections:
-            label = det.get("label", "unknown")
-            label_counts[label] = label_counts.get(label, 0) + 1
-        
-        # Create summary
-        parts = []
-        for label, count in label_counts.items():
-            if count == 1:
-                parts.append(f"1 {label}")
-            else:
-                parts.append(f"{count} {label}s")
-        
-        return "Detected: " + ", ".join(parts)
+
     
     def close(self):
         """Clean up resources."""

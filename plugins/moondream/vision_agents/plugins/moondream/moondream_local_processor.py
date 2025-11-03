@@ -126,7 +126,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
         logger.info(f"🔧 Device: {self.device}")
     
-    async def start(self):
+    async def warmup(self):
         """Initialize and load the model."""
         # Ensure model directory exists
         os.makedirs(self.options.model_dir, exist_ok=True)
@@ -200,15 +200,10 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 logger.warning(f"⚠️ Model compilation failed, continuing without compilation: {compile_error}")
             
             return model
-        except ImportError as e:
-            raise ImportError(
-                "transformers library is not installed. "
-                "Please install it: pip install transformers torch"
-            ) from e
         except Exception as e:
             error_msg = str(e)
             if "gated repo" in error_msg.lower() or "403" in error_msg or "authorized" in error_msg.lower():
-                logger.error(
+                logger.exception(
                     "❌ Failed to load Moondream model: Model requires authentication.\n"
                     "This model is gated and requires access approval:\n"
                     f"1. Visit https://huggingface.co/{self.model_name} to request access\n"
@@ -218,7 +213,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                     f"Original error: {e}"
                 )
             else:
-                logger.error(f"❌ Failed to load Moondream model: {e}")
+                logger.exception(f"❌ Failed to load Moondream model: {e}")
             raise
     
     async def process_video(
@@ -287,7 +282,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             
             return {"detections": all_detections}
         except Exception as e:
-            logger.error(f"❌ Local inference failed: {e}")
+            logger.exception(f"❌ Local inference failed: {e}")
             return {}
     
     def _run_detection_sync(self, image: Image.Image) -> List[Dict]:
@@ -375,7 +370,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             await self._video_track.add_frame(processed_frame)
             
         except Exception as e:
-            logger.error(f"❌ Frame processing failed: {e}")
+            logger.exception(f"❌ Frame processing failed: {e}")
             # Pass through original frame on error
             await self._video_track.add_frame(frame)
     
@@ -435,26 +430,6 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             )
         
         return annotated
-    
-    def _summarize_detections(self, detections: List[Dict]) -> str:
-        if not detections:
-            return "No objects detected"
-        
-        # Count occurrences of each label
-        label_counts: Dict[str, int] = {}
-        for det in detections:
-            label = det.get("label", "unknown")
-            label_counts[label] = label_counts.get(label, 0) + 1
-        
-        # Create summary
-        parts = []
-        for label, count in label_counts.items():
-            if count == 1:
-                parts.append(f"1 {label}")
-            else:
-                parts.append(f"{count} {label}s")
-        
-        return "Detected: " + ", ".join(parts)
 
     
     def close(self):

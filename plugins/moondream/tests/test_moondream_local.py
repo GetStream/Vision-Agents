@@ -58,7 +58,7 @@ class TestMoondreamLocalProcessor:
         assert moondream_processor.model is None
 
         # Start the processor (loads the model)
-        await moondream_processor.start()
+        await moondream_processor.warmup()
 
         # Verify model is loaded
         assert moondream_processor.model is not None
@@ -76,7 +76,7 @@ class TestMoondreamLocalProcessor:
     ):
         """Test _run_inference() with a test image."""
         # Ensure model is loaded
-        await moondream_processor.start()
+        await moondream_processor.warmup()
 
         # Convert PIL image to numpy array
         frame_array = np.array(golf_image)
@@ -99,7 +99,7 @@ class TestMoondreamLocalProcessor:
     ):
         """Test _run_detection_sync() directly with PIL Image."""
         # Ensure model is loaded
-        await moondream_processor.start()
+        await moondream_processor.warmup()
 
         # Run detection in executor (simulating async context)
         detections = await asyncio.get_event_loop().run_in_executor(
@@ -131,7 +131,7 @@ class TestMoondreamLocalProcessor:
     ):
         """Test end-to-end frame processing with annotations."""
         # Ensure model is loaded
-        await moondream_processor.start()
+        await moondream_processor.warmup()
 
         # Convert PIL Image to av.VideoFrame
         frame = av.VideoFrame.from_image(golf_image)
