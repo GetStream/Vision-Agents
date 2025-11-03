@@ -85,5 +85,6 @@ stream-py/
 *.pt
 *.kef
 *.onnx
+profile.html
 
 /opencode.json
