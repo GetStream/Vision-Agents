@@ -55,11 +55,6 @@ async def start_avatar_agent() -> None:
     
     # Join the call
     with await agent.join(call):
-        # Set agent reference on avatar publisher for text event subscription
-        avatar_publisher = agent.video_publishers[0]
-        if hasattr(avatar_publisher, 'set_agent'):
-            avatar_publisher.set_agent(agent)
-        
         # Open demo UI
         await agent.edge.open_demo(call)
         

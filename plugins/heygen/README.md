@@ -56,11 +56,6 @@ async def start_avatar_agent():
     call = agent.edge.client.video.call("default", str(uuid4()))
     
     with await agent.join(call):
-        # Set agent reference for event subscription
-        avatar_publisher = agent.video_publishers[0]
-        if hasattr(avatar_publisher, 'set_agent'):
-            avatar_publisher.set_agent(agent)
-        
         await agent.edge.open_demo(call)
         await agent.simple_response("Hello! I'm your AI assistant with an avatar.")
         await agent.finish()
@@ -112,11 +107,6 @@ agent = Agent(
 call = agent.edge.client.video.call("default", str(uuid4()))
 
 with await agent.join(call):
-    # Set agent reference for event subscription
-    avatar_publisher = agent.video_publishers[0]
-    if hasattr(avatar_publisher, 'set_agent'):
-        avatar_publisher.set_agent(agent)
-    
     await agent.finish()
 ```
 

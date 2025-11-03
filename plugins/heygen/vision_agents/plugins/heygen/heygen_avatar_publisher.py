@@ -122,10 +122,10 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         """
         return self._audio_track
     
-    def set_agent(self, agent: Any) -> None:
-        """Set the agent reference for event subscription.
+    def _attach_agent(self, agent: Any) -> None:
+        """Attach the agent reference for event subscription.
         
-        This is called by the agent when the processor is attached.
+        This is called automatically by the Agent during initialization.
         
         Args:
             agent: The agent instance.

@@ -215,6 +215,11 @@ class Agent:
 
         self.llm._attach_agent(self)
 
+        # Attach processors that need agent reference
+        for processor in self.processors:
+            if hasattr(processor, '_attach_agent'):
+                processor._attach_agent(self)
+
         self.events.subscribe(self._on_vad_audio)
         self.events.subscribe(self._on_agent_say)
         # Initialize state variables

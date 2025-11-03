@@ -28,14 +28,16 @@ Required API keys:
 
 ## Running the Example
 
+From the project root:
+
 ```bash
-uv run avatar_example.py
+uv run plugins/heygen/example/avatar_example.py
 ```
 
 This will:
 1. Start an AI agent with a HeyGen avatar
 2. Open a demo UI in your browser
-3. The avatar will greet you and be ready to chat
+3. The avatar will speak and be ready to chat
 
 ## What's Happening
 

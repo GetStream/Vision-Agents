@@ -8,6 +8,7 @@ dependencies = [
     "vision-agents-plugins-heygen",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
+    "vision-agents-plugins-deepgram",
     "python-dotenv",
 ]
 
@@ -16,4 +17,5 @@ vision-agents = { workspace = true }
 vision-agents-plugins-heygen = { workspace = true }
 vision-agents-plugins-gemini = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
+vision-agents-plugins-deepgram = { workspace = true }
 
