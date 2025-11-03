@@ -1,5 +1,4 @@
 import pyinstrument
-
 import logging
 
 from vision_agents.core.events import EventManager
@@ -14,12 +13,8 @@ class Profiler:
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.profiler = pyinstrument.Profiler()
-        self.events.subscribe(self.on_start)
-        self.events.subscribe(self.on_finish)
-
-    async def on_start(self, event: events.AgentInitEvent):
-        logger.info("Profiler started.")
         self.profiler.start()
+        self.events.subscribe(self.on_finish)
 
     async def on_finish(self, event: events.AgentFinishEvent):
         self.profiler.stop()

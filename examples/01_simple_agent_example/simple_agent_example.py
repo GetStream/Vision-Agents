@@ -3,7 +3,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import cartesia, deepgram, getstream, gemini, vogent
+from vision_agents.plugins import deepgram, getstream, gemini, vogent, elevenlabs
 from vision_agents.core.profiling import Profiler
 
 load_dotenv()
@@ -21,7 +21,7 @@ async def start_agent() -> None:
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
         # llm with tts & stt. if you use a realtime (sts capable) llm the tts, stt and vad aren't needed
         llm=llm,
-        tts=cartesia.TTS(),
+        tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         turn_detection=vogent.TurnDetection(),
         profiler=Profiler(),

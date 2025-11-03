@@ -160,7 +160,7 @@ class Agent:
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         # Configure the default logging for the sdk here. Pass None to leave the config intact.
-        log_level: Optional[int] = logging.INFO,
+        log_level: Optional[int] = logging.DEBUG,
         profiler: Optional[Profiler] = None,
     ):
         if log_level is not None:
