@@ -21,6 +21,7 @@ vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-krisp = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
+vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
 
 [tool.uv]
@@ -49,6 +50,7 @@ members = [
     "plugins/krisp",
     "plugins/smart_turn",
     "plugins/wizper",
+    "plugins/moondream",
     "plugins/vogent"
 ]
 exclude = [
