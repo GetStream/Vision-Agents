@@ -88,7 +88,7 @@ class HeyGenRTCManager:
                 offer_sdp = None
             
             if not offer_sdp:
-                logger.error(f"❌ Unexpected SDP format. Type: {type(sdp_data)}")
+                logger.error(f"Unexpected SDP format. Type: {type(sdp_data)}")
                 if isinstance(sdp_data, dict):
                     logger.error(f"SDP dict keys: {list(sdp_data.keys())}")
                 logger.error(f"SDP data: {str(sdp_data)[:200] if sdp_data else 'None'}")
@@ -105,7 +105,7 @@ class HeyGenRTCManager:
             
             @self.pc.on("connectionstatechange")
             async def on_connection_state_change():
-                logger.info(f"🔗 HeyGen connection state: {self.pc.connectionState}")
+                logger.info(f"HeyGen connection state: {self.pc.connectionState}")
                 if self.pc.connectionState == "connected":
                     self._connected = True
                     self._connection_ready.set()
@@ -131,10 +131,10 @@ class HeyGenRTCManager:
             # Wait for connection to be established
             await asyncio.wait_for(self._connection_ready.wait(), timeout=10.0)
             
-            logger.info("✅ HeyGen WebRTC connection established")
+            logger.info("HeyGen WebRTC connection established")
             
         except Exception as e:
-            logger.error(f"❌ Failed to connect to HeyGen: {e}")
+            logger.error(f"Failed to connect to HeyGen: {e}")
             raise
 
     def _parse_ice_servers(self, session_info: dict) -> list:
@@ -158,7 +158,7 @@ class HeyGenRTCManager:
         )
         
         if ice_server_configs and not isinstance(ice_server_configs, list):
-            logger.warning(f"⚠️ Unexpected ice_servers format: {type(ice_server_configs)}")
+            logger.warning(f"Unexpected ice_servers format: {type(ice_server_configs)}")
             ice_server_configs = []
         
         for server_config in ice_server_configs:
@@ -180,12 +180,12 @@ class HeyGenRTCManager:
                         credential=credential,
                     )
                 )
-                logger.info(f"🧊 Added ICE server: {urls[0]}")
+                logger.info(f"Added ICE server: {urls[0]}")
         
         # When using LiveKit, ICE servers may be embedded in SDP
         # In that case, use public STUN as fallback
         if not ice_servers:
-            logger.info("ℹ️ Using default STUN servers (LiveKit may provide its own via SDP)")
+            logger.info("Using default STUN servers (LiveKit may provide its own via SDP)")
             ice_servers.append(
                 RTCIceServer(urls=["stun:stun.l.google.com:19302"])
             )
@@ -198,7 +198,7 @@ class HeyGenRTCManager:
         Args:
             track: Incoming media track (audio or video).
         """
-        logger.info(f"📡 Received track from HeyGen: {track.kind}")
+        logger.info(f"Received track from HeyGen: {track.kind}")
         
         if track.kind == "video":
             if self._video_callback:
@@ -207,11 +207,11 @@ class HeyGenRTCManager:
                 logger.warning("Video track received but no callback registered")
         elif track.kind == "audio":
             # Audio track from HeyGen (avatar speech with lip-synced TTS)
-            logger.info("🔊 Audio track received from HeyGen")
+            logger.info("Audio track received from HeyGen")
             if self._audio_callback:
                 await self._audio_callback(track)
             else:
-                logger.warning("⚠️ Audio track received but no callback registered")
+                logger.warning("Audio track received but no callback registered")
 
     def set_video_callback(self, callback: Callable[[MediaStreamTrack], Any]) -> None:
         """Set callback for handling incoming video track.
@@ -257,5 +257,5 @@ class HeyGenRTCManager:
         self._connected = False
         self._connection_ready.clear()
         
-        logger.info("🔌 HeyGen RTC connection closed")
+        logger.info("HeyGen RTC connection closed")
 

@@ -110,7 +110,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         self._forwarding_audio = False
         
         logger.info(
-            f"🎭 HeyGen AvatarPublisher initialized "
+            f"HeyGen AvatarPublisher initialized "
             f"(avatar: {avatar_id}, quality: {quality}, resolution: {resolution})"
         )
     
@@ -131,7 +131,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             agent: The agent instance.
         """
         self._agent = agent
-        logger.info("🔗 Agent reference set for HeyGen avatar publisher")
+        logger.info("Agent reference set for HeyGen avatar publisher")
         
         # Mute the Realtime LLM's audio if requested
         if self.mute_llm_audio:
@@ -151,10 +151,10 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             await self.rtc_manager.connect()
             
             self._connected = True
-            logger.info("✅ Connected to HeyGen, avatar streaming active")
+            logger.info("Connected to HeyGen, avatar streaming active")
         
         except Exception as e:
-            logger.error(f"❌ Failed to connect to HeyGen: {e}")
+            logger.error(f"Failed to connect to HeyGen: {e}")
             self._connected = False
             raise
     
@@ -177,7 +177,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                 @self._agent.llm.events.subscribe
                 async def on_text_chunk(event: LLMResponseChunkEvent):
                     """Handle streaming text chunks from the LLM."""
-                    logger.debug(f"📝 HeyGen received text chunk: delta='{event.delta}'")
+                    logger.debug(f"HeyGen received text chunk: delta='{event.delta}'")
                     if event.delta:
                         await self._on_text_chunk(event.delta, event.item_id)
                 
@@ -202,14 +202,14 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                     This is the primary path for Gemini Realtime which transcribes
                     the agent's speech output as text.
                     """
-                    logger.debug(f"📝 HeyGen received agent speech: text='{event.text}'")
+                    logger.debug(f"HeyGen received agent speech: text='{event.text}'")
                     if event.text:
                         # Send directly to HeyGen - this is the complete utterance
                         await self._send_text_to_heygen(event.text)
                 
-                logger.info("📝 Subscribed to LLM text output events for HeyGen lip-sync")
+                logger.info("Subscribed to LLM text output events for HeyGen lip-sync")
             else:
-                logger.warning("⚠️ Cannot subscribe to text events - no agent or LLM attached yet")
+                logger.warning("Cannot subscribe to text events - no agent or LLM attached yet")
         except Exception as e:
             logger.error(f"Failed to subscribe to text events: {e}")
             import traceback
@@ -228,11 +228,11 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             from vision_agents.core.llm.realtime import Realtime
             
             if not hasattr(self, '_agent') or not self._agent:
-                logger.warning("⚠️ Cannot mute LLM audio - no agent set")
+                logger.warning("Cannot mute LLM audio - no agent set")
                 return
                 
             if not hasattr(self._agent, 'llm') or not isinstance(self._agent.llm, Realtime):
-                logger.info("ℹ️ LLM is not a Realtime LLM - no audio to mute")
+                logger.info("LLM is not a Realtime LLM - no audio to mute")
                 return
             
             # Store the original write method
@@ -249,7 +249,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             # Replace the write method
             self._agent.llm.output_track.write = selective_write
             
-            logger.info("🔇 Muted Realtime LLM audio output (HeyGen will provide audio)")
+            logger.info("Muted Realtime LLM audio output (HeyGen will provide audio)")
             
         except Exception as e:
             logger.error(f"Failed to mute LLM audio: {e}")
@@ -262,7 +262,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         Args:
             track: Incoming video track from HeyGen's WebRTC connection.
         """
-        logger.info("📹 Received video track from HeyGen, starting frame forwarding")
+        logger.info("Received video track from HeyGen, starting frame forwarding")
         await self._video_track.start_receiving(track)
 
     async def _on_audio_track(self, track: Any) -> None:
@@ -274,7 +274,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         Args:
             track: Incoming audio track from HeyGen's WebRTC connection.
         """
-        logger.info("🔊 Received audio track from HeyGen, starting audio forwarding")
+        logger.info("Received audio track from HeyGen, starting audio forwarding")
         
         # Forward audio frames from HeyGen to our audio track
         asyncio.create_task(self._forward_audio_frames(track, self._audio_track))
@@ -287,7 +287,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             dest_track: Agent's audio track to write to.
         """
         try:
-            logger.info("🔊 Starting HeyGen audio frame forwarding")
+            logger.info("Starting HeyGen audio frame forwarding")
             frame_count = 0
             while True:
                 try:
@@ -317,20 +317,20 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                         await dest_track.write(audio_bytes)
                         self._forwarding_audio = False
                     else:
-                        logger.warning("⚠️ Received frame without to_ndarray() method")
+                        logger.warning("Received frame without to_ndarray() method")
                         
                 except Exception as e:
                     if "ended" in str(e).lower() or "closed" in str(e).lower():
-                        logger.info(f"🔊 HeyGen audio track ended (forwarded {frame_count} frames)")
+                        logger.info(f"HeyGen audio track ended (forwarded {frame_count} frames)")
                         break
                     else:
-                        logger.error(f"❌ Error forwarding audio frame #{frame_count}: {e}")
+                        logger.error(f"Error forwarding audio frame #{frame_count}: {e}")
                         import traceback
                         logger.error(traceback.format_exc())
                         break
                         
         except Exception as e:
-            logger.error(f"❌ Error in audio forwarding loop: {e}")
+            logger.error(f"Error in audio forwarding loop: {e}")
             import traceback
             logger.error(traceback.format_exc())
 
@@ -383,11 +383,11 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             return
         
         try:
-            logger.info(f"📤 Sending text to HeyGen: '{text[:50]}...'")
+            logger.info(f"Sending text to HeyGen: '{text[:50]}...'")
             await self.rtc_manager.send_text(text, task_type="repeat")
-            logger.debug("✅ Text sent to HeyGen successfully")
+            logger.debug("Text sent to HeyGen successfully")
         except Exception as e:
-            logger.error(f"❌ Failed to send text to HeyGen: {e}")
+            logger.error(f"Failed to send text to HeyGen: {e}")
             import traceback
             logger.error(traceback.format_exc())
 
@@ -404,7 +404,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         if not self._connected and not self._connection_task:
             self._connection_task = asyncio.create_task(self._connect_to_heygen())
         
-        logger.info("🎥 Publishing HeyGen avatar video track")
+        logger.info("Publishing HeyGen avatar video track")
         return self._video_track
 
     def state(self) -> dict:
@@ -423,7 +423,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
 
     async def close(self) -> None:
         """Clean up resources and close connections."""
-        logger.info("🔌 Closing HeyGen avatar publisher")
+        logger.info("Closing HeyGen avatar publisher")
         
         # Stop video track
         if self._video_track:
@@ -442,5 +442,5 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                 pass
         
         self._connected = False
-        logger.info("✅ HeyGen avatar publisher closed")
+        logger.info("HeyGen avatar publisher closed")
 

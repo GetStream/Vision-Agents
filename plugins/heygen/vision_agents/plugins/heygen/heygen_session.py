@@ -76,11 +76,11 @@ class HeyGenSession:
                 self.session_info = data.get("data", {})
                 self.session_id = self.session_info.get("session_id")
                 
-                logger.info(f"✅ HeyGen session created: {self.session_id}")
+                logger.info(f"HeyGen session created: {self.session_id}")
                 return self.session_info
                 
         except Exception as e:
-            logger.error(f"❌ Failed to create HeyGen session: {e}")
+            logger.error(f"Failed to create HeyGen session: {e}")
             raise
 
     async def start_session(self, sdp_answer: Optional[str] = None) -> Dict[str, Any]:
@@ -127,11 +127,11 @@ class HeyGenSession:
                     )
                 
                 data = await response.json()
-                logger.info(f"✅ HeyGen session started: {self.session_id}")
+                logger.info(f"HeyGen session started: {self.session_id}")
                 return data
                 
         except Exception as e:
-            logger.error(f"❌ Failed to start HeyGen session: {e}")
+            logger.error(f"Failed to start HeyGen session: {e}")
             raise
 
     async def send_task(self, text: str, task_type: str = "repeat") -> Dict[str, Any]:
@@ -179,11 +179,11 @@ class HeyGenSession:
                     return {}
                 
                 data = await response.json()
-                logger.debug(f"📤 Sent text to HeyGen: '{text[:50]}...'")
+                logger.debug(f"Sent text to HeyGen: '{text[:50]}...'")
                 return data
         
         except Exception as e:
-            logger.error(f"❌ Error sending task to HeyGen: {e}")
+            logger.error(f"Error sending task to HeyGen: {e}")
             return {}
 
     async def stop_session(self) -> None:
@@ -211,13 +211,13 @@ class HeyGenSession:
                 headers=headers,
             ) as response:
                 if response.status == 200:
-                    logger.info(f"✅ HeyGen session stopped: {self.session_id}")
+                    logger.info(f"HeyGen session stopped: {self.session_id}")
                 else:
                     logger.warning(
                         f"Failed to stop HeyGen session: {response.status}"
                     )
         except Exception as e:
-            logger.error(f"❌ Error stopping HeyGen session: {e}")
+            logger.error(f"Error stopping HeyGen session: {e}")
 
     async def close(self) -> None:
         """Clean up session resources."""

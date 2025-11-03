@@ -43,7 +43,7 @@ class HeyGenVideoTrack(VideoStreamTrack):
         self._receiving_task: Optional[asyncio.Task] = None
         self._source_track: Optional[MediaStreamTrack] = None
         
-        logger.info(f"🎬 HeyGenVideoTrack initialized ({width}x{height})")
+        logger.info(f"HeyGenVideoTrack initialized ({width}x{height})")
 
     async def start_receiving(self, source_track: MediaStreamTrack) -> None:
         """Start receiving frames from HeyGen's video track.
@@ -57,7 +57,7 @@ class HeyGenVideoTrack(VideoStreamTrack):
         
         self._source_track = source_track
         self._receiving_task = asyncio.create_task(self._receive_frames())
-        logger.info("📥 Started receiving frames from HeyGen")
+        logger.info("Started receiving frames from HeyGen")
 
     async def _receive_frames(self) -> None:
         """Continuously receive frames from HeyGen and add to queue."""
@@ -80,7 +80,7 @@ class HeyGenVideoTrack(VideoStreamTrack):
                         self.frame_queue.put_latest_nowait(frame)
                         
                         logger.debug(
-                            f"📥 Received frame from HeyGen: {frame.width}x{frame.height}"
+                            f"Received frame from HeyGen: {frame.width}x{frame.height}"
                         )
                 
                 except Exception as e:
@@ -157,5 +157,5 @@ class HeyGenVideoTrack(VideoStreamTrack):
             self._receiving_task = None
         
         super().stop()
-        logger.info("🛑 HeyGenVideoTrack stopped")
+        logger.info("HeyGenVideoTrack stopped")
 
