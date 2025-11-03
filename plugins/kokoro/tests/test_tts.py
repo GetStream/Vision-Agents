@@ -1,10 +1,11 @@
 import pytest
+import pytest_asyncio
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
 
 
 class TestKokoroIntegration:
-    @pytest.fixture
-    def tts(self):  # returns kokoro TTS if available
+    @pytest_asyncio.fixture
+    async def tts(self):  # returns kokoro TTS if available
         try:
             import kokoro  # noqa: F401
         except Exception:
