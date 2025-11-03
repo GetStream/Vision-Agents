@@ -21,7 +21,7 @@ import torch
 from PIL import Image
 import av
 
-from vision_agents.plugins.moondream import MoondreamLocalProcessor
+from vision_agents.plugins.moondream import LocalDetectionProcessor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -38,9 +38,9 @@ class TestMoondreamLocalProcessor:
             yield img.convert("RGB")
 
     @pytest.fixture
-    def moondream_processor(self) -> Iterator[MoondreamLocalProcessor]:
+    def moondream_processor(self) -> Iterator[LocalDetectionProcessor]:
         """Create and manage MoondreamLocalProcessor lifecycle."""
-        processor = MoondreamLocalProcessor(device="cpu")
+        processor = LocalDetectionProcessor(device="cpu")
         try:
             yield processor
         finally:
@@ -52,7 +52,7 @@ class TestMoondreamLocalProcessor:
         not os.getenv("HF_TOKEN"),
         reason="HF_TOKEN environment variable not set (required for model access)",
     )
-    async def test_model_loads_correctly(self, moondream_processor: MoondreamLocalProcessor):
+    async def test_model_loads_correctly(self, moondream_processor: LocalDetectionProcessor):
         """Test that start() successfully loads the model."""
         # Model should be None initially
         assert moondream_processor.model is None
@@ -72,7 +72,7 @@ class TestMoondreamLocalProcessor:
         reason="HF_TOKEN environment variable not set (required for model access)",
     )
     async def test_run_inference_on_image(
-        self, golf_image: Image.Image, moondream_processor: MoondreamLocalProcessor
+        self, golf_image: Image.Image, moondream_processor: LocalDetectionProcessor
     ):
         """Test _run_inference() with a test image."""
         # Ensure model is loaded
@@ -95,7 +95,7 @@ class TestMoondreamLocalProcessor:
         reason="HF_TOKEN environment variable not set (required for model access)",
     )
     async def test_run_detection_sync(
-        self, golf_image: Image.Image, moondream_processor: MoondreamLocalProcessor
+        self, golf_image: Image.Image, moondream_processor: LocalDetectionProcessor
     ):
         """Test _run_detection_sync() directly with PIL Image."""
         # Ensure model is loaded
@@ -127,7 +127,7 @@ class TestMoondreamLocalProcessor:
         reason="HF_TOKEN environment variable not set (required for model access)",
     )
     async def test_annotated_frame_output(
-        self, golf_image: Image.Image, moondream_processor: MoondreamLocalProcessor
+        self, golf_image: Image.Image, moondream_processor: LocalDetectionProcessor
     ):
         """Test end-to-end frame processing with annotations."""
         # Ensure model is loaded
@@ -149,7 +149,7 @@ class TestMoondreamLocalProcessor:
 
     @pytest.mark.integration
     async def test_annotate_detections_with_results(
-        self, golf_image: Image.Image, moondream_processor: MoondreamLocalProcessor
+        self, golf_image: Image.Image, moondream_processor: LocalDetectionProcessor
     ):
         """Test annotation function directly with mock results."""
         frame_array = np.array(golf_image)
@@ -193,7 +193,7 @@ class TestMoondreamLocalProcessor:
             )
 
         # Initialize processor without device param
-        processor = MoondreamLocalProcessor()
+        processor = LocalDetectionProcessor()
         try:
             assert processor.device == "cuda"
         finally:
@@ -221,7 +221,7 @@ class TestMoondreamLocalProcessor:
             )
 
         # Initialize processor without device param
-        processor = MoondreamLocalProcessor()
+        processor = LocalDetectionProcessor()
         try:
             assert processor.device == "cpu"
         finally:
@@ -249,7 +249,7 @@ class TestMoondreamLocalProcessor:
             )
 
         # Initialize processor - should auto-detect and convert MPS to CPU
-        processor = MoondreamLocalProcessor()
+        processor = LocalDetectionProcessor()
         try:
             # Verify MPS is converted to CPU
             assert processor.device == "cpu"
@@ -257,7 +257,7 @@ class TestMoondreamLocalProcessor:
             processor.close()
 
         # Also test explicit MPS parameter
-        processor2 = MoondreamLocalProcessor(device="mps")
+        processor2 = LocalDetectionProcessor(device="mps")
         try:
             # Verify explicit MPS is also converted to CPU
             assert processor2.device == "cpu"
@@ -266,7 +266,7 @@ class TestMoondreamLocalProcessor:
 
     def test_device_explicit_cpu(self):
         """Test explicit CPU device selection."""
-        processor = MoondreamLocalProcessor(device="cpu")
+        processor = LocalDetectionProcessor(device="cpu")
         try:
             assert processor.device == "cpu"
         finally:
@@ -278,7 +278,7 @@ class TestMoondreamLocalProcessor:
     )
     def test_device_explicit_cuda(self):
         """Test explicit CUDA device selection (only if CUDA available)."""
-        processor = MoondreamLocalProcessor(device="cuda")
+        processor = LocalDetectionProcessor(device="cuda")
         try:
             assert processor.device == "cuda"
         finally:

@@ -43,7 +43,7 @@ agent = Agent(
 
 ```python
 # Detect multiple object types with zero-shot detection
-processor = moondream.MoondreamProcessor(
+processor = moondream.CloudDetectionProcessor(
     api_key="your-api-key",
     detect_objects=["person", "car", "dog", "basketball"],
     conf_threshold=0.3
@@ -52,8 +52,8 @@ processor = moondream.MoondreamProcessor(
 # Access results for LLM
 state = processor.state()
 print(state["detections_summary"])  # "Detected: 2 persons, 1 car"
-print(state["detections_count"])    # Total number of detections
-print(state["last_image"])          # PIL Image for vision models
+print(state["detections_count"])  # Total number of detections
+print(state["last_image"])  # PIL Image for vision models
 ```
 
 ## Configuration
@@ -72,7 +72,7 @@ print(state["last_image"])          # PIL Image for vision models
 The processor exposes visual understanding to LLMs via the `state()` method:
 
 ```python
-processor = moondream.MoondreamProcessor(
+processor = moondream.CloudDetectionProcessor(
     api_key="your-api-key",
     detect_objects=["person", "car", "dog"]
 )
@@ -96,7 +96,7 @@ print(f"Total objects: {state['detections_count']}")
 The processor publishes annotated video frames with bounding boxes drawn on detected objects:
 
 ```python
-processor = moondream.MoondreamProcessor(
+processor = moondream.CloudDetectionProcessor(
     api_key="your-api-key",
     detect_objects=["person", "car"]
 )

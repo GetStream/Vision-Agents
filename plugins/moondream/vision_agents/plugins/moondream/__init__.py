@@ -10,7 +10,7 @@ from .moondream_processor import (
     MoondreamVideoTrack,
 )
 from .moondream_local_processor import (
-    MoondreamLocalProcessor,
+    LocalDetectionProcessor,
 )
 
 # Re-export under the new namespace for convenience
@@ -18,7 +18,7 @@ __path__ = __import__("pkgutil").extend_path(__path__, __name__)
 
 __all__ = [
     "MoondreamProcessor",
-    "MoondreamLocalProcessor",
+    "LocalDetectionProcessor",
     "MoondreamVideoTrack",
 ]
 

@@ -90,7 +90,7 @@ class MoondreamVideoTrack(VideoStreamTrack):
         self._stopped = True
 
 
-class MoondreamProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
+class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """Performs real-time object detection on video streams using Moondream Cloud API.
     
     Args:

@@ -92,7 +92,7 @@ class MoondreamVideoTrack(VideoStreamTrack):
         self._stopped = True
 
 
-class MoondreamLocalProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
+class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """Performs real-time object detection on video streams using local Moondream 3 model.
     
     This processor downloads and runs the moondream3-preview model locally from Hugging Face,
