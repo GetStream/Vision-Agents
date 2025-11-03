@@ -409,7 +409,7 @@ class EventManager:
 
         # Validate event is registered (handles both BaseEvent and generated protobuf events)
         if hasattr(event, "type") and event.type in self._events:
-            # logger.info(f"Received event {_truncate_event_for_logging(event)}")
+            logger.debug(f"Received event {_truncate_event_for_logging(event)}")
             return event
         elif self._ignore_unknown_events:
             logger.debug(f"Event not registered {_truncate_event_for_logging(event)}")
