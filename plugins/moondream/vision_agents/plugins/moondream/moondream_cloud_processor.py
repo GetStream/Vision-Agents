@@ -193,23 +193,20 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         
         # Call SDK for each object type
         for object_type in self.detect_objects:
+            logger.debug(f"🔍 Detecting '{object_type}' via Moondream SDK")
             try:
-                logger.debug(f"🔍 Detecting '{object_type}' via Moondream SDK")
-                
                 # Call SDK's detect method
                 result = self.model.detect(image, object_type)
-                
-                # Parse SDK response format
-                # SDK returns: {"objects": [{"x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}, ...]}
-                if "objects" in result:
-                    for obj in result["objects"]:
-                        detection = self._parse_detection_bbox(obj, object_type)
-                        if detection:
-                            all_detections.append(detection)
-                        
             except Exception as e:
                 logger.warning(f"⚠️ Failed to detect '{object_type}': {e}")
                 continue
+
+            # Parse SDK response format
+            # SDK returns: {"objects": [{"x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}, ...]}
+            for obj in result.get("objects", []):
+                detection = self._parse_detection_bbox(obj, object_type)
+                if detection:
+                    all_detections.append(detection)
         
         logger.debug(f"🔍 SDK returned {len(all_detections)} objects across {len(self.detect_objects)} types")
         return all_detections
