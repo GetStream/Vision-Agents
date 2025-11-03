@@ -4,29 +4,12 @@ Tests for function calling functionality.
 
 import pytest
 from unittest.mock import Mock, patch
-from typing import Any, Optional
 
 from vision_agents.core.llm import FunctionRegistry, function_registry
 from vision_agents.core.llm.llm import LLM
 from vision_agents.plugins.openai import LLM as OpenAILLM
 from vision_agents.plugins.anthropic import LLM as ClaudeLLM
 from vision_agents.plugins.gemini import LLM as GeminiLLM
-
-
-# Test implementation of LLM for unit tests
-class TestLLM(LLM):
-    """Concrete implementation of LLM for testing."""
-
-    async def _simple_response(
-        self,
-        text: str,
-        processors: Optional[Any] = None,
-        participant: Optional[Any] = None,
-    ):
-        """Mock simple response."""
-        from vision_agents.core.llm.llm import LLMResponseEvent
-
-        return LLMResponseEvent(original=None, text=f"Mock response to: {text}")
 
 
 class TestFunctionRegistry:
@@ -145,10 +128,9 @@ class TestGlobalRegistry:
 class TestLLMFunctionCalling:
     """Test LLM function calling functionality."""
 
-    @pytest.mark.asyncio
     async def test_llm_function_registration(self):
         """Test that LLM can register functions."""
-        llm = TestLLM()
+        llm = LLM()
 
         @llm.register_function(description="Test function")
         def test_func(x: int) -> int:
@@ -159,10 +141,9 @@ class TestLLMFunctionCalling:
         assert len(functions) == 1
         assert functions[0]["name"] == "test_func"
 
-    @pytest.mark.asyncio
     async def test_llm_get_available_functions(self):
         """Test getting available functions from LLM."""
-        llm = TestLLM()
+        llm = LLM()
 
         @llm.register_function(description="Function 1")
         def func1(x: int) -> int:
@@ -182,7 +163,6 @@ class TestLLMFunctionCalling:
 class TestOpenAIFunctionCalling:
     """Test OpenAI function calling functionality."""
 
-    @pytest.mark.asyncio
     @patch("vision_agents.plugins.openai.openai_llm.AsyncOpenAI")
     async def test_openai_function_calling_response(self, mock_openai):
         """Test OpenAI function calling response."""
@@ -252,7 +232,6 @@ class TestOpenAIFunctionCalling:
 class TestClaudeFunctionCalling:
     """Test Claude function calling functionality."""
 
-    @pytest.mark.asyncio
     @patch("vision_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic")
     async def test_claude_function_calling_response(self, mock_anthropic):
         """Test Claude function calling response."""
@@ -324,7 +303,6 @@ class TestClaudeFunctionCalling:
 class TestGeminiFunctionCalling:
     """Test Gemini function calling functionality."""
 
-    @pytest.mark.asyncio
     @patch("vision_agents.plugins.gemini.gemini_llm.genai")
     async def test_gemini_function_calling_response(self, mock_genai):
         """Test Gemini function calling response."""
@@ -368,7 +346,6 @@ class TestGeminiFunctionCalling:
         result = llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
 
-    @pytest.mark.asyncio
     @patch("vision_agents.plugins.gemini.gemini_llm.genai")
     async def test_gemini_conversational_response(self, mock_genai):
         """Test Gemini conversational response generation."""
@@ -411,10 +388,9 @@ class TestGeminiFunctionCalling:
 class TestFunctionCallingIntegration:
     """Test function calling integration scenarios."""
 
-    @pytest.mark.asyncio
     async def test_tool_call_processing(self):
         """Test processing tool calls with multiple functions."""
-        llm = TestLLM()
+        llm = LLM()
 
         @llm.register_function(description="Get weather")
         def get_weather(location: str) -> str:
@@ -435,10 +411,9 @@ class TestFunctionCallingIntegration:
         assert weather_result == "Weather in NYC: Sunny"
         assert sum_result == 8
 
-    @pytest.mark.asyncio
     async def test_error_handling_in_function_calls(self):
         """Test error handling in function calls."""
-        llm = TestLLM()
+        llm = LLM()
 
         @llm.register_function(description="Test function that raises error")
         def error_function(x: int) -> int:
@@ -454,14 +429,13 @@ class TestFunctionCallingIntegration:
         with pytest.raises(ValueError):
             llm.call_function("error_function", {"x": -5})
 
-    @pytest.mark.asyncio
     async def test_function_schema_generation(self):
         """Test that function schemas are generated correctly."""
-        llm = TestLLM()
+        llm = LLM()
 
         @llm.register_function(description="Complex function")
         def complex_function(
-            name: str, age: int, is_active: bool = True, tags: Optional[list] = None
+            name: str, age: int, is_active: bool = True, tags: list = None
         ) -> dict:
             """Complex function with various parameter types."""
             return {
@@ -497,10 +471,9 @@ class TestFunctionCallingIntegration:
 class TestConcurrentToolExecution:
     """Test concurrent tool execution functionality."""
 
-    @pytest.mark.asyncio
     async def test_dedup_and_execute(self):
         """Test the _dedup_and_execute method."""
-        llm = TestLLM()
+        llm = LLM()
 
         @llm.register_function(description="Test function")
         def test_func(x: int) -> int:
@@ -529,12 +502,11 @@ class TestConcurrentToolExecution:
         assert 10 in results  # 5 * 2 (appears twice)
         assert 6 in results  # 3 * 2
 
-    @pytest.mark.asyncio
     async def test_tool_lifecycle_events(self):
         """Test that tool lifecycle events are emitted."""
         from vision_agents.core.llm.events import ToolStartEvent, ToolEndEvent
 
-        llm = TestLLM()
+        llm = LLM()
 
         @llm.register_function(description="Test function")
         def test_func(x: int) -> int:
@@ -566,10 +538,9 @@ class TestConcurrentToolExecution:
         assert end_events[0].tool_name == "test_func"
         assert end_events[0].success is True
 
-    @pytest.mark.asyncio
     async def test_output_sanitization(self):
         """Test output sanitization for large responses."""
-        llm = TestLLM()
+        llm = LLM()
 
         # Test normal output
         normal_output = "Hello world"
