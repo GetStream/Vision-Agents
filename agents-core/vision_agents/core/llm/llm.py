@@ -50,6 +50,16 @@ class LLM(abc.ABC):
         self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
 
+    async def warmup(self) -> None:
+        """
+        Warm up the LLM model.
+        
+        This method can be overridden by implementations to perform
+        model loading, connection establishment, or other initialization
+        that should happen before the first request.
+        """
+        pass
+
     async def simple_response(
         self,
         text: str,
