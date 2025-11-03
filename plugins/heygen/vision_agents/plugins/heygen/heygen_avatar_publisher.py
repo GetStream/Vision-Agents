@@ -104,7 +104,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         # Text buffer for accumulating LLM response chunks before sending to HeyGen
         self._text_buffer = ""
         self._current_response_id: Optional[str] = None
-        self._sent_texts: set = set()  # Track sent texts to avoid duplicates
+        self._all_sent_texts: set = set()  # Track all sent texts to prevent duplicates
         
         # Audio forwarding state (for selective muting of Realtime LLM audio)
         self._forwarding_audio = False
@@ -183,17 +183,37 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                 
                 @self._agent.llm.events.subscribe
                 async def on_text_complete(event: LLMResponseCompletedEvent):
-                    """Handle end of LLM response - send any remaining buffered text."""
-                    # Send any remaining buffered text
-                    if self._text_buffer.strip():
-                        text_to_send = self._text_buffer.strip()
-                        if text_to_send not in self._sent_texts:
-                            await self._send_text_to_heygen(text_to_send)
-                            self._sent_texts.add(text_to_send)
-                        self._text_buffer = ""
+                    """Handle end of LLM response - split into sentences and send each once."""
+                    if not self._text_buffer.strip():
+                        return
+                    
+                    # Split the complete response into sentences
+                    import re
+                    text = self._text_buffer.strip()
+                    # Split on sentence boundaries but keep the punctuation
+                    sentences = re.split(r'([.!?]+\s*)', text)
+                    # Recombine sentences with their punctuation
+                    full_sentences = []
+                    for i in range(0, len(sentences)-1, 2):
+                        if sentences[i].strip():
+                            sentence = (sentences[i] + sentences[i+1] if i+1 < len(sentences) else sentences[i]).strip()
+                            full_sentences.append(sentence)
+                    # Handle last part if no punctuation
+                    if sentences and sentences[-1].strip() and not any(sentences[-1].strip().endswith(p) for p in ['.', '!', '?']):
+                        full_sentences.append(sentences[-1].strip())
+                    
+                    # Send each sentence once if not already sent
+                    for sentence in full_sentences:
+                        if sentence and len(sentence) > 5:
+                            if sentence not in self._all_sent_texts:
+                                await self._send_text_to_heygen(sentence)
+                                self._all_sent_texts.add(sentence)
+                            else:
+                                logger.debug(f"Skipping duplicate: '{sentence[:30]}...'")
+                    
                     # Reset for next response
+                    self._text_buffer = ""
                     self._current_response_id = None
-                    self._sent_texts.clear()
                 
                 @self._agent.llm.events.subscribe
                 async def on_agent_speech(event: RealtimeAgentSpeechTranscriptionEvent):
@@ -298,19 +318,8 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                     # Convert frame to bytes and write to agent's audio track
                     if hasattr(frame, 'to_ndarray'):
                         audio_array = frame.to_ndarray()
-                        
-                        # Convert mono to stereo if needed (agent track expects stereo)
-                        # HeyGen sends mono (shape=(1, samples)), we need interleaved stereo
-                        if audio_array.shape[0] == 1:
-                            # Flatten to 1D array of samples
-                            mono_samples = audio_array.flatten()
-                            
-                            # Create stereo by interleaving each mono sample
-                            stereo_samples = np.repeat(mono_samples, 2)
-                            audio_bytes = stereo_samples.tobytes()
-                        else:
-                            # Already multi-channel, just flatten and convert
-                            audio_bytes = audio_array.flatten().tobytes()
+                        # Pass raw audio data - AudioStreamTrack handles format conversion
+                        audio_bytes = audio_array.tobytes()
                         
                         # Set flag to allow HeyGen audio through the muted track
                         self._forwarding_audio = True
@@ -337,8 +346,8 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
     async def _on_text_chunk(self, text_delta: str, item_id: Optional[str]) -> None:
         """Handle text chunk from the LLM.
         
-        Accumulates text chunks until a complete sentence or response is ready,
-        then sends to HeyGen for lip-sync.
+        Accumulates text chunks. Does NOT send immediately - waits for completion event
+        to avoid sending partial/duplicate sentences.
         
         Args:
             text_delta: The text chunk/delta from the LLM.
@@ -348,26 +357,16 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         if item_id != self._current_response_id:
             if self._text_buffer:
                 # Send any accumulated text from previous response
-                await self._send_text_to_heygen(self._text_buffer.strip())
+                text_to_send = self._text_buffer.strip()
+                if text_to_send and text_to_send not in self._all_sent_texts:
+                    await self._send_text_to_heygen(text_to_send)
+                    self._all_sent_texts.add(text_to_send)
             self._text_buffer = ""
             self._current_response_id = item_id
-            self._sent_texts.clear()
         
-        # Accumulate text
+        # Just accumulate text - don't send yet!
+        # Wait for completion event to avoid sending partial sentences
         self._text_buffer += text_delta
-        
-        # Send when we have a complete sentence (ending with period, !, or ?)
-        # But only if it's substantial enough (> 15 chars) to avoid sending tiny fragments
-        # Don't send on commas/semicolons to reduce repetition
-        if any(self._text_buffer.rstrip().endswith(p) for p in ['.', '!', '?']):
-            text_to_send = self._text_buffer.strip()
-            # Only send if it's substantial (>15 chars) and not already sent
-            if text_to_send and len(text_to_send) > 15 and text_to_send not in self._sent_texts:
-                await self._send_text_to_heygen(text_to_send)
-                self._sent_texts.add(text_to_send)
-                self._text_buffer = ""  # Clear buffer after sending
-            elif text_to_send in self._sent_texts:
-                self._text_buffer = ""  # Clear buffer to avoid re-sending
     
     async def _send_text_to_heygen(self, text: str) -> None:
         """Send text to HeyGen for the avatar to speak with lip-sync.
@@ -385,7 +384,6 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         try:
             logger.info(f"Sending text to HeyGen: '{text[:50]}...'")
             await self.rtc_manager.send_text(text, task_type="repeat")
-            logger.debug("Text sent to HeyGen successfully")
         except Exception as e:
             logger.error(f"Failed to send text to HeyGen: {e}")
             import traceback
