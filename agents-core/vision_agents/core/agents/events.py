@@ -4,6 +4,20 @@ from typing import Optional, Any, Dict
 
 
 @dataclass
+class AgentInitEvent(BaseEvent):
+    """Event emitted when Agent class initialized."""
+
+    type: str = field(default="agent.init", init=False)
+
+
+@dataclass
+class AgentFinishEvent(BaseEvent):
+    """Event emitted when agent.finish() call ended."""
+
+    type: str = field(default="agent.finish", init=False)
+
+
+@dataclass
 class AgentSayEvent(PluginBaseEvent):
     """Event emitted when the agent wants to say something."""
 

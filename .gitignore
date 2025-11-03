@@ -84,4 +84,10 @@ stream-py/
 # Artifacts / assets
 *.pt
 *.kef
+<<<<<<< HEAD
 *.onnx
+=======
+
+# opencode
+/opencode.json
+>>>>>>> 0924a71 (profiling: added implementation as plugin for dev install)

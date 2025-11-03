@@ -51,6 +51,7 @@ from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
 from .conversation import Conversation
+from ..profiling import Profiler
 from dataclasses import dataclass
 from opentelemetry.trace import set_span_in_context
 from opentelemetry.trace.propagation import Span, Context
@@ -160,6 +161,7 @@ class Agent:
         tracer: Tracer = trace.get_tracer("agents"),
         # Configure the default logging for the sdk here. Pass None to leave the config intact.
         log_level: Optional[int] = logging.INFO,
+        profiler: Optional[Profiler] = None,
     ):
         if log_level is not None:
             configure_default_logging(level=log_level)
@@ -213,7 +215,7 @@ class Agent:
         self._pending_user_transcripts: Dict[str, str] = {}
 
         # Merge plugin events BEFORE subscribing to any events
-        for plugin in [stt, tts, turn_detection, vad, llm, edge]:
+        for plugin in [stt, tts, turn_detection, vad, llm, edge, profiler]:
             if plugin and hasattr(plugin, "events"):
                 self.logger.debug(f"Register events from plugin {plugin}")
                 self.events.merge(plugin.events)
@@ -272,6 +274,8 @@ class Agent:
 
     def __aexit__(self, exc_type, exc_val, exc_tb):
         self.end_tracing()
+
+        self.events.send(events.AgentInitEvent())
 
     async def simple_response(
         self, text: str, participant: Optional[Participant] = None
@@ -567,6 +571,8 @@ class Agent:
             await running_event.wait()
         except asyncio.CancelledError:
             running_event.clear()
+
+        self.events.send(events.AgentFinishEvent())
 
         await asyncio.shield(self.close())
 
