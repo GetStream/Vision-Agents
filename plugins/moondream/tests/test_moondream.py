@@ -15,6 +15,7 @@ import os
 import pytest
 import av
 import numpy as np
+from typing import Dict, Any
 from PIL import Image
 
 from vision_agents.plugins.moondream import (
@@ -198,7 +199,7 @@ def test_annotate_detections_empty_results(sample_image):
     processor = MoondreamProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
-    mock_results = {"detections": []}
+    mock_results: Dict[str, Any] = {"detections": []}
     
     annotated = processor._annotate_detections(frame_array, mock_results)
     
@@ -490,7 +491,7 @@ async def test_multiple_object_detection():
         detected_labels = [det["label"] for det in result.get("detections", [])]
         unique_labels = set(detected_labels)
         
-        print(f"\n🎯 Multiple object detection test:")
+        print("\n🎯 Multiple object detection test:")
         print(f"   Searched for: {processor.detect_objects}")
         print(f"   Found {len(result.get('detections', []))} total detections")
         print(f"   Unique object types: {unique_labels}")

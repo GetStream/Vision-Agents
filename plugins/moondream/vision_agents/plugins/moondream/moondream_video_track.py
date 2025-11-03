@@ -55,7 +55,7 @@ class MoondreamVideoTrack(VideoStreamTrack):
             frame = await asyncio.wait_for(self.frame_queue.get(), timeout=0.02)
             if frame:
                 self.last_frame = frame
-                logger.debug(f"📥 Got new frame from queue")
+                logger.debug("📥 Got new frame from queue")
         except asyncio.TimeoutError:
             pass
         except Exception as e:

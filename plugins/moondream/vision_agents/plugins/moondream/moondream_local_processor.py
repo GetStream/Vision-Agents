@@ -95,9 +95,9 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 self.device = device
         
         # Initialize state tracking attributes
-        self._last_results = {}
-        self._last_frame_time = None
-        self._last_frame_pil = None
+        self._last_results: Dict[str, Any] = {}
+        self._last_frame_time: Optional[float] = None
+        self._last_frame_pil: Optional[Image.Image] = None
         
         # Font configuration constants for drawing efficiency
         self._font = cv2.FONT_HERSHEY_SIMPLEX

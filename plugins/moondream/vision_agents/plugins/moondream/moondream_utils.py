@@ -1,5 +1,6 @@
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import cv2
+import numpy as np
 
 
 def parse_detection_bbox(self, obj: Dict, object_type: str) -> Optional[Dict]:
