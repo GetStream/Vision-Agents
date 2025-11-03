@@ -3,11 +3,11 @@ import cv2
 import numpy as np
 
 
-def parse_detection_bbox(self, obj: Dict, object_type: str) -> Optional[Dict]:
+def parse_detection_bbox(obj: Dict, object_type: str, conf_threshold: float) -> Optional[Dict]:
     confidence = obj.get("confidence", 1.0)
 
     # Filter by confidence threshold
-    if confidence < self.conf_threshold:
+    if confidence < conf_threshold:
         return None
 
     bbox = [
@@ -23,7 +23,7 @@ def parse_detection_bbox(self, obj: Dict, object_type: str) -> Optional[Dict]:
         "confidence": confidence
     }
 
-def normalize_bbox_coordinates(self, bbox: List[float], width: int, height: int) -> tuple:
+def normalize_bbox_coordinates(bbox: List[float], width: int, height: int) -> tuple:
     if len(bbox) != 4:
         return (0, 0, 0, 0)
 
@@ -38,7 +38,15 @@ def normalize_bbox_coordinates(self, bbox: List[float], width: int, height: int)
         return int(x1), int(y1), int(x2), int(y2)
 
 
-def annotate_detections(self, frame_array: np.ndarray, results: Dict[str, Any]) -> np.ndarray:
+def annotate_detections(
+    frame_array: np.ndarray,
+    results: Dict[str, Any],
+    font: int = cv2.FONT_HERSHEY_SIMPLEX,
+    font_scale: float = 0.5,
+    font_thickness: int = 2,
+    bbox_color: tuple = (0, 255, 0),
+    text_color: tuple = (0, 0, 0),
+) -> np.ndarray:
     annotated = frame_array.copy()
 
     detections = results.get("detections", [])
@@ -50,13 +58,13 @@ def annotate_detections(self, frame_array: np.ndarray, results: Dict[str, Any]) 
     # Pre-calculate baseline text metrics once per frame for efficiency
     sample_text = "object 0.00"  # Representative text for baseline calculation
     (_, text_height), baseline = cv2.getTextSize(
-        sample_text, self._font, self._font_scale, self._font_thickness
+        sample_text, font, font_scale, font_thickness
     )
 
     for detection in detections:
         # Parse bounding box and normalize to pixel coordinates
         bbox = detection.get("bbox", [])
-        x1, y1, x2, y2 = self._normalize_bbox_coordinates(bbox, width, height)
+        x1, y1, x2, y2 = normalize_bbox_coordinates(bbox, width, height)
 
         # Skip invalid bounding boxes
         if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
@@ -66,19 +74,19 @@ def annotate_detections(self, frame_array: np.ndarray, results: Dict[str, Any]) 
         label = detection.get("label", "object")
         conf = detection.get("confidence", 0.0)
 
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), self._bbox_color, 2)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), bbox_color, 2)
 
         # Draw label background
         label_text = f"{label} {conf:.2f}"
         # Calculate text width for this specific label (varies by content)
         (text_width, _), _ = cv2.getTextSize(
-            label_text, self._font, self._font_scale, self._font_thickness
+            label_text, font, font_scale, font_thickness
         )
         cv2.rectangle(
             annotated,
             (x1, y1 - text_height - baseline - 5),
             (x1 + text_width, y1),
-            self._bbox_color,
+            bbox_color,
             -1
         )
 
@@ -87,10 +95,10 @@ def annotate_detections(self, frame_array: np.ndarray, results: Dict[str, Any]) 
             annotated,
             label_text,
             (x1, y1 - baseline - 5),
-            self._font,
-            self._font_scale,
-            self._text_color,
-            self._font_thickness
+            font,
+            font_scale,
+            text_color,
+            font_thickness
         )
 
     return annotated

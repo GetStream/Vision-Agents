@@ -8,7 +8,7 @@ Integration tests require HF_TOKEN environment variable (for gated model access)
 
 To run only unit tests (no model loading):
 
-    pytest plugins/moondream/tests/test_moondream_local.py -m "not integration" -v
+    uv run pytest plugins/moondream/tests/test_moondream_local.py -m "not integration" -v
 """
 import asyncio
 import os
@@ -22,6 +22,7 @@ from PIL import Image
 import av
 
 from vision_agents.plugins.moondream import LocalDetectionProcessor
+from vision_agents.plugins.moondream.moondream_utils import annotate_detections
 import logging
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,6 @@ class TestMoondreamLocalProcessor:
         finally:
             processor.close()
 
-    # 1. Model Loading Tests
     @pytest.mark.integration
     @pytest.mark.skipif(
         not os.getenv("HF_TOKEN"),
@@ -65,7 +65,6 @@ class TestMoondreamLocalProcessor:
         # Verify model is in eval mode
         assert moondream_processor.model.training is False
 
-    # 2. Image Inference Tests
     @pytest.mark.integration
     @pytest.mark.skipif(
         not os.getenv("HF_TOKEN"),
@@ -120,7 +119,6 @@ class TestMoondreamLocalProcessor:
                 assert isinstance(detection["bbox"], list)
                 assert len(detection["bbox"]) == 4
 
-    # 3. Annotated Output Tests
     @pytest.mark.integration
     @pytest.mark.skipif(
         not os.getenv("HF_TOKEN"),
@@ -162,15 +160,21 @@ class TestMoondreamLocalProcessor:
             ]
         }
 
-        # Annotate the frame
-        annotated = moondream_processor._annotate_detections(frame_array, mock_results)
+        annotated = annotate_detections(
+            frame_array,
+            mock_results,
+            font=moondream_processor._font,
+            font_scale=moondream_processor._font_scale,
+            font_thickness=moondream_processor._font_thickness,
+            bbox_color=moondream_processor._bbox_color,
+            text_color=moondream_processor._text_color,
+        )
 
         # Verify output shape matches input
         assert annotated.shape == frame_array.shape
         # Verify frame is modified (not array_equal)
         assert not np.array_equal(frame_array, annotated)
 
-    # 4. Device Handling Tests
     def test_device_auto_detection_cuda(self, monkeypatch):
         """Test CUDA auto-detection."""
         # Mock CUDA available, MPS not available

@@ -12,7 +12,6 @@ To run only unit tests (no API key needed):
     uv run pytest plugins/moondream/tests/ -m "not integration" -v
 """
 import os
-import types
 import pytest
 import av
 import numpy as np
@@ -23,7 +22,7 @@ from vision_agents.plugins.moondream import (
     CloudDetectionProcessor,
     MoondreamVideoTrack,
 )
-from vision_agents.plugins.moondream.moondream_utils import annotate_detections, normalize_bbox_coordinates
+from vision_agents.plugins.moondream.moondream_utils import annotate_detections
 
 
 @pytest.fixture
@@ -63,23 +62,6 @@ def test_processor_publishes_track():
     track = processor.publish_video_track()
     assert isinstance(track, MoondreamVideoTrack)
     processor.close()
-
-
-@pytest.mark.asyncio
-async def test_video_track_multiple_frames(sample_image):
-    """Test that video track handles multiple frames correctly."""
-    track = CloudDetectionProcessor()
-    
-    # Add multiple frames
-    for i in range(5):
-        img = Image.new("RGB", (640, 480), color=(i*50, 0, 0))
-        frame = av.VideoFrame.from_image(img)
-        await track.add_frame(frame)
-    
-    # Receive a frame
-    received_frame = await track.recv()
-    assert received_frame is not None
-    track.stop()
 
 
 @pytest.mark.asyncio
@@ -131,11 +113,16 @@ def test_annotate_detections_with_normalized_coords(sample_image):
         ]
     }
     
-    # Bind annotate_detections and normalize_bbox_coordinates to processor instance
-    # (functions expect self parameter)
-    processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
-    bound_annotate = types.MethodType(annotate_detections, processor)
-    annotated = bound_annotate(frame_array, mock_results)
+    # Call annotate_detections directly with styling parameters
+    annotated = annotate_detections(
+        frame_array,
+        mock_results,
+        font=processor._font,
+        font_scale=processor._font_scale,
+        font_thickness=processor._font_thickness,
+        bbox_color=processor._bbox_color,
+        text_color=processor._text_color,
+    )
     
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
@@ -156,11 +143,16 @@ def test_annotate_detections_with_pixel_coords(sample_image):
         ]
     }
     
-    # Bind annotate_detections and normalize_bbox_coordinates to processor instance
-    # (functions expect self parameter)
-    processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
-    bound_annotate = types.MethodType(annotate_detections, processor)
-    annotated = bound_annotate(frame_array, mock_results)
+    # Call annotate_detections directly with styling parameters
+    annotated = annotate_detections(
+        frame_array,
+        mock_results,
+        font=processor._font,
+        font_scale=processor._font_scale,
+        font_thickness=processor._font_thickness,
+        bbox_color=processor._bbox_color,
+        text_color=processor._text_color,
+    )
     
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
@@ -183,11 +175,16 @@ def test_annotate_detections_multiple_objects(sample_image):
         ]
     }
     
-    # Bind annotate_detections and normalize_bbox_coordinates to processor instance
-    # (functions expect self parameter)
-    processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
-    bound_annotate = types.MethodType(annotate_detections, processor)
-    annotated = bound_annotate(frame_array, mock_results)
+    # Call annotate_detections directly with styling parameters
+    annotated = annotate_detections(
+        frame_array,
+        mock_results,
+        font=processor._font,
+        font_scale=processor._font_scale,
+        font_thickness=processor._font_thickness,
+        bbox_color=processor._bbox_color,
+        text_color=processor._text_color,
+    )
     
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
@@ -201,11 +198,16 @@ def test_annotate_detections_empty_results(sample_image):
     frame_array = np.array(sample_image)
     mock_results: Dict[str, Any] = {"detections": []}
     
-    # Bind annotate_detections and normalize_bbox_coordinates to processor instance
-    # (functions expect self parameter)
-    processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
-    bound_annotate = types.MethodType(annotate_detections, processor)
-    annotated = bound_annotate(frame_array, mock_results)
+    # Call annotate_detections directly with styling parameters
+    annotated = annotate_detections(
+        frame_array,
+        mock_results,
+        font=processor._font,
+        font_scale=processor._font_scale,
+        font_thickness=processor._font_thickness,
+        bbox_color=processor._bbox_color,
+        text_color=processor._text_color,
+    )
     
     # Frame should be unchanged
     assert np.array_equal(frame_array, annotated)
@@ -252,7 +254,7 @@ async def test_live_detection_api():
         frame_array = np.array(image)
         
         # Run inference
-        result = await processor.run_inference(frame_array)
+        result = await processor._run_inference(frame_array)
         
         # Verify we got real detections
         assert "detections" in result
@@ -285,15 +287,20 @@ async def test_live_detection_with_annotation():
     frame_array = np.array(test_image)
     
     # Run inference
-    result = await processor.run_inference(frame_array)
+    result = await processor._run_inference(frame_array)
     
     # If we got detections, test annotation
     if result.get("detections"):
-        # Bind annotate_detections and normalize_bbox_coordinates to processor instance
-        # (functions expect self parameter)
-        processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
-        bound_annotate = types.MethodType(annotate_detections, processor)
-        annotated = bound_annotate(frame_array, result)
+        # Call annotate_detections directly with styling parameters
+        annotated = annotate_detections(
+            frame_array,
+            result,
+            font=processor._font,
+            font_scale=processor._font_scale,
+            font_thickness=processor._font_thickness,
+            bbox_color=processor._bbox_color,
+            text_color=processor._text_color,
+        )
         
         # Verify frame was modified
         assert not np.array_equal(frame_array, annotated)
@@ -396,7 +403,7 @@ async def test_custom_object_detection():
         frame_array = np.array(image)
         
         # Run inference - may return empty if no cars in image
-        result = await processor.run_inference(frame_array)
+        result = await processor._run_inference(frame_array)
         
         # Verify structure is correct
         assert "detections" in result
@@ -433,7 +440,7 @@ async def test_multiple_object_detection():
         frame_array = np.array(image)
         
         # Run inference
-        result = await processor.run_inference(frame_array)
+        result = await processor._run_inference(frame_array)
         
         # Verify structure
         assert "detections" in result

@@ -302,7 +302,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 # Model returns: {"objects": [{"x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}, ...]}
                 if "objects" in result:
                     for obj in result["objects"]:
-                        detection = parse_detection_bbox(obj, object_type)
+                        detection = parse_detection_bbox(obj, object_type, self.conf_threshold)
                         if detection:
                             all_detections.append(detection)
                         
@@ -328,7 +328,15 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
 
             # Annotate frame with detections
             if results.get("detections"):
-                frame_array = annotate_detections(frame_array, results)
+                frame_array = annotate_detections(
+                    frame_array,
+                    results,
+                    font=self._font,
+                    font_scale=self._font_scale,
+                    font_thickness=self._font_thickness,
+                    bbox_color=self._bbox_color,
+                    text_color=self._text_color,
+                )
 
             # Convert back to av.VideoFrame and publish
             processed_frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
