@@ -1,15 +1,6 @@
 # Moondream Plugin
 
-This plugin provides Moondream 3 vision capabilities for vision-agents, enabling real-time zero-shot object detection on video streams using the Moondream Cloud API.
-
-## Features
-
-- **Object Detection** with bounding boxes drawn on video frames
-- **Zero-shot Detection** - Detect any object by name using natural language
-- **LLM Integration** - Expose visual understanding to conversation agents via `state()` method
-- **High Performance** - Async processing with ThreadPoolExecutor for CPU-intensive operations
-- **Frame Queuing** - Latest-N queue pattern for smooth video publishing
-- **Moondream Cloud API** - Powered by state-of-the-art vision model
+This plugin provides Moondream 3 detection capabilities for vision-agents, enabling real-time zero-shot object detection on video streams. Choose between cloud-hosted or local processing depending on your needs.
 
 ## Installation
 
@@ -17,17 +8,63 @@ This plugin provides Moondream 3 vision capabilities for vision-agents, enabling
 uv add vision-agents-plugins-moondream
 ```
 
+## Choosing the Right Processor
+
+### CloudDetectionProcessor (Recommended for Most Users)
+- **Use when:** You want a simple setup with no infrastructure management
+- **Pros:** No model download, no GPU required, automatic updates
+- **Cons:** Requires API key, 2rps rate limit by default (can be increased)
+- **Best for:** Development, testing, low-to-medium volume applications
+
+### LocalDetectionProcessor (For Advanced Users)
+- **Use when:** You need higher throughput, have your own GPU infrastructure, or want to avoid rate limits
+- **Pros:** No rate limits, no API costs, full control over hardware
+- **Cons:** Requires GPU for best performance, model download on first use, infrastructure management
+- **Best for:** Production deployments, high-volume applications, Digital Ocean Gradient AI GPUs, or custom infrastructure
+
 ## Quick Start
 
-### Basic Object Detection
+### Using CloudDetectionProcessor (Hosted)
+
+The `CloudDetectionProcessor` uses Moondream's hosted API. By default it has a 2rps (requests per second) rate limit and requires an API key. The rate limit can be adjusted by contacting the Moondream team to request a higher limit.
 
 ```python
 from vision_agents.plugins import moondream
+from vision_agents.core import Agent
 
-# Create a Moondream processor with detection
-processor = moondream.MoondreamProcessor(
-    api_key="your-api-key",
+# Create a cloud processor with detection
+processor = moondream.CloudDetectionProcessor(
+    api_key="your-api-key",  # or set MOONDREAM_API_KEY env var
     detect_objects="person",  # or ["person", "car", "dog"] for multiple
+    fps=30
+)
+
+# Use in an agent
+agent = Agent(
+    processors=[processor],
+    llm=your_llm,
+    # ... other components
+)
+```
+
+### Using LocalDetectionProcessor (On-Device)
+
+If you are running on your own infrastructure or using a service like Digital Ocean's Gradient AI GPUs, you can use the `LocalDetectionProcessor` which downloads the model from HuggingFace and runs on device. By default it will use CUDA for best performance. Performance will vary depending on your specific hardware configuration.
+
+**Note:** The moondream3-preview model is gated and requires HuggingFace authentication:
+- Request access at https://huggingface.co/moondream/moondream3-preview
+- Set `HF_TOKEN` environment variable: `export HF_TOKEN=your_token_here`
+- Or run: `huggingface-cli login`
+
+```python
+from vision_agents.plugins import moondream
+from vision_agents.core import Agent
+
+# Create a local processor (no API key needed)
+processor = moondream.LocalDetectionProcessor(
+    detect_objects=["person", "car", "dog"],
+    conf_threshold=0.3,
+    device="cuda",  # Auto-detects CUDA, MPS, or CPU
     fps=30
 )
 
@@ -58,38 +95,29 @@ print(state["last_image"])  # PIL Image for vision models
 
 ## Configuration
 
-### Parameters
+### CloudDetectionProcessor Parameters
 
 - `api_key`: str - API key for Moondream Cloud API. If not provided, will attempt to read from `MOONDREAM_API_KEY` environment variable.
 - `detect_objects`: str | List[str] - Object(s) to detect using zero-shot detection. Can be any object name like "person", "car", "basketball". Default: `"person"`
 - `conf_threshold`: float - Confidence threshold for detections (default: 0.3)
 - `fps`: int - Frame processing rate (default: 30)
 - `interval`: int - Processing interval in seconds (default: 0)
-- `max_workers`: int - Thread pool size for CPU-intensive operations (default: 4)
+- `max_workers`: int - Thread pool size for CPU-intensive operations (default: 10)
 
-## LLM Integration
+**Rate Limits:** By default, the Moondream Cloud API has a 2rps (requests per second) rate limit. Contact the Moondream team to request a higher limit.
 
-The processor exposes visual understanding to LLMs via the `state()` method:
+### LocalDetectionProcessor Parameters
 
-```python
-processor = moondream.CloudDetectionProcessor(
-    api_key="your-api-key",
-    detect_objects=["person", "car", "dog"]
-)
+- `detect_objects`: str | List[str] - Object(s) to detect using zero-shot detection. Can be any object name like "person", "car", "basketball". Default: `"person"`
+- `conf_threshold`: float - Confidence threshold for detections (default: 0.3)
+- `fps`: int - Frame processing rate (default: 30)
+- `interval`: int - Processing interval in seconds (default: 0)
+- `max_workers`: int - Thread pool size for CPU-intensive operations (default: 10)
+- `device`: str - Device to run inference on ('cuda', 'mps', or 'cpu'). Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU. Default: `None` (auto-detect)
+- `model_name`: str - Hugging Face model identifier (default: "moondream/moondream3-preview")
+- `options`: AgentOptions - Model directory configuration. If not provided, uses default which defaults to tempfile.gettempdir()
 
-# After processing frames...
-state = processor.state()
-
-# Available state fields:
-# - last_frame_timestamp: float - When the frame was processed
-# - last_image: PIL.Image - For vision-capable LLMs
-# - detections_summary: str - Human-readable summary (e.g., "Detected: 2 persons, 1 car")
-# - detections_count: int - Total number of objects detected
-
-# Use in conversation
-print(f"Objects detected: {state['detections_summary']}")
-print(f"Total objects: {state['detections_count']}")
-```
+**Performance:** Performance will vary depending on your hardware configuration. CUDA is recommended for best performance on NVIDIA GPUs. The model will be downloaded from HuggingFace on first use.
 
 ## Video Publishing
 
@@ -101,37 +129,11 @@ processor = moondream.CloudDetectionProcessor(
     detect_objects=["person", "car"]
 )
 
-# Get video track for publishing
-video_track = processor.publish_video_track()
-
 # The track will show:
 # - Green bounding boxes around detected objects
 # - Labels with confidence scores
 # - Real-time annotation overlay
 ```
-
-## Moondream 3 Performance
-
-Moondream 3 is a mixture-of-experts vision language model with state-of-the-art performance:
-
-### Model Stats
-- **9B total params, 2B active params** - Fast inference with large capacity
-- **32k context window** - Process large images and long sequences
-- **Native grounded reasoning** - Precise object localization
-
-### Benchmark Results
-
-| Task | Moondream 3 | GPT 5 | Gemini 2.5-Flash | Claude 4 Sonnet |
-|------|-------------|-------|------------------|-----------------|
-| **Object Detection** | | | | |
-| refcocog | **88.6** | 49.8 | 75.1 | 26.2 |
-| refcoco+ | **81.8** | 46.3 | 70.2 | 23.4 |
-| refcoco | **91.1** | 57.2 | 75.8 | 30.1 |
-| **Counting** | | | | |
-| CountbenchQA | **93.2** | 89.3 | 81.2 | 90.1 |
-| **Document Understanding** | | | | |
-| ChartQA | **86.6** | 85* | 79.5 | 74.3* |
-| DocVQA | 88.3 | 89* | **94.2** | 89.5* |
 
 ## Testing
 
@@ -151,11 +153,15 @@ pytest plugins/moondream/tests/ -k "state" -v
 
 ### Required
 - `vision-agents` - Core framework
-- `moondream` - Moondream SDK for cloud API
+- `moondream` - Moondream SDK for cloud API (CloudDetectionProcessor only)
 - `numpy>=2.0.0` - Array operations
 - `pillow>=10.0.0` - Image processing
 - `opencv-python>=4.8.0` - Video annotation
 - `aiortc` - WebRTC support
+
+### LocalDetectionProcessor Additional Dependencies
+- `torch` - PyTorch for model inference
+- `transformers` - HuggingFace transformers library for model loading
 
 ## Links
 
