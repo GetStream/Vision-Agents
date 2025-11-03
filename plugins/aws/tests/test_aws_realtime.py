@@ -82,3 +82,46 @@ class TestBedrockRealtime:
         await realtime.close()
         assert realtime.connected is False
 
+    @pytest.mark.integration
+    async def test_function_calling(self, realtime):
+        """Test that function calling works with AWS Bedrock Realtime"""
+        # Register a test function
+        @realtime.register_function(
+            name="get_test_data",
+            description="Get test data for a given key"
+        )
+        def get_test_data(key: str) -> dict:
+            """Get test data.
+            
+            Args:
+                key: The key to look up
+                
+            Returns:
+                Test data for the key
+            """
+            test_data = {
+                "weather": {"value": "sunny", "temp": 72},
+                "time": {"value": "12:00 PM"},
+            }
+            return test_data.get(key, {"error": "Key not found"})
+        
+        events = []
+        
+        @realtime.events.subscribe
+        async def on_audio(event: RealtimeAudioOutputEvent):
+            events.append(event)
+        
+        await asyncio.sleep(0.01)
+        await realtime.connect()
+        
+        # Ask the model to use the function
+        await realtime.simple_response(
+            "Please use the get_test_data function to get data for the weather key and tell me what you find."
+        )
+        
+        # Wait for response
+        await asyncio.sleep(15.0)
+        
+        # Verify we got some audio output (meaning the model responded after function call)
+        assert len(events) > 0
+

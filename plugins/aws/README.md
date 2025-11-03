@@ -1,6 +1,6 @@
 # AWS Plugin for Vision Agents
 
-AWS (Bedrock) LLM integration for Vision Agents framework with support for both standard and realtime interactions. Includes AWS Polly TTS.
+AWS (Bedrock) LLM integration for Vision Agents framework with support for both standard and realtime interactions.
 
 ## Installation
 
@@ -20,7 +20,7 @@ agent = Agent(
     agent_user=User(name="Friendly AI"),
     instructions="Be nice to the user",
     llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
-    tts=aws.TTS(), # using AWS Polly
+    tts=cartesia.TTS(),
     stt=deepgram.STT(),
     turn_detection=smart_turn.TurnDetection(buffer_duration=2.0, confidence_threshold=0.5),
 )
@@ -28,9 +28,11 @@ agent = Agent(
 
 The full example is available in example/aws_qwen_example.py
 
-Nova sonic audio realtime STS is also supported:
+### Realtime Audio Usage
 
-```python
+Nova Sonic audio realtime STS is also supported:
+
+```python    
 agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Story Teller AI"),
@@ -39,8 +41,61 @@ agent = Agent(
 )
 ```
 
-### Polly TTS Usage
+## Function Calling
 
+### Standard LLM (aws.LLM)
+
+The standard LLM implementation **fully supports** function calling. Register functions using the `@llm.register_function` decorator:
+
+```python
+from vision_agents.plugins import aws
+
+llm = aws.LLM(
+    model="qwen.qwen3-32b-v1:0",
+    region_name="us-east-1"
+)
+
+@llm.register_function(
+    name="get_weather",
+    description="Get the current weather for a given city"
+)
+def get_weather(city: str) -> dict:
+    """Get weather information for a city."""
+    return {
+        "city": city,
+        "temperature": 72,
+        "condition": "Sunny"
+    }
+```
+
+### Realtime (aws.Realtime)
+
+The Realtime implementation **fully supports** function calling with AWS Nova Sonic. Register functions using the `@llm.register_function` decorator:
+
+```python
+from vision_agents.plugins import aws
+
+llm = aws.Realtime(
+    model="amazon.nova-sonic-v1:0",
+    region_name="us-east-1"
+)
+
+@llm.register_function(
+    name="get_weather",
+    description="Get the current weather for a given city"
+)
+def get_weather(city: str) -> dict:
+    """Get weather information for a city."""
+    return {
+        "city": city,
+        "temperature": 72,
+        "condition": "Sunny"
+    }
+
+# The function will be automatically called when the model decides to use it
+```
+
+See `example/aws_realtime_function_calling_example.py` for a complete example.
 
 ## Running the examples
 
@@ -53,7 +108,6 @@ STREAM_API_SECRET=your_stream_api_secret_here
 AWS_BEARER_TOKEN_BEDROCK=
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
-AWS_REGION=us-east-1
 
 FAL_KEY=
 CARTESIA_API_KEY=
