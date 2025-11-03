@@ -94,18 +94,38 @@ class HeyGenVideoTrack(VideoStreamTrack):
             logger.error(f"Fatal error in frame receiving: {e}")
 
     def _resize_frame(self, frame: av.VideoFrame) -> av.VideoFrame:
-        """Resize a video frame to match the track dimensions.
+        """Resize a video frame to match the track dimensions while maintaining aspect ratio.
         
         Args:
             frame: Input video frame.
             
         Returns:
-            Resized video frame.
+            Resized video frame with letterboxing if needed.
         """
         try:
             img = frame.to_image()
-            resized = img.resize((self.width, self.height), Image.LANCZOS)
-            return av.VideoFrame.from_image(resized)
+            
+            # Calculate scaling to maintain aspect ratio
+            src_width, src_height = img.size
+            target_width, target_height = self.width, self.height
+            
+            # Calculate scale factor (fit within target dimensions)
+            scale = min(target_width / src_width, target_height / src_height)
+            new_width = int(src_width * scale)
+            new_height = int(src_height * scale)
+            
+            # Resize with aspect ratio maintained
+            resized = img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Create black background at target resolution
+            result = Image.new('RGB', (target_width, target_height), (0, 0, 0))
+            
+            # Paste resized image centered
+            x_offset = (target_width - new_width) // 2
+            y_offset = (target_height - new_height) // 2
+            result.paste(resized, (x_offset, y_offset))
+            
+            return av.VideoFrame.from_image(result)
         
         except Exception as e:
             logger.error(f"Error resizing frame: {e}")
