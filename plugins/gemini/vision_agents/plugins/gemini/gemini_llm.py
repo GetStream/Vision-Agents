@@ -2,7 +2,6 @@ import asyncio
 import uuid
 from typing import Optional, List, TYPE_CHECKING, Any, Dict
 
-from google import genai
 from google.genai.client import AsyncClient, Client
 from google.genai import types
 from google.genai.types import GenerateContentResponse, GenerateContentConfig
