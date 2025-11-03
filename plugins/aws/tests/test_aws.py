@@ -5,6 +5,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 
+from conftest import skip_blockbuster
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.agents.conversation import Message
 from vision_agents.core.llm.events import LLMResponseChunkEvent
@@ -13,6 +14,7 @@ from vision_agents.plugins.aws.aws_llm import BedrockLLM
 load_dotenv()
 
 
+@skip_blockbuster
 class TestBedrockLLM:
     """Test suite for BedrockLLM class with real API calls."""
 
