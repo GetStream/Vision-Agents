@@ -26,7 +26,7 @@ uv add vision-agents-plugins-moondream
 
 ### Using CloudDetectionProcessor (Hosted)
 
-The `CloudDetectionProcessor` uses Moondream's hosted API. By default it has a 2rps (requests per second) rate limit and requires an API key. The rate limit can be adjusted by contacting the Moondream team to request a higher limit.
+The `CloudDetectionProcessor` uses Moondream's hosted API. By default it has a 2 RPS (requests per second) rate limit and requires an API key. The rate limit can be adjusted by contacting the Moondream team to request a higher limit.
 
 ```python
 from vision_agents.plugins import moondream
