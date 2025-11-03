@@ -19,6 +19,7 @@ from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
 )
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.plugins.moondream.moondream_utils import parse_detection_bbox, annotate_detections
 from vision_agents.plugins.moondream.moondream_video_track import MoondreamVideoTrack
 
 logger = logging.getLogger(__name__)
@@ -61,8 +62,6 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         device: Optional[str] = None,
         model_name: str = "moondream/moondream3-preview",
         options: Optional[AgentOptions] = None,
-        *args,
-        **kwargs,
     ):
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
         
@@ -303,7 +302,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 # Model returns: {"objects": [{"x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}, ...]}
                 if "objects" in result:
                     for obj in result["objects"]:
-                        detection = self._parse_detection_bbox(obj, object_type)
+                        detection = parse_detection_bbox(obj, object_type)
                         if detection:
                             all_detections.append(detection)
                         
@@ -313,125 +312,33 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         
         logger.debug(f"🔍 Model returned {len(all_detections)} objects across {len(self.detect_objects)} types")
         return all_detections
-    
-    def _parse_detection_bbox(self, obj: Dict, object_type: str) -> Optional[Dict]:
-        confidence = obj.get("confidence", 1.0)
-        
-        # Filter by confidence threshold
-        if confidence < self.conf_threshold:
-            return None
-        
-        bbox = [
-            obj.get("x_min", 0),
-            obj.get("y_min", 0),
-            obj.get("x_max", 0),
-            obj.get("y_max", 0)
-        ]
-        
-        return {
-            "label": object_type,
-            "bbox": bbox,
-            "confidence": confidence
-        }
-    
-    def _normalize_bbox_coordinates(self, bbox: List[float], width: int, height: int) -> tuple:
-        if len(bbox) != 4:
-            return (0, 0, 0, 0)
-        
-        x1, y1, x2, y2 = bbox
-        
-        # Check if normalized coordinates (between 0 and 1)
-        if x1 <= 1.0 and y1 <= 1.0 and x2 <= 1.0 and y2 <= 1.0:
-            # Convert to pixel coordinates
-            return (int(x1 * width), int(y1 * height), int(x2 * width), int(y2 * height))
-        else:
-            # Already pixel coordinates
-            return (int(x1), int(y1), int(x2), int(y2))
-    
+
     async def _process_and_add_frame(self, frame: av.VideoFrame):
         try:
             # Convert to numpy array
             frame_array = frame.to_ndarray(format="rgb24")
-            
+
             # Run inference
             results = await self._run_inference(frame_array)
-            
+
             # Store results for state() method and LLM access
             self._last_results = results
             self._last_frame_time = asyncio.get_event_loop().time()
             self._last_frame_pil = Image.fromarray(frame_array)
-            
+
             # Annotate frame with detections
             if results.get("detections"):
-                frame_array = self._annotate_detections(frame_array, results)
-            
+                frame_array = annotate_detections(frame_array, results)
+
             # Convert back to av.VideoFrame and publish
             processed_frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
             await self._video_track.add_frame(processed_frame)
-            
+
         except Exception as e:
             logger.exception(f"❌ Frame processing failed: {e}")
             # Pass through original frame on error
             await self._video_track.add_frame(frame)
-    
-    def _annotate_detections(self, frame_array: np.ndarray, results: Dict[str, Any]) -> np.ndarray:
-        annotated = frame_array.copy()
-        
-        detections = results.get("detections", [])
-        if not detections:
-            return annotated
-        
-        height, width = frame_array.shape[:2]
-        
-        # Pre-calculate baseline text metrics once per frame for efficiency
-        sample_text = "object 0.00"  # Representative text for baseline calculation
-        (_, text_height), baseline = cv2.getTextSize(
-            sample_text, self._font, self._font_scale, self._font_thickness
-        )
-        
-        for detection in detections:
-            # Parse bounding box and normalize to pixel coordinates
-            bbox = detection.get("bbox", [])
-            x1, y1, x2, y2 = self._normalize_bbox_coordinates(bbox, width, height)
-            
-            # Skip invalid bounding boxes
-            if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
-                continue
-            
-            # Get label and confidence
-            label = detection.get("label", "object")
-            conf = detection.get("confidence", 0.0)
-            
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), self._bbox_color, 2)
-            
-            # Draw label background
-            label_text = f"{label} {conf:.2f}"
-            # Calculate text width for this specific label (varies by content)
-            (text_width, _), _ = cv2.getTextSize(
-                label_text, self._font, self._font_scale, self._font_thickness
-            )
-            cv2.rectangle(
-                annotated,
-                (x1, y1 - text_height - baseline - 5),
-                (x1 + text_width, y1),
-                self._bbox_color,
-                -1
-            )
-            
-            # Draw label text using cached parameters
-            cv2.putText(
-                annotated,
-                label_text,
-                (x1, y1 - baseline - 5),
-                self._font,
-                self._font_scale,
-                self._text_color,
-                self._font_thickness
-            )
-        
-        return annotated
 
-    
     def close(self):
         """Clean up resources."""
         self._shutdown = True
