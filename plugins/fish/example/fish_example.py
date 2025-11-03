@@ -35,7 +35,7 @@ async def start_agent() -> None:
         tts=fish.TTS(),  # Uses Fish Audio for text-to-speech
         stt=fish.STT(),  # Uses Fish Audio for speech-to-text
         llm=gemini.LLM("gemini-2.0-flash"),
-        turn_detection=smart_turn.TurnDetection(buffer_duration=2.0, confidence_threshold=0.5),
+        turn_detection=smart_turn.TurnDetection(buffer_in_seconds=2.0, confidence_threshold=0.5),
     )
 
     await agent.create_user()

@@ -1,7 +1,4 @@
-from .turn_detection import TurnDetection
-
-# Re-export under the new namespace for convenience
-__path__ = __import__("pkgutil").extend_path(__path__, __name__)
+from .smart_turn_detection import SmartTurnDetection as TurnDetection
 
 __all__ = ["TurnDetection"]
 

@@ -4,7 +4,7 @@ from typing import AsyncIterator, Iterator, Optional
 
 from fish_audio_sdk import Session, TTSRequest
 from vision_agents.core import tts
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ class TTS(tts.TTS):
         # Stream audio from Fish Audio; let PcmData normalize response types
         stream = self.client.tts.awaitable(tts_request)
         return PcmData.from_response(
-            stream, sample_rate=16000, channels=1, format="s16"
+            stream, sample_rate=16000, channels=1, format=AudioFormat.S16
         )
 
     async def stop_audio(self) -> None:

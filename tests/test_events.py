@@ -82,7 +82,7 @@ async def test_subscribe_with_multiple_events_as_one_processes():
         value += 1
 
     manager.send(ValidEvent(field=1))
-    manager.send(AnotherEvent(value=2))
+    manager.send(AnotherEvent(value="2"))
     await manager.wait()
 
     assert value == 2
@@ -154,7 +154,7 @@ async def test_merge_managers_events_processed_in_one():
     manager2.register(AnotherEvent)
     
     # Set up handlers in each manager
-    all_events_processed = []
+    all_events_processed: list[tuple[str, ValidEvent | AnotherEvent]] = []
     
     @manager1.subscribe
     async def manager1_handler(event: ValidEvent):
@@ -175,8 +175,10 @@ async def test_merge_managers_events_processed_in_one():
     # Verify events were processed in their original managers
     assert len(all_events_processed) == 2
     assert all_events_processed[0][0] == "manager1"
+    assert isinstance(all_events_processed[0][1], ValidEvent)
     assert all_events_processed[0][1].field == 1
     assert all_events_processed[1][0] == "manager2"
+    assert isinstance(all_events_processed[1][1], AnotherEvent)
     assert all_events_processed[1][1].value == "test"
     
     # Clear the processed events list
@@ -200,8 +202,10 @@ async def test_merge_managers_events_processed_in_one():
     assert len(all_events_processed) == 2
     # Both events should be processed by manager1's task
     assert all_events_processed[0][0] == "manager1"  # ValidEvent
+    assert isinstance(all_events_processed[0][1], ValidEvent)
     assert all_events_processed[0][1].field == 2
     assert all_events_processed[1][0] == "manager2"  # AnotherEvent (handler from manager2)
+    assert isinstance(all_events_processed[1][1], AnotherEvent)
     assert all_events_processed[1][1].value == "merged"
     
     # Verify that manager2 can still send events but they go to manager1's queue
@@ -213,6 +217,7 @@ async def test_merge_managers_events_processed_in_one():
     # The event from manager2 should be processed by manager1's task
     assert len(all_events_processed) == 1
     assert all_events_processed[0][0] == "manager2"  # Handler from manager2
+    assert isinstance(all_events_processed[0][1], AnotherEvent)
     assert all_events_processed[0][1].value == "from_manager2"
 
 
@@ -305,6 +310,7 @@ async def test_protobuf_events_with_base_event():
     assert received_audio_events[0].user_id == 'user123'
     assert received_audio_events[0].session_id == 'session123'
     assert received_audio_events[0].is_speaking is True
+    assert received_audio_events[0].level is not None
     assert abs(received_audio_events[0].level - 0.85) < 0.01
     assert hasattr(received_audio_events[0], 'event_id')
     assert hasattr(received_audio_events[0], 'timestamp')
@@ -318,6 +324,7 @@ async def test_protobuf_events_with_base_event():
     
     assert len(received_audio_events) == 1
     assert received_audio_events[0].user_id == 'user456'
+    assert received_audio_events[0].level is not None
     assert abs(received_audio_events[0].level - 0.95) < 0.01
     assert received_audio_events[0].is_speaking is False
     assert hasattr(received_audio_events[0], 'event_id')
@@ -348,3 +355,60 @@ async def test_protobuf_events_with_base_event():
     assert received_participant_events[0].call_cid == "call123"
     assert received_participant_events[0].participant is not None
     assert hasattr(received_participant_events[0], 'event_id')
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_track_published_event_with_participant_property():
+    """Test that TrackPublishedEvent correctly handles participant property override."""
+    from vision_agents.core.events.manager import EventManager
+    from vision_agents.core.edge.sfu_events import TrackPublishedEvent, TrackUnpublishedEvent
+    from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
+    from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
+    
+    manager = EventManager()
+    
+    # Register events that override participant field with property
+    manager.register(TrackPublishedEvent)
+    manager.register(TrackUnpublishedEvent)
+    
+    # Test TrackPublishedEvent
+    participant = models_pb2.Participant(user_id="user123", session_id="session456")
+    proto_published = events_pb2.TrackPublished(
+        user_id="user123",
+        participant=participant
+    )
+    
+    # This should NOT raise "AttributeError: property 'participant' of 'TrackPublishedEvent' object has no setter"
+    TrackPublishedEvent.from_proto(proto_published)
+    
+    received_events = []
+    
+    @manager.subscribe
+    async def handle_published(event: TrackPublishedEvent):
+        received_events.append(event)
+    
+    # Send raw protobuf message (auto-wrapped by manager)
+    manager.send(proto_published)
+    await manager.wait()
+    
+    assert len(received_events) == 1
+    assert received_events[0].user_id == "user123"
+    # Verify participant property returns correct value from protobuf payload
+    assert received_events[0].participant is not None
+    assert received_events[0].participant.user_id == "user123"
+    assert received_events[0].participant.session_id == "session456"
+    assert hasattr(received_events[0], 'event_id')
+    
+    # Test TrackUnpublishedEvent
+    proto_unpublished = events_pb2.TrackUnpublished(
+        user_id="user456",
+        participant=participant,
+        cause=1
+    )
+    
+    unpublished_event = TrackUnpublishedEvent.from_proto(proto_unpublished)
+    assert unpublished_event.user_id == "user456"
+    assert unpublished_event.participant is not None
+    assert unpublished_event.participant.user_id == "user123"
+    assert unpublished_event.cause == 1

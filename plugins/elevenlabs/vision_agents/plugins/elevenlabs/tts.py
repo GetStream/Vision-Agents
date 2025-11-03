@@ -4,7 +4,9 @@ from typing import AsyncIterator, Iterator, Optional
 
 from elevenlabs.client import AsyncElevenLabs
 from vision_agents.core import tts
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc.track_util import PcmData, AudioFormat
+
+logger = logging.getLogger(__name__)
 
 
 class TTS(tts.TTS):
@@ -58,7 +60,7 @@ class TTS(tts.TTS):
         )
 
         return PcmData.from_response(
-            audio_stream, sample_rate=16000, channels=1, format="s16"
+            audio_stream, sample_rate=16000, channels=1, format=AudioFormat.S16
         )
 
     async def stop_audio(self) -> None:
@@ -69,4 +71,4 @@ class TTS(tts.TTS):
         Returns:
             None
         """
-        logging.info("🎤 ElevenLabs TTS stop requested (no-op)")
+        logger.info("🎤 ElevenLabs TTS stop requested (no-op)")

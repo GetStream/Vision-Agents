@@ -44,7 +44,7 @@ class TestBedrockLLM:
         return llm
 
     @pytest.mark.asyncio
-    async def test_message(self, llm: BedrockLLM):
+    async def test_message(self):
         messages = BedrockLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
         message = messages[0]
@@ -52,7 +52,7 @@ class TestBedrockLLM:
         assert message.content == "say hi"
 
     @pytest.mark.asyncio
-    async def test_advanced_message(self, llm: BedrockLLM):
+    async def test_advanced_message(self):
         advanced = {
             "role": "user",
             "content": [{"text": "Explain quantum entanglement in simple terms."}],

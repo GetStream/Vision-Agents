@@ -8,10 +8,15 @@ from ..mcp.tool_converter import MCPToolConverter
 
 class MCPManager:
     """Manages MCP server connections and tool registration for agents."""
-    
-    def __init__(self, mcp_servers: List[MCPBaseServer], llm, logger: logging.Logger):
+
+    def __init__(
+        self,
+        mcp_servers: List[MCPBaseServer],
+        llm,
+        logger: logging.Logger | logging.LoggerAdapter,
+    ):
         """Initialize the MCP manager.
-        
+
         Args:
             mcp_servers: List of MCP servers to manage
             llm: LLM instance for tool registration
@@ -20,7 +25,7 @@ class MCPManager:
         self.mcp_servers = mcp_servers
         self.llm = llm
         self.logger = logger
-        
+
     async def connect_all(self):
         """Connect to all configured MCP servers and register their tools."""
         if not self.mcp_servers:
@@ -89,12 +94,12 @@ class MCPManager:
         self, server_index: int, tool_name: str, arguments: Dict[str, Any]
     ) -> Any:
         """Call a tool on a specific MCP server.
-        
+
         Args:
             server_index: Index of the MCP server in the mcp_servers list
             tool_name: Name of the tool to call
             arguments: Arguments to pass to the tool
-            
+
         Returns:
             The result of the tool call
         """

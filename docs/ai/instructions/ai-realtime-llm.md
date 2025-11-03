@@ -15,14 +15,14 @@ class MyRealtime(realtime.Realtime):
         super().__init__()
         self.model = model
         self.client = client
-        
+
     async def connect(self):
         # create the websocket or webrtc connection to the realtime LLM
         pass
-    
+
     async def _handle_events(self):
         # handle the events from the connect method
-        
+
         # when receiving audio do this
         audio_event = RealtimeAudioOutputEvent(
             plugin_name="gemini",
@@ -32,26 +32,26 @@ class MyRealtime(realtime.Realtime):
         self.events.send(audio_event)
 
         await self.output_track.write(audio_content)
-        
+
         # for transcriptions...
         # TODO document this
         pass
-    
+
     async def close(self):
         pass
-        
+
     # native method wrapped. wrap the native method, every llm has its own name for this
     # openai calls it create response, anthropic create message. so the name depends on your llm
     async def mynativemethod(self, *args, **kwargs):
-        
+
         # some details to get right here...
         # ensure conversation history is maintained. typically by passing it ie:
         enhanced_instructions = self._build_enhanced_instructions()
         if enhanced_instructions:
             kwargs["system"] = [{"text": enhanced_instructions}]
-            
+
         response_iterator = await self.client.mynativemethod(self, *args, **kwargs)
-        
+
         # while receiving streaming do this
         total_text = ""
         for chunk in response_iterator:
@@ -64,7 +64,7 @@ class MyRealtime(realtime.Realtime):
                     delta=chunk.text,
                 ))
             total_text += chunk.text
-            
+
         llm_response = LLMResponseEvent(response_iterator, total_text)
         # and when completed
         self.events.send(LLMResponseCompletedEvent(
@@ -82,7 +82,7 @@ class MyRealtime(realtime.Realtime):
         # call the LLM with the given text
         # be sure to use the streaming version
         self.mynativemethod(...)
-    
+
     async def simple_audio_response(self, pcm: PcmData):
         # respond to this audio
         pass
@@ -102,3 +102,7 @@ If you need more examples look in
 
 - gemini_llm.py
 - aws_llm.py (AWS Bedrock implementation)
+
+## PCM / Audio management
+
+Use `PcmData` and other utils available from the `getstream.video.rtc.track_util` module. Do not write code that directly manipulates PCM, use the audio utilities instead.

@@ -3,19 +3,21 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vision-agents-plugins-moonshine"
+name = "vision-agents-plugins-vogent"
 dynamic = ["version"]
-description = "Moonshine STT integration for Vision Agents"
+description = "Vogent turn keeping plugin for Vision Agents"
 readme = "README.md"
-keywords = ["moonshine", "STT", "speech-to-text", "transcription", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "onnxruntime>=1.22.0",
-    "numpy>=2.2.6,<2.3",
-    "soundfile>=0.13.1",
+    "vogent-turn>=0.1.0",
+    "faster-whisper>=1.0.0",
+    "httpx>=0.27.0",
+    "onnxruntime>=1.16.0",
 ]
+
+
 
 [project.urls]
 Documentation = "https://visionagents.ai/"
@@ -27,19 +29,19 @@ source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = [".", "vision_agents"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/vision_agents"]
 
-[tool.hatch.metadata]
-allow-direct-references = true
-
 [tool.uv.sources]
 vision-agents = { workspace = true }
+vision-agents-plugins-deepgram = { workspace = true }
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
+    "vision-agents-plugins-deepgram",
 ]
+

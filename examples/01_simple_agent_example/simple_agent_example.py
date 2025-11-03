@@ -3,7 +3,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import cartesia, deepgram, getstream, smart_turn, gemini
+from vision_agents.plugins import cartesia, deepgram, getstream, gemini, vogent
 
 load_dotenv()
 
@@ -22,10 +22,7 @@ async def start_agent() -> None:
         llm=llm,
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
-        turn_detection=smart_turn.TurnDetection(
-            buffer_duration=2.0, confidence_threshold=0.5
-        ),  # Enable turn detection with FAL/ Smart turn
-        # vad=silero.VAD(),
+        turn_detection=vogent.TurnDetection(),
         # realtime version (vad, tts and stt not needed)
         # llm=openai.Realtime()
     )
@@ -60,5 +57,32 @@ async def start_agent() -> None:
         await agent.finish()
 
 
+def setup_telemetry():
+    import atexit
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+    resource = Resource.create(
+        {
+            "service.name": "agents",
+        }
+    )
+    tp = TracerProvider(resource=resource)
+    exporter = OTLPSpanExporter(endpoint="localhost:4317", insecure=True)
+
+    tp.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(tp)
+
+    def _flush_and_shutdown():
+        tp.force_flush()
+        tp.shutdown()
+
+    atexit.register(_flush_and_shutdown)
+
+
 if __name__ == "__main__":
+    # setup_telemetry()
     asyncio.run(start_agent())

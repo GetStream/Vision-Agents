@@ -1,10 +1,16 @@
+import logging
 import os
 import tempfile
+
 import numpy as np
 import av
+import pytest
+
 from vision_agents.core.utils.utils import parse_instructions, Instructions
+from getstream.video.rtc.track_util import AudioFormat
 from vision_agents.core.utils.video_utils import ensure_even_dimensions
 from vision_agents.core.edge.types import PcmData
+from vision_agents.core.utils.logging import configure_default_logging
 
 
 class TestParseInstructions:
@@ -336,7 +342,9 @@ class TestPcmDataMethods:
         test_samples = np.random.randint(-32768, 32767, 16000, dtype=np.int16)
         audio_bytes = test_samples.tobytes()
 
-        pcm_data = PcmData.from_bytes(audio_bytes, sample_rate=16000, format="s16")
+        pcm_data = PcmData.from_bytes(
+            audio_bytes, sample_rate=16000, format=AudioFormat.S16
+        )
 
         assert pcm_data.sample_rate == 16000
         assert pcm_data.format == "s16"
@@ -346,7 +354,9 @@ class TestPcmDataMethods:
     def test_pcm_data_resample_same_rate(self):
         """Test resampling when source and target rates are the same."""
         test_samples = np.random.randint(-32768, 32767, 16000, dtype=np.int16)
-        pcm_data = PcmData(samples=test_samples, sample_rate=16000, format="s16")
+        pcm_data = PcmData(
+            samples=test_samples, sample_rate=16000, format=AudioFormat.S16
+        )
 
         resampled = pcm_data.resample(target_sample_rate=16000)
 
@@ -359,7 +369,9 @@ class TestPcmDataMethods:
         """Test resampling from 24kHz to 48kHz (Gemini use case)."""
         # Create test audio data (1 second of 24kHz audio)
         test_samples = np.random.randint(-32768, 32767, 24000, dtype=np.int16)
-        pcm_data = PcmData(samples=test_samples, sample_rate=24000, format="s16")
+        pcm_data = PcmData(
+            samples=test_samples, sample_rate=24000, format=AudioFormat.S16
+        )
 
         resampled = pcm_data.resample(target_sample_rate=48000)
 
@@ -380,7 +392,9 @@ class TestPcmDataMethods:
         """Test resampling from 48kHz to 16kHz."""
         # Create test audio data (1 second of 48kHz audio)
         test_samples = np.random.randint(-32768, 32767, 48000, dtype=np.int16)
-        pcm_data = PcmData(samples=test_samples, sample_rate=48000, format="s16")
+        pcm_data = PcmData(
+            samples=test_samples, sample_rate=48000, format=AudioFormat.S16
+        )
 
         resampled = pcm_data.resample(target_sample_rate=16000)
 
@@ -403,7 +417,7 @@ class TestPcmDataMethods:
         pcm_data = PcmData(
             samples=test_samples,
             sample_rate=16000,
-            format="s16",
+            format=AudioFormat.S16,
             pts=1000,
             dts=950,
             time_base=0.001,
@@ -421,7 +435,9 @@ class TestPcmDataMethods:
         """Test that resampling handles 1D arrays correctly (fixes ndim error)."""
         # Create test audio data (1 second of 24kHz audio) - 1D array
         test_samples = np.random.randint(-32768, 32767, 24000, dtype=np.int16)
-        pcm_data = PcmData(samples=test_samples, sample_rate=24000, format="s16")
+        pcm_data = PcmData(
+            samples=test_samples, sample_rate=24000, format=AudioFormat.S16
+        )
 
         # This should now work without the ndim error
         resampled = pcm_data.resample(target_sample_rate=48000)
@@ -439,7 +455,9 @@ class TestPcmDataMethods:
         """Test that resampling handles 2D arrays correctly."""
         # Create test audio data (1 second of 24kHz audio) - 2D array (channels, samples)
         test_samples = np.random.randint(-32768, 32767, (1, 24000), dtype=np.int16)
-        pcm_data = PcmData(samples=test_samples, sample_rate=24000, format="s16")
+        pcm_data = PcmData(
+            samples=test_samples, sample_rate=24000, format=AudioFormat.S16
+        )
 
         # This should work with 2D arrays too
         resampled = pcm_data.resample(target_sample_rate=48000)
@@ -460,7 +478,9 @@ class TestPcmDataMethods:
         audio_bytes = test_samples.tobytes()
 
         # Chain the methods like in realtime2.py
-        pcm_data = PcmData.from_bytes(audio_bytes, sample_rate=24000, format="s16")
+        pcm_data = PcmData.from_bytes(
+            audio_bytes, sample_rate=24000, format=AudioFormat.S16
+        )
         resampled_pcm = pcm_data.resample(target_sample_rate=48000)
 
         assert pcm_data.sample_rate == 24000
@@ -477,7 +497,9 @@ class TestPcmDataMethods:
         test_samples = np.random.randint(
             -32768, 32767, 1920, dtype=np.int16
         )  # Small chunk like in the error
-        pcm_data = PcmData(samples=test_samples, sample_rate=24000, format="s16")
+        pcm_data = PcmData(
+            samples=test_samples, sample_rate=24000, format=AudioFormat.S16
+        )
 
         # This should work without the array shape error
         resampled = pcm_data.resample(target_sample_rate=48000)
@@ -521,9 +543,69 @@ class TestEnsureEvenDimensions:
         frame = av.VideoFrame(width=1921, height=1081, format="yuv420p")
         frame.pts = 12345
         frame.time_base = Fraction(1, 30)
-        
+
         result = ensure_even_dimensions(frame)
-        
+
         assert result.pts == 12345
         assert result.time_base == Fraction(1, 30)
 
+
+@pytest.fixture()
+def make_logger():
+    """
+    A fixture to get logger and reset its settings back to the original state after the test.
+    """
+    loggers = []
+
+    def factory(name: str):
+        logger_ = logging.getLogger(name)
+        original_level = logger_.level
+        original_handlers = logger_.handlers[:]
+        original_filters = logger_.filters[:]
+        loggers.append((logger_, original_level, original_handlers, original_filters))
+        return logger_
+
+    yield factory
+    for logger, level, handlers, filters in loggers:
+        logger.setLevel(level)
+        logger.handlers = handlers
+        logger.filters = filters
+
+
+class TestLogging:
+    def test_configure_default_logging_configures(self, make_logger):
+        vision_agents_logger = make_logger("vision_agents")
+        getstream_logger = make_logger("getstream")
+
+        some_level = 23
+        assert vision_agents_logger.level != some_level
+        assert getstream_logger.level != some_level
+        configure_default_logging(level=some_level)
+        assert vision_agents_logger.level == some_level
+        assert getstream_logger.level == some_level
+
+    def test_configure_default_logging_handlers_already_configured(self, make_logger):
+        loggers = [make_logger("vision_agents"), make_logger("getstream")]
+        some_level = 23
+        null_handler = logging.NullHandler()
+
+        for logger in loggers:
+            logger.addHandler(null_handler)
+
+        configure_default_logging(level=some_level)
+
+        for logger in loggers:
+            assert logger.level == some_level
+            assert logger.handlers == [null_handler]
+
+    def test_configure_default_logging_level_already_set(self, make_logger):
+        loggers = [make_logger("vision_agents"), make_logger("getstream")]
+        for logger in loggers:
+            logger.setLevel(logging.DEBUG)
+            assert not logger.handlers
+
+        configure_default_logging(level=logging.INFO)
+
+        for logger in loggers:
+            assert logger.level == logging.DEBUG
+            assert logger.handlers
