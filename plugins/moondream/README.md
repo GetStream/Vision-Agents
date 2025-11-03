@@ -13,7 +13,7 @@ uv add vision-agents-plugins-moondream
 ### CloudDetectionProcessor (Recommended for Most Users)
 - **Use when:** You want a simple setup with no infrastructure management
 - **Pros:** No model download, no GPU required, automatic updates
-- **Cons:** Requires API key, 2rps rate limit by default (can be increased)
+- **Cons:** Requires API key, 2 RPS rate limit by default (can be increased)
 - **Best for:** Development, testing, low-to-medium volume applications
 
 ### LocalDetectionProcessor (For Advanced Users)
