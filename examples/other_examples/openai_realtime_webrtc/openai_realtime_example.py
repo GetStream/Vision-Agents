@@ -29,7 +29,7 @@ async def create_agent(**kwargs) -> Agent:
             name="My happy AI friend", id="agent"
         ),  # the user object for the agent (name, image etc)
         instructions=(
-            "You are a voice assistant. Keep your responses short and friendly"
+            "You are a voice assistant. Keep your responses short and friendly. Speak english plz"
         ),
         # Enable video input and set a conservative default frame rate for realtime responsiveness
         llm=openai.Realtime(),

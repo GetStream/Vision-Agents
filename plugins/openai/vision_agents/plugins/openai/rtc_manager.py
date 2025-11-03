@@ -220,7 +220,7 @@ class RTCManager:
         """
         Send a video frame to Gemini using send_realtime_input
         """
-        logger.info(f"Sending video frame: {frame}")
+        logger.debug(f"Sending video frame: {frame}")
         await self._video_to_openai_track.add_frame(frame)
 
     async def start_video_sender(
