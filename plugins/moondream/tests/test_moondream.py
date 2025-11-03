@@ -5,13 +5,14 @@ Unit tests run without API keys.
 Integration tests require MOONDREAM_API_KEY environment variable:
 
     export MOONDREAM_API_KEY="your-key-here"
-    pytest plugins/moondream/tests/ -m integration -v
+    uv run pytest plugins/moondream/tests/ -m integration -v
     
 To run only unit tests (no API key needed):
 
-    pytest plugins/moondream/tests/ -m "not integration" -v
+    uv run pytest plugins/moondream/tests/ -m "not integration" -v
 """
 import os
+import types
 import pytest
 import av
 import numpy as np
@@ -19,9 +20,10 @@ from typing import Dict, Any
 from PIL import Image
 
 from vision_agents.plugins.moondream import (
-    MoondreamProcessor,
+    CloudDetectionProcessor,
     MoondreamVideoTrack,
 )
+from vision_agents.plugins.moondream.moondream_utils import annotate_detections, normalize_bbox_coordinates
 
 
 @pytest.fixture
@@ -38,20 +40,10 @@ def sample_frame(sample_image):
 
 def test_processor_initialization():
     """Test that processor can be initialized with basic config."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     assert processor is not None
     processor.close()
 
-
-def test_processor_state():
-    """Test that processor returns empty state initially."""
-    processor = MoondreamProcessor(api_key="test_key")
-    state = processor.state()
-    assert isinstance(state, dict)
-    processor.close()
-
-
-# Phase 2 Tests: Video Track + Frame Queuing
 
 @pytest.mark.asyncio
 async def test_video_track_frame_queuing(sample_frame):
@@ -67,7 +59,7 @@ async def test_video_track_frame_queuing(sample_frame):
 
 def test_processor_publishes_track():
     """Test that processor publishes a MoondreamVideoTrack."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     track = processor.publish_video_track()
     assert isinstance(track, MoondreamVideoTrack)
     processor.close()
@@ -76,7 +68,7 @@ def test_processor_publishes_track():
 @pytest.mark.asyncio
 async def test_video_track_multiple_frames(sample_image):
     """Test that video track handles multiple frames correctly."""
-    track = MoondreamVideoTrack()
+    track = CloudDetectionProcessor()
     
     # Add multiple frames
     for i in range(5):
@@ -90,12 +82,10 @@ async def test_video_track_multiple_frames(sample_image):
     track.stop()
 
 
-# Phase 3 Tests: Inference Backends
-
 @pytest.mark.asyncio
 async def test_cloud_inference_structure(sample_image):
     """Test that cloud inference returns proper structure."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     
     # Mock the SDK detection call
     def mock_detection_sync(image):
@@ -121,18 +111,16 @@ async def test_run_inference(sample_image):
         return []
     
     # Test inference
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     processor._run_detection_sync = mock_detection_sync
     result = await processor._run_inference(frame_array)
     assert isinstance(result, dict)
     processor.close()
 
 
-# Phase 4 Tests: Frame Processing + Annotation
-
 def test_annotate_detections_with_normalized_coords(sample_image):
     """Test annotation with normalized coordinates."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -143,7 +131,11 @@ def test_annotate_detections_with_normalized_coords(sample_image):
         ]
     }
     
-    annotated = processor._annotate_detections(frame_array, mock_results)
+    # Bind annotate_detections and normalize_bbox_coordinates to processor instance
+    # (functions expect self parameter)
+    processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
+    bound_annotate = types.MethodType(annotate_detections, processor)
+    annotated = bound_annotate(frame_array, mock_results)
     
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
@@ -153,7 +145,7 @@ def test_annotate_detections_with_normalized_coords(sample_image):
 
 def test_annotate_detections_with_pixel_coords(sample_image):
     """Test annotation with pixel coordinates."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -164,7 +156,11 @@ def test_annotate_detections_with_pixel_coords(sample_image):
         ]
     }
     
-    annotated = processor._annotate_detections(frame_array, mock_results)
+    # Bind annotate_detections and normalize_bbox_coordinates to processor instance
+    # (functions expect self parameter)
+    processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
+    bound_annotate = types.MethodType(annotate_detections, processor)
+    annotated = bound_annotate(frame_array, mock_results)
     
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
@@ -174,7 +170,7 @@ def test_annotate_detections_with_pixel_coords(sample_image):
 
 def test_annotate_detections_multiple_objects(sample_image):
     """Test annotation with multiple detections."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
     
@@ -187,7 +183,11 @@ def test_annotate_detections_multiple_objects(sample_image):
         ]
     }
     
-    annotated = processor._annotate_detections(frame_array, mock_results)
+    # Bind annotate_detections and normalize_bbox_coordinates to processor instance
+    # (functions expect self parameter)
+    processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
+    bound_annotate = types.MethodType(annotate_detections, processor)
+    annotated = bound_annotate(frame_array, mock_results)
     
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
@@ -196,12 +196,16 @@ def test_annotate_detections_multiple_objects(sample_image):
 
 def test_annotate_detections_empty_results(sample_image):
     """Test annotation with no detections."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     
     frame_array = np.array(sample_image)
     mock_results: Dict[str, Any] = {"detections": []}
     
-    annotated = processor._annotate_detections(frame_array, mock_results)
+    # Bind annotate_detections and normalize_bbox_coordinates to processor instance
+    # (functions expect self parameter)
+    processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
+    bound_annotate = types.MethodType(annotate_detections, processor)
+    annotated = bound_annotate(frame_array, mock_results)
     
     # Frame should be unchanged
     assert np.array_equal(frame_array, annotated)
@@ -211,7 +215,7 @@ def test_annotate_detections_empty_results(sample_image):
 @pytest.mark.asyncio
 async def test_process_and_add_frame(sample_frame):
     """Test the full frame processing pipeline."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     
     # Mock the run_inference method to return test data
     async def mock_inference(frame_array):
@@ -228,66 +232,12 @@ async def test_process_and_add_frame(sample_frame):
     processor.close()
 
 
-# Phase 6 Tests: State Management + LLM Integration
-
-def test_state_exposes_detection_results():
-    """Test that state() provides detection data for LLM."""
-    processor = MoondreamProcessor(api_key="test_key")
-    
-    # Simulate inference results
-    processor._last_results = {
-        "detections": [{"label": "person", "confidence": 0.95, "bbox": [0.1, 0.1, 0.5, 0.5]}]
-    }
-    processor._last_frame_time = 123.45
-    
-    state = processor.state()
-    assert "detections_summary" in state
-    assert "person" in state["detections_summary"]
-    assert "detections_count" in state
-    assert state["detections_count"] == 1
-    processor.close()
-
-
-def test_state_empty_before_processing():
-    """Test that state is empty before any processing."""
-    processor = MoondreamProcessor(api_key="test_key")
-    state = processor.state()
-    assert state == {}
-    processor.close()
-
-
-def test_summarize_detections():
-    """Test detection summarization for LLM."""
-    processor = MoondreamProcessor(api_key="test_key")
-    
-    detections = [
-        {"label": "person", "confidence": 0.95},
-        {"label": "person", "confidence": 0.88},
-        {"label": "car", "confidence": 0.92},
-    ]
-    
-    summary = processor._summarize_detections(detections)
-    assert "2 persons" in summary
-    assert "1 car" in summary
-    processor.close()
-
-
-def test_summarize_empty_detections():
-    """Test detection summary with no detections."""
-    processor = MoondreamProcessor(api_key="test_key")
-    summary = processor._summarize_detections([])
-    assert summary == "No objects detected"
-    processor.close()
-
-
-# Phase 7 Tests: Live API Integration
-
 @pytest.mark.integration
 @pytest.mark.skipif(not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set")
 @pytest.mark.asyncio
 async def test_live_detection_api():
     """Test live detection API with real Moondream service."""
-    processor = MoondreamProcessor(
+    processor = CloudDetectionProcessor(
         api_key=os.getenv("MOONDREAM_API_KEY"),
         conf_threshold=0.5
     )
@@ -326,7 +276,7 @@ async def test_live_detection_api():
 @pytest.mark.asyncio
 async def test_live_detection_with_annotation():
     """Test that detection results are properly annotated on frames."""
-    processor = MoondreamProcessor(
+    processor = CloudDetectionProcessor(
         api_key=os.getenv("MOONDREAM_API_KEY")
     )
     
@@ -339,7 +289,11 @@ async def test_live_detection_with_annotation():
     
     # If we got detections, test annotation
     if result.get("detections"):
-        annotated = processor._annotate_detections(frame_array, result)
+        # Bind annotate_detections and normalize_bbox_coordinates to processor instance
+        # (functions expect self parameter)
+        processor._normalize_bbox_coordinates = types.MethodType(normalize_bbox_coordinates, processor)
+        bound_annotate = types.MethodType(annotate_detections, processor)
+        annotated = bound_annotate(frame_array, result)
         
         # Verify frame was modified
         assert not np.array_equal(frame_array, annotated)
@@ -356,14 +310,14 @@ def test_missing_api_key(monkeypatch):
     monkeypatch.delenv("MOONDREAM_API_KEY", raising=False)
     
     with pytest.raises(ValueError, match="api_key is required"):
-        MoondreamProcessor(api_key=None)
+        CloudDetectionProcessor(api_key=None)
 
 
 def test_api_key_from_env(monkeypatch):
     """Test that API key is loaded from environment variable."""
     monkeypatch.setenv("MOONDREAM_API_KEY", "test_env_key")
     
-    processor = MoondreamProcessor()
+    processor = CloudDetectionProcessor()
     assert processor.api_key == "test_env_key"
     processor.close()
 
@@ -372,23 +326,21 @@ def test_api_key_explicit_override(monkeypatch):
     """Test that explicit API key overrides environment variable."""
     monkeypatch.setenv("MOONDREAM_API_KEY", "env_key")
     
-    processor = MoondreamProcessor(api_key="explicit_key")
+    processor = CloudDetectionProcessor(api_key="explicit_key")
     assert processor.api_key == "explicit_key"
     processor.close()
 
 
-# Phase 8 Tests: Configurable Detection Objects
-
 def test_detect_objects_default():
     """Test default detect_objects is 'person'."""
-    processor = MoondreamProcessor(api_key="test_key")
+    processor = CloudDetectionProcessor(api_key="test_key")
     assert processor.detect_objects == ["person"]
     processor.close()
 
 
 def test_detect_objects_single_string():
     """Test detect_objects with single string."""
-    processor = MoondreamProcessor(
+    processor = CloudDetectionProcessor(
         api_key="test_key",
         detect_objects="car"
     )
@@ -398,7 +350,7 @@ def test_detect_objects_single_string():
 
 def test_detect_objects_list():
     """Test detect_objects with list."""
-    processor = MoondreamProcessor(
+    processor = CloudDetectionProcessor(
         api_key="test_key",
         detect_objects=["person", "car", "dog"]
     )
@@ -409,7 +361,7 @@ def test_detect_objects_list():
 def test_detect_objects_invalid_type():
     """Test detect_objects with invalid type raises error."""
     with pytest.raises(ValueError, match="detect_objects must be str or list"):
-        MoondreamProcessor(
+        CloudDetectionProcessor(
             api_key="test_key",
             detect_objects=123  # Invalid: not a string or list
         )
@@ -418,7 +370,7 @@ def test_detect_objects_invalid_type():
 def test_detect_objects_invalid_list_contents():
     """Test detect_objects with non-string list items raises error."""
     with pytest.raises(ValueError, match="detect_objects must be str or list"):
-        MoondreamProcessor(
+        CloudDetectionProcessor(
             api_key="test_key",
             detect_objects=["person", 123, "car"]  # Invalid: contains non-string
         )
@@ -429,7 +381,7 @@ def test_detect_objects_invalid_list_contents():
 @pytest.mark.asyncio
 async def test_custom_object_detection():
     """Test detection with custom object type (not 'person')."""
-    processor = MoondreamProcessor(
+    processor = CloudDetectionProcessor(
         api_key=os.getenv("MOONDREAM_API_KEY"),
         detect_objects="car"  # Detect cars instead of persons
     )
@@ -466,7 +418,7 @@ async def test_custom_object_detection():
 @pytest.mark.asyncio
 async def test_multiple_object_detection():
     """Test detection with multiple object types."""
-    processor = MoondreamProcessor(
+    processor = CloudDetectionProcessor(
         api_key=os.getenv("MOONDREAM_API_KEY"),
         detect_objects=["person", "grass", "sky"]  # Multiple types
     )
