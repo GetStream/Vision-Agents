@@ -26,9 +26,12 @@ class TestSmartTurn:
         yield td
 
     async def test_silero_predict(self, mia_audio_16khz):
+        import asyncio
         path = os.path.join(tempfile.gettempdir(), SILERO_ONNX_FILENAME)
         await ensure_model(path, SILERO_ONNX_URL)
-        vad = SileroVAD(path)
+        # Load model file asynchronously to avoid blocking I/O
+        model_bytes = await asyncio.to_thread(open(path, "rb").read)
+        vad = SileroVAD(path, model_bytes)
 
         for pcm_chunk in mia_audio_16khz.chunks(chunk_size=512):
             if len(pcm_chunk.samples) != 512:

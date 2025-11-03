@@ -139,6 +139,12 @@ class TTS(abc.ABC):
     ) -> tuple[int, float]:
         """Emit TTSAudioEvent; return (bytes_len, duration_ms)."""
 
+        # Resample to desired format if needed
+        pcm = pcm.resample(
+            target_sample_rate=self._desired_sample_rate,
+            target_channels=self._desired_channels
+        )
+
         self.events.send(
             TTSAudioEvent(
                 session_id=self.session_id,
