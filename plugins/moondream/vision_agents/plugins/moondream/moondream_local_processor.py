@@ -149,11 +149,19 @@ class MoondreamLocalProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             if torch.cuda.is_available():
                 self.device = "cuda"
             elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                self.device = "mps"
+                # Moondream model has CUDA dependencies that don't work on MPS
+                # Use CPU instead to avoid runtime errors
+                self.device = "cpu"
+                logger.info("⚠️ MPS detected but using CPU (moondream model has CUDA dependencies incompatible with MPS)")
             else:
                 self.device = "cpu"
         else:
-            self.device = device
+            # Override MPS to CPU if explicitly set (moondream doesn't work with MPS)
+            if device == "mps":
+                self.device = "cpu"
+                logger.warning("⚠️ MPS device requested but using CPU instead (moondream model has CUDA dependencies incompatible with MPS)")
+            else:
+                self.device = device
         
         # Initialize state tracking attributes
         self._last_results = {}
@@ -193,8 +201,6 @@ class MoondreamLocalProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         
         # Prepare model asynchronously
         await self._prepare_moondream()
-        
-        await super().start()
     
     async def _prepare_moondream(self):
         """Load the Moondream model from Hugging Face."""
@@ -206,7 +212,7 @@ class MoondreamLocalProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         self.model = await asyncio.to_thread(  # type: ignore[func-returns-value]
             lambda: self._load_model_sync()
         )
-        logger.info("✅ Moondream model loaded and compiled")
+        logger.info("✅ Moondream model loaded")
     
     def _load_model_sync(self):
         """Synchronous model loading function run in thread pool."""
@@ -237,12 +243,8 @@ class MoondreamLocalProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             if self.device == "cuda":
                 # CUDA: Use device_map for efficient multi-GPU support
                 load_kwargs["device_map"] = {"": "cuda"}
-            elif self.device == "mps":
-                # MPS: Don't use device_map (may not support MPS well),
-                # load on CPU then move explicitly to ensure all components are on MPS
-                load_kwargs["device_map"] = "cpu"
             else:
-                # CPU: load directly on CPU
+                # CPU: load directly on CPU (MPS is automatically converted to CPU in __init__)
                 load_kwargs["device_map"] = "cpu"
             
             model = AutoModelForCausalLM.from_pretrained(
@@ -250,35 +252,20 @@ class MoondreamLocalProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 **load_kwargs,
             )
             
-            # Explicitly move model to target device after loading
-            # This ensures all model parameters are on the correct device
-            if self.device == "mps":
-                # For MPS, explicitly move all model components to MPS
-                # This helps avoid device mismatches in internal operations
-                model = model.to(self.device)
-                # Ensure model is in eval mode for inference
-                model.eval()
-                # Synchronize MPS operations
-                if hasattr(torch.backends.mps, "empty_cache"):
-                    torch.backends.mps.empty_cache()
-                logger.info("✅ Model moved to MPS device")
-            elif self.device == "cuda":
-                # CUDA uses device_map, but ensure eval mode
-                model.eval()
+            # Ensure model is in eval mode for inference
+            model.eval()
+            
+            if self.device == "cuda":
+                logger.info("✅ Model loaded on CUDA device")
             else:
-                # CPU: ensure eval mode
-                model.eval()
+                logger.info("✅ Model loaded on CPU device")
             
             # Compile model for fast inference (as per HF documentation)
-            # Skip compilation for MPS as it can cause device mismatch issues
-            if self.device != "mps":
-                try:
-                    model.compile()
-                except Exception as compile_error:
-                    # If compilation fails, log and continue without compilation
-                    logger.warning(f"⚠️ Model compilation failed, continuing without compilation: {compile_error}")
-            else:
-                logger.info("⚠️ Skipping model compilation for MPS device (may cause device mismatch issues)")
+            try:
+                model.compile()
+            except Exception as compile_error:
+                # If compilation fails, log and continue without compilation
+                logger.warning(f"⚠️ Model compilation failed, continuing without compilation: {compile_error}")
             
             return model
         except ImportError as e:
@@ -578,4 +565,5 @@ class MoondreamLocalProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             del self.model
             self.model = None
         logger.info("🛑 Moondream Local Processor closed")
+
 
