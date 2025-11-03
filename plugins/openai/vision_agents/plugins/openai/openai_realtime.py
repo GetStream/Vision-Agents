@@ -262,7 +262,8 @@ class Realtime(realtime.Realtime):
         )
 
     async def _stop_watching_video_track(self) -> None:
-        await self.rtc.stop_video_sender()
+        # Video sender will be stopped when connection closes
+        pass
 
     async def _handle_tool_call_event(self, event: dict) -> None:
         """Handle tool call events from OpenAI realtime.

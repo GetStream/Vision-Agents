@@ -167,20 +167,40 @@ def cli(launcher: "AgentLauncher") -> None:
             logger = logging.getLogger(__name__)
             logger.info("🚀 Launching agent...")
             
-            # Launch agent with warmup
-            agent = await launcher.launch(call_type=call_type, call_id=call_id)
-            logger.info("✅ Agent warmed up and ready")
-            
-            # Join call if join_call function is provided
-            if launcher.join_call:
-                logger.info(f"📞 Joining call: {call_type}/{call_id}")
-                result = launcher.join_call(agent, call_type, call_id)
-                if asyncio.iscoroutine(result):
-                    await result
-            else:
-                logger.warning("No join_call function provided, agent created but not joined to call")
+            try:
+                # Launch agent with warmup
+                agent = await launcher.launch(call_type=call_type, call_id=call_id)
+                logger.info("✅ Agent warmed up and ready")
+                
+                # Join call if join_call function is provided
+                if launcher.join_call:
+                    logger.info(f"📞 Joining call: {call_type}/{call_id}")
+                    result = launcher.join_call(agent, call_type, call_id)
+                    if asyncio.iscoroutine(result):
+                        await result
+                else:
+                    logger.warning("No join_call function provided, agent created but not joined to call")
+            except KeyboardInterrupt:
+                logger.info("🛑 Received interrupt signal, shutting down gracefully...")
+            except Exception as e:
+                logger.error(f"❌ Error running agent: {e}", exc_info=True)
+                raise
         
-        asyncio.run(_run(), debug=debug)
+        try:
+            # Temporarily suppress asyncio error logging during cleanup
+            asyncio_logger = logging.getLogger("asyncio")
+            original_level = asyncio_logger.level
+            
+            asyncio.run(_run(), debug=debug)
+        except KeyboardInterrupt:
+            # Suppress KeyboardInterrupt and asyncio errors during cleanup
+            asyncio_logger.setLevel(logging.CRITICAL)
+            logger = logging.getLogger(__name__)
+            logger.info("👋 Agent shutdown complete")
+        finally:
+            # Restore original logging level
+            if 'asyncio_logger' in locals() and 'original_level' in locals():
+                asyncio_logger.setLevel(original_level)
     
     # Invoke the click command
     run_agent()

@@ -7,9 +7,11 @@ available to all tests in the project, including plugin tests.
 
 import asyncio
 import os
+from typing import Iterator
 
 import numpy as np
 import pytest
+from blockbuster import BlockBuster, blockbuster_ctx
 from dotenv import load_dotenv
 from torchvision.io.video import av
 
@@ -17,9 +19,6 @@ from getstream.video.rtc.track_util import PcmData, AudioFormat
 from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
 
 load_dotenv()
-
-from blockbuster import BlockBuster, blockbuster_ctx
-from typing import Iterator
 
 @pytest.fixture(autouse=True)
 def blockbuster() -> Iterator[BlockBuster]:

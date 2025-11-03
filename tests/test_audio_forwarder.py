@@ -1,7 +1,6 @@
 import asyncio
 
 import numpy as np
-import pytest
 
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 from vision_agents.core.utils.audio_forwarder import AudioForwarder

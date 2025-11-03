@@ -159,4 +159,4 @@ def get_vision_agents_version() -> str:
     Returns:
         Version string, or "unknown" if not available.
     """
-    return _VISION_AGENTS_VERSION
+    return _VISION_AGENTS_VERSION or "unknown"

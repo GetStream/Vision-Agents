@@ -7,7 +7,6 @@ real-time bidirectional audio streaming.
 """
 
 import logging
-from typing import Any, Coroutine
 
 from dotenv import load_dotenv
 

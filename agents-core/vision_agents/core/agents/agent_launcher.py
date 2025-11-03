@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional, TYPE_CHECKING, Callable, Awaitable, Union, Any
+from typing import Optional, TYPE_CHECKING, Callable, Awaitable, Union, cast
 
 if TYPE_CHECKING:
     from .agents import Agent
@@ -62,9 +62,11 @@ class AgentLauncher:
             # Create the agent
             result = self.create_agent(**kwargs)
             if asyncio.iscoroutine(result):
-                self._agent = await result
+                agent: "Agent" = await result
             else:
-                self._agent = result
+                agent = cast("Agent", result)
+            
+            self._agent = agent
             
             logger.info("Warming up agent components...")
             
@@ -72,24 +74,24 @@ class AgentLauncher:
             warmup_tasks = []
             
             # Warmup LLM (including Realtime)
-            if self._agent.llm and hasattr(self._agent.llm, 'warmup'):
-                logger.debug("Warming up LLM: %s", self._agent.llm.__class__.__name__)
-                warmup_tasks.append(self._agent.llm.warmup())
+            if agent.llm and hasattr(agent.llm, 'warmup'):
+                logger.debug("Warming up LLM: %s", agent.llm.__class__.__name__)
+                warmup_tasks.append(agent.llm.warmup())
             
             # Warmup TTS
-            if self._agent.tts and hasattr(self._agent.tts, 'warmup'):
-                logger.debug("Warming up TTS: %s", self._agent.tts.__class__.__name__)
-                warmup_tasks.append(self._agent.tts.warmup())
+            if agent.tts and hasattr(agent.tts, 'warmup'):
+                logger.debug("Warming up TTS: %s", agent.tts.__class__.__name__)
+                warmup_tasks.append(agent.tts.warmup())
             
             # Warmup STT
-            if self._agent.stt and hasattr(self._agent.stt, 'warmup'):
-                logger.debug("Warming up STT: %s", self._agent.stt.__class__.__name__)
-                warmup_tasks.append(self._agent.stt.warmup())
+            if agent.stt and hasattr(agent.stt, 'warmup'):
+                logger.debug("Warming up STT: %s", agent.stt.__class__.__name__)
+                warmup_tasks.append(agent.stt.warmup())
             
             # Warmup turn detection
-            if self._agent.turn_detection and hasattr(self._agent.turn_detection, 'warmup'):
-                logger.debug("Warming up turn detection: %s", self._agent.turn_detection.__class__.__name__)
-                warmup_tasks.append(self._agent.turn_detection.warmup())
+            if agent.turn_detection and hasattr(agent.turn_detection, 'warmup'):
+                logger.debug("Warming up turn detection: %s", agent.turn_detection.__class__.__name__)
+                warmup_tasks.append(agent.turn_detection.warmup())
             
             # Run all warmups in parallel
             if warmup_tasks:
