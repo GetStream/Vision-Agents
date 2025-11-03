@@ -28,7 +28,7 @@ DEFAULT_HEIGHT = 480
 
 
 class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
-    """Performs real-time object detection on video streams using Moondream Cloud API.
+    """Performs real-time object detection on video streams using Moondream Cloud API. By default the Moondream Cloud API has a 2rps second limit however this can be changed by contacting the Moondream team. If you are deploying to your own infrastructure, consider using the LocalProcessor instead.
     
     Args:
         api_key: API key for Moondream Cloud API. If not provided, will attempt to read
@@ -50,14 +50,10 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         fps: int = 30,
         interval: int = 0,
         max_workers: int = 10,
-        *args,
-        **kwargs,
     ):
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
         
-        # Auto-load API key from environment if not provided
         self.api_key = api_key or os.getenv("MOONDREAM_API_KEY")
-        
         self.conf_threshold = conf_threshold
         self.fps = fps
         self.max_workers = max_workers
