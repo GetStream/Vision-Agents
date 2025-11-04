@@ -174,7 +174,7 @@ class BedrockLLM(LLM):
                 while current_calls and rounds < MAX_ROUNDS:
                     # Execute calls concurrently with dedup
                     triples, seen = await self._dedup_and_execute(
-                        cast(List[Dict[str, Any]], current_calls),
+                        cast(List[NormalizedToolCallItem], current_calls),
                         seen=seen,
                         max_concurrency=8,
                         timeout_s=30,
@@ -431,7 +431,7 @@ class BedrockLLM(LLM):
 
             while accumulated_calls and rounds < MAX_ROUNDS:
                 triples, seen = await self._dedup_and_execute(
-                    cast(List[Dict[str, Any]], accumulated_calls),
+                    cast(List[NormalizedToolCallItem], accumulated_calls),
                     seen=seen,
                     max_concurrency=8,
                     timeout_s=30,
