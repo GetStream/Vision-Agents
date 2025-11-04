@@ -4,7 +4,6 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Any
 
-import httpx
 import numpy as np
 from faster_whisper import WhisperModel
 from getstream.video.rtc.track_util import PcmData, AudioFormat
@@ -17,6 +16,7 @@ from vision_agents.core.turn_detection import (
     TurnStartedEvent,
     TurnEndedEvent,
 )
+from vision_agents.core.utils.utils import ensure_model
 
 import logging
 
@@ -507,48 +507,5 @@ class SileroVAD:
 
         # out shape is (1, 1) -> return scalar
         return float(out[0][0])
-
-
-async def ensure_model(path: str, url: str) -> str:
-    """
-    Download a model file asynchronously if it doesn't exist.
-    
-    Args:
-        path: Local path where the model should be saved
-        url: URL to download the model from
-        
-    Returns:
-        The path to the model file
-    """
-    if not os.path.exists(path):
-        model_name = os.path.basename(path)
-        logger.info(f"Downloading {model_name}...")
-        
-        try:
-            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
-                async with client.stream("GET", url) as response:
-                    response.raise_for_status()
-                    
-                    # Write file in chunks to avoid loading entire file in memory
-                    chunks = []
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        chunks.append(chunk)
-                    
-                    # Write all chunks to file in thread to avoid blocking event loop
-                    def write_file():
-                        with open(path, "wb") as f:
-                            for chunk in chunks:
-                                f.write(chunk)
-                    
-                    await asyncio.to_thread(write_file)
-            
-            logger.info(f"{model_name} downloaded.")
-        except httpx.HTTPError as e:
-            # Clean up partial download on error
-            if os.path.exists(path):
-                os.remove(path)
-            raise RuntimeError(f"Failed to download {model_name}: {e}")
-    
-    return path
 
 

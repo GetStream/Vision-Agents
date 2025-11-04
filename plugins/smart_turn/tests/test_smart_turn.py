@@ -9,10 +9,11 @@ from vision_agents.core.turn_detection import TurnStartedEvent, TurnEndedEvent
 from vision_agents.plugins.smart_turn.smart_turn_detection import (
     SileroVAD,
     SmartTurnDetection,
-    ensure_model,
     SILERO_ONNX_URL,
     SILERO_ONNX_FILENAME,
 )
+from vision_agents.core.utils.utils import ensure_model
+
 import logging
 
 logger = logging.getLogger(__name__)
