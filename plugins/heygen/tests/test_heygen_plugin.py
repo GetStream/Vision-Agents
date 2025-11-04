@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import patch
 from vision_agents.plugins.heygen import (
     AvatarPublisher,
     HeyGenVideoTrack,
