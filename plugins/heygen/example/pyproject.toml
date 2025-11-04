@@ -1,0 +1,21 @@
+[project]
+name = "heygen-avatar-example"
+version = "0.1.0"
+description = "Example using HeyGen avatar with Vision Agents"
+requires-python = ">=3.10"
+dependencies = [
+    "vision-agents",
+    "vision-agents-plugins-heygen",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-deepgram",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+vision-agents = { workspace = true }
+vision-agents-plugins-heygen = { workspace = true }
+vision-agents-plugins-gemini = { workspace = true }
+vision-agents-plugins-getstream = { workspace = true }
+vision-agents-plugins-deepgram = { workspace = true }
+

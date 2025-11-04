@@ -6,7 +6,7 @@ from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
-    ConversationItemInputAudioTranscriptionCompletedEvent, SessionUpdatedEvent, ResponseCreatedEvent, ResponseDoneEvent,
+    ConversationItemInputAudioTranscriptionCompletedEvent, ResponseDoneEvent,
 )
 
 from vision_agents.core.llm import realtime
@@ -241,7 +241,6 @@ class Realtime(realtime.Realtime):
             # Handle tool calls from OpenAI realtime
             await self._handle_tool_call_event(event)
         elif et == "response.created":
-            e = ResponseCreatedEvent(**event)
             pass
         elif et == "response.done":
             logger.info("OpenAI response done %s", event)

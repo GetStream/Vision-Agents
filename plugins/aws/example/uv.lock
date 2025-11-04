@@ -2648,6 +2648,8 @@ requires-dist = [
     { name = "vision-agents-plugins-gemini", marker = "extra == 'gemini'", editable = "../../gemini" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'all-plugins'", editable = "../../getstream" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'getstream'", editable = "../../getstream" },
+    { name = "vision-agents-plugins-heygen", marker = "extra == 'all-plugins'", editable = "../../heygen" },
+    { name = "vision-agents-plugins-heygen", marker = "extra == 'heygen'", editable = "../../heygen" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'all-plugins'", editable = "../../kokoro" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'kokoro'", editable = "../../kokoro" },
     { name = "vision-agents-plugins-krisp", marker = "extra == 'all-plugins'", editable = "../../krisp" },
@@ -2665,7 +2667,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "../../xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "../../xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "kokoro", "krisp", "moonshine", "openai", "smart-turn", "ultralytics", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "heygen", "kokoro", "krisp", "moonshine", "openai", "smart-turn", "ultralytics", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-aws"

@@ -19,6 +19,7 @@ members = [
     "vision-agents-plugins-fish",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
+    "vision-agents-plugins-heygen",
     "vision-agents-plugins-kokoro",
     "vision-agents-plugins-krisp",
     "vision-agents-plugins-moondream",
@@ -193,6 +194,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/95/a2/45dfab1d5a7f96c48595a5770379acf406cdf02a2cd1ac1729b599322b08/aioice-0.10.1.tar.gz", hash = "sha256:5c8e1422103448d171925c678fb39795e5fe13d79108bebb00aa75a899c2094a", size = 44304, upload-time = "2025-04-13T08:15:25.629Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/58/af07dda649c22a1ae954ffb7aaaf4d4a57f1bf00ebdf62307affc0b8552f/aioice-0.10.1-py3-none-any.whl", hash = "sha256:f31ae2abc8608b1283ed5f21aebd7b6bd472b152ff9551e9b559b2d8efed79e9", size = 24872, upload-time = "2025-04-13T08:15:24.044Z" },
+]
+
+[[package]]
+name = "aiortc"
+version = "1.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aioice" },
+    { name = "av" },
+    { name = "cryptography" },
+    { name = "google-crc32c" },
+    { name = "pyee" },
+    { name = "pylibsrtp" },
+    { name = "pyopenssl" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/51/9c/4e027bfe0195de0442da301e2389329496745d40ae44d2d7c4571c4290ce/aiortc-1.14.0.tar.gz", hash = "sha256:adc8a67ace10a085721e588e06a00358ed8eaf5f6b62f0a95358ff45628dd762", size = 1180864, upload-time = "2025-10-13T21:40:37.905Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/ab/31646a49209568cde3b97eeade0d28bb78b400e6645c56422c101df68932/aiortc-1.14.0-py3-none-any.whl", hash = "sha256:4b244d7e482f4e1f67e685b3468269628eca1ec91fa5b329ab517738cfca086e", size = 93183, upload-time = "2025-10-13T21:40:36.59Z" },
 ]
 
 [[package]]
@@ -5302,6 +5321,7 @@ all-plugins = [
     { name = "vision-agents-plugins-elevenlabs" },
     { name = "vision-agents-plugins-gemini" },
     { name = "vision-agents-plugins-getstream" },
+    { name = "vision-agents-plugins-heygen" },
     { name = "vision-agents-plugins-kokoro" },
     { name = "vision-agents-plugins-krisp" },
     { name = "vision-agents-plugins-moonshine" },
@@ -5334,6 +5354,9 @@ gemini = [
 ]
 getstream = [
     { name = "vision-agents-plugins-getstream" },
+]
+heygen = [
+    { name = "vision-agents-plugins-heygen" },
 ]
 kokoro = [
     { name = "vision-agents-plugins-kokoro" },
@@ -5384,6 +5407,8 @@ requires-dist = [
     { name = "vision-agents-plugins-gemini", marker = "extra == 'gemini'", editable = "plugins/gemini" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'all-plugins'", editable = "plugins/getstream" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'getstream'", editable = "plugins/getstream" },
+    { name = "vision-agents-plugins-heygen", marker = "extra == 'all-plugins'", editable = "plugins/heygen" },
+    { name = "vision-agents-plugins-heygen", marker = "extra == 'heygen'", editable = "plugins/heygen" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'all-plugins'", editable = "plugins/kokoro" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'kokoro'", editable = "plugins/kokoro" },
     { name = "vision-agents-plugins-krisp", marker = "extra == 'all-plugins'", editable = "plugins/krisp" },
@@ -5401,7 +5426,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "kokoro", "krisp", "moonshine", "openai", "smart-turn", "ultralytics", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "heygen", "kokoro", "krisp", "moonshine", "openai", "smart-turn", "ultralytics", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
@@ -5616,6 +5641,35 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-heygen"
+version = "0.1.0"
+source = { editable = "plugins/heygen" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "aiortc" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "aiortc", specifier = ">=1.9.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
