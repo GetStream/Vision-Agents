@@ -88,7 +88,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         # Audio track for publishing HeyGen's audio
         # Create it immediately so the agent can detect it during initialization
         self._audio_track = audio_track.AudioStreamTrack(
-            framerate=48000, stereo=True
+            sample_rate=48000, channels=2, format="s16"
         )
         
         # Connection state
