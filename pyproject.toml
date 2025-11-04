@@ -22,6 +22,7 @@ vision-agents-plugins-krisp = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
+vision-agents-plugins-moondream = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -49,7 +50,8 @@ members = [
     "plugins/krisp",
     "plugins/smart_turn",
     "plugins/wizper",
-    "plugins/vogent"
+    "plugins/vogent",
+    "plugins/moondream"
 ]
 exclude = [
 "**/__pycache__",
