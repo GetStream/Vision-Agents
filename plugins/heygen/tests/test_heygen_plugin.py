@@ -1,11 +1,9 @@
 import pytest
 from unittest.mock import patch
-from vision_agents.plugins.heygen import (
-    AvatarPublisher,
-    HeyGenVideoTrack,
-    HeyGenRTCManager,
-    HeyGenSession,
-)
+from vision_agents.plugins.heygen import AvatarPublisher
+from vision_agents.plugins.heygen.heygen_video_track import HeyGenVideoTrack
+from vision_agents.plugins.heygen.heygen_rtc_manager import HeyGenRTCManager
+from vision_agents.plugins.heygen.heygen_session import HeyGenSession
 
 
 class TestHeyGenSession:
@@ -97,6 +95,9 @@ class TestAvatarPublisher:
         """Test publishing video track."""
         with patch.object(HeyGenRTCManager, "__init__", return_value=None):
             publisher = AvatarPublisher(api_key="test_key")
+            # Set _connected to True to avoid creating async task
+            publisher._connected = True
+            publisher._connection_task = None
             
             track = publisher.publish_video_track()
             
@@ -110,6 +111,8 @@ class TestAvatarPublisher:
                 quality="medium",
                 api_key="test_key",
             )
+            # Mock the _connected attribute on the RTC manager
+            publisher.rtc_manager._connected = False
             
             state = publisher.state()
             
