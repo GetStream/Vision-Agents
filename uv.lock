@@ -1360,8 +1360,8 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.7"
-source = { git = "https://github.com/GetStream/stream-py.git?branch=audio-more#57cd3e301e87f14b8a837bdb50c8d7753522c09d" }
+version = "2.5.8"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
     { name = "httpx" },
@@ -1372,6 +1372,9 @@ dependencies = [
     { name = "pyee" },
     { name = "pyjwt" },
     { name = "python-dateutil" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/94/2befd2313d3370c5432aa1c1448a48b3df939ff544048d9e037b0cf16255/getstream-2.5.8-py3-none-any.whl", hash = "sha256:2df91640e2c197ee72bb55a1f8c33e9f900f67be9b73c9fecafbdc05d38c864c", size = 241467 },
 ]
 
 [package.optional-dependencies]
@@ -5322,7 +5325,7 @@ xai = [
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?branch=audio-more" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.8" },
     { name = "mcp", specifier = ">=1.16.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
