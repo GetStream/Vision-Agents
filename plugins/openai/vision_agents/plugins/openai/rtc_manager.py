@@ -46,6 +46,9 @@ class RTCManager:
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
 
+        # Set up connection event handlers
+        self._setup_connection_logging()
+
         # on this track we send audio to openAI
         self._audio_to_openai_track: QueuedAudioTrack = QueuedAudioTrack(
             sample_rate=48000
@@ -61,6 +64,51 @@ class RTCManager:
         self.send_video = send_video
 
         self.instructions: Optional[str] = None
+
+    def _setup_connection_logging(self) -> None:
+        """Set up event handlers for connection monitoring and error logging."""
+
+        @self.pc.on("connectionstatechange")
+        async def on_connectionstatechange():
+            state = self.pc.connectionState
+            logger.info(f"🔗 RTC connection state changed: {state}")
+            if state == "failed":
+                logger.error("❌ RTC connection failed")
+            elif state == "disconnected":
+                logger.warning("⚠️ RTC connection disconnected")
+            elif state == "connected":
+                logger.info("✅ RTC connection established")
+            elif state == "closed":
+                logger.info("🔒 RTC connection closed")
+
+        @self.pc.on("iceconnectionstatechange")
+        async def on_iceconnectionstatechange():
+            state = self.pc.iceConnectionState
+            logger.info(f"🧊 ICE connection state: {state}")
+            if state == "failed":
+                logger.error("❌ ICE connection failed")
+            elif state == "disconnected":
+                logger.warning("⚠️ ICE connection disconnected")
+            elif state == "connected":
+                logger.info("✅ ICE connection established")
+            elif state == "checking":
+                logger.debug("🔍 ICE checking candidates...")
+
+        @self.pc.on("icegatheringstatechange")
+        async def on_icegatheringstatechange():
+            state = self.pc.iceGatheringState
+            logger.debug(f"🧊 ICE gathering state: {state}")
+            if state == "complete":
+                logger.info("✅ ICE gathering complete")
+
+        @self.pc.on("signalingstatechange")
+        async def on_signalingstatechange():
+            state = self.pc.signalingState
+            logger.debug(f"📡 Signaling state: {state}")
+
+        @self.pc.on("datachannel")
+        async def on_datachannel(channel):
+            logger.info(f"📨 Remote data channel created: {channel.label}")
 
     async def connect(self) -> None:
         """Establish WebRTC connection to OpenAI's Realtime API.
@@ -81,7 +129,6 @@ class RTCManager:
             logger.info("receiving track from openai")
             if track.kind == "audio":
                 track = cast(AudioStreamTrack, track)
-                logger.info("Remote audio track attached; starting audio forwarder")
                 if self._audio_callback:
                     audio_forwarder = AudioForwarder(track, self._audio_callback)
                     await audio_forwarder.start()
