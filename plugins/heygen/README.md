@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
 from vision_agents.plugins import cartesia, deepgram, getstream, gemini, heygen
+from vision_agents.plugins.heygen import VideoQuality
 
 load_dotenv()
 
@@ -48,7 +49,7 @@ async def start_avatar_agent():
         processors=[
             heygen.AvatarPublisher(
                 avatar_id="default",
-                quality="high"
+                quality=VideoQuality.HIGH
             )
         ]
     )
@@ -77,9 +78,11 @@ HEYGEN_API_KEY=your_heygen_api_key_here
 ### AvatarPublisher Options
 
 ```python
+from vision_agents.plugins.heygen import VideoQuality
+
 heygen.AvatarPublisher(
     avatar_id="default",           # HeyGen avatar ID
-    quality="high",                # Video quality: "low", "medium", "high"
+    quality=VideoQuality.HIGH,    # Video quality: VideoQuality.LOW, VideoQuality.MEDIUM, or VideoQuality.HIGH
     resolution=(1920, 1080),       # Output resolution (width, height)
     api_key=None,                  # Optional: override env var
 )
@@ -159,7 +162,7 @@ If you experience connection problems:
 
 To optimize video quality:
 
-- Use `quality="high"` for best results
+- Use `quality=VideoQuality.HIGH` for best results
 - Increase resolution if bandwidth allows
 - Ensure stable internet connection
 

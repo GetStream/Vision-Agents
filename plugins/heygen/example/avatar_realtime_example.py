@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
 from vision_agents.plugins import getstream, gemini, heygen
+from vision_agents.plugins.heygen import VideoQuality
 
 load_dotenv()
 
@@ -38,7 +39,7 @@ async def start_avatar_agent() -> None:
         processors=[
             heygen.AvatarPublisher(
                 avatar_id="default",
-                quality="high",
+                quality=VideoQuality.HIGH,
             )
         ],
     )

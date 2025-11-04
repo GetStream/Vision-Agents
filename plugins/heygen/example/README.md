@@ -108,9 +108,11 @@ Both will:
 Get your avatar ID from HeyGen dashboard and update:
 
 ```python
+from vision_agents.plugins.heygen import VideoQuality
+
 heygen.AvatarPublisher(
     avatar_id="your_avatar_id_here",
-    quality="high"
+    quality=VideoQuality.HIGH
 )
 ```
 
@@ -119,9 +121,11 @@ heygen.AvatarPublisher(
 Choose quality based on your bandwidth:
 
 ```python
+from vision_agents.plugins.heygen import VideoQuality
+
 heygen.AvatarPublisher(
     avatar_id="default",
-    quality="low",      # Options: "low", "medium", "high"
+    quality=VideoQuality.LOW,  # Options: VideoQuality.LOW, VideoQuality.MEDIUM, or VideoQuality.HIGH
     resolution=(1280, 720)  # Lower resolution for better performance
 )
 ```

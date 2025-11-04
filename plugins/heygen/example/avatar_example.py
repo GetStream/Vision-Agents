@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
 from vision_agents.plugins import getstream, gemini, heygen, deepgram
+from vision_agents.plugins.heygen import VideoQuality
 
 load_dotenv()
 
@@ -43,7 +44,7 @@ async def start_avatar_agent() -> None:
         processors=[
             heygen.AvatarPublisher(
                 avatar_id="default",  # Use your HeyGen avatar ID
-                quality="high",       # Video quality: "low", "medium", "high"
+                quality=VideoQuality.HIGH,  # Video quality: VideoQuality.LOW, VideoQuality.MEDIUM, or VideoQuality.HIGH
                 resolution=(1920, 1080),  # Output resolution
                 mute_llm_audio=False,  # Not needed for streaming LLM
             )

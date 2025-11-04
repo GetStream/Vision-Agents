@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch
-from vision_agents.plugins.heygen import AvatarPublisher
+from vision_agents.plugins.heygen import AvatarPublisher, VideoQuality
 from vision_agents.plugins.heygen.heygen_video_track import HeyGenVideoTrack
 from vision_agents.plugins.heygen.heygen_rtc_manager import HeyGenRTCManager
 from vision_agents.plugins.heygen.heygen_session import HeyGenSession
@@ -13,12 +13,12 @@ class TestHeyGenSession:
         """Test initialization with explicit API key."""
         session = HeyGenSession(
             avatar_id="test_avatar",
-            quality="high",
+            quality=VideoQuality.HIGH,
             api_key="test_key",
         )
         
         assert session.avatar_id == "test_avatar"
-        assert session.quality == "high"
+        assert session.quality == VideoQuality.HIGH
         assert session.api_key == "test_key"
     
     def test_init_without_api_key_raises(self):
@@ -55,7 +55,7 @@ class TestHeyGenRTCManager:
         with patch.object(HeyGenSession, "__init__", return_value=None):
             manager = HeyGenRTCManager(
                 avatar_id="test_avatar",
-                quality="medium",
+                quality=VideoQuality.MEDIUM,
                 api_key="test_key",
             )
             
@@ -81,13 +81,13 @@ class TestAvatarPublisher:
         with patch.object(HeyGenRTCManager, "__init__", return_value=None):
             publisher = AvatarPublisher(
                 avatar_id="test_avatar",
-                quality="high",
+                quality=VideoQuality.HIGH,
                 resolution=(1920, 1080),
                 api_key="test_key",
             )
             
             assert publisher.avatar_id == "test_avatar"
-            assert publisher.quality == "high"
+            assert publisher.quality == VideoQuality.HIGH
             assert publisher.resolution == (1920, 1080)
             assert not publisher._connected
     
@@ -108,7 +108,7 @@ class TestAvatarPublisher:
         with patch.object(HeyGenRTCManager, "__init__", return_value=None):
             publisher = AvatarPublisher(
                 avatar_id="test_avatar",
-                quality="medium",
+                quality=VideoQuality.MEDIUM,
                 api_key="test_key",
             )
             # Mock the _connected attribute on the RTC manager
@@ -117,7 +117,7 @@ class TestAvatarPublisher:
             state = publisher.state()
             
             assert state["avatar_id"] == "test_avatar"
-            assert state["quality"] == "medium"
+            assert state["quality"] == VideoQuality.MEDIUM
             assert "connected" in state
             assert "rtc_connected" in state
 

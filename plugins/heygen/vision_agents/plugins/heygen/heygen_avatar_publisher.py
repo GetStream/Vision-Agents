@@ -1,5 +1,15 @@
 import asyncio
 import logging
+from enum import Enum
+
+# Define VideoQuality enum FIRST before any other imports to avoid circular import issues
+class VideoQuality(str, Enum):
+    """Video quality options for HeyGen avatar streaming."""
+    
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
 from typing import Optional, Any, Tuple
 
 from getstream.video.rtc import audio_track
@@ -34,7 +44,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             processors=[
                 heygen.AvatarPublisher(
                     avatar_id="default",
-                    quality="high"
+                    quality=heygen.VideoQuality.HIGH
                 )
             ]
         )
@@ -43,7 +53,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
     def __init__(
         self,
         avatar_id: str = "default",
-        quality: str = "high",
+        quality: VideoQuality = VideoQuality.HIGH,
         resolution: Tuple[int, int] = (1920, 1080),
         api_key: Optional[str] = None,
         interval: int = 0,
@@ -53,7 +63,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         
         Args:
             avatar_id: HeyGen avatar ID to use for streaming.
-            quality: Video quality ("low", "medium", "high").
+            quality: Video quality (VideoQuality.LOW, VideoQuality.MEDIUM, or VideoQuality.HIGH).
             resolution: Output video resolution (width, height).
             api_key: HeyGen API key. Uses HEYGEN_API_KEY env var if not provided.
             interval: Processing interval (not used, kept for compatibility).
