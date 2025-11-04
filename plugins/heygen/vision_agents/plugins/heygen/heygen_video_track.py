@@ -52,8 +52,14 @@ class HeyGenVideoTrack(VideoStreamTrack):
             source_track: The incoming video track from HeyGen's WebRTC connection.
         """
         if self._receiving_task:
-            logger.warning("Already receiving frames from HeyGen")
-            return
+            logger.info("Restarting HeyGen video receiver with new source track")
+            self._receiving_task.cancel()
+            try:
+                await self._receiving_task
+            except asyncio.CancelledError:
+                pass
+            self._receiving_task = None
+            self._source_track = None
         
         self._source_track = source_track
         self._receiving_task = asyncio.create_task(self._receive_frames())
