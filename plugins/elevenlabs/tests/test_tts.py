@@ -2,7 +2,7 @@ import os
 import pytest
 import pytest_asyncio
 
-from vision_agents.core.tts.testing import TTSSession, assert_tts_send_non_blocking
+from vision_agents.core.tts.testing import TTSSession
 from vision_agents.plugins import elevenlabs
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
 
@@ -32,7 +32,3 @@ class TestElevenLabsIntegration:
     async def test_elevenlabs_tts_convert_text_to_audio_manual_test(self, tts):
         path = await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
         print("ElevenLabs TTS audio written to:", path)
-
-    @pytest.mark.integration
-    async def test_elevenlabs_tts_non_blocking(self, tts):
-        await assert_tts_send_non_blocking(tts, "This should not block the event loop.")

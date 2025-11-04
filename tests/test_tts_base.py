@@ -49,7 +49,7 @@ async def test_tts_stereo_to_mono_halves_bytes():
     await tts.events.wait()
     assert len(session.speeches) == 1
     # Original interleaved data length was 400 bytes; mono should be ~200 bytes
-    assert 180 <= len(session.speeches[0]) <= 220
+    assert 180 <= len(session.speeches[0].to_bytes()) <= 220
 
 
 async def test_tts_resample_changes_size_reasonably():
@@ -62,7 +62,7 @@ async def test_tts_resample_changes_size_reasonably():
     await tts.events.wait()
     assert len(session.speeches) == 1
     # Input had 200 samples (400 bytes); at 8k this should be roughly half
-    assert 150 <= len(session.speeches[0]) <= 250
+    assert 150 <= len(session.speeches[0].to_bytes()) <= 250
 
 
 async def test_tts_error_emits_and_raises():

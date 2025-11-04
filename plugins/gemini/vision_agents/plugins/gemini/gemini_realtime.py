@@ -27,7 +27,6 @@ from google.genai.types import (
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.events import (
-    RealtimeAudioOutputEvent,
     LLMResponseChunkEvent,
 )
 from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
@@ -104,7 +103,7 @@ class Realtime(realtime.Realtime):
         self.logger = logging.getLogger(__name__)
         # Gemini generates at 24k. webrtc automatically translates it to 48khz
         self.output_track = AudioStreamTrack(
-            framerate=24000, stereo=False, format="s16"
+            sample_rate=24000, channels=1, format="s16"
         )
         self._video_forwarder: Optional[VideoForwarder] = None
         self._session_context: Optional[Any] = None
@@ -148,10 +147,12 @@ class Realtime(realtime.Realtime):
             return
 
         self._current_participant = participant
-        self.logger.debug(f"Sending audio to gemini: {pcm.duration}")
+
         # Build blob and send directly
-        audio_bytes = pcm.samples.tobytes()
-        mime = f"audio/pcm;rate={pcm.sample_rate}"
+        audio_bytes = pcm.resample(
+            target_sample_rate=16000, target_channels=1
+        ).samples.tobytes()
+        mime = f"audio/pcm;rate=16000"
         blob = Blob(data=audio_bytes, mime_type=mime)
 
         await self._require_session().send_realtime_input(audio=blob)
@@ -302,19 +303,14 @@ class Realtime(realtime.Realtime):
                                             )
                                             self.events.send(event)
                                     elif typed_part.inline_data:
-                                        data = typed_part.inline_data.data
-
                                         # Emit audio output event
-                                        audio_event = RealtimeAudioOutputEvent(
-                                            plugin_name="gemini",
-                                            audio_data=data,
-                                            sample_rate=24000,
+                                        pcm = PcmData.from_bytes(
+                                            typed_part.inline_data.data, 24000
                                         )
-                                        self.events.send(audio_event)
-
-                                        await self.output_track.write(
-                                            data
-                                        )  # original 24khz here
+                                        self._emit_audio_output_event(
+                                            audio_data=pcm,
+                                        )
+                                        await self.output_track.write(pcm)
                                     elif (
                                         hasattr(typed_part, "function_call")
                                         and typed_part.function_call
@@ -341,7 +337,9 @@ class Realtime(realtime.Realtime):
                         )
                         await self._handle_tool_call(server_message.tool_call)
                     else:
-                        self.logger.warning("Unrecognized event structure for gemini %s", server_message)
+                        self.logger.warning(
+                            "Unrecognized event structure for gemini %s", server_message
+                        )
         except CancelledError:
             logger.error("Stop async iteration exception")
             return

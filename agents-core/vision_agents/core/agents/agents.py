@@ -85,6 +85,7 @@ class _AgentLoggerAdapter(logging.LoggerAdapter):
             return "[Agent: %s] | %s" % (self.extra["agent_id"], msg), kwargs
         return super(_AgentLoggerAdapter, self).process(msg, kwargs)
 
+
 # TODO: move me
 @dataclass
 class AgentOptions:
@@ -100,8 +101,12 @@ class AgentOptions:
         return AgentOptions(**merged_dict)
 
 
+# Cache tempdir at module load time to avoid blocking I/O during async operations
+_DEFAULT_MODEL_DIR = tempfile.gettempdir()
+
+
 def default_agent_options():
-    return AgentOptions(model_dir=tempfile.gettempdir())
+    return AgentOptions(model_dir=_DEFAULT_MODEL_DIR)
 
 
 class Agent:
@@ -345,6 +350,7 @@ class Agent:
 
     async def _setup_speech_events(self):
         self.logger.info("_setup_speech_events")
+
         @self.events.subscribe
         async def on_error(event: STTErrorEvent):
             self.logger.error("stt error event %s", event)
@@ -413,8 +419,8 @@ class Agent:
 
         @self.events.subscribe
         async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
-            if self._audio_track and event and event.audio_data is not None:
-                await self._audio_track.write(event.audio_data)
+            if self._audio_track and event and event.data is not None:
+                await self._audio_track.write(event.data)
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
@@ -542,7 +548,6 @@ class Agent:
                 "🔚 Agent connection is already closed, finishing immediately"
             )
             return
-
 
         with self.span("agent.finish"):
             # If connection is None or already closed, return immediately
@@ -1110,18 +1115,22 @@ class Agent:
                     except Exception as e:
                         self.logger.error(f"Error stopping TTS: {e}")
                 else:
-                    participant_id = event.participant.user_id if event.participant else "unknown"
+                    participant_id = (
+                        event.participant.user_id if event.participant else "unknown"
+                    )
                     self.logger.info(
                         f"👉 Turn started - participant speaking {participant_id} : {event.confidence}"
                     )
             else:
                 # Agent itself started speaking - this is normal
-                participant_id = event.participant.user_id if event.participant else "unknown"
-                self.logger.debug(
-                    f"👉 Turn started - agent speaking {participant_id}"
+                participant_id = (
+                    event.participant.user_id if event.participant else "unknown"
                 )
+                self.logger.debug(f"👉 Turn started - agent speaking {participant_id}")
         elif isinstance(event, TurnEndedEvent):
-            participant_id = event.participant.user_id if event.participant else "unknown"
+            participant_id = (
+                event.participant.user_id if event.participant else "unknown"
+            )
             self.logger.info(
                 f"👉 Turn ended - participant {participant_id} finished (confidence: {event.confidence})"
             )

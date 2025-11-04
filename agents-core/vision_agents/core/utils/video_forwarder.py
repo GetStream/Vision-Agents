@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 from typing import Optional, Callable, Any
 
@@ -72,6 +73,8 @@ class VideoForwarder:
         try:
             while not self._stopped.is_set():
                 frame : Frame = await self.input_track.recv()
+                frame.dts = int(datetime.datetime.now().timestamp())
+
                 await self.queue.put_latest(frame)
         except asyncio.CancelledError:
             raise
@@ -94,10 +97,12 @@ class VideoForwarder:
         # drain to newest
         while True:
             try:
+
                 newer = self.queue.get_nowait()
                 frame = newer
             except asyncio.QueueEmpty:
                 break
+
         return frame
 
     # ---------- push model (broadcast via callback) ----------
@@ -151,6 +156,8 @@ class VideoForwarder:
                         await asyncio.sleep(min_interval - elapsed)
                     last_ts = loop.time()
                 # Call handler
+
+
                 if is_coro:
                     await on_frame(frame)  # type: ignore[arg-type]
                 else:

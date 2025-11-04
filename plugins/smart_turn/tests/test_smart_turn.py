@@ -3,6 +3,7 @@ import tempfile
 
 import pytest
 
+from conftest import skip_blockbuster
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import TurnStartedEvent, TurnEndedEvent
@@ -19,6 +20,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+@skip_blockbuster
 class TestSmartTurn:
     @pytest.fixture
     async def td(self):
@@ -27,9 +29,13 @@ class TestSmartTurn:
         yield td
 
     async def test_silero_predict(self, mia_audio_16khz):
+        import asyncio
+
         path = os.path.join(tempfile.gettempdir(), SILERO_ONNX_FILENAME)
         await ensure_model(path, SILERO_ONNX_URL)
-        vad = SileroVAD(path)
+        # Load model file asynchronously to avoid blocking I/O
+        model_bytes = await asyncio.to_thread(open(path, "rb").read)
+        vad = SileroVAD(path, model_bytes)
 
         for pcm_chunk in mia_audio_16khz.chunks(chunk_size=512):
             if len(pcm_chunk.samples) != 512:
@@ -62,7 +68,12 @@ class TestSmartTurn:
         # Wait for background processing to complete
         await td.wait_for_processing_complete()
 
-        assert event_order == ["start", "stop"] or event_order == ["start", "stop", "start", "stop"]
+        assert event_order == ["start", "stop"] or event_order == [
+            "start",
+            "stop",
+            "start",
+            "stop",
+        ]
 
     async def test_turn_detection(self, td, mia_audio_16khz):
         participant = Participant(user_id="mia", original={})
@@ -87,8 +98,12 @@ class TestSmartTurn:
 
         # Verify that turn detection is working - we should get at least some turn events
         # With continuous processing, we may get multiple start/stop cycles
-        assert event_order == ["start", "stop"] or event_order == ["start", "stop", "start", "stop"]
-
+        assert event_order == ["start", "stop"] or event_order == [
+            "start",
+            "stop",
+            "start",
+            "stop",
+        ]
 
     """
     TODO
@@ -97,5 +112,5 @@ class TestSmartTurn:
     - Test that turn detection is run after speech and 2s of silence
     - Test that silence doens't start a new segmetn
     - Test that speaking starts a new segment
-    
+
     """

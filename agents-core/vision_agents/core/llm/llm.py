@@ -3,7 +3,17 @@ from __future__ import annotations
 import abc
 import asyncio
 import json
-from typing import Optional, TYPE_CHECKING, Tuple, List, Dict, Any, TypeVar, Callable, Generic
+from typing import (
+    Optional,
+    TYPE_CHECKING,
+    Tuple,
+    List,
+    Dict,
+    Any,
+    TypeVar,
+    Callable,
+    Generic,
+)
 
 from vision_agents.core.llm import events
 from vision_agents.core.llm.events import ToolStartEvent, ToolEndEvent
@@ -50,6 +60,16 @@ class LLM(abc.ABC):
         self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
 
+    async def warmup(self) -> None:
+        """
+        Warm up the LLM model.
+
+        This method can be overridden by implementations to perform
+        model loading, connection establishment, or other initialization
+        that should happen before the first request.
+        """
+        pass
+
     async def simple_response(
         self,
         text: str,
@@ -65,7 +85,7 @@ class LLM(abc.ABC):
         Returns:
             Enhanced instructions string with markdown file contents included, or None if no parsed instructions
         """
-        if not hasattr(self, 'parsed_instructions') or not self.parsed_instructions:
+        if not hasattr(self, "parsed_instructions") or not self.parsed_instructions:
             return None
 
         parsed = self.parsed_instructions
@@ -80,7 +100,9 @@ class LLM(abc.ABC):
                     enhanced_instructions.append(content)
                 else:
                     enhanced_instructions.append(f"\n### {filename}")
-                    enhanced_instructions.append("*(File not found or could not be read)*")
+                    enhanced_instructions.append(
+                        "*(File not found or could not be read)*"
+                    )
 
         return "\n".join(enhanced_instructions)
 
@@ -88,64 +110,72 @@ class LLM(abc.ABC):
         """
         Get tools in provider-specific format.
         This method should be overridden by each LLM implementation.
-        
+
         Returns:
             List of tools in the provider's expected format.
         """
         tools = self.get_available_functions()
         return self._convert_tools_to_provider_format(tools)
-    
-    def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+
+    def _convert_tools_to_provider_format(
+        self, tools: List[ToolSchema]
+    ) -> List[Dict[str, Any]]:
         """
         Convert ToolSchema objects to provider-specific format.
         This method should be overridden by each LLM implementation.
-        
+
         Args:
             tools: List of ToolSchema objects
-            
+
         Returns:
             List of tools in provider-specific format
         """
         # Default implementation - should be overridden
         return []
-    
-    def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToolCallItem]:
+
+    def _extract_tool_calls_from_response(
+        self, response: Any
+    ) -> List[NormalizedToolCallItem]:
         """
         Extract tool calls from provider-specific response.
         This method should be overridden by each LLM implementation.
-        
+
         Args:
             response: Provider-specific response object
-            
+
         Returns:
             List of normalized tool call items
         """
         # Default implementation - should be overridden
         return []
-    
-    def _extract_tool_calls_from_stream_chunk(self, chunk: Any) -> List[NormalizedToolCallItem]:
+
+    def _extract_tool_calls_from_stream_chunk(
+        self, chunk: Any
+    ) -> List[NormalizedToolCallItem]:
         """
         Extract tool calls from a streaming chunk.
         This method should be overridden by each LLM implementation.
-        
+
         Args:
             chunk: Provider-specific streaming chunk
-            
+
         Returns:
             List of normalized tool call items
         """
         # Default implementation - should be overridden
         return []
-    
-    def _create_tool_result_message(self, tool_calls: List[NormalizedToolCallItem], results: List[Any]) -> List[Dict[str, Any]]:
+
+    def _create_tool_result_message(
+        self, tool_calls: List[NormalizedToolCallItem], results: List[Any]
+    ) -> List[Dict[str, Any]]:
         """
         Create tool result messages for the provider.
         This method should be overridden by each LLM implementation.
-        
+
         Args:
             tool_calls: List of tool calls that were executed
             results: List of results from function execution
-            
+
         Returns:
             List of tool result messages in provider format
         """
@@ -160,67 +190,65 @@ class LLM(abc.ABC):
         self._conversation = agent.conversation
         self._set_instructions(agent.instructions)
 
-
     def _set_instructions(self, instructions: str):
         self.instructions = instructions
 
         # Parse instructions to extract @ mentioned markdown files
         self.parsed_instructions = parse_instructions(instructions)
 
-    def register_function(self, 
-                         name: Optional[str] = None,
-                         description: Optional[str] = None) -> Callable:
+    def register_function(
+        self, name: Optional[str] = None, description: Optional[str] = None
+    ) -> Callable:
         """
         Decorator to register a function with the LLM's function registry.
-        
+
         Args:
             name: Optional custom name for the function. If not provided, uses the function name.
             description: Optional description for the function. If not provided, uses the docstring.
-        
+
         Returns:
             Decorator function.
         """
         return self.function_registry.register(name, description)
-    
+
     def get_available_functions(self) -> List[ToolSchema]:
         """Get a list of available function schemas."""
         return self.function_registry.get_tool_schemas()
-    
+
     def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
         """
         Call a registered function with the given arguments.
-        
+
         Args:
             name: Name of the function to call.
             arguments: Dictionary of arguments to pass to the function.
-        
+
         Returns:
             Result of the function call.
         """
         return self.function_registry.call_function(name, arguments)
-    
 
-    def _tc_key(self, tc: Dict[str, Any]) -> Tuple[Optional[str], str, str]:
+    def _tc_key(self, tc: NormalizedToolCallItem) -> Tuple[Optional[str], str, str]:
         """Generate a unique key for tool call deduplication.
-        
+
         Args:
             tc: Tool call dictionary
-            
+
         Returns:
             Tuple of (id, name, arguments_json) for deduplication
         """
         return (
-            tc.get("id"), 
-            tc["name"], 
-            json.dumps(tc.get("arguments_json", tc.get("arguments", {})), sort_keys=True)
+            tc.get("id"),
+            tc["name"],
+            json.dumps(tc.get("arguments_json", {}), sort_keys=True),
         )
 
     async def _maybe_await(self, x):
         """Await if x is a coroutine, otherwise return x directly.
-        
+
         Args:
             x: Value that might be a coroutine
-            
+
         Returns:
             Awaited result if coroutine, otherwise x
         """
@@ -230,23 +258,23 @@ class LLM(abc.ABC):
 
     async def _run_one_tool(self, tc: Dict[str, Any], timeout_s: float):
         """Run a single tool call with timeout.
-        
+
         Args:
             tc: Tool call dictionary
             timeout_s: Timeout in seconds
-            
+
         Returns:
             Tuple of (tool_call, result, error)
         """
         import inspect
         import time
-        
+
         args = tc.get("arguments_json", tc.get("arguments", {})) or {}
         start_time = time.time()
-        
+
         async def _invoke():
             # Get the actual function to check if it's async
-            if hasattr(self.function_registry, 'get_callable'):
+            if hasattr(self.function_registry, "get_callable"):
                 fn = self.function_registry.get_callable(tc["name"])
                 if inspect.iscoroutinefunction(fn):
                     return await fn(**args)
@@ -257,85 +285,97 @@ class LLM(abc.ABC):
                 # Fallback to existing call_function method
                 res = self.call_function(tc["name"], args)
                 return await self._maybe_await(res)
-        
+
         try:
             # Send tool start event
-            self.events.send(ToolStartEvent(
-                plugin_name="llm",
-                tool_name=tc["name"],
-                arguments=args,
-                tool_call_id=tc.get("id")
-            ))
-            
+            self.events.send(
+                ToolStartEvent(
+                    plugin_name="llm",
+                    tool_name=tc["name"],
+                    arguments=args,
+                    tool_call_id=tc.get("id"),
+                )
+            )
+
             res = await asyncio.wait_for(_invoke(), timeout=timeout_s)
             execution_time = (time.time() - start_time) * 1000
-            
+
             # Send tool end event (success)
-            self.events.send(ToolEndEvent(
-                plugin_name="llm",
-                tool_name=tc["name"],
-                success=True,
-                result=res,
-                tool_call_id=tc.get("id"),
-                execution_time_ms=execution_time
-            ))
-            
+            self.events.send(
+                ToolEndEvent(
+                    plugin_name="llm",
+                    tool_name=tc["name"],
+                    success=True,
+                    result=res,
+                    tool_call_id=tc.get("id"),
+                    execution_time_ms=execution_time,
+                )
+            )
+
             return tc, res, None
         except Exception as e:
             execution_time = (time.time() - start_time) * 1000
-            
+
             # Send tool end event (error)
-            self.events.send(ToolEndEvent(
-                plugin_name="llm",
-                tool_name=tc["name"],
-                success=False,
-                error=str(e),
-                tool_call_id=tc.get("id"),
-                execution_time_ms=execution_time
-            ))
-            
+            self.events.send(
+                ToolEndEvent(
+                    plugin_name="llm",
+                    tool_name=tc["name"],
+                    success=False,
+                    error=str(e),
+                    tool_call_id=tc.get("id"),
+                    execution_time_ms=execution_time,
+                )
+            )
+
             return tc, {"error": str(e)}, e
 
-    async def _execute_tools(self, calls: List[Dict[str, Any]], *, max_concurrency: int = 8, timeout_s: float = 30):
+    async def _execute_tools(
+        self,
+        calls: List[NormalizedToolCallItem],
+        *,
+        max_concurrency: int = 8,
+        timeout_s: float = 30,
+    ):
         """Execute multiple tool calls concurrently with timeout.
-        
+
         Args:
             calls: List of tool call dictionaries
             max_concurrency: Maximum number of concurrent tool executions
             timeout_s: Timeout per tool execution in seconds
-            
+
         Returns:
             List of tuples (tool_call, result, error)
         """
         sem = asyncio.Semaphore(max_concurrency)
-        
+
         async def _guarded(tc):
             async with sem:
                 return await self._run_one_tool(tc, timeout_s)
-        
+
         return await asyncio.gather(*[_guarded(tc) for tc in calls])
 
     async def _dedup_and_execute(
         self,
-        calls: List[Dict[str, Any]],
+        calls: List[NormalizedToolCallItem],
         *,
         max_concurrency: int = 8,
         timeout_s: float = 30,
         seen: Optional[set] = None,
     ):
         """De-duplicate (by id/name/args) then execute concurrently.
-        
+
         Args:
             calls: List of tool call dictionaries
             max_concurrency: Maximum number of concurrent tool executions
             timeout_s: Timeout per tool execution in seconds
             seen: Set of seen tool call keys for deduplication
-            
+
         Returns:
             Tuple of (triples, updated_seen_set)
         """
         seen = seen or set()
-        to_run: List[Dict[str, Any]] = []
+        to_run: List[NormalizedToolCallItem] = []
         for tc in calls:
             key = self._tc_key(tc)
             if key in seen:
@@ -346,16 +386,18 @@ class LLM(abc.ABC):
         if not to_run:
             return [], seen  # nothing new
 
-        triples = await self._execute_tools(to_run, max_concurrency=max_concurrency, timeout_s=timeout_s)
+        triples = await self._execute_tools(
+            to_run, max_concurrency=max_concurrency, timeout_s=timeout_s
+        )
         return triples, seen
 
     def _sanitize_tool_output(self, value: Any, max_chars: int = 60_000) -> str:
         """Sanitize tool output to prevent oversized responses.
-        
+
         Args:
             value: Tool output value
             max_chars: Maximum characters allowed
-            
+
         Returns:
             Sanitized string output
         """

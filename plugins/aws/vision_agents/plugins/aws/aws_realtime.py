@@ -21,7 +21,7 @@ from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.processors import Processor
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc import PcmData
 
 logger = logging.getLogger(__name__)
 
@@ -158,9 +158,9 @@ class Realtime(realtime.Realtime):
         self.client = BedrockRuntimeClient(config=config)
         self.logger = logging.getLogger(__name__)
 
-        # Audio output track - Bedrock typically outputs at 16kHz
+        # Audio output track - Bedrock typically outputs at 24kHz
         self.output_track = AudioStreamTrack(
-            framerate=24000, stereo=False, format="s16"
+            sample_rate=24000, channels=1, format="s16"
         )
 
         self._video_forwarder: Optional[VideoForwarder] = None
@@ -241,13 +241,13 @@ class Realtime(realtime.Realtime):
             return
 
         # Resample to 24kHz if needed, as required by AWS Nova
-        if pcm.sample_rate != 24000:
-            pcm = pcm.resample(24000)
+        pcm = pcm.resample(24000)
 
         content_name = str(uuid.uuid4())
 
         await self.audio_content_start(content_name)
-        self._emit_audio_input_event(pcm.samples, sample_rate=pcm.sample_rate)
+        self._emit_audio_input_event(pcm)
+
         # Convert PcmData to base64 encoded bytes
         audio_base64 = base64.b64encode(pcm.samples).decode("utf-8")
         await self.audio_input(content_name, audio_base64)
@@ -684,13 +684,13 @@ class Realtime(realtime.Realtime):
                                         "content"
                                     ]
                                     audio_bytes = base64.b64decode(audio_content)
-                                    # await self.audio_output_queue.put(audio_bytes)
-                                    self._emit_audio_output_event(
-                                        audio_data=audio_bytes,
-                                        sample_rate=24000,
+                                    pcm = PcmData.from_bytes(
+                                        audio_bytes, self.sample_rate
                                     )
-
-                                    await self.output_track.write(audio_bytes)
+                                    self._emit_audio_output_event(
+                                        audio_data=pcm,
+                                    )
+                                    await self.output_track.write(pcm)
 
                                 elif "toolUse" in json_data["event"]:
                                     tool_use_data = json_data["event"]["toolUse"]

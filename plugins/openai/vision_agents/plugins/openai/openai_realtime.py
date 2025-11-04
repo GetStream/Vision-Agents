@@ -1,12 +1,12 @@
 import json
 from typing import Any, Optional, List, Dict
 
-from getstream.video.rtc.audio_track import AudioStreamTrack
+from getstream.video.rtc import AudioStreamTrack
 from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
-    ConversationItemInputAudioTranscriptionCompletedEvent,
+    ConversationItemInputAudioTranscriptionCompletedEvent, SessionUpdatedEvent, ResponseCreatedEvent, ResponseDoneEvent,
 )
 
 from vision_agents.core.llm import realtime
@@ -64,7 +64,9 @@ class Realtime(realtime.Realtime):
         # TODO: send video should depend on if the RTC connection with stream is sending video.
         self.rtc = RTCManager(self.model, self.voice, True)
         # audio output track?
-        self.output_track = AudioStreamTrack(framerate=48000, stereo=True, format="s16")
+        self.output_track = AudioStreamTrack(
+            sample_rate=48000, channels=2, format="s16"
+        )
         # Map conversation item_id to participant to handle multi-user scenarios
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
@@ -144,7 +146,6 @@ class Realtime(realtime.Realtime):
 
     async def close(self):
         await self.rtc.close()
-
 
     async def _handle_openai_event(self, event: dict) -> None:
         """Process events received from the OpenAI Realtime API.
@@ -239,26 +240,34 @@ class Realtime(realtime.Realtime):
         elif et == "response.tool_call":
             # Handle tool calls from OpenAI realtime
             await self._handle_tool_call_event(event)
+        elif et == "response.created":
+            e = ResponseCreatedEvent(**event)
+            pass
+        elif et == "response.done":
+            logger.info("OpenAI response done %s", event)
+            e = ResponseDoneEvent(**event)
 
-    async def _handle_audio_output(self, audio_bytes: bytes) -> None:
+            if e.response.status == "failed":
+                raise Exception("OpenAI realtime failure %s", e.response)
+        elif et == "session.updated":
+            pass
+            #e = SessionUpdatedEvent(**event)
+        else:
+            logger.info(f"Unrecognized OpenAI Realtime event: {et} {event}")
+
+    async def _handle_audio_output(self, pcm: PcmData) -> None:
         """Process audio output received from the OpenAI API.
 
         Forwards audio data to the output track for playback and emits audio output event.
-
-        Args:
-            audio_bytes: Raw audio data bytes from OpenAI session.
-
-        Note:
-            Registered as callback with RTC manager.
         """
+
         # Emit audio output event
         self._emit_audio_output_event(
-            audio_data=audio_bytes,
-            sample_rate=48000,  # OpenAI Realtime uses 48kHz
+            audio_data=pcm,
         )
 
         # Forward audio to output track for playback
-        await self.output_track.write(audio_bytes)
+        await self.output_track.write(pcm)
 
     async def _watch_video_track(self, track, **kwargs) -> None:
         shared_forwarder = kwargs.get("shared_forwarder")
@@ -267,7 +276,8 @@ class Realtime(realtime.Realtime):
         )
 
     async def _stop_watching_video_track(self) -> None:
-        await self.rtc.stop_video_sender()
+        # Video sender will be stopped when connection closes
+        pass
 
     async def _handle_tool_call_event(self, event: dict) -> None:
         """Handle tool call events from OpenAI realtime.

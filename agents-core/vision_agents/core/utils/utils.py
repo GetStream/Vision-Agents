@@ -13,6 +13,23 @@ import httpx
 # Type alias for markdown file contents: maps filename to file content
 MarkdownFileContents = Dict[str, str]
 
+# Cache version at module load time to avoid blocking I/O during async operations
+_VISION_AGENTS_VERSION: str | None = None
+
+
+def _load_version() -> str:
+    """Load version once at module import time."""
+    try:
+        return importlib.metadata.version("vision-agents")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+_VISION_AGENTS_VERSION = _load_version()
+
+# Cache current working directory at module load time
+_INITIAL_CWD = os.getcwd()
+
 
 @dataclass
 class Instructions:
@@ -23,13 +40,59 @@ class Instructions:
     base_dir: str = ""  # Base directory for file search, defaults to empty string
 
 
+def _read_markdown_file_sync(file_path: str) -> str:
+    """Synchronous helper to read a markdown file."""
+    try:
+        if os.path.isfile(file_path):
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        else:
+            return ""
+    except (OSError, IOError, UnicodeDecodeError):
+        return ""
+
+
+async def parse_instructions_async(text: str, base_dir: Optional[str] = None) -> Instructions:
+    """
+    Async version: Parse instructions from a string, extracting @ mentioned markdown files and their contents.
+
+    Args:
+        text: Input text that may contain @ mentions of markdown files
+        base_dir: Base directory to search for markdown files. If None, uses cached working directory.
+
+    Returns:
+        Instructions object containing the input text and file contents
+    """
+    # Find all @ mentions that look like markdown files
+    markdown_pattern = r"@([^\s@]+\.md)"
+    matches = re.findall(markdown_pattern, text)
+
+    # Create a dictionary mapping filename to file content
+    markdown_contents = {}
+
+    # Set base directory for file search
+    if base_dir is None:
+        base_dir = _INITIAL_CWD
+
+    for match in matches:
+        # Try to read the markdown file content
+        file_path = os.path.join(base_dir, match)
+        # Run blocking I/O in thread pool
+        content = await asyncio.to_thread(_read_markdown_file_sync, file_path)
+        markdown_contents[match] = content
+
+    return Instructions(
+        input_text=text, markdown_contents=markdown_contents, base_dir=base_dir
+    )
+
+
 def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instructions:
     """
     Parse instructions from a string, extracting @ mentioned markdown files and their contents.
 
     Args:
         text: Input text that may contain @ mentions of markdown files
-        base_dir: Base directory to search for markdown files. If None, uses current working directory.
+        base_dir: Base directory to search for markdown files. If None, uses cached working directory.
 
     Returns:
         Instructions object containing the input text and file contents
@@ -52,21 +115,12 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
 
     # Set base directory for file search
     if base_dir is None:
-        base_dir = os.getcwd()
+        base_dir = _INITIAL_CWD
 
     for match in matches:
         # Try to read the markdown file content
         file_path = os.path.join(base_dir, match)
-        try:
-            if os.path.isfile(file_path):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    markdown_contents[match] = f.read()
-            else:
-                # File not found, store empty string
-                markdown_contents[match] = ""
-        except (OSError, IOError, UnicodeDecodeError):
-            # File read error, store empty string
-            markdown_contents[match] = ""
+        markdown_contents[match] = _read_markdown_file_sync(file_path)
 
     return Instructions(
         input_text=text, markdown_contents=markdown_contents, base_dir=base_dir
@@ -99,17 +153,14 @@ def frame_to_png_bytes(frame) -> bytes:
         return b""
 
 
-def get_vision_agents_version() -> str:
+def get_vision_agents_version() -> Optional[str]:
     """
     Get the installed vision-agents package version.
 
     Returns:
         Version string, or "unknown" if not available.
     """
-    try:
-        return importlib.metadata.version("vision-agents")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+    return _VISION_AGENTS_VERSION or "unknown"
 
 
 async def ensure_model(path: str, url: str) -> str:

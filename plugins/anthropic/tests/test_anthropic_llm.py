@@ -17,7 +17,7 @@ class TestClaudeLLM:
     @pytest.fixture
     async def llm(self) -> ClaudeLLM:
         """Test ClaudeLLM initialization with a provided client."""
-        llm = ClaudeLLM(model="claude-3-5-sonnet-20241022")
+        llm = ClaudeLLM(model="claude-sonnet-4-20250514")
         llm._conversation = InMemoryConversation("be friendly", [])
         return llm
 

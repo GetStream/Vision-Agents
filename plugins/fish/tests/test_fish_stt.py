@@ -7,6 +7,7 @@ from conftest import STTSession
 # Load environment variables
 load_dotenv()
 
+
 class TestFishSTT:
     """Integration tests for Fish Audio STT"""
 
@@ -22,7 +23,7 @@ class TestFishSTT:
     @pytest.mark.integration
     async def test_transcribe_mia_audio(self, stt, mia_audio_16khz):
         # Create session to collect transcripts and errors
-        session = STTSession(stt)
+        session = STTSession(stt)   
         
         # Process the audio
         await stt.process_audio(mia_audio_16khz)

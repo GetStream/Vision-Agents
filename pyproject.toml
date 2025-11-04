@@ -52,8 +52,8 @@ members = [
     "plugins/smart_turn",
     "plugins/wizper",
     "plugins/heygen",
-    "plugins/moondream",
-    "plugins/vogent"
+    "plugins/vogent",
+    "plugins/moondream"
 ]
 exclude = [
 "**/__pycache__",
@@ -84,6 +84,8 @@ dev = [
     "pytest-timeout>=2.4.0",
     "hatch-vcs>=0.5.0",
     "hatch>=1.14.2",
+    "blockbuster>=1.5.5,<1.6",
+    "aiofiles>=25.1.0",
 ]
 
 [tool.mypy]
