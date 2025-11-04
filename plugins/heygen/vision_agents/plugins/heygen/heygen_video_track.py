@@ -71,7 +71,8 @@ class HeyGenVideoTrack(VideoStreamTrack):
                     # Receive frame from HeyGen
                     frame = await self._source_track.recv()
                     
-                    if frame:
+                    # Type check: ensure we have a VideoFrame
+                    if frame and isinstance(frame, av.VideoFrame):
                         # Resize if needed
                         if frame.width != self.width or frame.height != self.height:
                             frame = self._resize_frame(frame)
@@ -115,7 +116,7 @@ class HeyGenVideoTrack(VideoStreamTrack):
             new_height = int(src_height * scale)
             
             # Resize with aspect ratio maintained
-            resized = img.resize((new_width, new_height), Image.LANCZOS)
+            resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
             
             # Create black background at target resolution
             result = Image.new('RGB', (target_width, target_height), (0, 0, 0))

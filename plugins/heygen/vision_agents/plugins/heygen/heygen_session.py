@@ -28,7 +28,7 @@ class HeyGenSession:
         """
         self.avatar_id = avatar_id
         self.quality = quality
-        self.api_key = api_key or getenv("HEYGEN_API_KEY")
+        self.api_key: str = api_key or getenv("HEYGEN_API_KEY") or ""
         
         if not self.api_key:
             raise ValueError(
@@ -50,7 +50,7 @@ class HeyGenSession:
         if not self._http_session:
             self._http_session = aiohttp.ClientSession()
         
-        headers = {
+        headers: dict[str, str] = {
             "X-Api-Key": self.api_key,
             "Content-Type": "application/json",
         }
@@ -98,7 +98,7 @@ class HeyGenSession:
         if not self._http_session:
             self._http_session = aiohttp.ClientSession()
         
-        headers = {
+        headers: dict[str, str] = {
             "X-Api-Key": self.api_key,
             "Content-Type": "application/json",
         }
@@ -154,7 +154,7 @@ class HeyGenSession:
         if not self._http_session:
             self._http_session = aiohttp.ClientSession()
         
-        headers = {
+        headers: dict[str, str] = {
             "X-Api-Key": self.api_key,
             "Content-Type": "application/json",
         }
@@ -195,7 +195,7 @@ class HeyGenSession:
         if not self._http_session:
             return
         
-        headers = {
+        headers: dict[str, str] = {
             "X-Api-Key": self.api_key,
             "Content-Type": "application/json",
         }

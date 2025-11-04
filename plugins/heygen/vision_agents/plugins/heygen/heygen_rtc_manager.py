@@ -105,6 +105,8 @@ class HeyGenRTCManager:
             
             @self.pc.on("connectionstatechange")
             async def on_connection_state_change():
+                if self.pc is None:
+                    return
                 logger.info(f"HeyGen connection state: {self.pc.connectionState}")
                 if self.pc.connectionState == "connected":
                     self._connected = True
