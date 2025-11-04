@@ -85,12 +85,6 @@ processor = moondream.CloudDetectionProcessor(
     detect_objects=["person", "car", "dog", "basketball"],
     conf_threshold=0.3
 )
-
-# Access results for LLM
-state = processor.state()
-print(state["detections_summary"])  # "Detected: 2 persons, 1 car"
-print(state["detections_count"])  # Total number of detections
-print(state["last_image"])  # PIL Image for vision models
 ```
 
 ## Configuration
@@ -146,7 +140,6 @@ pytest plugins/moondream/tests/ -v
 # Run specific test categories
 pytest plugins/moondream/tests/ -k "inference" -v
 pytest plugins/moondream/tests/ -k "annotation" -v
-pytest plugins/moondream/tests/ -k "state" -v
 ```
 
 ## Dependencies
