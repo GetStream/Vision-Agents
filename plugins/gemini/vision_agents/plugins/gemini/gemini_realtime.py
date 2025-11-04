@@ -152,7 +152,7 @@ class Realtime(realtime.Realtime):
         audio_bytes = pcm.resample(
             target_sample_rate=16000, target_channels=1
         ).samples.tobytes()
-        mime = f"audio/pcm;rate=16000"
+        mime = "audio/pcm;rate=16000"
         blob = Blob(data=audio_bytes, mime_type=mime)
 
         await self._require_session().send_realtime_input(audio=blob)
