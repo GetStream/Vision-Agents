@@ -103,9 +103,6 @@ class VideoForwarder:
             except asyncio.QueueEmpty:
                 break
 
-        now = datetime.datetime.now().timestamp()
-        logger.info("FRAME: received at %s", now - frame.dts)
-
         return frame
 
     # ---------- push model (broadcast via callback) ----------

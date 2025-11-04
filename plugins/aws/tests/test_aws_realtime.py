@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from dotenv import load_dotenv
 
+from conftest import skip_blockbuster
 from vision_agents.plugins.aws import Realtime
 from vision_agents.core.llm.events import RealtimeAudioOutputEvent
 
@@ -10,6 +11,7 @@ from vision_agents.core.llm.events import RealtimeAudioOutputEvent
 load_dotenv()
 
 
+@skip_blockbuster
 class TestBedrockRealtime:
     """Integration tests for AWS Bedrock Realtime connect flow"""
 

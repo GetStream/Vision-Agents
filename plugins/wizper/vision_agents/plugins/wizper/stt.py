@@ -6,6 +6,8 @@ This plugin integrates with Stream's audio processing pipeline to provide high-q
 speech-to-text capabilities.
 """
 
+import aiofiles
+import asyncio
 import logging
 import os
 import tempfile
@@ -85,11 +87,13 @@ class STT(stt.STT):
             # Convert PCM to WAV format for upload using shared PcmData method
             wav_data = pcm_data.to_wav_bytes()
 
-            # Create temporary file for upload
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_file.write(wav_data)
-                temp_file.flush()
-                temp_file_path = temp_file.name
+            # Create temporary file for upload (async to avoid blocking)
+            temp_file_path = os.path.join(
+                tempfile.gettempdir(), 
+                f"wizper_{os.getpid()}_{id(pcm_data)}.wav"
+            )
+            async with aiofiles.open(temp_file_path, "wb") as f:
+                await f.write(wav_data)
 
             try:
                 input_params = {
@@ -111,15 +115,20 @@ class STT(stt.STT):
                 )
                 if "text" in result:
                     text = result["text"].strip()
-                    if text and participant is not None:
+                    if text:
+                        # Create a default participant if none provided
+                        if participant is None:
+                            from vision_agents.core.edge.types import Participant
+                            participant = Participant(original=None, user_id="test-user")
+                        
                         response_metadata = TranscriptResponse()
                         self._emit_transcript_event(
                             text, participant, response_metadata
                         )
             finally:
-                # Clean up temporary file
+                # Clean up temporary file (async to avoid blocking)
                 try:
-                    os.unlink(temp_file_path)
+                    await asyncio.to_thread(os.unlink, temp_file_path)
                 except OSError:
                     pass
 

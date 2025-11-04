@@ -82,8 +82,9 @@ class RTCManager:
             if track.kind == "audio":
                 track = cast(AudioStreamTrack, track)
                 logger.info("Remote audio track attached; starting audio forwarder")
-                audio_forwarder = AudioForwarder(track, self._audio_callback)
-                await audio_forwarder.start()
+                if self._audio_callback:
+                    audio_forwarder = AudioForwarder(track, self._audio_callback)
+                    await audio_forwarder.start()
 
         answer_sdp = await self._setup_sdp_exchange()
 
@@ -158,7 +159,8 @@ class RTCManager:
         self.pc.addTrack(self._audio_to_openai_track)
 
     async def _set_video_track(self) -> None:
-        self._video_sender = self.pc.addTrack(self._video_to_openai_track)
+        if self._video_to_openai_track:
+            self._video_sender = self.pc.addTrack(self._video_to_openai_track)
 
     async def send_audio_pcm(self, pcm: PcmData) -> None:
         await self._audio_to_openai_track.write(pcm)
@@ -220,8 +222,9 @@ class RTCManager:
         """
         Send a video frame to Gemini using send_realtime_input
         """
-        logger.info(f"Sending video frame: {frame}")
-        await self._video_to_openai_track.add_frame(frame)
+        logger.debug(f"Sending video frame: {frame}")
+        if self._video_to_openai_track:
+            await self._video_to_openai_track.add_frame(frame)
 
     async def start_video_sender(
         self, stream_video_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None

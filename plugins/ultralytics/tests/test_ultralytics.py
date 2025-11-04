@@ -43,6 +43,8 @@ class TestYOLOPoseProcessor:
         assert pose is not None
 
     async def test_annotated_image_output(self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor):
+        import asyncio
+        
         image_with_pose, pose = await pose_processor.add_pose_to_image(image=golf_image)
 
         assert image_with_pose is not None
@@ -51,9 +53,9 @@ class TestYOLOPoseProcessor:
         # Ensure same size as input for simplicity
         assert image_with_pose.size == golf_image.size
         
-        # Save the annotated image temporarily for inspection
+        # Save the annotated image temporarily for inspection (use asyncio.to_thread for blocking I/O)
         temp_path = Path("/tmp/annotated_golf_swing.png")
-        image_with_pose.save(temp_path)
+        await asyncio.to_thread(image_with_pose.save, temp_path)
         print(f"Saved annotated image to: {temp_path}")
 
     async def test_annotated_frame_output(self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor):

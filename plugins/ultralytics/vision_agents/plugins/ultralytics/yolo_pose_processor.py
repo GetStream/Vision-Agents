@@ -9,7 +9,6 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any
 from PIL import Image
-from aiortc import VideoStreamTrack
 import av
 from numpy import ndarray
 
@@ -18,7 +17,6 @@ from vision_agents.core.processors.base_processor import (
     VideoPublisherMixin,
     AudioVideoProcessor,
 )
-from vision_agents.core.utils.queue import LatestNQueue
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 

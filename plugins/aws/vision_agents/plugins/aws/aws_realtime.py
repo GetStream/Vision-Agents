@@ -158,9 +158,9 @@ class Realtime(realtime.Realtime):
         self.client = BedrockRuntimeClient(config=config)
         self.logger = logging.getLogger(__name__)
 
-        # Audio output track - Bedrock typically outputs at 16kHz
+        # Audio output track - Bedrock typically outputs at 24kHz
         self.output_track = AudioStreamTrack(
-            framerate=24000, stereo=False, format="s16"
+            sample_rate=24000, channels=1, format="s16"
         )
 
         self._video_forwarder: Optional[VideoForwarder] = None

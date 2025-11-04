@@ -4,7 +4,6 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Any
 
-import httpx
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 import numpy as np
 import onnxruntime as ort
@@ -19,6 +18,7 @@ from vision_agents.core.turn_detection import (
     TurnStartedEvent,
     TurnEndedEvent,
 )
+from vision_agents.core.utils.utils import ensure_model
 
 import logging
 
@@ -117,8 +117,8 @@ class SmartTurnDetection(TurnDetector):
             self.options = options
 
     async def start(self):
-        # Ensure model directory exists
-        os.makedirs(self.options.model_dir, exist_ok=True)
+        # Ensure model directory exists (use asyncio.to_thread for blocking I/O)
+        await asyncio.to_thread(os.makedirs, self.options.model_dir, exist_ok=True)
 
         # Prepare both models in parallel
         await asyncio.gather(
@@ -397,17 +397,19 @@ class SmartTurnDetection(TurnDetector):
 class SileroVAD:
     """Minimal Silero VAD ONNX wrapper for 16 kHz, mono, chunk=512."""
 
-    def __init__(self, model_path: str, reset_interval_seconds: float = 5.0):
+    def __init__(self, model_path: str, model_bytes: Optional[bytes] = None, reset_interval_seconds: float = 5.0):
         """
         Initialize Silero VAD.
 
         Args:
-            model_path: Path to the ONNX model file
+            model_path: Path to the ONNX model file (used only if model_bytes is None)
+            model_bytes: Optional pre-loaded model file contents to avoid blocking I/O
             reset_interval_seconds: Reset internal state every N seconds to prevent drift
         """
         # Load model into memory to avoid multi-worker file access issues
-        with open(model_path, "rb") as f:
-            model_bytes = f.read()
+        if model_bytes is None:
+            with open(model_path, "rb") as f:
+                model_bytes = f.read()
         
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = 1
@@ -462,47 +464,3 @@ class SileroVAD:
 
         # out shape is (1, 1) -> return scalar
         return float(out[0][0])
-
-
-async def ensure_model(path: str, url: str) -> str:
-    """
-    Download a model file asynchronously if it doesn't exist.
-
-    Args:
-        path: Local path where the model should be saved
-        url: URL to download the model from
-
-    Returns:
-        The path to the model file
-    """
-    if not os.path.exists(path):
-        model_name = os.path.basename(path)
-
-        try:
-            async with httpx.AsyncClient(
-                timeout=300.0, follow_redirects=True
-            ) as client:
-                async with client.stream("GET", url) as response:
-                    response.raise_for_status()
-
-                    # Write file in chunks to avoid loading entire file in memory
-                    # Use asyncio.to_thread for blocking file I/O operations
-                    chunks = []
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        chunks.append(chunk)
-
-                    # Write all chunks to file in thread to avoid blocking event loop
-                    def write_file():
-                        with open(path, "wb") as f:
-                            for chunk in chunks:
-                                f.write(chunk)
-
-                    await asyncio.to_thread(write_file)
-
-        except httpx.HTTPError as e:
-            # Clean up partial download on error
-            if os.path.exists(path):
-                os.remove(path)
-            raise RuntimeError(f"Failed to download {model_name}: {e}")
-
-    return path

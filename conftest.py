@@ -7,9 +7,11 @@ available to all tests in the project, including plugin tests.
 
 import asyncio
 import os
+from typing import Iterator
 
 import numpy as np
 import pytest
+from blockbuster import BlockBuster, blockbuster_ctx
 from dotenv import load_dotenv
 from torchvision.io.video import av
 
@@ -18,13 +20,39 @@ from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, STT
 
 load_dotenv()
 
-from blockbuster import BlockBuster, blockbuster_ctx
-from typing import Iterator
+
+def skip_blockbuster(func_or_class):
+    """Decorator to skip blockbuster checks for a test function or class.
+    
+    Use this decorator when testing code that makes unavoidable blocking calls
+    (e.g., third-party SDKs like boto3, fish-audio-sdk).
+    
+    Examples:
+        @skip_blockbuster
+        async def test_aws_function():
+            # boto3 makes blocking calls we can't fix
+            pass
+        
+        @skip_blockbuster
+        class TestAWSIntegration:
+            # All tests in this class skip blockbuster
+            pass
+    """
+    return pytest.mark.skip_blockbuster(func_or_class)
+
 
 @pytest.fixture(autouse=True)
-def blockbuster() -> Iterator[BlockBuster]:
-    with blockbuster_ctx() as bb:
-        yield bb
+def blockbuster(request) -> Iterator[BlockBuster | None]:
+    """Blockbuster fixture that detects blocking calls in async code.
+    
+    Can be disabled for specific tests using the @skip_blockbuster decorator.
+    """
+    # Check if test is marked to skip blockbuster
+    if request.node.get_closest_marker("skip_blockbuster"):
+        yield None
+    else:
+        with blockbuster_ctx() as bb:
+            yield bb
 
 
 class STTSession:

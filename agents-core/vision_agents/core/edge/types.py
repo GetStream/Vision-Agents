@@ -9,6 +9,7 @@ import logging
 
 from getstream.video.rtc.track_util import PcmData
 from pyee.asyncio import AsyncIOEventEmitter
+import aiofiles
 import asyncio
 import os
 import shutil
@@ -62,6 +63,7 @@ async def play_pcm_with_ffplay(
     """Write PcmData to a WAV file and optionally play it with ffplay.
 
     This is a utility function for testing and debugging audio output.
+    Audio playback only happens if PLAY_AUDIO environment variable is set to "true".
 
     Args:
         pcm: PcmData object to play
@@ -74,6 +76,9 @@ async def play_pcm_with_ffplay(
     Example:
         pcm = PcmData.from_bytes(audio_bytes, sample_rate=48000, channels=2)
         wav_path = await play_pcm_with_ffplay(pcm)
+        
+    Note:
+        Set PLAY_AUDIO=true environment variable to enable audio playback during tests.
     """
 
     # Generate output path if not provided
@@ -82,30 +87,37 @@ async def play_pcm_with_ffplay(
         timestamp = int(time.time())
         outfile_path = os.path.join(tmpdir, f"pcm_playback_{timestamp}.wav")
 
-    # Write WAV file
-    with open(outfile_path, "wb") as f:
-        f.write(pcm.to_wav_bytes())
+    # Write WAV file asynchronously
+    async with aiofiles.open(outfile_path, "wb") as f:
+        await f.write(pcm.to_wav_bytes())
 
     logger.info(f"Wrote WAV file: {outfile_path}")
 
-    # Optional playback with ffplay
-    if shutil.which("ffplay"):
-        logger.info("Playing audio with ffplay...")
-        proc = await asyncio.create_subprocess_exec(
-            "ffplay",
-            "-autoexit",
-            "-nodisp",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            outfile_path,
-        )
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=timeout_s)
-        except asyncio.TimeoutError:
-            logger.warning(f"ffplay timed out after {timeout_s}s, killing process")
-            proc.kill()
+    # Optional playback with ffplay - only if PLAY_AUDIO environment variable is set
+    play_audio = os.environ.get("PLAY_AUDIO", "").lower() in ("true", "1", "yes")
+    
+    if play_audio:
+        # Check in thread pool to avoid blocking
+        has_ffplay = await asyncio.to_thread(shutil.which, "ffplay")
+        if has_ffplay:
+            logger.info("Playing audio with ffplay...")
+            proc = await asyncio.create_subprocess_exec(
+                "ffplay",
+                "-autoexit",
+                "-nodisp",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                outfile_path,
+            )
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                logger.warning(f"ffplay timed out after {timeout_s}s, killing process")
+                proc.kill()
+        else:
+            logger.warning("ffplay not found in PATH, skipping playback")
     else:
-        logger.warning("ffplay not found in PATH, skipping playback")
+        logger.debug("Skipping audio playback (set PLAY_AUDIO=true to enable)")
 
     return outfile_path

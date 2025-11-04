@@ -3,6 +3,7 @@ import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 
+from conftest import skip_blockbuster
 from vision_agents.plugins import aws as aws_plugin
 from vision_agents.core.tts.testing import TTSSession, assert_tts_send_non_blocking
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
@@ -24,6 +25,7 @@ def _has_aws_creds() -> bool:
     )
 
 
+@skip_blockbuster
 class TestAWSPollyTTS:
     @pytest_asyncio.fixture
     async def tts(self) -> aws_plugin.TTS:  # type: ignore[name-defined]

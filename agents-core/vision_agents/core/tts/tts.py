@@ -4,6 +4,8 @@ import time
 import uuid
 from typing import Optional, Dict, Union, Iterator, AsyncIterator, AsyncGenerator, Any
 
+import av
+
 from vision_agents.core.events.manager import EventManager
 
 from . import events
@@ -63,6 +65,21 @@ class TTS(abc.ABC):
         self._desired_channels: int = 1
         self._desired_format: AudioFormat = AudioFormat.PCM_S16
 
+        # Persistent resampler to avoid discontinuities between chunks
+        self._resampler: Optional[av.AudioResampler] = None
+        self._resampler_input_rate: Optional[int] = None
+        self._resampler_input_channels: Optional[int] = None
+
+    async def warmup(self) -> None:
+        """
+        Warm up the TTS service.
+        
+        This method can be overridden by implementations to perform
+        model loading, connection establishment, or other initialization
+        that should happen before the first synthesis request.
+        """
+        pass
+
     def set_output_format(
         self,
         sample_rate: int,
@@ -121,6 +138,12 @@ class TTS(abc.ABC):
         user: Optional[Dict[str, Any]],
     ) -> tuple[int, float]:
         """Emit TTSAudioEvent; return (bytes_len, duration_ms)."""
+
+        # Resample to desired format if needed
+        pcm = pcm.resample(
+            target_sample_rate=self._desired_sample_rate,
+            target_channels=self._desired_channels
+        )
 
         self.events.send(
             TTSAudioEvent(

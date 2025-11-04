@@ -61,6 +61,8 @@ class AudioForwarder:
 
             try:
                 pcm = PcmData.from_av_frame(frame)
+                # Resample to 16kHz mono as documented in the class docstring
+                pcm = pcm.resample(target_sample_rate=16000, target_channels=1)
                 await self._callback(pcm)
             except Exception as e:
                 logger.exception(f"Failed to process audio frame: {e}")
