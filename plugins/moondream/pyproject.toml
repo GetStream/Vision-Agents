@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vision-agents-plugins-moondream"
+dynamic = ["version"]
+description = "Moondream 3 vision processor plugin for Vision Agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "vision-agents",
+    "numpy>=2.0.0",
+    "pillow>=10.4.0",
+    "opencv-python>=4.8.0",
+    "moondream>=0.1.1",  # Now compatible with vision-agents pillow>=10.4.0
+    "transformers>=4.40.0",  # For local model loading
+    "torch>=2.0.0",  # PyTorch for model inference
+    "accelerate>=0.20.0",  # Required for device_map and device management
+]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
+
+[tool.hatch.build.targets.wheel]
+packages = [".", "vision_agents"]
+
+[tool.uv.sources]
+vision-agents = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+]
+
