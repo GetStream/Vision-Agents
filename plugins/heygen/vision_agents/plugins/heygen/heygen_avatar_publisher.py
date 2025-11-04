@@ -2,7 +2,6 @@ import asyncio
 import logging
 from typing import Optional, Any, Tuple
 
-import numpy as np
 from getstream.video.rtc import audio_track
 
 from vision_agents.core.processors.base_processor import (
@@ -21,10 +20,9 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
     """HeyGen avatar video and audio publisher.
     
     Publishes video of a HeyGen avatar that lip-syncs based on LLM text output.
-    Can be used as a processor in the Vision Agents framework to add
-    realistic avatar video to AI agents.
     
-    HeyGen handles TTS internally, so no separate TTS is needed.
+    For standard LLMs: HeyGen provides both video and audio (with TTS).
+    For Realtime LLMs: HeyGen provides video only; LLM provides audio.
     
     Example:
         agent = Agent(
@@ -49,7 +47,6 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         resolution: Tuple[int, int] = (1920, 1080),
         api_key: Optional[str] = None,
         interval: int = 0,
-        mute_llm_audio: bool = True,
         **kwargs,
     ):
         """Initialize the HeyGen avatar publisher.
@@ -60,8 +57,6 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             resolution: Output video resolution (width, height).
             api_key: HeyGen API key. Uses HEYGEN_API_KEY env var if not provided.
             interval: Processing interval (not used, kept for compatibility).
-            mute_llm_audio: If True, mutes the Realtime LLM's audio output so only
-                HeyGen's video (with audio) is heard. Default: True.
             **kwargs: Additional arguments passed to parent class.
         """
         super().__init__(
@@ -75,7 +70,6 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         self.quality = quality
         self.resolution = resolution
         self.api_key = api_key
-        self.mute_llm_audio = mute_llm_audio
         
         # WebRTC manager for HeyGen connection
         self.rtc_manager = HeyGenRTCManager(
@@ -106,9 +100,6 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         self._current_response_id: Optional[str] = None
         self._all_sent_texts: set = set()  # Track all sent texts to prevent duplicates
         
-        # Audio forwarding state (for selective muting of Realtime LLM audio)
-        self._forwarding_audio = False
-        
         logger.info(
             f"HeyGen AvatarPublisher initialized "
             f"(avatar: {avatar_id}, quality: {quality}, resolution: {resolution})"
@@ -132,10 +123,6 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         """
         self._agent = agent
         logger.info("Agent reference set for HeyGen avatar publisher")
-        
-        # Mute the Realtime LLM's audio if requested
-        if self.mute_llm_audio:
-            self._mute_realtime_llm_audio()
         
         # Subscribe to text events immediately when agent is set
         self._subscribe_to_text_events()
@@ -231,50 +218,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             else:
                 logger.warning("Cannot subscribe to text events - no agent or LLM attached yet")
         except Exception as e:
-            logger.error(f"Failed to subscribe to text events: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-    def _mute_realtime_llm_audio(self) -> None:
-        """Mute the Realtime LLM's audio output.
-        
-        When using HeyGen, we want HeyGen to handle all audio (with lip-sync),
-        so we mute the LLM's native audio output to avoid duplicated/overlapping audio.
-        
-        This works by intercepting writes to the LLM's output_track and only blocking
-        writes that come from the LLM itself (not from HeyGen forwarding).
-        """
-        try:
-            from vision_agents.core.llm.realtime import Realtime
-            
-            if not hasattr(self, '_agent') or not self._agent:
-                logger.warning("Cannot mute LLM audio - no agent set")
-                return
-                
-            if not hasattr(self._agent, 'llm') or not isinstance(self._agent.llm, Realtime):
-                logger.info("LLM is not a Realtime LLM - no audio to mute")
-                return
-            
-            # Store the original write method
-            original_write = self._agent.llm.output_track.write
-            
-            # Create a selective write method
-            async def selective_write(audio_data: bytes) -> None:
-                """Only allow writes from HeyGen forwarding, block LLM writes."""
-                if self._forwarding_audio:
-                    # This is from HeyGen - allow it
-                    await original_write(audio_data)
-                # else: This is from the Realtime LLM - block it
-            
-            # Replace the write method
-            self._agent.llm.output_track.write = selective_write
-            
-            logger.info("Muted Realtime LLM audio output (HeyGen will provide audio)")
-            
-        except Exception as e:
-            logger.error(f"Failed to mute LLM audio: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"Failed to subscribe to text events: {e}", exc_info=True)
 
     async def _on_video_track(self, track: Any) -> None:
         """Callback when video track is received from HeyGen.
@@ -291,12 +235,29 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         HeyGen provides audio with lip-synced TTS. We forward this audio
         to the agent's audio track so it gets published to the call.
         
+        For Realtime LLMs: We DON'T forward HeyGen audio - the LLM generates its own audio.
+        HeyGen is only used for video lip-sync based on text transcriptions.
+        
         Args:
             track: Incoming audio track from HeyGen's WebRTC connection.
         """
-        logger.info("Received audio track from HeyGen, starting audio forwarding")
+        logger.info("Received audio track from HeyGen")
         
-        # Forward audio frames from HeyGen to our audio track
+        # Check if we're using a Realtime LLM
+        using_realtime_llm = False
+        if hasattr(self, '_agent') and self._agent:
+            from vision_agents.core.llm.realtime import Realtime
+            if hasattr(self._agent, 'llm') and isinstance(self._agent.llm, Realtime):
+                using_realtime_llm = True
+        
+        if using_realtime_llm:
+            # For Realtime LLMs, don't forward HeyGen audio - use the LLM's native audio
+            # HeyGen is only used for lip-synced video based on text transcriptions
+            logger.info("Using Realtime LLM - skipping HeyGen audio forwarding (using LLM's native audio)")
+            return
+        
+        # For standard LLMs, forward HeyGen's audio to our audio track
+        logger.info("Forwarding HeyGen audio to audio track")
         asyncio.create_task(self._forward_audio_frames(track, self._audio_track))
     
     async def _forward_audio_frames(self, source_track: Any, dest_track: Any) -> None:
@@ -315,16 +276,10 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                     frame = await source_track.recv()
                     frame_count += 1
                     
-                    # Convert frame to bytes and write to agent's audio track
                     if hasattr(frame, 'to_ndarray'):
                         audio_array = frame.to_ndarray()
-                        # Pass raw audio data - AudioStreamTrack handles format conversion
                         audio_bytes = audio_array.tobytes()
-                        
-                        # Set flag to allow HeyGen audio through the muted track
-                        self._forwarding_audio = True
                         await dest_track.write(audio_bytes)
-                        self._forwarding_audio = False
                     else:
                         logger.warning("Received frame without to_ndarray() method")
                         
@@ -332,16 +287,11 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                     if "ended" in str(e).lower() or "closed" in str(e).lower():
                         logger.info(f"HeyGen audio track ended (forwarded {frame_count} frames)")
                         break
-                    else:
-                        logger.error(f"Error forwarding audio frame #{frame_count}: {e}")
-                        import traceback
-                        logger.error(traceback.format_exc())
-                        break
+                    logger.error(f"Error forwarding audio frame: {e}", exc_info=True)
+                    break
                         
         except Exception as e:
-            logger.error(f"Error in audio forwarding loop: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"Error in audio forwarding loop: {e}", exc_info=True)
 
     async def _on_text_chunk(self, text_delta: str, item_id: Optional[str]) -> None:
         """Handle text chunk from the LLM.
@@ -385,9 +335,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             logger.info(f"Sending text to HeyGen: '{text[:50]}...'")
             await self.rtc_manager.send_text(text, task_type="repeat")
         except Exception as e:
-            logger.error(f"Failed to send text to HeyGen: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"Failed to send text to HeyGen: {e}", exc_info=True)
 
     def publish_video_track(self):
         """Publish the HeyGen avatar video track.
