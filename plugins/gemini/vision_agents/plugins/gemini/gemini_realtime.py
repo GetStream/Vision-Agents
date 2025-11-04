@@ -303,22 +303,14 @@ class Realtime(realtime.Realtime):
                                             )
                                             self.events.send(event)
                                     elif typed_part.inline_data:
-                                        raise NotImplementedError(
-                                            "this code path is not implemented yet"
-                                        )
-                                        # TODO: parse typed_part.inline_data.data to PcmData, emit event and write to output_track
-                                        # data = typed_part.inline_data.data
                                         # Emit audio output event
-                                        # audio_event = RealtimeAudioOutputEvent(
-                                        #     plugin_name="gemini",
-                                        #     audio_data=data,
-                                        #     sample_rate=24000,
-                                        # )
-                                        # self.events.send(audio_event)
-                                        #
-                                        # await self.output_track.write(
-                                        #     data
-                                        # )  # original 24khz here
+                                        pcm = PcmData.from_bytes(
+                                            typed_part.inline_data.data, 24000
+                                        )
+                                        self._emit_audio_output_event(
+                                            audio_data=pcm,
+                                        )
+                                        await self.output_track.write(pcm)
                                     elif (
                                         hasattr(typed_part, "function_call")
                                         and typed_part.function_call

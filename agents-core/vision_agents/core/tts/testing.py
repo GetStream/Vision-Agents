@@ -13,6 +13,7 @@ from .events import (
 
 from getstream.video.rtc import PcmData
 
+
 @dataclass
 class TTSResult:
     speeches: List[PcmData] = field(default_factory=list)
@@ -126,36 +127,3 @@ async def _probe_event_loop_while(coro, interval: float = 0.01) -> EventLoopProb
             ticker_task.cancel()
     elapsed_ms = (loop.time() - start) * 1000.0
     return EventLoopProbeResult(ticks=ticks, elapsed_ms=elapsed_ms, max_gap_ms=max_gap)
-
-
-async def assert_tts_send_non_blocking(
-    tts: TTS,
-    text: str = "Hello from non-blocking test",
-    *,
-    interval: float = 0.01,
-    min_observation_ms: float = 50.0,
-    min_expected_ticks: int = 2,
-) -> EventLoopProbeResult:
-    """Assert that `tts.send(text)` does not block the event loop.
-
-    This helper runs `tts.send(text)` while probing the event loop at a small
-    interval. If the call takes at least `min_observation_ms`, we require the
-    probe to tick at least `min_expected_ticks`. A zero or very low tick count
-    indicates the event loop was blocked (e.g., sync SDK call without executor).
-
-    Returns the probe metrics for optional additional assertions.
-    """
-    # Ensure output format is set so send() can emit properly even if unused
-    try:
-        tts.set_output_format(sample_rate=16000, channels=1)
-    except Exception:
-        pass
-
-    probe = await _probe_event_loop_while(tts.send(text), interval=interval)
-
-    if probe.elapsed_ms >= min_observation_ms:
-        assert probe.ticks >= min_expected_ticks, (
-            f"tts.send blocked event loop: ticks={probe.ticks}, elapsed_ms={probe.elapsed_ms:.1f}. It looks like the stream_audio method is blocking the event loop."
-        )
-    # If call was too fast, we don't strictly assert; return metrics for info
-    return probe

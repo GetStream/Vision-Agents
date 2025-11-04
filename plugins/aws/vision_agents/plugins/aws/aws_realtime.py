@@ -21,7 +21,7 @@ from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.processors import Processor
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc import PcmData
 
 logger = logging.getLogger(__name__)
 
@@ -683,17 +683,14 @@ class Realtime(realtime.Realtime):
                                     audio_content = json_data["event"]["audioOutput"][
                                         "content"
                                     ]
-                                    raise NotImplementedError(
-                                        "this code path is not implemented yet"
-                                    )
                                     audio_bytes = base64.b64decode(audio_content)
-                                    # await self.audio_output_queue.put(audio_bytes)
-                                    self._emit_audio_output_event(
-                                        audio_data=audio_bytes,
-                                        sample_rate=24000,
+                                    pcm = PcmData.from_bytes(
+                                        audio_bytes, self.sample_rate
                                     )
-
-                                    await self.output_track.write(audio_bytes)
+                                    self._emit_audio_output_event(
+                                        audio_data=pcm,
+                                    )
+                                    await self.output_track.write(pcm)
 
                                 elif "toolUse" in json_data["event"]:
                                     tool_use_data = json_data["event"]["toolUse"]
