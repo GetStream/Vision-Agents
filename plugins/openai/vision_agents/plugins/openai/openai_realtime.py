@@ -6,7 +6,7 @@ from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
-    ConversationItemInputAudioTranscriptionCompletedEvent, ResponseCreatedEvent, ResponseDoneEvent,
+    ConversationItemInputAudioTranscriptionCompletedEvent, ResponseDoneEvent,
 )
 
 from vision_agents.core.llm import realtime
