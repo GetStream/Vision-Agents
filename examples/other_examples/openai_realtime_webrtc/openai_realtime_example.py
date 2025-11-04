@@ -55,8 +55,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         #TODO: should open demo be done by the CLI instead of the example?
         await agent.edge.open_demo(call)
         logger.info("LLM ready")
-        # await agent.llm.request_session_info()
-        logger.info("Requested session info")
         # Wait for a human to join the call before greeting
         logger.info("Waiting for human to join the call")
         await agent.llm.simple_response(text="Please greet the user.")

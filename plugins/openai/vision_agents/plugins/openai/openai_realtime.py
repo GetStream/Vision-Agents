@@ -6,7 +6,7 @@ from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
-    ConversationItemInputAudioTranscriptionCompletedEvent,
+    ConversationItemInputAudioTranscriptionCompletedEvent, SessionUpdatedEvent, ResponseCreatedEvent, ResponseDoneEvent,
 )
 
 from vision_agents.core.llm import realtime
@@ -240,6 +240,20 @@ class Realtime(realtime.Realtime):
         elif et == "response.tool_call":
             # Handle tool calls from OpenAI realtime
             await self._handle_tool_call_event(event)
+        elif et == "response.created":
+            e = ResponseCreatedEvent(**event)
+            pass
+        elif et == "response.done":
+            logger.info("OpenAI response done %s", event)
+            e = ResponseDoneEvent(**event)
+
+            if e.response.status == "failed":
+                raise Exception("OpenAI realtime failure %s", e.response)
+        elif et == "session.updated":
+            pass
+            #e = SessionUpdatedEvent(**event)
+        else:
+            logger.info(f"Unrecognized OpenAI Realtime event: {et} {event}")
 
     async def _handle_audio_output(self, pcm: PcmData) -> None:
         """Process audio output received from the OpenAI API.
