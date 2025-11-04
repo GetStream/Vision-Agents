@@ -42,6 +42,13 @@ class Realtime(LLM, abc.ABC):
     fps: int = 1
     session_id: str  # UUID to identify this session
 
+    # Instruct the Agent that this model can handle audio and video
+    # without additional STT and TTS services.
+    handles_audio: bool = True
+    handles_video: bool = True
+    needs_stt = False
+    needs_tts = False
+
     def __init__(
         self,
         fps: int = 1,  # the number of video frames per second to send (for implementations that support setting fps)

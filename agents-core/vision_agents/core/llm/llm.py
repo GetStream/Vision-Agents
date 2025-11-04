@@ -44,8 +44,12 @@ AfterCb = Callable[[LLMResponseEvent], None]
 
 
 class LLM(abc.ABC):
-    # if we want to use realtime/ sts behaviour
-    sts: bool = False
+    # Instruct the Agent that this model requires STT and TTS services, and it doesn't handle audio and video
+    # on its own.
+    needs_stt: bool = True
+    needs_tts: bool = True
+    handles_audio: bool = False
+    handles_video: bool = False
 
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
