@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 from vision_agents.plugins import fish
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
-from vision_agents.core.tts.testing import TTSSession, assert_tts_send_non_blocking
+from vision_agents.core.tts.testing import TTSSession
 
 # Load environment variables
 load_dotenv()
@@ -30,7 +30,3 @@ class TestFishTTS:
 
         assert not session.errors
         assert len(session.speeches) > 0
-
-    @pytest.mark.integration
-    async def test_fish_tts_non_blocking(self, tts: fish.TTS):
-        await assert_tts_send_non_blocking(tts, "Hello from Fish Audio.")

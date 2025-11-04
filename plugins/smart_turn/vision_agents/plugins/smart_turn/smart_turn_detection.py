@@ -117,8 +117,8 @@ class SmartTurnDetection(TurnDetector):
             self.options = options
 
     async def start(self):
-        # Ensure model directory exists
-        os.makedirs(self.options.model_dir, exist_ok=True)
+        # Ensure model directory exists (use asyncio.to_thread for blocking I/O)
+        await asyncio.to_thread(os.makedirs, self.options.model_dir, exist_ok=True)
 
         # Prepare both models in parallel
         await asyncio.gather(
@@ -397,17 +397,19 @@ class SmartTurnDetection(TurnDetector):
 class SileroVAD:
     """Minimal Silero VAD ONNX wrapper for 16 kHz, mono, chunk=512."""
 
-    def __init__(self, model_path: str, reset_interval_seconds: float = 5.0):
+    def __init__(self, model_path: str, model_bytes: Optional[bytes] = None, reset_interval_seconds: float = 5.0):
         """
         Initialize Silero VAD.
 
         Args:
-            model_path: Path to the ONNX model file
+            model_path: Path to the ONNX model file (used only if model_bytes is None)
+            model_bytes: Optional pre-loaded model file contents to avoid blocking I/O
             reset_interval_seconds: Reset internal state every N seconds to prevent drift
         """
         # Load model into memory to avoid multi-worker file access issues
-        with open(model_path, "rb") as f:
-            model_bytes = f.read()
+        if model_bytes is None:
+            with open(model_path, "rb") as f:
+                model_bytes = f.read()
         
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = 1

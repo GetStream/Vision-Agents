@@ -21,8 +21,8 @@ vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-krisp = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
-vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
+vision-agents-plugins-moondream = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -50,8 +50,8 @@ members = [
     "plugins/krisp",
     "plugins/smart_turn",
     "plugins/wizper",
-    "plugins/moondream",
-    "plugins/vogent"
+    "plugins/vogent",
+    "plugins/moondream"
 ]
 exclude = [
 "**/__pycache__",
@@ -82,6 +82,8 @@ dev = [
     "pytest-timeout>=2.4.0",
     "hatch-vcs>=0.5.0",
     "hatch>=1.14.2",
+    "blockbuster>=1.5.5,<1.6",
+    "aiofiles>=25.1.0",
 ]
 
 [tool.mypy]

@@ -1,7 +1,8 @@
 import uuid
-from vision_agents.core.events import (
-    PluginBaseEvent, AudioFormat, ConnectionState
-)
+
+from getstream.video.rtc import PcmData
+
+from vision_agents.core.events import PluginBaseEvent, ConnectionState
 from dataclasses import dataclass, field
 from typing import Optional, Any
 
@@ -11,10 +12,7 @@ class TTSAudioEvent(PluginBaseEvent):
     """Event emitted when TTS audio data is available."""
 
     type: str = field(default="plugin.tts_audio", init=False)
-    audio_data: Optional[bytes] = None
-    audio_format: AudioFormat = AudioFormat.PCM_S16
-    sample_rate: int = 16000
-    channels: int = 1
+    data: Optional[PcmData] = None
     chunk_index: int = 0
     is_final_chunk: bool = True
     text_source: Optional[str] = None
@@ -72,4 +70,3 @@ class TTSConnectionEvent(PluginBaseEvent):
     connection_state: Optional[ConnectionState] = None
     provider: Optional[str] = None
     details: Optional[dict[str, Any]] = None
-
