@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 from os import getenv
 import aiohttp
 
-from .heygen_avatar_publisher import VideoQuality
+from .heygen_types import VideoQuality
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class HeyGenSession:
     def __init__(
         self,
         avatar_id: str = "default",
-        quality: "VideoQuality" = None,
+        quality: VideoQuality = VideoQuality.HIGH,
         api_key: Optional[str] = None,
     ):
         """Initialize HeyGen session manager.
@@ -28,10 +28,6 @@ class HeyGenSession:
             quality: Video quality setting (VideoQuality.LOW, VideoQuality.MEDIUM, or VideoQuality.HIGH).
             api_key: HeyGen API key. Uses HEYGEN_API_KEY env var if not provided.
         """
-        # Default to HIGH if not provided
-        if quality is None:
-            quality = VideoQuality.HIGH
-        
         self.avatar_id = avatar_id
         self.quality = quality
         self.api_key: str = api_key or getenv("HEYGEN_API_KEY") or ""

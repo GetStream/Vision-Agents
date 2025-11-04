@@ -1,15 +1,5 @@
 import asyncio
 import logging
-from enum import Enum
-
-# Define VideoQuality enum FIRST before any other imports to avoid circular import issues
-class VideoQuality(str, Enum):
-    """Video quality options for HeyGen avatar streaming."""
-    
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
 from typing import Optional, Any, Tuple
 
 from getstream.video.rtc import audio_track
@@ -21,6 +11,7 @@ from vision_agents.core.processors.base_processor import (
 )
 
 from .heygen_rtc_manager import HeyGenRTCManager
+from .heygen_types import VideoQuality
 from .heygen_video_track import HeyGenVideoTrack
 
 logger = logging.getLogger(__name__)

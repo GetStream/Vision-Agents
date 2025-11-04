@@ -10,10 +10,8 @@ from aiortc import (
     MediaStreamTrack,
 )
 
-from typing import Optional, Callable, Any
-
 from .heygen_session import HeyGenSession
-from .heygen_avatar_publisher import VideoQuality
+from .heygen_types import VideoQuality
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +26,7 @@ class HeyGenRTCManager:
     def __init__(
         self,
         avatar_id: str = "default",
-        quality: "VideoQuality" = None,
+        quality: Optional["VideoQuality"] = VideoQuality.HIGH,
         api_key: Optional[str] = None,
     ):
         """Initialize the RTC manager.
