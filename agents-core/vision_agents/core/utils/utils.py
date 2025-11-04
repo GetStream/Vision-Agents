@@ -152,7 +152,7 @@ def frame_to_png_bytes(frame) -> bytes:
         return b""
 
 
-def get_vision_agents_version() -> str:
+def get_vision_agents_version() -> Optional[str]:
     """
     Get the installed vision-agents package version.
 
