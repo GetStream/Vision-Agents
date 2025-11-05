@@ -42,9 +42,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # ensure the agent user is created
     await agent.create_user()
     # Create a call
-    call = agent.edge.client.video.call(call_type, call_id)
-    # Ensure the call exists server-side before joining
-    await call.get_or_create(data={"created_by_id": agent.agent_user.id})
+    call = await agent.create_call(call_type, call_id)
 
     logger.info("🤖 Starting OpenAI Realtime Agent...")
 

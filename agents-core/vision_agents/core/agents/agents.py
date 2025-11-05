@@ -5,11 +5,12 @@ import tempfile
 import time
 import uuid
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard, Coroutine
 from uuid import uuid4
 
 import getstream.models
 from aiortc import VideoStreamTrack
+from getstream.video.async_call import Call
 from getstream.video.rtc import Call
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
@@ -692,6 +693,13 @@ class Agent:
             self._agent_user_initialized = True
 
         return None
+
+    async def create_call(self, call_type: str, call_id: str) -> Call:
+        """Shortcut for creating a call/room etc."""
+        call = self.edge.client.video.call(call_type, call_id)
+        response = await call.get_or_create(data={"created_by_id": self.agent_user.id})
+
+        return call
 
     def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.debug(f"Vad audio event {self._truncate_for_logging(event)}")
