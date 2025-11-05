@@ -20,4 +20,3 @@ vision-agents-plugins-getstream = { workspace = true }
 vision-agents-plugins-deepgram = { workspace = true }
 vision-agents-plugins-elevenlabs = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
-ß
