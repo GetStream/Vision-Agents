@@ -10,7 +10,6 @@ dependencies = [
     "asyncio",
     "aiortc",
     "openai",
-    "pyinstrument>=5.1.1",
 ]
 
 [tool.uv.sources]

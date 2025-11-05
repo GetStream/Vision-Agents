@@ -62,5 +62,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
         await agent.finish()  # run till the call ends
 
+
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
