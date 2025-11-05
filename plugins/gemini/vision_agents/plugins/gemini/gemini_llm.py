@@ -106,7 +106,7 @@ class GeminiLLM(LLM):
             kwargs["config"] = cfg
 
         # Generate content using the client
-        iterator: AsyncIterator[GenerateContentResponse] = await self.chat.send_message_stream(*args, **kwargs)  # type: ignore[assignment]
+        iterator: AsyncIterator[GenerateContentResponse] = await self.chat.send_message_stream(*args, **kwargs)
         text_parts : List[str] = []
         final_chunk = None
         pending_calls: List[NormalizedToolCallItem] = []
