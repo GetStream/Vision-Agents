@@ -61,7 +61,7 @@ class VideoProcessorMixin(abc.ABC):
     @abc.abstractmethod
     async def process_video(
         self,
-        track: aiortc.mediastreams.MediaStreamTrack,
+        track: aiortc.MediaStreamTrack,
         participant: models_pb2.Participant,
     ):
         pass
