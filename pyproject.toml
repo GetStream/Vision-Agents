@@ -86,6 +86,7 @@ dev = [
     "hatch>=1.14.2",
     "blockbuster>=1.5.5,<1.6",
     "aiofiles>=25.1.0",
+    "pyinstrument>=5.1.1",
 ]
 
 [tool.mypy]

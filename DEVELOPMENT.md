@@ -301,6 +301,43 @@ start_http_server(port=9464)
 
 You can now see the metrics at `http://localhost:9464/metrics` (make sure that your Python program keeps running), after this you can setup your Prometheus server to scrape this endpoint.
 
+### Profiling
+
+The `Profiler` class uses `pyinstrument` to profile your agent's performance and generate an HTML report showing where time is spent during execution.
+
+#### Example usage:
+
+```python
+from uuid import uuid4
+from vision_agents.core import User, Agent
+from vision_agents.core.profiling import Profiler
+from vision_agents.plugins import getstream, gemini, deepgram, elevenlabs, vogent
+
+async def start_agent() -> None:
+    agent = Agent(
+        edge=getstream.Edge(),
+        agent_user=User(name="My AI friend", id="agent"),
+        instructions="You're a helpful assistant.",
+        llm=gemini.LLM("gemini-2.0-flash"),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
+        turn_detection=vogent.TurnDetection(),
+        profiler=Profiler(output_path='./profile.html'),  # Optional: specify output path
+    )
+    
+    call = agent.edge.client.video.call("default", str(uuid4()))
+    with await agent.join(call):
+        await agent.simple_response("Hello!")
+        await agent.finish()
+```
+
+The profiler automatically:
+- Starts profiling when the agent is created
+- Stops profiling when the agent finishes (on `AgentFinishEvent`)
+- Saves an HTML report to the specified output path (default: `./profile.html`)
+
+You can open the generated HTML file in a browser to view the performance profile, which shows a timeline of function calls and where time is spent during agent execution.
+
 
 ### Queuing
 

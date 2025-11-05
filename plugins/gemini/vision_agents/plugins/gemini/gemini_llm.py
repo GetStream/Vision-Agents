@@ -1,8 +1,7 @@
-import asyncio
 import uuid
-from typing import Optional, List, TYPE_CHECKING, Any, Dict
+from typing import Optional, List, TYPE_CHECKING, Any, Dict, AsyncIterator
 
-from google import genai
+from google.genai.client import AsyncClient, Client
 from google.genai import types
 from google.genai.types import GenerateContentResponse, GenerateContentConfig
 
@@ -38,15 +37,15 @@ class GeminiLLM(LLM):
 
     Examples:
 
-        from vision_agents.plugins import gemini
-        llm = gemini.LLM()
+          from vision_agents.plugins import gemini
+          llm = gemini.LLM()
     """
 
     def __init__(
         self,
         model: str,
         api_key: Optional[str] = None,
-        client: Optional[genai.Client] = None,
+        client: Optional[AsyncClient] = None,
     ):
         """
         Initialize the GeminiLLM class.
@@ -64,7 +63,7 @@ class GeminiLLM(LLM):
         if client is not None:
             self.client = client
         else:
-            self.client = genai.Client(api_key=api_key)
+            self.client = Client(api_key=api_key).aio
 
     async def simple_response(
         self,
@@ -85,21 +84,6 @@ class GeminiLLM(LLM):
         """
         return await self.send_message(message=text)
 
-    def _iterate_stream_blocking(self, iterator):
-        """Helper method to iterate over a blocking stream iterator.
-
-        This method runs in a thread pool to avoid blocking the async event loop.
-        It collects all chunks and returns them as a list.
-        """
-        chunks = []
-        try:
-            for chunk in iterator:
-                chunks.append(chunk)
-        except Exception as e:
-            # Return error as last element
-            chunks.append(e)
-        return chunks
-
     async def send_message(self, *args, **kwargs):
         """
         send_message gives you full support/access to the native Gemini chat send message method
@@ -115,9 +99,6 @@ class GeminiLLM(LLM):
             config = GenerateContentConfig(system_instruction=enhanced_instructions)
             self.chat = self.client.chats.create(model=self.model, config=config)
 
-        # Store in local variable for type narrowing
-        chat = self.chat
-
         # Add tools if available - Gemini uses GenerateContentConfig
         tools_spec = self.get_available_functions()
         if tools_spec:
@@ -130,13 +111,10 @@ class GeminiLLM(LLM):
             cfg.tools = conv_tools  # type: ignore[assignment]
             kwargs["config"] = cfg
 
-        # Generate content using the client - this returns a blocking iterator
-        # We need to run it in a thread pool to avoid blocking the event loop
-        def _get_iterator():
-            return chat.send_message_stream(*args, **kwargs)
-
-        iterator = await asyncio.to_thread(_get_iterator)
-
+        # Generate content using the client
+        iterator: AsyncIterator[
+            GenerateContentResponse
+        ] = await self.chat.send_message_stream(*args, **kwargs)
         text_parts: List[str] = []
         final_chunk = None
         pending_calls: List[NormalizedToolCallItem] = []
@@ -144,14 +122,8 @@ class GeminiLLM(LLM):
         # Gemini API does not have an item_id, we create it here and add it to all events
         item_id = str(uuid.uuid4())
 
-        # Iterate over the stream in a thread pool to avoid blocking
-        chunks = await asyncio.to_thread(self._iterate_stream_blocking, iterator)
-
-        # Check if last element is an exception
-        if chunks and isinstance(chunks[-1], Exception):
-            raise chunks[-1]
-
-        for idx, chunk in enumerate(chunks):
+        idx = 0
+        async for chunk in iterator:
             response_chunk: GenerateContentResponse = chunk
             final_chunk = response_chunk
             self._standardize_and_emit_event(response_chunk, text_parts, item_id, idx)
@@ -162,6 +134,8 @@ class GeminiLLM(LLM):
                 pending_calls.extend(chunk_calls)
             except Exception:
                 pass  # Ignore errors in chunk processing
+
+            idx += 1
 
         # Check if there were function calls in the response
         if pending_calls:
@@ -189,34 +163,27 @@ class GeminiLLM(LLM):
                     sanitized_res = {}
                     for k, v in res.items():
                         sanitized_res[k] = self._sanitize_tool_output(v)
+
                     parts.append(
                         types.Part.from_function_response(
                             name=tc["name"], response=sanitized_res
                         )
                     )
 
-                # Send function responses with tools config - wrap in thread pool
-                def _get_follow_up_iter():
-                    return chat.send_message_stream(parts, config=cfg_with_tools)  # type: ignore[arg-type]
-
-                follow_up_iter = await asyncio.to_thread(_get_follow_up_iter)
-                follow_up_chunks = await asyncio.to_thread(
-                    self._iterate_stream_blocking, follow_up_iter
-                )
-
-                # Check if last element is an exception
-                if follow_up_chunks and isinstance(follow_up_chunks[-1], Exception):
-                    raise follow_up_chunks[-1]
-
+                # Send function responses with tools config
+                follow_up_iter: AsyncIterator[
+                    GenerateContentResponse
+                ] = await self.chat.send_message_stream(parts, config=cfg_with_tools)  # type: ignore[arg-type]
                 follow_up_text_parts: List[str] = []
                 follow_up_last = None
                 next_calls = []
+                follow_up_idx = 0
 
-                for idx, chk in enumerate(follow_up_chunks):
+                async for chk in follow_up_iter:
                     follow_up_last = chk
                     # TODO: unclear if this is correct (item_id and idx)
                     self._standardize_and_emit_event(
-                        chk, follow_up_text_parts, item_id, idx
+                        chk, follow_up_text_parts, item_id, follow_up_idx
                     )
 
                     # Check for new function calls
@@ -225,6 +192,8 @@ class GeminiLLM(LLM):
                         next_calls.extend(chunk_calls)
                     except Exception:
                         pass
+
+                    follow_up_idx += 1
 
                 current_calls = next_calls
                 rounds += 1

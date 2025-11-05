@@ -51,6 +51,7 @@ from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
 from .conversation import Conversation
+from ..profiling import Profiler
 from dataclasses import dataclass
 from opentelemetry.trace import set_span_in_context
 from opentelemetry.trace.propagation import Span, Context
@@ -160,6 +161,7 @@ class Agent:
         tracer: Tracer = trace.get_tracer("agents"),
         # Configure the default logging for the sdk here. Pass None to leave the config intact.
         log_level: Optional[int] = logging.INFO,
+        profiler: Optional[Profiler] = None,
     ):
         if log_level is not None:
             configure_default_logging(level=log_level)
@@ -213,7 +215,7 @@ class Agent:
         self._pending_user_transcripts: Dict[str, str] = {}
 
         # Merge plugin events BEFORE subscribing to any events
-        for plugin in [stt, tts, turn_detection, vad, llm, edge]:
+        for plugin in [stt, tts, turn_detection, vad, llm, edge, profiler]:
             if plugin and hasattr(plugin, "events"):
                 self.logger.debug(f"Register events from plugin {plugin}")
                 self.events.merge(plugin.events)
@@ -247,6 +249,8 @@ class Agent:
         self._validate_configuration()
         self._prepare_rtc()
         self._setup_stt()
+
+        self.events.send(events.AgentInitEvent())
 
     @contextlib.contextmanager
     def span(self, name):
@@ -542,13 +546,13 @@ class Agent:
         Subscribes to the edge transport's `call_ended` event and awaits it. If
         no connection is active, returns immediately.
         """
-        # If connection is None or already closed, return immediately
         if not self._connection:
             self.logger.info(
                 "🔚 Agent connection is already closed, finishing immediately"
             )
             return
 
+        running_event = asyncio.Event()
         with self.span("agent.finish"):
             # If connection is None or already closed, return immediately
             if not self._connection:
@@ -559,15 +563,18 @@ class Agent:
 
             @self.edge.events.subscribe
             async def on_ended(event: CallEndedEvent):
+                running_event.set()
                 self._is_running = False
+        # TODO: add members count check (particiapnts left + count = 1 timeout 2 minutes)
 
-            while self._is_running:
-                try:
-                    await asyncio.sleep(0.0001)
-                except asyncio.CancelledError:
-                    self._is_running = False
+        try:
+            await running_event.wait()
+        except asyncio.CancelledError:
+            running_event.clear()
 
-            await asyncio.shield(self.close())
+        self.events.send(events.AgentFinishEvent())
+
+        await asyncio.shield(self.close())
 
     async def close(self):
         """Clean up all connections and resources.
