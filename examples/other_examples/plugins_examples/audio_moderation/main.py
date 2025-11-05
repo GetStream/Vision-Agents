@@ -24,16 +24,17 @@ import time
 import uuid
 
 from dotenv import load_dotenv
-from uuid import uuid4
 
 from getstream.stream import Stream
 from getstream.models import CheckResponse, ModerationPayload
-from vision_agents.core.agents import Agent
+from vision_agents.core.agents import Agent, AgentLauncher
+from vision_agents.core import cli
 from vision_agents.core.edge.types import User
 from vision_agents.plugins import deepgram, getstream, openai
 from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 # Suppress dataclasses_json missing value RuntimeWarnings
 warnings.filterwarnings(
@@ -58,8 +59,13 @@ def moderate(client: Stream, text: str, user_name: str) -> CheckResponse:
     ).data
 
 
-async def main():
-    load_dotenv()
+load_dotenv()
+
+# Global client for moderation
+client = Stream.from_env()
+
+
+async def create_agent(**kwargs) -> Agent:
     print("\n🤖 Starting moderation bot...")
     print("The bot will join the call and moderate all audio it receives.")
     print(
@@ -106,12 +112,18 @@ async def main():
         if event.context:
             print(f"    └─ context: {event.context}")
 
-    # Create call and open demo
-    call = agent.edge.client.video.call("default", str(uuid4()))
-    agent.edge.open_demo(call)
+    return agent
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    # ensure the agent user is created
+    await agent.create_user()
+    # Create a call
+    call = await agent.create_call(call_type, call_id)
 
     # Join call and start conversation
     with await agent.join(call):
+        await agent.edge.open_demo(call)
         print("🎧 Listening for audio... (Press Ctrl+C to stop)")
         await agent.finish()
 
@@ -147,7 +159,6 @@ if __name__ == "__main__":
     args = parse_args()
     
     if args.setup:
-        client = Stream.from_env()
         setup_moderation_config(client)
-
-    asyncio.run(main())
+    else:
+        cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
