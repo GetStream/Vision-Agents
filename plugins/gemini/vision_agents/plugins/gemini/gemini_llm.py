@@ -106,7 +106,7 @@ class GeminiLLM(LLM):
             kwargs["config"] = cfg
 
         # Generate content using the client
-        iterator: AsyncIterator[GenerateContentResponse] = self.chat.send_message_stream(*args, **kwargs)  # type: ignore[assignment]
+        iterator: AsyncIterator[GenerateContentResponse] = await self.chat.send_message_stream(*args, **kwargs)  # type: ignore[assignment]
         text_parts : List[str] = []
         final_chunk = None
         pending_calls: List[NormalizedToolCallItem] = []
@@ -163,7 +163,7 @@ class GeminiLLM(LLM):
                     )
 
                 # Send function responses with tools config
-                follow_up_iter: AsyncIterator[GenerateContentResponse] = self.chat.send_message_stream(parts, config=cfg_with_tools)  # type: ignore[arg-type,assignment]
+                follow_up_iter: AsyncIterator[GenerateContentResponse] = await self.chat.send_message_stream(parts, config=cfg_with_tools)
                 follow_up_text_parts: List[str] = []
                 follow_up_last = None
                 next_calls = []
