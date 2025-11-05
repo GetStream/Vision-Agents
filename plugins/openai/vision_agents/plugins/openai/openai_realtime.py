@@ -1,12 +1,14 @@
 import json
 from typing import Any, Optional, List, Dict
 
+import aiortc
 from getstream.video.rtc import AudioStreamTrack
 from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
-    ConversationItemInputAudioTranscriptionCompletedEvent, ResponseDoneEvent,
+    ConversationItemInputAudioTranscriptionCompletedEvent,
+    ResponseDoneEvent,
 )
 
 from vision_agents.core.llm import realtime
@@ -18,6 +20,7 @@ from .rtc_manager import RTCManager
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.processors import Processor
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 load_dotenv()
 
@@ -63,13 +66,16 @@ class Realtime(realtime.Realtime):
         self.voice = voice
         # TODO: send video should depend on if the RTC connection with stream is sending video.
         self.rtc = RTCManager(self.model, self.voice, True)
-        # audio output track?
-        self.output_track = AudioStreamTrack(
+        self._output_audio_track = AudioStreamTrack(
             sample_rate=48000, channels=2, format="s16"
         )
         # Map conversation item_id to participant to handle multi-user scenarios
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
+
+    @property
+    def output_audio_track(self) -> AudioStreamTrack:
+        return self._output_audio_track
 
     async def connect(self):
         """Establish the WebRTC connection to OpenAI's Realtime API.
@@ -250,7 +256,7 @@ class Realtime(realtime.Realtime):
                 raise Exception("OpenAI realtime failure %s", e.response)
         elif et == "session.updated":
             pass
-            #e = SessionUpdatedEvent(**event)
+            # e = SessionUpdatedEvent(**event)
         else:
             logger.info(f"Unrecognized OpenAI Realtime event: {et} {event}")
 
@@ -266,10 +272,22 @@ class Realtime(realtime.Realtime):
         )
 
         # Forward audio to output track for playback
-        await self.output_track.write(pcm)
+        await self._output_audio_track.write(pcm)
 
-    async def _watch_video_track(self, track, **kwargs) -> None:
-        shared_forwarder = kwargs.get("shared_forwarder")
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        """
+        Watch the video track and forward data to OpenAI Realtime API.
+
+        Args:
+            track: Video track to watch and forward.
+            shared_forwarder: Optional shared VideoForwarder instance to use instead
+                of creating a new one. Allows multiple consumers to share the same
+                video stream.
+        """
         await self.rtc.start_video_sender(
             track, self.fps, shared_forwarder=shared_forwarder
         )

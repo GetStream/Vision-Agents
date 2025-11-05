@@ -15,6 +15,7 @@ from typing import (
     Generic,
 )
 
+import aiortc
 from vision_agents.core.llm import events
 from vision_agents.core.llm.events import ToolStartEvent, ToolEndEvent
 
@@ -23,11 +24,13 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Conversation
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from getstream.video.rtc import AudioStreamTrack, PcmData
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.utils import parse_instructions
 from vision_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
 from .llm_types import ToolSchema, NormalizedToolCallItem
+from ..utils.video_forwarder import VideoForwarder
 
 T = TypeVar("T")
 
@@ -44,9 +47,6 @@ AfterCb = Callable[[LLMResponseEvent], None]
 
 
 class LLM(abc.ABC):
-    # if we want to use realtime/ sts behaviour
-    sts: bool = False
-
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
     agent: Optional["Agent"]
@@ -403,3 +403,64 @@ class LLM(abc.ABC):
         """
         s = value if isinstance(value, str) else json.dumps(value)
         return (s[:max_chars] + "…") if len(s) > max_chars else s
+
+
+class AudioLLM(LLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of processing speech-to-speech audio.
+    These models do not require TTS and STT services to run.
+    """
+
+    @abc.abstractmethod
+    async def simple_audio_response(
+        self, pcm: PcmData, participant: Optional[Participant] = None
+    ):
+        """
+        Implement this method to forward PCM audio frames to the LLM.
+
+        The audio should be raw PCM matching the model's expected
+        format (typically 48 kHz mono, 16-bit).
+
+        Args:
+            pcm: PCM audio frame to forward upstream.
+            participant: Optional participant information for the audio source.
+        """
+
+    @property
+    @abc.abstractmethod
+    def output_audio_track(self) -> AudioStreamTrack:
+        """
+        An output audio track from the LLM.
+        """
+
+
+class VideoLLM(LLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of processing video.
+
+    These models will receive the video track from the `Agent` to analyze it.
+    """
+
+    @abc.abstractmethod
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        """
+        Implement this method to watch and forward video tracks.
+
+        Args:
+            track: Video track to watch and forward.
+            shared_forwarder: Optional shared VideoForwarder instance to use instead
+                of creating a new one. Allows multiple consumers to share the same
+                video stream.
+        """
+
+
+class OmniLLM(AudioLLM, VideoLLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of both video and speech-to-speech audio processing.
+    """
+
+    ...

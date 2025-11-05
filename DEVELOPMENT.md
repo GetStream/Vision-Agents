@@ -105,7 +105,7 @@ To see how the agent work open up agents.py
 
 **Video**
 
-* The agent receives the video track, and calls agent.llm._watch_video_track
+* The agent receives the video track, and calls agent.llm.watch_video_track
 * The LLM uses the VideoForwarder to write the video to a websocket or webrtc connection
 * The STS writes the reply on agent.llm.audio_track and the RealtimeTranscriptEvent / RealtimePartialTranscriptEvent
 
