@@ -112,6 +112,7 @@ class Realtime(realtime.Realtime):
         self._session: Optional[AsyncSession] = None
         self._receive_task: Optional[asyncio.Task[Any]] = None
 
+    @property
     def output_audio_track(self) -> AudioStreamTrack:
         return self._output_audio_track
 
