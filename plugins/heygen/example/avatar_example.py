@@ -1,26 +1,31 @@
-import asyncio
-from uuid import uuid4
+"""
+HeyGen Avatar with Streaming LLM Example
+
+This example demonstrates how to use HeyGen's avatar streaming
+with a regular streaming LLM. This approach has much lower latency
+than using Realtime LLMs because text goes directly to HeyGen
+without any transcription round-trip.
+
+HeyGen handles all TTS and lip-sync based on the LLM's text output.
+"""
+
+import logging
+
 from dotenv import load_dotenv
 
-from vision_agents.core import User, Agent
+from vision_agents.core import User, Agent, cli
+from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, gemini, heygen, deepgram
 from vision_agents.plugins.heygen import VideoQuality
+
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 
-async def start_avatar_agent() -> None:
-    """Start an agent with HeyGen avatar using streaming LLM.
-    
-    This example demonstrates how to use HeyGen's avatar streaming
-    with a regular streaming LLM. This approach has much lower latency
-    than using Realtime LLMs because text goes directly to HeyGen
-    without any transcription round-trip.
-    
-    HeyGen handles all TTS and lip-sync based on the LLM's text output.
-    """
-    
-    # Create agent with HeyGen avatar and streaming LLM
+async def create_agent(**kwargs) -> Agent:
+    """Create agent with HeyGen avatar and streaming LLM."""
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(
@@ -50,19 +55,28 @@ async def start_avatar_agent() -> None:
             )
         ]
     )
-    
+    return agent
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    """Join the call and start the avatar agent."""
+    # Ensure the agent user is created
+    await agent.create_user()
     # Create a call
-    call = agent.edge.client.video.call("default", str(uuid4()))
-    
-    # Join the call
+    call = await agent.create_call(call_type, call_id)
+
+    logger.info("🤖 Starting HeyGen Avatar Agent...")
+
+    # Have the agent join the call/room
     with await agent.join(call):
-        # Open demo UI
+        logger.info("Joining call")
+
         await agent.edge.open_demo(call)
+        logger.info("Demo opened")
         
-        # Keep the call running
-        await agent.finish()
+        await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
-    asyncio.run(start_avatar_agent())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
 

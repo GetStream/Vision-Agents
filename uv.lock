@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -1398,8 +1398,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.8"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../stream-py" }
 dependencies = [
     { name = "dataclasses-json" },
     { name = "httpx" },
@@ -1410,9 +1409,6 @@ dependencies = [
     { name = "pyee" },
     { name = "pyjwt" },
     { name = "python-dateutil" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/94/2befd2313d3370c5432aa1c1448a48b3df939ff544048d9e037b0cf16255/getstream-2.5.8-py3-none-any.whl", hash = "sha256:2df91640e2c197ee72bb55a1f8c33e9f900f67be9b73c9fecafbdc05d38c864c", size = 241467, upload-time = "2025-11-04T15:03:36.911Z" },
 ]
 
 [package.optional-dependencies]
@@ -1436,6 +1432,59 @@ webrtc = [
     { name = "twirp" },
     { name = "websocket-client" },
     { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.11.16" },
+    { name = "aiortc-getstream", marker = "extra == 'webrtc'", specifier = "==1.13.0.post1" },
+    { name = "dataclasses-json", specifier = ">=0.6.0,<0.7" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "ijson", specifier = ">=3.4.0" },
+    { name = "marshmallow", specifier = ">=3.21.0,<4" },
+    { name = "numpy", marker = "extra == 'webrtc'", specifier = ">=2.2.6" },
+    { name = "numpy", marker = "extra == 'webrtc'", specifier = ">=2.2.6,<2.3" },
+    { name = "openai", extras = ["realtime"], marker = "extra == 'openai-realtime'", specifier = ">=1.93.0" },
+    { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.26.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.26.0" },
+    { name = "ping3", marker = "extra == 'webrtc'", specifier = ">=4.0.8" },
+    { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=4.25.1" },
+    { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=6.31.1" },
+    { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "pydantic-settings", specifier = ">=2.9.1" },
+    { name = "pyee", specifier = ">=13.0.0" },
+    { name = "pyjwt", specifier = ">=2.8.0,<3" },
+    { name = "python-dateutil", specifier = ">=2.8.2" },
+    { name = "python-dateutil", marker = "extra == 'webrtc'", specifier = ">=2.8.2" },
+    { name = "scipy", marker = "extra == 'webrtc'", specifier = ">=1.15.3" },
+    { name = "scipy", marker = "extra == 'webrtc'", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", marker = "extra == 'webrtc'", specifier = ">=0.13.1" },
+    { name = "structlog", marker = "extra == 'webrtc'", specifier = "<24" },
+    { name = "tenacity", marker = "extra == 'webrtc'", specifier = ">=9.1.2" },
+    { name = "torch", marker = "extra == 'webrtc'", specifier = ">=2.7.1" },
+    { name = "torchaudio", marker = "extra == 'webrtc'", specifier = ">=2.7.1" },
+    { name = "twirp", marker = "extra == 'webrtc'", specifier = ">=0.0.7" },
+    { name = "websocket-client", marker = "extra == 'webrtc'", specifier = ">=1.8.0" },
+    { name = "websockets", marker = "extra == 'webrtc'", specifier = ">=15.0.1" },
+    { name = "websockets", marker = "extra == 'webrtc'", specifier = ">=15.0.1,<16" },
+]
+provides-extras = ["openai-realtime", "telemetry", "webrtc"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "grpcio-tools", specifier = ">=1.73.1" },
+    { name = "mypy-protobuf", specifier = "==3.5.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.37.0" },
+    { name = "opentelemetry-exporter-prometheus", specifier = ">=0.58b0" },
+    { name = "pre-commit", specifier = ">=4.2.0" },
+    { name = "prometheus-client", specifier = ">=0.23.1" },
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "pytest-timeout", specifier = ">=2.3.1" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
+    { name = "python-dateutil", specifier = ">=2.8.2,<3" },
+    { name = "python-dotenv", specifier = ">=1.1.1,<2" },
+    { name = "ruff", specifier = ">=0.12.1" },
 ]
 
 [[package]]
@@ -2869,7 +2918,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/51/e123d997aa098c61d029f76663dedbfb9bc8dcf8c60cbd6adbe42f76d049/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:949452be657fa16687d0930933f032835951ef0892b37d2d53824d1a84dc97a8", size = 706758467, upload-time = "2025-06-06T21:54:08.597Z" },
@@ -2880,7 +2929,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/13/ee4e00f30e676b66ae65b4f08cb5bcbb8392c03f54f2d5413ea99a5d1c80/nvidia_cufft_cu12-11.3.3.83-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4d2dd21ec0b88cf61b62e6b43564355e5222e4a3fb394cac0db101f2dd0d4f74", size = 193118695, upload-time = "2025-03-07T01:45:27.821Z" },
@@ -2907,9 +2956,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.3.90"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cusparse-cu12" },
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'win32'" },
+    { name = "nvidia-cusparse-cu12", marker = "sys_platform != 'win32'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/85/48/9a13d2975803e8cf2777d5ed57b87a0b6ca2cc795f9a4f59796a910bfb80/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:4376c11ad263152bd50ea295c05370360776f8c3427b30991df774f9fb26c450", size = 267506905, upload-time = "2025-03-07T01:47:16.273Z" },
@@ -2920,7 +2969,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.8.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/f5/e1854cb2f2bcd4280c44736c93550cc300ff4b8c95ebe370d0aa7d2b473d/nvidia_cusparse_cu12-12.5.8.93-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:1ec05d76bbbd8b61b06a80e1eaf8cf4959c3d4ce8e711b65ebd0443bb0ebb13b", size = 288216466, upload-time = "2025-03-07T01:48:13.779Z" },
@@ -3694,6 +3743,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/71/70/23b021c950c2addd24ec408e9ab05d59b035b39d97cdc1130e1bce647bb6/pydantic_core-2.41.5.tar.gz", hash = "sha256:08daa51ea16ad373ffd5e7606252cc32f07bc72b28284b6bc9c6df804816476e", size = 460952, upload-time = "2025-11-04T13:43:49.098Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5f/5d/5f6c63eebb5afee93bcaae4ce9a898f3373ca23df3ccaef086d0233a35a7/pydantic_core-2.41.5-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:f41a7489d32336dbf2199c8c0a215390a751c5b014c2c1c5366e817202e9cdf7", size = 2110990, upload-time = "2025-11-04T13:39:58.079Z" },
     { url = "https://files.pythonhosted.org/packages/aa/32/9c2e8ccb57c01111e0fd091f236c7b371c1bccea0fa85247ac55b1e2b6b6/pydantic_core-2.41.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:070259a8818988b9a84a449a2a7337c7f430a22acc0859c6b110aa7212a6d9c0", size = 1896003, upload-time = "2025-11-04T13:39:59.956Z" },
@@ -5436,7 +5486,7 @@ xai = [
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.8" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], editable = "../stream-py" },
     { name = "mcp", specifier = ">=1.16.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
