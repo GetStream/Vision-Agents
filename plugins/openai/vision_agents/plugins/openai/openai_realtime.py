@@ -279,6 +279,15 @@ class Realtime(realtime.Realtime):
         track: aiortc.mediastreams.MediaStreamTrack,
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
+        """
+        Watch the video track and forward data to OpenAI Realtime API.
+
+        Args:
+            track: Video track to watch and forward.
+            shared_forwarder: Optional shared VideoForwarder instance to use instead
+                of creating a new one. Allows multiple consumers to share the same
+                video stream.
+        """
         await self.rtc.start_video_sender(
             track, self.fps, shared_forwarder=shared_forwarder
         )

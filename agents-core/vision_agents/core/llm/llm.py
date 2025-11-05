@@ -414,11 +414,24 @@ class AudioLLM(LLM, metaclass=abc.ABCMeta):
     @abc.abstractmethod
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
-    ): ...
+    ):
+        """
+        Implement this method to forward PCM audio frames to the LLM.
+
+        The audio should be raw PCM matching the model's expected
+        format (typically 48 kHz mono, 16-bit).
+
+        Args:
+            pcm: PCM audio frame to forward upstream.
+            participant: Optional participant information for the audio source.
+        """
 
     @property
     @abc.abstractmethod
-    def output_audio_track(self) -> AudioStreamTrack: ...
+    def output_audio_track(self) -> AudioStreamTrack:
+        """
+        An output audio track from the LLM.
+        """
 
 
 class VideoLLM(LLM, metaclass=abc.ABCMeta):
@@ -433,7 +446,16 @@ class VideoLLM(LLM, metaclass=abc.ABCMeta):
         self,
         track: aiortc.mediastreams.MediaStreamTrack,
         shared_forwarder: Optional[VideoForwarder] = None,
-    ) -> None: ...
+    ) -> None:
+        """
+        Implement this method to watch and forward video tracks.
+
+        Args:
+            track: Video track to watch and forward.
+            shared_forwarder: Optional shared VideoForwarder instance to use instead
+                of creating a new one. Allows multiple consumers to share the same
+                video stream.
+        """
 
 
 class OmniLLM(AudioLLM, VideoLLM, metaclass=abc.ABCMeta):
