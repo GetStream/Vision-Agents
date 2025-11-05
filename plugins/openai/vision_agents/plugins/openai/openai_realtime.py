@@ -19,7 +19,7 @@ from .rtc_manager import RTCManager
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.processors import Processor
-from ...core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 load_dotenv()
 
