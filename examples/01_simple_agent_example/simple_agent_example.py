@@ -1,15 +1,18 @@
-import asyncio
-from uuid import uuid4
+import logging
+
 from dotenv import load_dotenv
 
-from vision_agents.core import User, Agent
+from vision_agents.core import User, Agent, cli
+from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, getstream, gemini, vogent, elevenlabs
 # from vision_agents.core.profiling import Profiler
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 
-async def start_agent() -> None:
+async def create_agent(**kwargs) -> Agent:
     llm = gemini.LLM("gemini-2.0-flash")
     # create an agent to run with Stream's edge, openAI llm
     agent = Agent(
@@ -30,9 +33,14 @@ async def start_agent() -> None:
         # realtime version (vad, tts and stt not needed)
         # llm=openai.Realtime()
     )
+    return agent
 
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    # ensure the agent user is created
+    await agent.create_user()
     # Create a call
-    call = agent.edge.client.video.call("default", str(uuid4()))
+    call = await agent.create_call(call_type, call_id)
 
     # Have the agent join the call/room
     with await agent.join(call):
@@ -89,4 +97,4 @@ def setup_telemetry():
 
 if __name__ == "__main__":
     # setup_telemetry()
-    asyncio.run(start_agent())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
