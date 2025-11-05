@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
 from vision_agents.plugins import deepgram, getstream, gemini, vogent, elevenlabs
-from vision_agents.core.profiling import Profiler
+# from vision_agents.core.profiling import Profiler
 
 load_dotenv()
 
@@ -24,7 +24,8 @@ async def start_agent() -> None:
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         turn_detection=vogent.TurnDetection(),
-        profiler=Profiler(),
+        # enable profiler by uncommenting the following line
+        # profiler=Profiler(),
         # vad=silero.VAD(),
         # realtime version (vad, tts and stt not needed)
         # llm=openai.Realtime()
