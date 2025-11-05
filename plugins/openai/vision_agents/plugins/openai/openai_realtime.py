@@ -1,6 +1,7 @@
 import json
 from typing import Any, Optional, List, Dict
 
+import aiortc
 from getstream.video.rtc import AudioStreamTrack
 from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
@@ -18,6 +19,7 @@ from .rtc_manager import RTCManager
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.processors import Processor
+from ...core.utils.video_forwarder import VideoForwarder
 
 load_dotenv()
 
@@ -253,7 +255,7 @@ class Realtime(realtime.Realtime):
                 raise Exception("OpenAI realtime failure %s", e.response)
         elif et == "session.updated":
             pass
-            #e = SessionUpdatedEvent(**event)
+            # e = SessionUpdatedEvent(**event)
         else:
             logger.info(f"Unrecognized OpenAI Realtime event: {et} {event}")
 
@@ -271,8 +273,11 @@ class Realtime(realtime.Realtime):
         # Forward audio to output track for playback
         await self._output_audio_track.write(pcm)
 
-    async def watch_video_track(self, track, **kwargs) -> None:
-        shared_forwarder = kwargs.get("shared_forwarder")
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
         await self.rtc.start_video_sender(
             track, self.fps, shared_forwarder=shared_forwarder
         )
