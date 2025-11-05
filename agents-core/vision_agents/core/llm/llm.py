@@ -15,6 +15,7 @@ from typing import (
     Generic,
 )
 
+import aiortc
 from vision_agents.core.llm import events
 from vision_agents.core.llm.events import ToolStartEvent, ToolEndEvent
 
@@ -23,11 +24,13 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Conversation
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from getstream.video.rtc import AudioStreamTrack, PcmData
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.utils import parse_instructions
 from vision_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
 from .llm_types import ToolSchema, NormalizedToolCallItem
+from ..utils.video_forwarder import VideoForwarder
 
 T = TypeVar("T")
 
@@ -44,13 +47,6 @@ AfterCb = Callable[[LLMResponseEvent], None]
 
 
 class LLM(abc.ABC):
-    # Instruct the Agent that this model requires STT and TTS services, and it doesn't handle audio and video
-    # on its own.
-    needs_stt: bool = True
-    needs_tts: bool = True
-    handles_audio: bool = False
-    handles_video: bool = False
-
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
     agent: Optional["Agent"]
@@ -407,3 +403,42 @@ class LLM(abc.ABC):
         """
         s = value if isinstance(value, str) else json.dumps(value)
         return (s[:max_chars] + "…") if len(s) > max_chars else s
+
+
+class AudioLLM(LLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of processing speech-to-speech audio.
+    These models do not require TTS and STT services to run.
+    """
+
+    @abc.abstractmethod
+    async def simple_audio_response(
+        self, pcm: PcmData, participant: Optional[Participant] = None
+    ): ...
+
+    @property
+    @abc.abstractmethod
+    def output_audio_track(self) -> AudioStreamTrack: ...
+
+
+class VideoLLM(LLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of processing video.
+
+    These models will receive the video track from the `Agent` to analyze it.
+    """
+
+    @abc.abstractmethod
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None: ...
+
+
+class OmniLLM(AudioLLM, VideoLLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of both video and speech-to-speech audio processing.
+    """
+
+    ...

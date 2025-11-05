@@ -2,6 +2,8 @@ import asyncio
 import logging
 from asyncio import CancelledError
 from typing import Optional, List, Dict, Any
+
+import aiortc
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
@@ -102,13 +104,16 @@ class Realtime(realtime.Realtime):
         self.config: LiveConnectConfigDict = self._create_config(config)
         self.logger = logging.getLogger(__name__)
         # Gemini generates at 24k. webrtc automatically translates it to 48khz
-        self.output_track = AudioStreamTrack(
+        self._output_audio_track = AudioStreamTrack(
             sample_rate=24000, channels=1, format="s16"
         )
         self._video_forwarder: Optional[VideoForwarder] = None
         self._session_context: Optional[Any] = None
         self._session: Optional[AsyncSession] = None
         self._receive_task: Optional[asyncio.Task[Any]] = None
+
+    def output_audio_track(self) -> AudioStreamTrack:
+        return self._output_audio_track
 
     async def simple_response(
         self,
@@ -310,7 +315,7 @@ class Realtime(realtime.Realtime):
                                         self._emit_audio_output_event(
                                             audio_data=pcm,
                                         )
-                                        await self.output_track.write(pcm)
+                                        await self._output_audio_track.write(pcm)
                                     elif (
                                         hasattr(typed_part, "function_call")
                                         and typed_part.function_call
@@ -380,7 +385,11 @@ class Realtime(realtime.Realtime):
             self._session_context = None
             self._session = None
 
-    async def _watch_video_track(self, track: Any, **kwargs) -> None:
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
         """
         Start sending video frames to Gemini using VideoForwarder.
         We follow the on_track from Stream. If video is turned on or off this gets forwarded.
@@ -389,7 +398,6 @@ class Realtime(realtime.Realtime):
             track: Video track to watch
             shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one
         """
-        shared_forwarder = kwargs.get("shared_forwarder")
 
         if self._video_forwarder is not None and shared_forwarder is None:
             self.logger.warning("Video sender already running, stopping previous one")

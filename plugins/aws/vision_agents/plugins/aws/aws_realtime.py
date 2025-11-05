@@ -4,6 +4,8 @@ import json
 import logging
 import uuid
 from typing import Optional, List, Dict, Any
+
+import aiortc
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 from vision_agents.core.llm import realtime
@@ -159,7 +161,7 @@ class Realtime(realtime.Realtime):
         self.logger = logging.getLogger(__name__)
 
         # Audio output track - Bedrock typically outputs at 24kHz
-        self.output_track = AudioStreamTrack(
+        self._output_audio_track = AudioStreamTrack(
             sample_rate=24000, channels=1, format="s16"
         )
 
@@ -175,10 +177,22 @@ class Realtime(realtime.Realtime):
         # Audio streaming configuration
         self.prompt_name = self.session_id
 
+    @property
+    def output_audio_track(self) -> AudioStreamTrack:
+        return self._output_audio_track
+
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        return None
+
+
     async def connect(self):
         """To connect we need to do a few things
 
-        - start a bi directional stream
+        - start a bidirectional stream
         - send session start event
         - send prompt start event
         - send text content start, text content, text content end
@@ -690,7 +704,7 @@ class Realtime(realtime.Realtime):
                                     self._emit_audio_output_event(
                                         audio_data=pcm,
                                     )
-                                    await self.output_track.write(pcm)
+                                    await self._output_audio_track.write(pcm)
 
                                 elif "toolUse" in json_data["event"]:
                                     tool_use_data = json_data["event"]["toolUse"]

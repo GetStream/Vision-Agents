@@ -5,7 +5,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
 import getstream.models
@@ -30,7 +30,7 @@ from ..llm.events import (
     RealtimeUserSpeechTranscriptionEvent,
     RealtimeAgentSpeechTranscriptionEvent,
 )
-from ..llm.llm import LLM
+from ..llm.llm import AudioLLM, LLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..mcp import MCPBaseServer, MCPManager
 from ..processors.base_processor import Processor, ProcessorType, filter_processors
@@ -110,6 +110,18 @@ def default_agent_options():
     return AgentOptions(model_dir=_DEFAULT_MODEL_DIR)
 
 
+def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:
+    return isinstance(llm, AudioLLM)
+
+
+def _is_video_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[VideoLLM]:
+    return isinstance(llm, VideoLLM)
+
+
+def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Realtime]:
+    return isinstance(llm, Realtime)
+
+
 class Agent:
     """
     Agent class makes it easy to build your own video AI.
@@ -140,7 +152,7 @@ class Agent:
         # edge network for video & audio
         edge: "StreamEdge",
         # llm, optionally with sts/realtime capabilities
-        llm: LLM | Realtime,
+        llm: LLM | AudioLLM | VideoLLM,
         # the agent's user info
         agent_user: User,
         # instructions
@@ -428,7 +440,7 @@ class Agent:
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
-            if self.llm.handles_audio:
+            if _is_audio_llm(self.llm):
                 # There is no need to send the response to the LLM if it handles audio itself.
                 return
 
@@ -497,7 +509,7 @@ class Agent:
 
             # Ensure Realtime providers are ready before proceeding (they manage their own connection)
             self.logger.info(f"🤖 Agent joining call: {call.id}")
-            if isinstance(self.llm, Realtime):
+            if _is_realtime_llm(self.llm):
                 await self.llm.connect()
 
             with self.span("edge.join"):
@@ -819,12 +831,12 @@ class Agent:
                     f"🎥 Track re-added: {track_type_name} ({track_id}), switching to it"
                 )
 
-                if self.llm.handles_video:
+                if _is_video_llm(self.llm):
                     # Get the existing forwarder and switch to this track
                     _, _, forwarder = self._active_video_tracks[track_id]
                     track = self.edge.add_track_subscriber(track_id)
                     if track and forwarder:
-                        await self.llm._watch_video_track(
+                        await self.llm.watch_video_track(
                             track, shared_forwarder=forwarder
                         )
                         self._current_video_track_id = track_id
@@ -853,7 +865,7 @@ class Agent:
             self._active_video_tracks.pop(track_id, None)
 
             # If this was the active track, switch to any other available track
-            if self.llm.handles_video and track_id == self._current_video_track_id:
+            if _is_video_llm(self.llm) and track_id == self._current_video_track_id:
                 self.logger.info(
                     "🎥 Active video track removed, switching to next available"
                 )
@@ -879,7 +891,7 @@ class Agent:
                 )
 
             # when in Realtime mode call the Realtime directly (non-blocking)
-            if self.llm.handles_audio:
+            if _is_audio_llm(self.llm):
                 # TODO: this behaviour should be easy to change in the agent class
                 asyncio.create_task(
                     self.llm.simple_audio_response(pcm_data, participant)
@@ -915,9 +927,9 @@ class Agent:
 
             # Get the track and forwarder
             track = self.edge.add_track_subscriber(track_id)
-            if track and forwarder and isinstance(self.llm, Realtime):
+            if track and forwarder and _is_video_llm(self.llm):
                 # Send to Realtime provider
-                await self.llm._watch_video_track(track, shared_forwarder=forwarder)
+                await self.llm.watch_video_track(track, shared_forwarder=forwarder)
                 self._current_video_track_id = track_id
                 return
             else:
@@ -980,7 +992,7 @@ class Agent:
             # If Realtime provider supports video, switch to this new track
             track_type_name = TrackType.Name(track_type)
 
-            if self.llm.handles_video:
+            if _is_video_llm(self.llm):
                 if self._video_track:
                     # We have a video publisher (e.g., YOLO processor)
                     # Create a separate forwarder for the PROCESSED video track
@@ -996,22 +1008,20 @@ class Agent:
                     await processed_forwarder.start()
                     self._video_forwarders.append(processed_forwarder)
 
-                    if isinstance(self.llm, Realtime):
-                        # Send PROCESSED frames with the processed forwarder
-                        await self.llm._watch_video_track(
-                            self._video_track, shared_forwarder=processed_forwarder
-                        )
-                        self._current_video_track_id = track_id
+                    # Send PROCESSED frames with the processed forwarder
+                    await self.llm.watch_video_track(
+                        self._video_track, shared_forwarder=processed_forwarder
+                    )
+                    self._current_video_track_id = track_id
                 else:
                     # No video publisher, send raw frames - switch to this new track
                     self.logger.info(
                         f"🎥 Switching to {track_type_name} track: {track_id}"
                     )
-                    if isinstance(self.llm, Realtime):
-                        await self.llm._watch_video_track(
-                            track, shared_forwarder=raw_forwarder
-                        )
-                        self._current_video_track_id = track_id
+                    await self.llm.watch_video_track(
+                        track, shared_forwarder=raw_forwarder
+                    )
+                    self._current_video_track_id = track_id
 
             has_image_processors = len(self.image_processors) > 0
 
@@ -1103,7 +1113,7 @@ class Agent:
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
         # Skip the turn event handling if the model doesn't require TTS or SST audio itself.
-        if not (self.llm.needs_tts and self.llm.needs_stt):
+        if _is_audio_llm(self.llm):
             return
 
         if isinstance(event, TurnStartedEvent):
@@ -1174,7 +1184,7 @@ class Agent:
         Returns:
             True if TTS is configured, when in Realtime mode, or if there are audio publishers.
         """
-        if self.tts is not None or self.llm.handles_audio:
+        if self.tts is not None or _is_audio_llm(self.llm):
             return True
         # Also publish audio if there are audio publishers (e.g., HeyGen avatar)
         if self.audio_publishers:
@@ -1211,7 +1221,7 @@ class Agent:
         # Video input needed for:
         # - Video processors (for frame analysis)
         # - Realtime mode with video (multimodal LLMs)
-        needs_video = len(self.video_processors) > 0 or self.llm.handles_video
+        needs_video = len(self.video_processors) > 0 or _is_video_llm(self.llm)
 
         return needs_audio or needs_video
 
@@ -1262,7 +1272,7 @@ class Agent:
 
     def _validate_configuration(self):
         """Validate the agent configuration."""
-        if self.llm.handles_audio:
+        if _is_audio_llm(self.llm):
             # Realtime mode - should not have separate STT/TTS
             if self.stt or self.tts:
                 self.logger.warning(
@@ -1299,8 +1309,8 @@ class Agent:
 
         # Set up audio track if TTS is available
         if self.publish_audio:
-            if self.llm.handles_audio:
-                self._audio_track = self.llm.output_track
+            if _is_audio_llm(self.llm):
+                self._audio_track = self.llm.output_audio_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
             elif self.audio_publishers:
                 # Get the first audio publisher to create the track

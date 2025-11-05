@@ -103,7 +103,7 @@ class TestOpenAIRealtime:
         await realtime.simple_response("Describe what you see in this video please")
         await asyncio.sleep(10.0)
         # Start video sender with low FPS to avoid overwhelming the connection
-        await realtime._watch_video_track(bunny_video_track)
+        await realtime.watch_video_track(bunny_video_track)
 
         # Let it run for a few seconds
         await asyncio.sleep(10.0)
