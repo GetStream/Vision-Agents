@@ -53,6 +53,7 @@ class CloudVLM(llm.VideoLLM):
         self._latest_frame: Optional[av.VideoFrame] = None
         self._video_forwarder: Optional[VideoForwarder] = None
         self._stt_subscription_setup = False
+        self._is_processing = False
 
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
@@ -98,15 +99,12 @@ class CloudVLM(llm.VideoLLM):
     async def _on_frame_received(self, frame: av.VideoFrame):
         """Callback to receive frames and add to buffer."""
         try:
-            # Add frame to LatestNQueue (automatically maintains maxlen=10)
             self._frame_buffer.put_latest_nowait(frame)
-            # Update latest frame reference for fast synchronous access
             self._latest_frame = frame
         except Exception as e:
             logger.error(f"Error adding frame to buffer: {e}")
 
     def _setup_stt_subscription(self):
-        """Subscribe to STT transcript events."""
         if not self.agent:
             logger.warning("Cannot setup STT subscription: agent not set")
             return
@@ -116,10 +114,6 @@ class CloudVLM(llm.VideoLLM):
             await self._on_stt_transcript(event)
 
     def _consume_stream(self, generator):
-        """Consume Moondream streaming generator and return full text.
-        
-        The generator yields string chunks directly, which we accumulate into the full response.
-        """
         chunks = []
         for chunk in generator:
             logger.debug(f"Moondream stream chunk: {type(chunk)} - {chunk}")
@@ -135,10 +129,12 @@ class CloudVLM(llm.VideoLLM):
         return result
 
     async def _process_frame(self, text: Optional[str] = None) -> Optional[LLMResponseEvent]:
-        """Process the latest frame and return LLMResponseEvent."""
-        # Get latest frame from reference
         if self._latest_frame is None:
             logger.warning("No frames available, skipping Moondream processing")
+            return None
+
+        if self._is_processing:
+            logger.debug("Moondream processing already in progress, skipping")
             return None
 
         latest_frame = self._latest_frame
@@ -153,41 +149,48 @@ class CloudVLM(llm.VideoLLM):
                 if not text:
                     logger.warning("VQA mode requires text/question")
                     return None
-
                 # Moondream SDK returns {"answer": <generator>}, extract the generator
+                self._is_processing = True
                 result = self.model.query(image, text, stream=True)
                 stream = result["answer"]
                 answer = await asyncio.to_thread(self._consume_stream, stream)
 
                 if not answer:
                     logger.warning("Moondream query returned empty answer")
+                    self._is_processing = False
                     return None
 
                 self.events.send(LLMResponseChunkEvent(delta=answer))
                 self.events.send(LLMResponseCompletedEvent(text=answer))
                 logger.info(f"Moondream VQA response: {answer}")
+                self._is_processing = False
                 return LLMResponseEvent(original=answer, text=answer)
 
             elif self.mode == "caption":
                 # Moondream SDK returns {"caption": <generator>}, extract the generator
+                self._is_processing = True
                 result = self.model.caption(image, length="normal", stream=True)
                 stream = result["caption"]
                 caption = await asyncio.to_thread(self._consume_stream, stream)
 
                 if not caption:
                     logger.warning("Moondream caption returned empty result")
+                    self._is_processing = False
                     return None
 
                 self.events.send(LLMResponseChunkEvent(delta=caption))
                 self.events.send(LLMResponseCompletedEvent(text=caption))
                 logger.info(f"Moondream caption: {caption}")
+                self._is_processing = False
                 return LLMResponseEvent(original=caption, text=caption)
             else:
                 logger.error(f"Unknown mode: {self.mode}")
+                self._is_processing = False
                 return None
 
         except Exception as e:
             logger.exception(f"Error processing frame: {e}")
+            self._is_processing = False
             return LLMResponseEvent(original=None, text="", exception=e)
 
     async def _on_stt_transcript(self, event: STTTranscriptEvent):
