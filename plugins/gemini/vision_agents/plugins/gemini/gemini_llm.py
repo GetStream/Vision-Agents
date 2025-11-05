@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from typing import Optional, List, TYPE_CHECKING, Any, Dict, AsyncIterator
 
@@ -93,9 +92,6 @@ class GeminiLLM(LLM):
             enhanced_instructions = self._build_enhanced_instructions()
             config = GenerateContentConfig(system_instruction=enhanced_instructions)
             self.chat = self.client.chats.create(model=self.model, config=config)
-
-        # Store in local variable for type narrowing
-        chat = self.chat
 
         # Add tools if available - Gemini uses GenerateContentConfig
         tools_spec = self.get_available_functions()
