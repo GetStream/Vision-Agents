@@ -39,8 +39,14 @@ class GeminiLLM(LLM):
 
           from vision_agents.plugins import gemini
           llm = gemini.LLM()
-      """
-    def __init__(self, model: str, api_key: Optional[str] = None, client: Optional[AsyncClient] = None):
+    """
+
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        client: Optional[AsyncClient] = None,
+    ):
         """
         Initialize the GeminiLLM class.
 
@@ -106,8 +112,10 @@ class GeminiLLM(LLM):
             kwargs["config"] = cfg
 
         # Generate content using the client
-        iterator: AsyncIterator[GenerateContentResponse] = await self.chat.send_message_stream(*args, **kwargs)
-        text_parts : List[str] = []
+        iterator: AsyncIterator[
+            GenerateContentResponse
+        ] = await self.chat.send_message_stream(*args, **kwargs)
+        text_parts: List[str] = []
         final_chunk = None
         pending_calls: List[NormalizedToolCallItem] = []
 
@@ -163,16 +171,20 @@ class GeminiLLM(LLM):
                     )
 
                 # Send function responses with tools config
-                follow_up_iter: AsyncIterator[GenerateContentResponse] = await self.chat.send_message_stream(parts, config=cfg_with_tools)
+                follow_up_iter: AsyncIterator[
+                    GenerateContentResponse
+                ] = await self.chat.send_message_stream(parts, config=cfg_with_tools)  # type: ignore[arg-type]
                 follow_up_text_parts: List[str] = []
                 follow_up_last = None
                 next_calls = []
                 follow_up_idx = 0
-                
+
                 async for chk in follow_up_iter:
                     follow_up_last = chk
                     # TODO: unclear if this is correct (item_id and idx)
-                    self._standardize_and_emit_event(chk, follow_up_text_parts, item_id, follow_up_idx)
+                    self._standardize_and_emit_event(
+                        chk, follow_up_text_parts, item_id, follow_up_idx
+                    )
 
                     # Check for new function calls
                     try:
@@ -180,9 +192,9 @@ class GeminiLLM(LLM):
                         next_calls.extend(chunk_calls)
                     except Exception:
                         pass
-                    
+
                     follow_up_idx += 1
-                
+
                 current_calls = next_calls
                 rounds += 1
 
