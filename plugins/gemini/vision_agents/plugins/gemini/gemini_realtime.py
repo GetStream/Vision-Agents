@@ -252,8 +252,8 @@ class Realtime(realtime.Realtime):
                             text = (
                                 server_message.server_content.input_transcription.text
                             )
-                            self.logger.info("input: %s", text)
                             if text:
+                                # TODO: should this be partial?
                                 self._emit_user_speech_transcription(
                                     text=text, original=server_message
                                 )
@@ -265,7 +265,6 @@ class Realtime(realtime.Realtime):
                             text = (
                                 server_message.server_content.output_transcription.text
                             )
-                            self.logger.info("output: %s", text)
                             if text:
                                 self._emit_agent_speech_transcription(
                                     text=text, original=server_message

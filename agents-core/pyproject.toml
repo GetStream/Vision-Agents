@@ -91,5 +91,5 @@ include = ["vision_agents"]
 #]
 # getstream = { git = "https://github.com/GetStream/stream-py.git", branch = "audio-more" }
 # for local development
-getstream = { path = "../../stream-py/", editable = true }
+#getstream = { path = "../../stream-py/", editable = true }
 # aiortc = { path = "../stream-py/", editable = true }
