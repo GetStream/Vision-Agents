@@ -33,13 +33,13 @@ DEFAULT_SAMPLE_RATE = 16000
 """
 AWS Bedrock Realtime with Nova Sonic support.
 
-Supports real-time audio/video streaming and function calling (tool use).
+Supports real-time audio streaming and function calling (tool use).
 """
 
 
 class Realtime(realtime.Realtime):
     """
-    Realtime on AWS with support for audio/video streaming and function calling (uses AWS Bedrock).
+    Realtime on AWS with support for audio streaming and function calling (uses AWS Bedrock).
 
     A few things are different about Nova compared to other STS solutions
 
@@ -165,7 +165,6 @@ class Realtime(realtime.Realtime):
             sample_rate=24000, channels=1, format="s16"
         )
 
-        self._video_forwarder: Optional[VideoForwarder] = None
         self._stream_task: Optional[asyncio.Task[Any]] = None
         self._is_connected = False
         self._message_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -186,6 +185,7 @@ class Realtime(realtime.Realtime):
         track: aiortc.mediastreams.MediaStreamTrack,
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
+        # No video support for now.
         return None
 
 
