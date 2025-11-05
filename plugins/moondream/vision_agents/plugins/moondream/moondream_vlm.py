@@ -54,10 +54,8 @@ class CloudVLM(llm.VideoLLM):
         self._video_forwarder: Optional[VideoForwarder] = None
         self._stt_subscription_setup = False
 
-        # Thread pool for blocking Moondream API calls
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
-        # Initialize model
         self._load_model()
 
     async def watch_video_track(
@@ -118,18 +116,23 @@ class CloudVLM(llm.VideoLLM):
             await self._on_stt_transcript(event)
 
     def _consume_stream(self, generator):
-        """Consume Moondream streaming generator and return full text."""
+        """Consume Moondream streaming generator and return full text.
+        
+        The generator yields string chunks directly, which we accumulate into the full response.
+        """
         chunks = []
-        for event in generator:
-            if isinstance(event, dict) and "data" in event:
-                data = event["data"]
-                if chunk := data.get("chunk", ""):
-                    chunks.append(chunk)
-                if data.get("completed", False):
-                    break
-            elif isinstance(event, str):
-                chunks.append(event)
-        return "".join(chunks)
+        for chunk in generator:
+            logger.debug(f"Moondream stream chunk: {type(chunk)} - {chunk}")
+            if isinstance(chunk, str):
+                chunks.append(chunk)
+            else:
+                # Log unexpected types but continue processing
+                logger.warning(f"Unexpected chunk type: {type(chunk)}, value: {chunk}")
+                if chunk:
+                    chunks.append(str(chunk))
+        result = "".join(chunks)
+        logger.debug(f"Moondream stream result: {result}")
+        return result
 
     async def _process_frame(self, text: Optional[str] = None) -> Optional[LLMResponseEvent]:
         """Process the latest frame and return LLMResponseEvent."""
@@ -150,13 +153,12 @@ class CloudVLM(llm.VideoLLM):
                 if not text:
                     logger.warning("VQA mode requires text/question")
                     return None
-                
-                loop = asyncio.get_event_loop()
-                answer = await loop.run_in_executor(
-                    self.executor,
-                    lambda: self._consume_stream(self.model.query(image, text, stream=True))
-                )
-                
+
+                # Moondream SDK returns {"answer": <generator>}, extract the generator
+                result = self.model.query(image, text, stream=True)
+                stream = result["answer"]
+                answer = await asyncio.to_thread(self._consume_stream, stream)
+
                 if not answer:
                     logger.warning("Moondream query returned empty answer")
                     return None
@@ -167,11 +169,10 @@ class CloudVLM(llm.VideoLLM):
                 return LLMResponseEvent(original=answer, text=answer)
 
             elif self.mode == "caption":
-                loop = asyncio.get_event_loop()
-                caption = await loop.run_in_executor(
-                    self.executor,
-                    lambda: self._consume_stream(self.model.caption(image, length="normal", stream=True))
-                )
+                # Moondream SDK returns {"caption": <generator>}, extract the generator
+                result = self.model.caption(image, length="normal", stream=True)
+                stream = result["caption"]
+                caption = await asyncio.to_thread(self._consume_stream, stream)
 
                 if not caption:
                     logger.warning("Moondream caption returned empty result")
@@ -197,10 +198,10 @@ class CloudVLM(llm.VideoLLM):
         await self._process_frame(text=event.text)
 
     async def simple_response(
-        self,
-        text: str,
-        processors: Optional[List[Processor]] = None,
-        participant: Optional[Participant] = None,
+            self,
+            text: str,
+            processors: Optional[List[Processor]] = None,
+            participant: Optional[Participant] = None,
     ) -> LLMResponseEvent:
         """
         simple_response is a standardized way to create a response.
@@ -215,7 +216,8 @@ class CloudVLM(llm.VideoLLM):
         """
         result = await self._process_frame(text=text if self.mode == "vqa" else None)
         if result is None:
-            return LLMResponseEvent(original=None, text="", exception=ValueError("No frame available or processing failed"))
+            return LLMResponseEvent(original=None, text="",
+                                    exception=ValueError("No frame available or processing failed"))
         return result
 
     async def _stop_watching_video_track(self) -> None:
