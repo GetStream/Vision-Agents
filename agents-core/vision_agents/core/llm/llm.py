@@ -15,6 +15,7 @@ from typing import (
     Generic,
 )
 
+import aiortc
 from vision_agents.core.llm import events
 from vision_agents.core.llm.events import ToolStartEvent, ToolEndEvent
 
@@ -23,11 +24,13 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Conversation
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from getstream.video.rtc import AudioStreamTrack, PcmData
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.utils import parse_instructions
 from vision_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
 from .llm_types import ToolSchema, NormalizedToolCallItem
+from ..utils.video_forwarder import VideoForwarder
 
 T = TypeVar("T")
 
@@ -44,9 +47,6 @@ AfterCb = Callable[[LLMResponseEvent], None]
 
 
 class LLM(abc.ABC):
-    # if we want to use realtime/ sts behaviour
-    sts: bool = False
-
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
     agent: Optional["Agent"]
@@ -59,6 +59,16 @@ class LLM(abc.ABC):
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
+
+    async def warmup(self) -> None:
+        """
+        Warm up the LLM model.
+
+        This method can be overridden by implementations to perform
+        model loading, connection establishment, or other initialization
+        that should happen before the first request.
+        """
+        pass
 
     async def simple_response(
         self,
@@ -247,7 +257,7 @@ class LLM(abc.ABC):
         """
         return self.function_registry.call_function(name, arguments)
 
-    def _tc_key(self, tc: Dict[str, Any]) -> Tuple[Optional[str], str, str]:
+    def _tc_key(self, tc: NormalizedToolCallItem) -> Tuple[Optional[str], str, str]:
         """Generate a unique key for tool call deduplication.
 
         Args:
@@ -259,9 +269,7 @@ class LLM(abc.ABC):
         return (
             tc.get("id"),
             tc["name"],
-            json.dumps(
-                tc.get("arguments_json", tc.get("arguments", {})), sort_keys=True
-            ),
+            json.dumps(tc.get("arguments_json", {}), sort_keys=True),
         )
 
     async def _maybe_await(self, x):
@@ -353,7 +361,7 @@ class LLM(abc.ABC):
 
     async def _execute_tools(
         self,
-        calls: List[Dict[str, Any]],
+        calls: List[NormalizedToolCallItem],
         *,
         max_concurrency: int = 8,
         timeout_s: float = 30,
@@ -378,7 +386,7 @@ class LLM(abc.ABC):
 
     async def _dedup_and_execute(
         self,
-        calls: List[Dict[str, Any]],
+        calls: List[NormalizedToolCallItem],
         *,
         max_concurrency: int = 8,
         timeout_s: float = 30,
@@ -396,7 +404,7 @@ class LLM(abc.ABC):
             Tuple of (triples, updated_seen_set)
         """
         seen = seen or set()
-        to_run: List[Dict[str, Any]] = []
+        to_run: List[NormalizedToolCallItem] = []
         for tc in calls:
             key = self._tc_key(tc)
             if key in seen:
@@ -424,3 +432,64 @@ class LLM(abc.ABC):
         """
         s = value if isinstance(value, str) else json.dumps(value)
         return (s[:max_chars] + "…") if len(s) > max_chars else s
+
+
+class AudioLLM(LLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of processing speech-to-speech audio.
+    These models do not require TTS and STT services to run.
+    """
+
+    @abc.abstractmethod
+    async def simple_audio_response(
+        self, pcm: PcmData, participant: Optional[Participant] = None
+    ):
+        """
+        Implement this method to forward PCM audio frames to the LLM.
+
+        The audio should be raw PCM matching the model's expected
+        format (typically 48 kHz mono, 16-bit).
+
+        Args:
+            pcm: PCM audio frame to forward upstream.
+            participant: Optional participant information for the audio source.
+        """
+
+    @property
+    @abc.abstractmethod
+    def output_audio_track(self) -> AudioStreamTrack:
+        """
+        An output audio track from the LLM.
+        """
+
+
+class VideoLLM(LLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of processing video.
+
+    These models will receive the video track from the `Agent` to analyze it.
+    """
+
+    @abc.abstractmethod
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        """
+        Implement this method to watch and forward video tracks.
+
+        Args:
+            track: Video track to watch and forward.
+            shared_forwarder: Optional shared VideoForwarder instance to use instead
+                of creating a new one. Allows multiple consumers to share the same
+                video stream.
+        """
+
+
+class OmniLLM(AudioLLM, VideoLLM, metaclass=abc.ABCMeta):
+    """
+    A base class for LLMs capable of both video and speech-to-speech audio processing.
+    """
+
+    ...

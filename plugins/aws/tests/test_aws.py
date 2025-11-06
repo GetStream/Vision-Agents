@@ -1,7 +1,5 @@
 """Tests for AWS plugin."""
 
-import os
-
 import pytest
 from dotenv import load_dotenv
 
@@ -37,9 +35,6 @@ class TestBedrockLLM:
     async def llm(self) -> BedrockLLM:
         """Test BedrockLLM initialization with a provided client."""
         llm = BedrockLLM(model="qwen.qwen3-32b-v1:0", region_name="us-east-1")
-        if not os.environ.get("AWS_BEARER_TOKEN_BEDROCK"):
-            pytest.skip("AWS_BEARER_TOKEN_BEDROCK not set – skipping Bedrock tests")
-
         llm._conversation = InMemoryConversation("be friendly", [])
         return llm
 

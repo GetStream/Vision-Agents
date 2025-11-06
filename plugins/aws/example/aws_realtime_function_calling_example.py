@@ -1,33 +1,30 @@
+"""
+AWS Bedrock Realtime with Function Calling Example
+
+This example creates an agent that can call custom functions to get
+weather information and perform calculations.
+"""
+
 import asyncio
 import logging
-from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from vision_agents.core import User
-from vision_agents.core.agents import Agent
+from vision_agents.core import User, Agent, cli
+from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import aws, getstream
+
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
 
-
-async def start_agent() -> None:
-    """Example demonstrating AWS Bedrock realtime with function calling.
-    
-    This example creates an agent that can call custom functions to get
-    weather information and perform calculations.
-    """
-    
-    # Create the agent with AWS Bedrock Realtime
+async def create_agent(**kwargs) -> Agent:
+    """Create the agent with AWS Bedrock Realtime."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Weather Assistant AI"),
+        agent_user=User(name="Weather Assistant AI", id="agent"),
         instructions="""You are a helpful weather assistant. When users ask about weather,
         use the get_weather function to fetch current conditions. You can also help with
         simple calculations using the calculate function.""",
@@ -103,13 +100,25 @@ async def start_agent() -> None:
             "result": result
         }
     
-    # Create and start the agent
+    return agent
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    """Join the call and start the agent."""
+    # Ensure the agent user is created
     await agent.create_user()
-    
-    call = agent.edge.client.video.call("default", str(uuid4()))
-    await agent.edge.open_demo(call)
-    
+    # Create a call
+    call = await agent.create_call(call_type, call_id)
+
+    logger.info("🤖 Starting AWS Bedrock Realtime Agent...")
+
+    # Have the agent join the call/room
     with await agent.join(call):
+        logger.info("Joining call")
+
+        await agent.edge.open_demo(call)
+        logger.info("LLM ready")
+        
         # Give the agent a moment to connect
         await asyncio.sleep(5)
         
@@ -120,9 +129,9 @@ async def start_agent() -> None:
         # Wait for AWS Nova to process the request and call the function
         await asyncio.sleep(15)
         
-        await agent.finish()
+        await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
-    asyncio.run(start_agent())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
 

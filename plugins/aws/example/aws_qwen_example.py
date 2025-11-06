@@ -1,40 +1,59 @@
+"""
+AWS Bedrock Qwen LLM Example
+
+This example demonstrates using AWS Bedrock with the Qwen LLM model.
+"""
+
 import asyncio
 import logging
-from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from vision_agents.core import User
-from vision_agents.core.agents import Agent
+from vision_agents.core import User, Agent, cli
+from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import aws, getstream, cartesia, deepgram, smart_turn
+
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [call_id=%(call_id)s] %(name)s: %(message)s")
-logger = logging.getLogger(__name__)
 
-
-async def start_agent() -> None:
+async def create_agent(**kwargs) -> Agent:
+    """Create the agent with AWS Bedrock Qwen LLM."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Friendly AI"),
+        agent_user=User(name="Friendly AI", id="agent"),
         instructions="Be nice to the user",
         llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
         turn_detection=smart_turn.TurnDetection(buffer_in_seconds=2.0, confidence_threshold=0.5),
-        # Enable turn detection with FAL/ Smart turn
     )
+    return agent
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    """Join the call and start the agent."""
+    # Ensure the agent user is created
     await agent.create_user()
+    # Create a call
+    call = await agent.create_call(call_type, call_id)
 
-    call = agent.edge.client.video.call("default", str(uuid4()))
-    await agent.edge.open_demo(call)
+    logger.info("🤖 Starting AWS Qwen Agent...")
 
+    # Have the agent join the call/room
     with await agent.join(call):
+        logger.info("Joining call")
+
+        await agent.edge.open_demo(call)
+        logger.info("LLM ready")
+        
         await asyncio.sleep(5)
         await agent.llm.simple_response(text="Say hi")
-        await agent.finish()
+        
+        await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
-    asyncio.run(start_agent())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

@@ -4,6 +4,8 @@ import json
 import logging
 import uuid
 from typing import Optional, List, Dict, Any
+
+import aiortc
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 from vision_agents.core.llm import realtime
@@ -21,7 +23,7 @@ from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.processors import Processor
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.edge.types import PcmData
+from getstream.video.rtc import PcmData
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +33,13 @@ DEFAULT_SAMPLE_RATE = 16000
 """
 AWS Bedrock Realtime with Nova Sonic support.
 
-Supports real-time audio/video streaming and function calling (tool use).
+Supports real-time audio streaming and function calling (tool use).
 """
 
 
 class Realtime(realtime.Realtime):
     """
-    Realtime on AWS with support for audio/video streaming and function calling (uses AWS Bedrock).
+    Realtime on AWS with support for audio streaming and function calling (uses AWS Bedrock).
 
     A few things are different about Nova compared to other STS solutions
 
@@ -158,12 +160,11 @@ class Realtime(realtime.Realtime):
         self.client = BedrockRuntimeClient(config=config)
         self.logger = logging.getLogger(__name__)
 
-        # Audio output track - Bedrock typically outputs at 16kHz
-        self.output_track = AudioStreamTrack(
-            framerate=24000, stereo=False, format="s16"
+        # Audio output track - Bedrock typically outputs at 24kHz
+        self._output_audio_track = AudioStreamTrack(
+            sample_rate=24000, channels=1, format="s16"
         )
 
-        self._video_forwarder: Optional[VideoForwarder] = None
         self._stream_task: Optional[asyncio.Task[Any]] = None
         self._is_connected = False
         self._message_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -175,10 +176,23 @@ class Realtime(realtime.Realtime):
         # Audio streaming configuration
         self.prompt_name = self.session_id
 
+    @property
+    def output_audio_track(self) -> AudioStreamTrack:
+        return self._output_audio_track
+
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        # No video support for now.
+        return None
+
+
     async def connect(self):
         """To connect we need to do a few things
 
-        - start a bi directional stream
+        - start a bidirectional stream
         - send session start event
         - send prompt start event
         - send text content start, text content, text content end
@@ -241,13 +255,13 @@ class Realtime(realtime.Realtime):
             return
 
         # Resample to 24kHz if needed, as required by AWS Nova
-        if pcm.sample_rate != 24000:
-            pcm = pcm.resample(24000)
+        pcm = pcm.resample(24000)
 
         content_name = str(uuid.uuid4())
 
         await self.audio_content_start(content_name)
-        self._emit_audio_input_event(pcm.samples, sample_rate=pcm.sample_rate)
+        self._emit_audio_input_event(pcm)
+
         # Convert PcmData to base64 encoded bytes
         audio_base64 = base64.b64encode(pcm.samples).decode("utf-8")
         await self.audio_input(content_name, audio_base64)
@@ -684,13 +698,13 @@ class Realtime(realtime.Realtime):
                                         "content"
                                     ]
                                     audio_bytes = base64.b64decode(audio_content)
-                                    # await self.audio_output_queue.put(audio_bytes)
-                                    self._emit_audio_output_event(
-                                        audio_data=audio_bytes,
-                                        sample_rate=24000,
+                                    pcm = PcmData.from_bytes(
+                                        audio_bytes, self.sample_rate
                                     )
-
-                                    await self.output_track.write(audio_bytes)
+                                    self._emit_audio_output_event(
+                                        audio_data=pcm,
+                                    )
+                                    await self._output_audio_track.write(pcm)
 
                                 elif "toolUse" in json_data["event"]:
                                     tool_use_data = json_data["event"]["toolUse"]

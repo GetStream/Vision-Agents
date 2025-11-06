@@ -1,7 +1,7 @@
 import uuid
-from typing import Optional, List, TYPE_CHECKING, Any, Dict
+from typing import Optional, List, TYPE_CHECKING, Any, Dict, AsyncIterator
 
-from google import genai
+from google.genai.client import AsyncClient, Client
 from google.genai import types
 from google.genai.types import GenerateContentResponse, GenerateContentConfig
 
@@ -37,15 +37,15 @@ class GeminiLLM(LLM):
 
     Examples:
 
-        from vision_agents.plugins import gemini
-        llm = gemini.LLM()
+    from vision_agents.plugins import gemini
+    llm = gemini.LLM()
     """
 
     def __init__(
         self,
         model: str,
         api_key: Optional[str] = None,
-        client: Optional[genai.Client] = None,
+        client: Optional[AsyncClient] = None,
     ):
         """
         Initialize the GeminiLLM class.
@@ -64,7 +64,7 @@ class GeminiLLM(LLM):
         if client is not None:
             self.client = client
         else:
-            self.client = genai.Client(api_key=api_key)
+            self.client = Client(api_key=api_key).aio
 
     async def _simple_response(
         self,
@@ -85,7 +85,7 @@ class GeminiLLM(LLM):
         """
         return await self.send_message(message=text)
 
-    async def send_message(self, *args, **kwargs):
+    async def send_message(self, *args, **kwargs) -> LLMResponseEvent[Any]:
         """
         send_message gives you full support/access to the native Gemini chat send message method
         under the hood it calls chat.send_message_stream(*args, **kwargs)
@@ -113,7 +113,9 @@ class GeminiLLM(LLM):
             kwargs["config"] = cfg
 
         # Generate content using the client
-        iterator = self.chat.send_message_stream(*args, **kwargs)
+        iterator: AsyncIterator[
+            GenerateContentResponse
+        ] = await self.chat.send_message_stream(*args, **kwargs)
         text_parts: List[str] = []
         final_chunk = None
         pending_calls: List[NormalizedToolCallItem] = []
@@ -121,7 +123,8 @@ class GeminiLLM(LLM):
         # Gemini API does not have an item_id, we create it here and add it to all events
         item_id = str(uuid.uuid4())
 
-        for idx, chunk in enumerate(iterator):
+        idx = 0
+        async for chunk in iterator:
             response_chunk: GenerateContentResponse = chunk
             final_chunk = response_chunk
             self._standardize_and_emit_event(response_chunk, text_parts, item_id, idx)
@@ -132,6 +135,8 @@ class GeminiLLM(LLM):
                 pending_calls.extend(chunk_calls)
             except Exception:
                 pass  # Ignore errors in chunk processing
+
+            idx += 1
 
         # Check if there were function calls in the response
         if pending_calls:
@@ -145,11 +150,8 @@ class GeminiLLM(LLM):
             while current_calls and rounds < MAX_ROUNDS:
                 # Execute tools concurrently with deduplication
                 triples, seen = await self._dedup_and_execute(
-                    current_calls,  # type: ignore[arg-type]
-                    max_concurrency=8,
-                    timeout_s=30,
-                    seen=seen,
-                )
+                    current_calls, max_concurrency=8, timeout_s=30, seen=seen
+                )  # type: ignore[arg-type]
 
                 executed = []
                 parts = []
@@ -169,20 +171,19 @@ class GeminiLLM(LLM):
                     )
 
                 # Send function responses with tools config
-                follow_up_iter = self.chat.send_message_stream(
-                    parts,  # type: ignore[arg-type]
-                    config=cfg_with_tools,
-                )
-
+                follow_up_iter: AsyncIterator[
+                    GenerateContentResponse
+                ] = await self.chat.send_message_stream(parts, config=cfg_with_tools)  # type: ignore[arg-type]
                 follow_up_text_parts: List[str] = []
                 follow_up_last = None
                 next_calls = []
+                follow_up_idx = 0
 
-                for idx, chk in enumerate(follow_up_iter):
+                async for chk in follow_up_iter:
                     follow_up_last = chk
                     # TODO: unclear if this is correct (item_id and idx)
                     self._standardize_and_emit_event(
-                        chk, follow_up_text_parts, item_id, idx
+                        chk, follow_up_text_parts, item_id, follow_up_idx
                     )
 
                     # Check for new function calls
@@ -191,6 +192,8 @@ class GeminiLLM(LLM):
                         next_calls.extend(chunk_calls)
                     except Exception:
                         pass
+
+                    follow_up_idx += 1
 
                 current_calls = next_calls
                 rounds += 1

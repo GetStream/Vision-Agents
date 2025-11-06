@@ -41,15 +41,6 @@ The plugin constructor should:
 - Add pytest tests at `plugins/<provider>/tests/test_tts.py`. Keep them simple: assert that `stream_audio` yields `PcmData` and that `send()` emits `TTSAudioEvent`.
 - Do not write spec tests with mocks, this is usually not necessary
 - Make sure to write at least a couple of integration tests, use `TTSSession` to avoid boiler-plate code in testing
-- Verify your implementation does not block the event loop. Import and call `assert_tts_send_non_blocking`:
-
-  ```python
-  from vision_agents.core.tts.testing import assert_tts_send_non_blocking
-
-  @pytest.mark.integration
-  async def test_provider_non_blocking(tts):
-      await assert_tts_send_non_blocking(tts, "Hello from TTS")
-  ```
 - Include a minimal example in `plugins/<provider>/example/` (see `fish_tts_example.py`).
 
 ## PCM / Audio management

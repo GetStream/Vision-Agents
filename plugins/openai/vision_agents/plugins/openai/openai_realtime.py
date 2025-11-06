@@ -1,12 +1,14 @@
 import json
 from typing import Any, Optional, List, Dict
 
-from getstream.video.rtc.audio_track import AudioStreamTrack
+import aiortc
+from getstream.video.rtc import AudioStreamTrack
 from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
     ConversationItemInputAudioTranscriptionCompletedEvent,
+    ResponseDoneEvent,
 )
 
 from vision_agents.core.llm import realtime
@@ -18,6 +20,7 @@ from .rtc_manager import RTCManager
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.processors import Processor
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 load_dotenv()
 
@@ -63,11 +66,16 @@ class Realtime(realtime.Realtime):
         self.voice = voice
         # TODO: send video should depend on if the RTC connection with stream is sending video.
         self.rtc = RTCManager(self.model, self.voice, True)
-        # audio output track?
-        self.output_track = AudioStreamTrack(framerate=48000, stereo=True, format="s16")
+        self._output_audio_track = AudioStreamTrack(
+            sample_rate=48000, channels=2, format="s16"
+        )
         # Map conversation item_id to participant to handle multi-user scenarios
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
+
+    @property
+    def output_audio_track(self) -> AudioStreamTrack:
+        return self._output_audio_track
 
     async def connect(self):
         """Establish the WebRTC connection to OpenAI's Realtime API.
@@ -256,35 +264,55 @@ class Realtime(realtime.Realtime):
         elif et == "response.tool_call":
             # Handle tool calls from OpenAI realtime
             await self._handle_tool_call_event(event)
+        elif et == "response.created":
+            pass
+        elif et == "response.done":
+            logger.info("OpenAI response done %s", event)
+            e = ResponseDoneEvent(**event)
 
-    async def _handle_audio_output(self, audio_bytes: bytes) -> None:
+            if e.response.status == "failed":
+                raise Exception("OpenAI realtime failure %s", e.response)
+        elif et == "session.updated":
+            pass
+            # e = SessionUpdatedEvent(**event)
+        else:
+            logger.info(f"Unrecognized OpenAI Realtime event: {et} {event}")
+
+    async def _handle_audio_output(self, pcm: PcmData) -> None:
         """Process audio output received from the OpenAI API.
 
         Forwards audio data to the output track for playback and emits audio output event.
-
-        Args:
-            audio_bytes: Raw audio data bytes from OpenAI session.
-
-        Note:
-            Registered as callback with RTC manager.
         """
+
         # Emit audio output event
         self._emit_audio_output_event(
-            audio_data=audio_bytes,
-            sample_rate=48000,  # OpenAI Realtime uses 48kHz
+            audio_data=pcm,
         )
 
         # Forward audio to output track for playback
-        await self.output_track.write(audio_bytes)
+        await self._output_audio_track.write(pcm)
 
-    async def _watch_video_track(self, track, **kwargs) -> None:
-        shared_forwarder = kwargs.get("shared_forwarder")
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        """
+        Watch the video track and forward data to OpenAI Realtime API.
+
+        Args:
+            track: Video track to watch and forward.
+            shared_forwarder: Optional shared VideoForwarder instance to use instead
+                of creating a new one. Allows multiple consumers to share the same
+                video stream.
+        """
         await self.rtc.start_video_sender(
             track, self.fps, shared_forwarder=shared_forwarder
         )
 
     async def _stop_watching_video_track(self) -> None:
-        await self.rtc.stop_video_sender()
+        # Video sender will be stopped when connection closes
+        pass
 
     async def _handle_tool_call_event(self, event: dict) -> None:
         """Handle tool call events from OpenAI realtime.

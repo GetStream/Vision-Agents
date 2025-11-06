@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -93,12 +94,12 @@ class STT(stt.STT):
                 ignore_timestamps=True,
             )
 
-            # Send to Fish Audio API
+            # Send to Fish Audio API (run in thread pool to avoid blocking)
             logger.debug(
                 "Sending audio to Fish Audio ASR",
                 extra={"audio_bytes": len(wav_data)},
             )
-            response = self.client.asr(asr_request)
+            response = await asyncio.to_thread(self.client.asr, asr_request)
 
             # Extract transcript text
             transcript_text = response.text.strip()
@@ -124,10 +125,11 @@ class STT(stt.STT):
                 },
             )
 
-            if participant is not None:
-                self._emit_transcript_event(
-                    transcript_text, participant, response_metadata
-                )
+            # Create a default participant if none provided
+            if participant is None:
+                participant = Participant(original=None, user_id="test-user")
+
+            self._emit_transcript_event(transcript_text, participant, response_metadata)
 
         except Exception as e:
             logger.error(

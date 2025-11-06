@@ -303,15 +303,22 @@ class TestClaudeFunctionCalling:
 class TestGeminiFunctionCalling:
     """Test Gemini function calling functionality."""
 
-    @patch("vision_agents.plugins.gemini.gemini_llm.genai")
-    async def test_gemini_function_calling_response(self, mock_genai):
+    @patch("vision_agents.plugins.gemini.gemini_llm.Client")
+    async def test_gemini_function_calling_response(self, mock_client_class):
         """Test Gemini function calling response."""
-        # Mock the Gemini client and response
-        mock_client = Mock()
-        mock_genai.configure.return_value = None
-        mock_genai.Chat.return_value = mock_client
+        # Mock the Gemini client structure
+        mock_async_client = Mock()
+        mock_client_instance = Mock()
+        mock_client_instance.aio = mock_async_client
+        mock_client_class.return_value = mock_client_instance
 
-        # Mock the send_message_stream call
+        # Mock the chat object
+        mock_chat = Mock()
+        mock_chats = Mock()
+        mock_chats.create.return_value = mock_chat
+        mock_async_client.chats = mock_chats
+
+        # Mock the send_message_stream call - returns async iterator
         mock_response = Mock()
         mock_response.candidates = [
             Mock(
@@ -327,7 +334,13 @@ class TestGeminiFunctionCalling:
                 )
             )
         ]
-        mock_client.send_message_stream.return_value = [mock_response]
+        mock_response.text = ""  # No text, just function call
+        
+        async def mock_iterator():
+            yield mock_response
+        
+        # send_message_stream is called and should return an async iterator
+        mock_chat.send_message_stream = Mock(return_value=mock_iterator())
 
         llm = GeminiLLM(model="gemini-2.0-flash")
 
@@ -346,14 +359,22 @@ class TestGeminiFunctionCalling:
         result = llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
 
-    @patch("vision_agents.plugins.gemini.gemini_llm.genai")
-    async def test_gemini_conversational_response(self, mock_genai):
+    @patch("vision_agents.plugins.gemini.gemini_llm.Client")
+    async def test_gemini_conversational_response(self, mock_client_class):
         """Test Gemini conversational response generation."""
-        mock_client = Mock()
-        mock_genai.configure.return_value = None
-        mock_genai.Chat.return_value = mock_client
+        # Mock the Gemini client structure
+        mock_async_client = Mock()
+        mock_client_instance = Mock()
+        mock_client_instance.aio = mock_async_client
+        mock_client_class.return_value = mock_client_instance
 
-        # Mock the send_message_stream call
+        # Mock the chat object
+        mock_chat = Mock()
+        mock_chats = Mock()
+        mock_chats.create.return_value = mock_chat
+        mock_async_client.chats = mock_chats
+
+        # Mock the send_message_stream call - returns async iterator
         mock_response = Mock()
         mock_response.candidates = [
             Mock(
@@ -369,7 +390,13 @@ class TestGeminiFunctionCalling:
                 )
             )
         ]
-        mock_client.send_message_stream.return_value = [mock_response]
+        mock_response.text = ""  # No text, just function call
+        
+        async def mock_iterator():
+            yield mock_response
+        
+        # send_message_stream is called and should return an async iterator
+        mock_chat.send_message_stream = Mock(return_value=mock_iterator())
 
         llm = GeminiLLM(model="gemini-2.0-flash")
 

@@ -2,6 +2,8 @@ import asyncio
 import logging
 from asyncio import CancelledError
 from typing import Optional, List, Dict, Any
+
+import aiortc
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
@@ -27,7 +29,6 @@ from google.genai.types import (
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.events import (
-    RealtimeAudioOutputEvent,
     LLMResponseChunkEvent,
 )
 from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
@@ -103,13 +104,17 @@ class Realtime(realtime.Realtime):
         self.config: LiveConnectConfigDict = self._create_config(config)
         self.logger = logging.getLogger(__name__)
         # Gemini generates at 24k. webrtc automatically translates it to 48khz
-        self.output_track = AudioStreamTrack(
-            framerate=24000, stereo=False, format="s16"
+        self._output_audio_track = AudioStreamTrack(
+            sample_rate=24000, channels=1, format="s16"
         )
         self._video_forwarder: Optional[VideoForwarder] = None
         self._session_context: Optional[Any] = None
         self._session: Optional[AsyncSession] = None
         self._receive_task: Optional[asyncio.Task[Any]] = None
+
+    @property
+    def output_audio_track(self) -> AudioStreamTrack:
+        return self._output_audio_track
 
     async def simple_response(
         self,
@@ -166,10 +171,12 @@ class Realtime(realtime.Realtime):
             return
 
         self._current_participant = participant
-        self.logger.debug(f"Sending audio to gemini: {pcm.duration}")
+
         # Build blob and send directly
-        audio_bytes = pcm.samples.tobytes()
-        mime = f"audio/pcm;rate={pcm.sample_rate}"
+        audio_bytes = pcm.resample(
+            target_sample_rate=16000, target_channels=1
+        ).samples.tobytes()
+        mime = "audio/pcm;rate=16000"
         blob = Blob(data=audio_bytes, mime_type=mime)
 
         await self._require_session().send_realtime_input(audio=blob)
@@ -263,8 +270,8 @@ class Realtime(realtime.Realtime):
                             text = (
                                 server_message.server_content.input_transcription.text
                             )
-                            self.logger.info("input: %s", text)
                             if text:
+                                # TODO: should this be partial?
                                 self._emit_user_speech_transcription(
                                     text=text, original=server_message
                                 )
@@ -276,7 +283,6 @@ class Realtime(realtime.Realtime):
                             text = (
                                 server_message.server_content.output_transcription.text
                             )
-                            self.logger.info("output: %s", text)
                             if text:
                                 self._emit_agent_speech_transcription(
                                     text=text, original=server_message
@@ -320,19 +326,14 @@ class Realtime(realtime.Realtime):
                                             )
                                             self.events.send(event)
                                     elif typed_part.inline_data:
-                                        data = typed_part.inline_data.data
-
                                         # Emit audio output event
-                                        audio_event = RealtimeAudioOutputEvent(
-                                            plugin_name="gemini",
-                                            audio_data=data,
-                                            sample_rate=24000,
+                                        pcm = PcmData.from_bytes(
+                                            typed_part.inline_data.data, 24000
                                         )
-                                        self.events.send(audio_event)
-
-                                        await self.output_track.write(
-                                            data
-                                        )  # original 24khz here
+                                        self._emit_audio_output_event(
+                                            audio_data=pcm,
+                                        )
+                                        await self._output_audio_track.write(pcm)
                                     elif (
                                         hasattr(typed_part, "function_call")
                                         and typed_part.function_call
@@ -402,7 +403,11 @@ class Realtime(realtime.Realtime):
             self._session_context = None
             self._session = None
 
-    async def _watch_video_track(self, track: Any, **kwargs) -> None:
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
         """
         Start sending video frames to Gemini using VideoForwarder.
         We follow the on_track from Stream. If video is turned on or off this gets forwarded.
@@ -411,7 +416,6 @@ class Realtime(realtime.Realtime):
             track: Video track to watch
             shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one
         """
-        shared_forwarder = kwargs.get("shared_forwarder")
 
         if self._video_forwarder is not None and shared_forwarder is None:
             self.logger.warning("Video sender already running, stopping previous one")

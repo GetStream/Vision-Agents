@@ -1,6 +1,20 @@
 from dataclasses import dataclass, field
-from vision_agents.core.events import PluginBaseEvent
+from vision_agents.core.events import PluginBaseEvent, BaseEvent
 from typing import Optional, Any, Dict
+
+
+@dataclass
+class AgentInitEvent(BaseEvent):
+    """Event emitted when Agent class initialized."""
+
+    type: str = field(default="agent.init", init=False)
+
+
+@dataclass
+class AgentFinishEvent(BaseEvent):
+    """Event emitted when agent.finish() call ended."""
+
+    type: str = field(default="agent.finish", init=False)
 
 
 @dataclass

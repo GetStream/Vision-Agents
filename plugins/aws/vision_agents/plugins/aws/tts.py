@@ -1,6 +1,5 @@
 import asyncio
 import os
-from functools import partial
 from typing import Optional, Union, Iterator, AsyncIterator, List, Any
 
 import boto3
@@ -53,9 +52,11 @@ class TTS(BaseTTS):
         self._client = client
 
     @property
-    def client(self):
+    async def client(self):
         if self._client is None:
-            self._client = boto3.client("polly", region_name=self.region_name)
+            self._client = await asyncio.to_thread(
+                lambda: boto3.client("polly", region_name=self.region_name)
+            )
         return self._client
 
     async def stream_audio(
@@ -65,6 +66,8 @@ class TTS(BaseTTS):
 
         Returns PcmData with s16 format and the configured sample rate.
         """
+
+        client = await self.client
 
         params = {
             "Text": text,
@@ -81,13 +84,12 @@ class TTS(BaseTTS):
         if self.lexicon_names:
             params["LexiconNames"] = self.lexicon_names  # type: ignore[assignment]
 
-        # this is necessary to avoid blocking the event loop, I will first write a failing test
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, partial(self.client.synthesize_speech, **params)
-        )
+        # Wrap both the API call and stream read in a thread to avoid blocking
+        def _synthesize_and_read():
+            resp = client.synthesize_speech(**params)
+            return resp["AudioStream"].read()
 
-        audio_bytes = resp["AudioStream"].read()
+        audio_bytes = await asyncio.to_thread(_synthesize_and_read)
 
         return PcmData.from_bytes(
             audio_bytes, sample_rate=16000, channels=1, format=AudioFormat.S16

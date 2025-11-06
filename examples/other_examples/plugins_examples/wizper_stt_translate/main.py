@@ -28,13 +28,15 @@ from dotenv import load_dotenv
 
 from getstream.models import UserRequest
 from getstream.stream import Stream
-from vision_agents.core.agents import Agent
+from vision_agents.core.agents import Agent, AgentLauncher
+from vision_agents.core import cli
 from vision_agents.core.edge.types import User
 from vision_agents.plugins import wizper, silero, getstream, openai
 from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
 from vision_agents.core.vad.events import VADAudioEvent, VADErrorEvent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def create_user(client: Stream, id: str, name: str) -> None:
@@ -78,31 +80,16 @@ def open_browser(api_key: str, token: str, call_id: str) -> str:
     return url
 
 
-async def main():
+load_dotenv()
+
+# Global client
+client = Stream.from_env()
+
+
+async def create_agent(**kwargs) -> Agent:
     """Main example function."""
     print("🎙️  Stream + Fal Real-time Transcription Example")
     print("=" * 55)
-
-    # Load environment variables
-    load_dotenv()
-
-    # Initialize Stream client from ENV
-    client = Stream.from_env()
-
-    # Create a unique call ID for this session
-    call_id = str(uuid.uuid4())
-    print(f"📞 Call ID: {call_id}")
-
-    user_id = f"user-{uuid.uuid4()}"
-    create_user(client, user_id, "My User")
-    logging.info("👤 Created user: %s", user_id)
-
-    user_token = client.create_token(user_id, expiration=3600)
-    logging.info("🔑 Created token for user: %s", user_id)
-
-    # Open browser for users to join with the user token
-    open_browser(client.api_key, user_token, call_id)
-
     print("\n🤖 Starting transcription bot...")
     print(
         "The bot will join the call and transcribe all audio it receives, optionally translating it to French."
@@ -158,14 +145,30 @@ async def main():
         if event.context:
             print(f"    └─ context: {event.context}")
 
-    # Create call and open demo
-    call = agent.edge.client.video.call("default", call_id)
-    call.get_or_create(data={"created_by_id": "transcription-bot"})
-    agent.edge.open_demo(call)
+    return agent
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    # Create a demo user for browser testing
+    user_id = f"user-{uuid.uuid4()}"
+    create_user(client, user_id, "My User")
+    logging.info("👤 Created user: %s", user_id)
+
+    user_token = client.create_token(user_id, expiration=3600)
+    logging.info("🔑 Created token for user: %s", user_id)
+
+    # Open browser for users to join with the user token
+    open_browser(client.api_key, user_token, call_id)
 
     try:
+        # ensure the agent user is created
+        await agent.create_user()
+        # Create a call
+        call = await agent.create_call(call_type, call_id)
+
         # Join call and start transcription
         with await agent.join(call):
+            await agent.edge.open_demo(call)
             print("🎧 Listening for audio... (Press Ctrl+C to stop)")
             await agent.finish()
     except asyncio.CancelledError:
@@ -180,4 +183,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

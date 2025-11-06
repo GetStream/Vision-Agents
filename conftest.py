@@ -7,9 +7,11 @@ available to all tests in the project, including plugin tests.
 
 import asyncio
 import os
+from typing import Iterator
 
 import numpy as np
 import pytest
+from blockbuster import BlockBuster, blockbuster_ctx
 from dotenv import load_dotenv
 from torchvision.io.video import av
 
@@ -17,6 +19,40 @@ from getstream.video.rtc.track_util import PcmData, AudioFormat
 from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
 
 load_dotenv()
+
+
+def skip_blockbuster(func_or_class):
+    """Decorator to skip blockbuster checks for a test function or class.
+    
+    Use this decorator when testing code that makes unavoidable blocking calls
+    (e.g., third-party SDKs like boto3, fish-audio-sdk).
+    
+    Examples:
+        @skip_blockbuster
+        async def test_aws_function():
+            # boto3 makes blocking calls we can't fix
+            pass
+        
+        @skip_blockbuster
+        class TestAWSIntegration:
+            # All tests in this class skip blockbuster
+            pass
+    """
+    return pytest.mark.skip_blockbuster(func_or_class)
+
+
+@pytest.fixture(autouse=True)
+def blockbuster(request) -> Iterator[BlockBuster | None]:
+    """Blockbuster fixture that detects blocking calls in async code.
+    
+    Can be disabled for specific tests using the @skip_blockbuster decorator.
+    """
+    # Check if test is marked to skip blockbuster
+    if request.node.get_closest_marker("skip_blockbuster"):
+        yield None
+    else:
+        with blockbuster_ctx() as bb:
+            yield bb
 
 
 class STTSession:
@@ -302,6 +338,34 @@ async def bunny_video_track():
                     raise asyncio.CancelledError("Video read error")
 
     track = RealVideoTrack(video_file_path, max_frames=None)
+    try:
+        yield track
+    finally:
+        track.container.close()
+
+
+@pytest.fixture
+async def audio_track_48khz():
+    """Create audio track that produces 48kHz audio frames."""
+    from getstream.video.rtc.audio_track import AudioStreamTrack
+
+    audio_file_path = os.path.join(get_assets_dir(), "formant_speech_48k.wav")
+
+    class TestAudioTrack(AudioStreamTrack):
+        def __init__(self, audio_path):
+            super().__init__()
+            self.container = av.open(audio_path)
+            self.audio_stream = self.container.streams.audio[0]
+            self.decoder = self.container.decode(self.audio_stream)
+
+        async def recv(self):
+            try:
+                frame = next(self.decoder)
+                return frame
+            except StopIteration:
+                raise asyncio.CancelledError("End of audio stream")
+
+    track = TestAudioTrack(audio_file_path)
     try:
         yield track
     finally:

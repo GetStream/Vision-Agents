@@ -5,7 +5,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
 import getstream.models
@@ -30,7 +30,7 @@ from ..llm.events import (
     RealtimeUserSpeechTranscriptionEvent,
     RealtimeAgentSpeechTranscriptionEvent,
 )
-from ..llm.llm import LLM
+from ..llm.llm import AudioLLM, LLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..mcp import MCPBaseServer, MCPManager
 from ..processors.base_processor import Processor, ProcessorType, filter_processors
@@ -51,6 +51,7 @@ from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
 from .conversation import Conversation
+from ..profiling import Profiler
 from dataclasses import dataclass
 from opentelemetry.trace import set_span_in_context
 from opentelemetry.trace.propagation import Span, Context
@@ -85,6 +86,7 @@ class _AgentLoggerAdapter(logging.LoggerAdapter):
             return "[Agent: %s] | %s" % (self.extra["agent_id"], msg), kwargs
         return super(_AgentLoggerAdapter, self).process(msg, kwargs)
 
+
 # TODO: move me
 @dataclass
 class AgentOptions:
@@ -100,8 +102,24 @@ class AgentOptions:
         return AgentOptions(**merged_dict)
 
 
+# Cache tempdir at module load time to avoid blocking I/O during async operations
+_DEFAULT_MODEL_DIR = tempfile.gettempdir()
+
+
 def default_agent_options():
-    return AgentOptions(model_dir=tempfile.gettempdir())
+    return AgentOptions(model_dir=_DEFAULT_MODEL_DIR)
+
+
+def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:
+    return isinstance(llm, AudioLLM)
+
+
+def _is_video_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[VideoLLM]:
+    return isinstance(llm, VideoLLM)
+
+
+def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Realtime]:
+    return isinstance(llm, Realtime)
 
 
 class Agent:
@@ -134,7 +152,7 @@ class Agent:
         # edge network for video & audio
         edge: "StreamEdge",
         # llm, optionally with sts/realtime capabilities
-        llm: LLM | Realtime,
+        llm: LLM | AudioLLM | VideoLLM,
         # the agent's user info
         agent_user: User,
         # instructions
@@ -155,6 +173,7 @@ class Agent:
         tracer: Tracer = trace.get_tracer("agents"),
         # Configure the default logging for the sdk here. Pass None to leave the config intact.
         log_level: Optional[int] = logging.INFO,
+        profiler: Optional[Profiler] = None,
     ):
         if log_level is not None:
             configure_default_logging(level=log_level)
@@ -208,12 +227,17 @@ class Agent:
         self._pending_user_transcripts: Dict[str, str] = {}
 
         # Merge plugin events BEFORE subscribing to any events
-        for plugin in [stt, tts, turn_detection, vad, llm, edge]:
+        for plugin in [stt, tts, turn_detection, vad, llm, edge, profiler]:
             if plugin and hasattr(plugin, "events"):
                 self.logger.debug(f"Register events from plugin {plugin}")
                 self.events.merge(plugin.events)
 
         self.llm._attach_agent(self)
+
+        # Attach processors that need agent reference
+        for processor in self.processors:
+            if hasattr(processor, '_attach_agent'):
+                processor._attach_agent(self)
 
         self.events.subscribe(self._on_vad_audio)
         self.events.subscribe(self._on_agent_say)
@@ -237,6 +261,8 @@ class Agent:
         self._validate_configuration()
         self._prepare_rtc()
         self._setup_stt()
+
+        self.events.send(events.AgentInitEvent())
 
     @contextlib.contextmanager
     def span(self, name):
@@ -340,6 +366,7 @@ class Agent:
 
     async def _setup_speech_events(self):
         self.logger.info("_setup_speech_events")
+
         @self.events.subscribe
         async def on_error(event: STTErrorEvent):
             self.logger.error("stt error event %s", event)
@@ -408,13 +435,13 @@ class Agent:
 
         @self.events.subscribe
         async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
-            if self._audio_track and event and event.audio_data is not None:
-                await self._audio_track.write(event.audio_data)
+            if self._audio_track and event and event.data is not None:
+                await self._audio_track.write(event.data)
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
-            if self.realtime_mode or not self.llm:
-                # when running in realtime mode, there is no need to send the response to the LLM
+            if _is_audio_llm(self.llm):
+                # There is no need to send the response to the LLM if it handles audio itself.
                 return
 
             user_id = event.user_id()
@@ -482,7 +509,7 @@ class Agent:
 
             # Ensure Realtime providers are ready before proceeding (they manage their own connection)
             self.logger.info(f"🤖 Agent joining call: {call.id}")
-            if isinstance(self.llm, Realtime):
+            if _is_realtime_llm(self.llm):
                 await self.llm.connect()
 
             with self.span("edge.join"):
@@ -531,14 +558,13 @@ class Agent:
         Subscribes to the edge transport's `call_ended` event and awaits it. If
         no connection is active, returns immediately.
         """
-        # If connection is None or already closed, return immediately
         if not self._connection:
             self.logger.info(
                 "🔚 Agent connection is already closed, finishing immediately"
             )
             return
 
-
+        running_event = asyncio.Event()
         with self.span("agent.finish"):
             # If connection is None or already closed, return immediately
             if not self._connection:
@@ -549,15 +575,18 @@ class Agent:
 
             @self.edge.events.subscribe
             async def on_ended(event: CallEndedEvent):
+                running_event.set()
                 self._is_running = False
+        # TODO: add members count check (particiapnts left + count = 1 timeout 2 minutes)
 
-            while self._is_running:
-                try:
-                    await asyncio.sleep(0.0001)
-                except asyncio.CancelledError:
-                    self._is_running = False
+        try:
+            await running_event.wait()
+        except asyncio.CancelledError:
+            running_event.clear()
 
-            await asyncio.shield(self.close())
+        self.events.send(events.AgentFinishEvent())
+
+        await asyncio.shield(self.close())
 
     async def close(self):
         """Clean up all connections and resources.
@@ -663,6 +692,13 @@ class Agent:
             self._agent_user_initialized = True
 
         return None
+
+    async def create_call(self, call_type: str, call_id: str) -> Call:
+        """Shortcut for creating a call/room etc."""
+        call = self.edge.client.video.call(call_type, call_id)
+        await call.get_or_create(data={"created_by_id": self.agent_user.id})
+
+        return call
 
     def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.debug(f"Vad audio event {self._truncate_for_logging(event)}")
@@ -788,7 +824,7 @@ class Agent:
 
         # Always listen to remote video tracks so we can forward frames to Realtime providers
         @self.edge.events.subscribe
-        async def on_track(event: TrackAddedEvent):
+        async def on_video_track_added(event: TrackAddedEvent):
             track_id = event.track_id
             track_type = event.track_type
             user = event.user
@@ -802,12 +838,12 @@ class Agent:
                     f"🎥 Track re-added: {track_type_name} ({track_id}), switching to it"
                 )
 
-                if self.realtime_mode and isinstance(self.llm, Realtime):
+                if _is_video_llm(self.llm):
                     # Get the existing forwarder and switch to this track
                     _, _, forwarder = self._active_video_tracks[track_id]
                     track = self.edge.add_track_subscriber(track_id)
                     if track and forwarder:
-                        await self.llm._watch_video_track(
+                        await self.llm.watch_video_track(
                             track, shared_forwarder=forwarder
                         )
                         self._current_video_track_id = track_id
@@ -818,7 +854,7 @@ class Agent:
             task.add_done_callback(_log_task_exception)
 
         @self.edge.events.subscribe
-        async def on_track_removed(event: TrackRemovedEvent):
+        async def on_video_track_removed(event: TrackRemovedEvent):
             track_id = event.track_id
             track_type = event.track_type
             if not track_id:
@@ -836,11 +872,7 @@ class Agent:
             self._active_video_tracks.pop(track_id, None)
 
             # If this was the active track, switch to any other available track
-            if (
-                track_id == self._current_video_track_id
-                and self.realtime_mode
-                and isinstance(self.llm, Realtime)
-            ):
+            if _is_video_llm(self.llm) and track_id == self._current_video_track_id:
                 self.logger.info(
                     "🎥 Active video track removed, switching to next available"
                 )
@@ -866,7 +898,7 @@ class Agent:
                 )
 
             # when in Realtime mode call the Realtime directly (non-blocking)
-            if self.realtime_mode and isinstance(self.llm, Realtime):
+            if _is_audio_llm(self.llm):
                 # TODO: this behaviour should be easy to change in the agent class
                 asyncio.create_task(
                     self.llm.simple_audio_response(pcm_data, participant)
@@ -902,9 +934,9 @@ class Agent:
 
             # Get the track and forwarder
             track = self.edge.add_track_subscriber(track_id)
-            if track and forwarder and isinstance(self.llm, Realtime):
+            if track and forwarder and _is_video_llm(self.llm):
                 # Send to Realtime provider
-                await self.llm._watch_video_track(track, shared_forwarder=forwarder)
+                await self.llm.watch_video_track(track, shared_forwarder=forwarder)
                 self._current_video_track_id = track_id
                 return
             else:
@@ -967,7 +999,7 @@ class Agent:
             # If Realtime provider supports video, switch to this new track
             track_type_name = TrackType.Name(track_type)
 
-            if self.realtime_mode:
+            if _is_video_llm(self.llm):
                 if self._video_track:
                     # We have a video publisher (e.g., YOLO processor)
                     # Create a separate forwarder for the PROCESSED video track
@@ -983,22 +1015,20 @@ class Agent:
                     await processed_forwarder.start()
                     self._video_forwarders.append(processed_forwarder)
 
-                    if isinstance(self.llm, Realtime):
-                        # Send PROCESSED frames with the processed forwarder
-                        await self.llm._watch_video_track(
-                            self._video_track, shared_forwarder=processed_forwarder
-                        )
-                        self._current_video_track_id = track_id
+                    # Send PROCESSED frames with the processed forwarder
+                    await self.llm.watch_video_track(
+                        self._video_track, shared_forwarder=processed_forwarder
+                    )
+                    self._current_video_track_id = track_id
                 else:
                     # No video publisher, send raw frames - switch to this new track
                     self.logger.info(
                         f"🎥 Switching to {track_type_name} track: {track_id}"
                     )
-                    if isinstance(self.llm, Realtime):
-                        await self.llm._watch_video_track(
-                            track, shared_forwarder=raw_forwarder
-                        )
-                        self._current_video_track_id = track_id
+                    await self.llm.watch_video_track(
+                        track, shared_forwarder=raw_forwarder
+                    )
+                    self._current_video_track_id = track_id
 
             has_image_processors = len(self.image_processors) > 0
 
@@ -1089,8 +1119,8 @@ class Agent:
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
-        # In realtime mode, the LLM handles turn detection, interruption, and responses itself
-        if self.realtime_mode:
+        # Skip the turn event handling if the model doesn't require TTS or SST audio itself.
+        if _is_audio_llm(self.llm):
             return
 
         if isinstance(event, TurnStartedEvent):
@@ -1105,71 +1135,66 @@ class Agent:
                     except Exception as e:
                         self.logger.error(f"Error stopping TTS: {e}")
                 else:
-                    participant_id = event.participant.user_id if event.participant else "unknown"
+                    participant_id = (
+                        event.participant.user_id if event.participant else "unknown"
+                    )
                     self.logger.info(
                         f"👉 Turn started - participant speaking {participant_id} : {event.confidence}"
                     )
             else:
                 # Agent itself started speaking - this is normal
-                participant_id = event.participant.user_id if event.participant else "unknown"
-                self.logger.debug(
-                    f"👉 Turn started - agent speaking {participant_id}"
+                participant_id = (
+                    event.participant.user_id if event.participant else "unknown"
                 )
+                self.logger.debug(f"👉 Turn started - agent speaking {participant_id}")
         elif isinstance(event, TurnEndedEvent):
-            participant_id = event.participant.user_id if event.participant else "unknown"
+            participant_id = (
+                event.participant.user_id if event.participant else "unknown"
+            )
             self.logger.info(
                 f"👉 Turn ended - participant {participant_id} finished (confidence: {event.confidence})"
             )
+            if not event.participant or event.participant.user_id == self.agent_user.id:
+                # Exit early if the event is triggered by the model response.
+                return
 
-            # When turn detection is enabled, trigger LLM response when user's turn ends
+            # When turn detection is enabled, trigger LLM response when user's turn ends.
             # This is the signal that the user has finished speaking and expects a response
-            if event.participant and event.participant.user_id != self.agent_user.id:
-                # Get the accumulated transcript for this speaker
-                transcript = self._pending_user_transcripts.get(
-                    event.participant.user_id, ""
+            transcript = self._pending_user_transcripts.get(
+                event.participant.user_id, ""
+            )
+            if transcript.strip():
+                self.logger.info(
+                    f"🤖 Triggering LLM response after turn ended for {event.participant.user_id}"
                 )
 
-                if transcript and transcript.strip():
-                    self.logger.info(
-                        f"🤖 Triggering LLM response after turn ended for {event.participant.user_id}"
-                    )
+                # Create participant object if we have metadata
+                participant = None
+                if hasattr(event, "custom") and event.custom:
+                    # Try to extract participant info from custom metadata
+                    participant = event.custom.get("participant")
 
-                    # Create participant object if we have metadata
-                    participant = None
-                    if hasattr(event, "custom") and event.custom:
-                        # Try to extract participant info from custom metadata
-                        participant = event.custom.get("participant")
+                # Trigger LLM response with the complete transcript
+                await self.simple_response(transcript, participant)
 
-                    # Trigger LLM response with the complete transcript
-                    if self.llm:
-                        await self.simple_response(transcript, participant)
-
-                    # Clear the pending transcript for this speaker
-                    self._pending_user_transcripts[event.participant.user_id] = ""
+                # Clear the pending transcript for this speaker
+                self._pending_user_transcripts[event.participant.user_id] = ""
 
     async def _on_stt_error(self, error):
         """Handle STT service errors."""
         self.logger.error(f"❌ STT Error: {error}")
 
     @property
-    def realtime_mode(self) -> bool:
-        """Check if the agent is in Realtime mode.
-
-        Returns:
-            True if `llm` is a `Realtime` implementation; otherwise False.
-        """
-        if self.llm is not None and isinstance(self.llm, Realtime):
-            return True
-        return False
-
-    @property
     def publish_audio(self) -> bool:
         """Whether the agent should publish an outbound audio track.
 
         Returns:
-            True if TTS is configured or when in Realtime mode.
+            True if TTS is configured, when in Realtime mode, or if there are audio publishers.
         """
-        if self.tts is not None or self.realtime_mode:
+        if self.tts is not None or _is_audio_llm(self.llm):
+            return True
+        # Also publish audio if there are audio publishers (e.g., HeyGen avatar)
+        if self.audio_publishers:
             return True
         return False
 
@@ -1203,9 +1228,7 @@ class Agent:
         # Video input needed for:
         # - Video processors (for frame analysis)
         # - Realtime mode with video (multimodal LLMs)
-        needs_video = len(self.video_processors) > 0 or (
-            self.realtime_mode and isinstance(self.llm, Realtime)
-        )
+        needs_video = len(self.video_processors) > 0 or _is_video_llm(self.llm)
 
         return needs_audio or needs_video
 
@@ -1256,7 +1279,7 @@ class Agent:
 
     def _validate_configuration(self):
         """Validate the agent configuration."""
-        if self.realtime_mode:
+        if _is_audio_llm(self.llm):
             # Realtime mode - should not have separate STT/TTS
             if self.stt or self.tts:
                 self.logger.warning(
@@ -1293,9 +1316,14 @@ class Agent:
 
         # Set up audio track if TTS is available
         if self.publish_audio:
-            if self.realtime_mode and isinstance(self.llm, Realtime):
-                self._audio_track = self.llm.output_track
+            if _is_audio_llm(self.llm):
+                self._audio_track = self.llm.output_audio_track
                 self.logger.info("🎵 Using Realtime provider output track for audio")
+            elif self.audio_publishers:
+                # Get the first audio publisher to create the track
+                audio_publisher = self.audio_publishers[0]
+                self._audio_track = audio_publisher.publish_audio_track()
+                self.logger.info("🎵 Audio track initialized from audio publisher")
             else:
                 # Default to WebRTC-friendly format unless configured differently
                 framerate = 48000

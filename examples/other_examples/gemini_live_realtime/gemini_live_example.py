@@ -1,12 +1,10 @@
-import asyncio
 import logging
-from uuid import uuid4
 
 from dotenv import load_dotenv
-from getstream import AsyncStream
 
 from vision_agents.core.edge.types import User
-from vision_agents.core.agents import Agent
+from vision_agents.core.agents import Agent, AgentLauncher
+from vision_agents.core import cli
 from vision_agents.plugins import gemini, getstream
 
 load_dotenv()
@@ -18,9 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def start_agent() -> None:
-    client = AsyncStream()
-
+async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(
@@ -30,16 +26,20 @@ async def start_agent() -> None:
         llm=gemini.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
+    return agent
 
-    call = client.video.call("default", str(uuid4()))
 
-    await agent.edge.open_demo(call)
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    # ensure the agent user is created
+    await agent.create_user()
+    # Create a call
+    call = await agent.create_call(call_type, call_id)
 
     with await agent.join(call):
-        await asyncio.sleep(5)
+        await agent.edge.open_demo(call)
         await agent.llm.simple_response(text="Describe what you see and say hi")
         await agent.finish()  # run till the call ends
 
 
 if __name__ == "__main__":
-    asyncio.run(start_agent())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

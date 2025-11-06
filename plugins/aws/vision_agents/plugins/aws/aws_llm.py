@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 from typing import Optional, List, TYPE_CHECKING, Any, Dict, cast
@@ -74,10 +75,20 @@ class BedrockLLM(LLM):
         if os.environ.get("AWS_BEDROCK_API_KEY"):
             session_kwargs["aws_session_token"] = os.environ["AWS_BEDROCK_API_KEY"]
 
-        self.client = boto3.client("bedrock-runtime", **session_kwargs)
-
+        self._client = None
+        self._session_kwargs = session_kwargs
         self.region_name = region_name
         self.logger = logging.getLogger(__name__)
+
+    @property
+    async def client(self) -> Any:
+        if self._client is None:
+
+            def _create_client():
+                self._client = boto3.client("bedrock-runtime", **self._session_kwargs)
+
+            await asyncio.to_thread(_create_client)
+        return self._client
 
     async def _simple_response(
         self,
@@ -130,10 +141,12 @@ class BedrockLLM(LLM):
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
 
+        client = await self.client
+
         try:
             system_param = kwargs.get("system")
 
-            response = self.client.converse(**kwargs)
+            response = await asyncio.to_thread(client.converse, **kwargs)
 
             # Extract text from response
             text = self._extract_text_from_response(response)
@@ -161,7 +174,7 @@ class BedrockLLM(LLM):
                 while current_calls and rounds < MAX_ROUNDS:
                     # Execute calls concurrently with dedup
                     triples, seen = await self._dedup_and_execute(
-                        cast(List[Dict[str, Any]], current_calls),
+                        cast(List[NormalizedToolCallItem], current_calls),
                         seen=seen,
                         max_concurrency=8,
                         timeout_s=30,
@@ -211,7 +224,7 @@ class BedrockLLM(LLM):
                         follow_up_kwargs["system"] = system_param
 
                     try:
-                        follow_up_response = self.client.converse(**follow_up_kwargs)
+                        follow_up_response = client.converse(**follow_up_kwargs)
                     except ClientError as e:
                         self.logger.error(
                             f"AWS Bedrock API error in follow-up call: {e}"
@@ -256,7 +269,7 @@ class BedrockLLM(LLM):
                         final_kwargs["system"] = system_param
 
                     try:
-                        final_response = self.client.converse(**final_kwargs)
+                        final_response = client.converse(**final_kwargs)
                     except ClientError as e:
                         self.logger.error(f"AWS Bedrock API error in final pass: {e}")
                         error_code = (
@@ -321,6 +334,8 @@ class BedrockLLM(LLM):
         """
         Streaming version of converse using Bedrock's ConverseStream API.
         """
+        client = await self.client
+
         if "modelId" not in kwargs:
             kwargs["modelId"] = self.model
 
@@ -347,8 +362,20 @@ class BedrockLLM(LLM):
         try:
             system_param = kwargs.get("system")
 
+            # Helper to consume stream in a thread (stream iteration is blocking I/O)
+            def _consume_stream():
+                response = client.converse_stream(**kwargs)
+                stream = response.get("stream")
+                if not stream:
+                    return None, [], []
+
+                events = []
+                for event in stream:
+                    events.append(event)
+                return stream, events, response
+
             try:
-                response = self.client.converse_stream(**kwargs)
+                stream, events, response = await asyncio.to_thread(_consume_stream)
             except ClientError as e:
                 error_code = (
                     e.response.get("Error", {}).get("Code", "Unknown")
@@ -366,7 +393,6 @@ class BedrockLLM(LLM):
                 )
                 raise
 
-            stream = response.get("stream")
             if not stream:
                 self.logger.error("converse_stream response has no 'stream' field")
                 llm_response = LLMResponseEvent(None, "No stream in response")
@@ -376,7 +402,7 @@ class BedrockLLM(LLM):
             accumulated_calls: List[NormalizedToolCallItem] = []
             last_event = None
 
-            for event in stream:
+            for event in events:
                 last_event = event
                 self._process_stream_event(event, text_parts, accumulated_calls)
 
@@ -405,7 +431,7 @@ class BedrockLLM(LLM):
 
             while accumulated_calls and rounds < MAX_ROUNDS:
                 triples, seen = await self._dedup_and_execute(
-                    cast(List[Dict[str, Any]], accumulated_calls),
+                    cast(List[NormalizedToolCallItem], accumulated_calls),
                     seen=seen,
                     max_concurrency=8,
                     timeout_s=30,
@@ -449,7 +475,7 @@ class BedrockLLM(LLM):
                 if system_param:
                     follow_up_kwargs["system"] = system_param
 
-                follow_up_response = self.client.converse_stream(**follow_up_kwargs)
+                follow_up_response = client.converse_stream(**follow_up_kwargs)
 
                 accumulated_calls = []
                 follow_up_text_parts: List[str] = []
@@ -494,10 +520,19 @@ class BedrockLLM(LLM):
                 if system_param:
                     final_kwargs["system"] = system_param
 
-                final_response = self.client.converse_stream(**final_kwargs)
-                final_stream = final_response.get("stream")
+                def _consume_final_stream():
+                    response = client.converse_stream(**final_kwargs)
+                    stream = response.get("stream")
+                    if not stream:
+                        return []
+                    events = []
+                    for event in stream:
+                        events.append(event)
+                    return events
+
+                final_events = await asyncio.to_thread(_consume_final_stream)
                 final_text_parts: List[str] = []
-                for event in final_stream:
+                for event in final_events:
                     last_event = event
                     self._process_stream_event(
                         event, final_text_parts, accumulated_calls

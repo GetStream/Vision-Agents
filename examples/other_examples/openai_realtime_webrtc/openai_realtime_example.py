@@ -6,65 +6,53 @@ The agent uses WebRTC to establish a peer connection with OpenAI's servers, enab
 real-time bidirectional audio streaming.
 """
 
-import asyncio
 import logging
-from uuid import uuid4
 
 from dotenv import load_dotenv
 
+from vision_agents.core import User, Agent, cli
+from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import openai, getstream
-from vision_agents.core.agents import Agent
-from getstream import AsyncStream
 
-logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 
-async def start_agent() -> None:
-    # Set the call ID here to be used in the logging
-    call_id = str(uuid4())
-
-    # create a stream client and a user object
-    client = AsyncStream()
-    agent_user = await client.create_user(name="My happy AI friend")
-
+async def create_agent(**kwargs) -> Agent:
     # Create the agent
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-        agent_user=agent_user,  # the user object for the agent (name, image etc)
+        agent_user=User(
+            name="My happy AI friend", id="agent"
+        ),  # the user object for the agent (name, image etc)
         instructions=(
-            """
-You are a voice assistant.
-- Greet the user once when asked, then wait for the next user input.
-- Speak English only.
-- If you see images/video, describe them when asked. Don't hallucinate.
-- If you don't see images/video, say you don't see them.
-- Keep responses natural and conversational.
-- Only respond to clear audio or text.
-- If the user's audio is not clear (e.g., ambiguous input/background noise/silent/unintelligible) or you didn't fully understand, ask for clarification.
-"""
+            "You are a voice assistant. Keep your responses short and friendly. Speak english plz"
         ),
         # Enable video input and set a conservative default frame rate for realtime responsiveness
         llm=openai.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
+    return agent
 
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    # ensure the agent user is created
+    await agent.create_user()
     # Create a call
-    call = client.video.call("default", call_id)
-    # Ensure the call exists server-side before joining
-    await call.get_or_create(data={"created_by_id": agent.agent_user.id})
+    call = await agent.create_call(call_type, call_id)
 
     logger.info("🤖 Starting OpenAI Realtime Agent...")
 
     # Have the agent join the call/room
     with await agent.join(call):
         logger.info("Joining call")
+
+        #TODO: should open demo be done by the CLI instead of the example?
         await agent.edge.open_demo(call)
         logger.info("LLM ready")
-        # await agent.llm.request_session_info()
-        logger.info("Requested session info")
         # Wait for a human to join the call before greeting
         logger.info("Waiting for human to join the call")
         await agent.llm.simple_response(text="Please greet the user.")
@@ -74,4 +62,4 @@ You are a voice assistant.
 
 
 if __name__ == "__main__":
-    asyncio.run(start_agent())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

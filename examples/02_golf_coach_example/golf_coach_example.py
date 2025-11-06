@@ -1,15 +1,17 @@
-import asyncio
-from uuid import uuid4
+import logging
 
 from dotenv import load_dotenv
 
-from vision_agents.core import User, Agent
+from vision_agents.core import User, Agent, cli
+from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, ultralytics, gemini
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 
-async def start_agent() -> None:
+async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),  # use stream for edge video transport
         agent_user=User(name="AI golf coach"),
@@ -20,9 +22,14 @@ async def start_agent() -> None:
             ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
         ],  # realtime pose detection with yolo
     )
+    return agent
 
-    # create a call, some other video networks call this a room
-    call = agent.edge.client.video.call("default", str(uuid4()))
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    # ensure the agent user is created
+    await agent.create_user()
+    # Create a call
+    call = await agent.create_call(call_type, call_id)
 
     # join the call and open a demo env
     with await agent.join(call):
@@ -37,4 +44,4 @@ async def start_agent() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(start_agent())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

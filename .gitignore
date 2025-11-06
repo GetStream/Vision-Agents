@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
+.cursor/*
 # Distribution / packaging
 .Python
 build/
@@ -85,3 +85,6 @@ stream-py/
 *.pt
 *.kef
 *.onnx
+profile.html
+
+/opencode.json

@@ -5,13 +5,13 @@ when an agent connects to MCP servers. The tools become available for function c
 by the LLM without any manual registration required.
 """
 
-import asyncio
 import logging
 import os
-from uuid import uuid4
+
 from dotenv import load_dotenv
 
-from vision_agents.core.agents import Agent
+from vision_agents.core.agents import Agent, AgentLauncher
+from vision_agents.core import cli
 from vision_agents.core.mcp import MCPServerRemote
 from vision_agents.plugins.openai.openai_llm import OpenAILLM
 from vision_agents.plugins import elevenlabs, deepgram, silero, getstream
@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def start_agent():
+async def create_agent(**kwargs) -> Agent:
     """Demonstrate GitHub MCP server integration."""
 
     # Get GitHub PAT from environment
@@ -34,7 +34,7 @@ async def start_agent():
     if not github_pat:
         logger.error("GITHUB_PAT environment variable not found!")
         logger.error("Please set GITHUB_PAT in your .env file or environment")
-        return
+        raise ValueError("GITHUB_PAT environment variable not found")
 
     # Create GitHub MCP server
     github_server = MCPServerRemote(
@@ -49,7 +49,7 @@ async def start_agent():
     if not openai_api_key:
         logger.error("OPENAI_API_KEY environment variable not found!")
         logger.error("Please set OPENAI_API_KEY in your .env file or environment")
-        return
+        raise ValueError("OPENAI_API_KEY environment variable not found")
 
     # Create OpenAI LLM
     llm = OpenAILLM(model="gpt-4o", api_key=openai_api_key)
@@ -74,6 +74,10 @@ async def start_agent():
     logger.info("Agent created with GitHub MCP server")
     logger.info(f"GitHub server: {github_server}")
 
+    return agent
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     try:
         # Connect to GitHub MCP server with timeout
         logger.info("Connecting to GitHub MCP server...")
@@ -95,8 +99,10 @@ async def start_agent():
                 f"Hello {event.participant.user.name}! I'm your GitHub AI assistant with access to {len(mcp_functions)} GitHub tools. I can help you with repositories, issues, pull requests, and more!"
             )
 
+        # ensure the agent user is created
+        await agent.create_user()
         # Create a call
-        call = agent.edge.client.video.call("default", str(uuid4()))
+        call = await agent.create_call(call_type, call_id)
 
         # Have the agent join the call/room
         logger.info("🎤 Agent joining call...")
@@ -126,4 +132,4 @@ async def start_agent():
 
 
 if __name__ == "__main__":
-    asyncio.run(start_agent())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

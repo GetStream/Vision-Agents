@@ -15,14 +15,17 @@ Requirements:
     - Install dependencies: pip install -e .
 """
 
-import asyncio
-from uuid import uuid4
+import logging
+
 from dotenv import load_dotenv
 
-from vision_agents.core.agents import Agent
+from vision_agents.core.agents import Agent, AgentLauncher
+from vision_agents.core import cli
 from vision_agents.core.edge.types import User
 from vision_agents.plugins import deepgram, elevenlabs, openai, getstream
 from vision_agents.core.mcp import MCPBaseServer
+
+logger = logging.getLogger(__name__)
 
 # Example MCP server for demonstration
 class ExampleMCPServer(MCPBaseServer):
@@ -56,7 +59,8 @@ class ExampleMCPServer(MCPBaseServer):
 
 load_dotenv()
 
-async def main():
+
+async def create_agent(**kwargs) -> Agent:
     # Create agent with MCP servers
     agent = Agent(
         edge=getstream.Edge(),
@@ -67,15 +71,21 @@ async def main():
         tts=elevenlabs.TTS(),
         mcp_servers=[ExampleMCPServer()],
     )
+    return agent
 
-    # Create call and open demo
-    call = agent.edge.client.video.call("default", str(uuid4()))
-    agent.edge.open_demo(call)
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    # ensure the agent user is created
+    await agent.create_user()
+    # Create a call
+    call = await agent.create_call(call_type, call_id)
 
     # Join call and start MCP-enabled conversation
     with await agent.join(call):
+        await agent.edge.open_demo(call)
         await agent.say("Hello! I have access to MCP tools including weather information. How can I help you?")
         await agent.finish()
 
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

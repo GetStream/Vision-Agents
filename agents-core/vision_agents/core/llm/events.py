@@ -1,5 +1,8 @@
 from dataclasses import dataclass, field
-from vision_agents.core.events import PluginBaseEvent, AudioFormat
+
+from getstream.video.rtc import PcmData
+
+from vision_agents.core.events import PluginBaseEvent
 from typing import Optional, Any, Dict
 import uuid
 
@@ -27,10 +30,7 @@ class RealtimeAudioInputEvent(PluginBaseEvent):
     """Event emitted when audio input is sent to realtime session."""
 
     type: str = field(default="plugin.realtime_audio_input", init=False)
-    audio_data: Optional[bytes] = None
-    audio_format: AudioFormat = AudioFormat.PCM_S16
-    sample_rate: int = 16000
-    channels: int = 1
+    data: Optional[PcmData] = None
 
 
 @dataclass
@@ -38,10 +38,7 @@ class RealtimeAudioOutputEvent(PluginBaseEvent):
     """Event emitted when audio output is received from realtime session."""
 
     type: str = field(default="plugin.realtime_audio_output", init=False)
-    audio_data: Optional[bytes] = None
-    audio_format: AudioFormat = AudioFormat.PCM_S16
-    sample_rate: int = 16000
-    channels: int = 1
+    data: Optional[PcmData] = None
     response_id: Optional[str] = None
 
 

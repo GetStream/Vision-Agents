@@ -2,12 +2,13 @@ import pytest
 from dotenv import load_dotenv
 
 from vision_agents.plugins import wizper
-from conftest import STTSession
+from conftest import STTSession, skip_blockbuster
 
 # Load environment variables
 load_dotenv()
 
 
+@skip_blockbuster
 class TestWizperSTT:
     """Integration tests for Wizper STT"""
 
