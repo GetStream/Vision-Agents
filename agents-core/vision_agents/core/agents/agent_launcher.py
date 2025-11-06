@@ -92,6 +92,13 @@ class AgentLauncher:
             if agent.turn_detection and hasattr(agent.turn_detection, 'warmup'):
                 logger.debug("Warming up turn detection: %s", agent.turn_detection.__class__.__name__)
                 warmup_tasks.append(agent.turn_detection.warmup())
+
+            # Warmup processors
+            if agent.processors and hasattr(agent.processors, 'warmup'):
+                logger.debug("Warming up processors")
+                for processor in agent.processors:
+                    if hasattr(processor, 'warmup'):
+                        warmup_tasks.append(processor.warmup())
             
             # Run all warmups in parallel
             if warmup_tasks:
