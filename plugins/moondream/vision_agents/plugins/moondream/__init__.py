@@ -2,22 +2,14 @@
 Moondream plugin for vision-agents.
 
 This plugin provides Moondream 3 vision capabilities including object detection,
-visual question answering, counting, and captioning.
+visual question answering, and captioning.
 """
 
-from .moondream_cloud_processor import (
-    CloudDetectionProcessor,
-)
-from .moondream_local_processor import (
-    LocalDetectionProcessor,
-)
-from .moondream_video_track import (
-    MoondreamVideoTrack,
-)
+from vision_agents.plugins.moondream.detection.moondream_cloud_processor import CloudDetectionProcessor
+from vision_agents.plugins.moondream.detection.moondream_local_processor import LocalDetectionProcessor
+from vision_agents.plugins.moondream.detection.moondream_video_track import MoondreamVideoTrack
+from vision_agents.plugins.moondream.vlm.moondream_cloud_vlm import CloudVLM
 
-from .moondream_vlm import (
-    CloudVLM,
-)
 
 __path__ = __import__("pkgutil").extend_path(__path__, __name__)
 
@@ -27,4 +19,3 @@ __all__ = [
     "LocalDetectionProcessor",
     "MoondreamVideoTrack",
 ]
-

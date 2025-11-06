@@ -5,7 +5,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard, Coroutine
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
 import getstream.models
