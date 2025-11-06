@@ -80,6 +80,10 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         else:
             self.device, self._dtype = handle_device()
 
+        self._last_results: Dict[str, Any] = {}
+        self._last_frame_time: Optional[float] = None
+        self._last_frame_pil: Optional[Image.Image] = None
+
         # Font configuration constants for drawing efficiency
         self._font = cv2.FONT_HERSHEY_SIMPLEX
         self._font_scale = 0.5
@@ -107,10 +111,6 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         logger.info(f"🔧 Device: {self.device}")
 
     async def warmup(self):
-        """Initialize and load the model."""
-        # Ensure model directory exists
-        os.makedirs(self.options.model_dir, exist_ok=True)
-
         # Prepare model asynchronously
         await self._prepare_moondream()
 
@@ -281,6 +281,10 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         try:
             frame_array = frame.to_ndarray(format="rgb24")
             results = await self._run_inference(frame_array)
+
+            self._last_results = results
+            self._last_frame_time = asyncio.get_event_loop().time()
+            self._last_frame_pil = Image.fromarray(frame_array)
 
             if results.get("detections"):
                 frame_array = annotate_detections(

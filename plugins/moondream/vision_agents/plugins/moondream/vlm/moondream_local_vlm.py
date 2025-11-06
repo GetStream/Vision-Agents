@@ -8,7 +8,6 @@ import aiortc
 import av
 import torch
 from PIL import Image
-from torch import dtype
 from transformers import AutoModelForCausalLM
 
 from vision_agents.core import llm
@@ -63,6 +62,7 @@ class LocalVLM(llm.VideoLLM):
         self.max_workers = max_workers
         self.mode = mode
         self.model_name = model_name
+        self.force_cpu = force_cpu
 
         if options is None:
             self.options = default_agent_options()
@@ -70,10 +70,10 @@ class LocalVLM(llm.VideoLLM):
             self.options = options
 
         if torch.backends.mps.is_available():
-            force_cpu = True
+            self.force_cpu = True
             logger.warning("⚠️ MPS detected but using CPU (moondream model has CUDA dependencies incompatible with MPS)")
 
-        if force_cpu:
+        if self.force_cpu:
             self.device, self._dtype = torch.device("cpu"), torch.float32
         else:
             self.device, self._dtype = handle_device()
@@ -133,8 +133,11 @@ class LocalVLM(llm.VideoLLM):
                 device_map={"": self.device},
                 dtype=self._dtype,
                 **load_kwargs,
-            ).eval()
+            )
 
+            if self.force_cpu:
+                model.to("cpu")
+            model.eval()
             logger.info(f"✅ Model loaded on {self.device} device")
 
             try:
