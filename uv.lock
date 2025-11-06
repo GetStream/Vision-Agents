@@ -1398,8 +1398,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.8"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../stream-py" }
 dependencies = [
     { name = "dataclasses-json" },
     { name = "httpx" },
@@ -1410,9 +1409,6 @@ dependencies = [
     { name = "pyee" },
     { name = "pyjwt" },
     { name = "python-dateutil" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/94/2befd2313d3370c5432aa1c1448a48b3df939ff544048d9e037b0cf16255/getstream-2.5.8-py3-none-any.whl", hash = "sha256:2df91640e2c197ee72bb55a1f8c33e9f900f67be9b73c9fecafbdc05d38c864c", size = 241467, upload-time = "2025-11-04T15:03:36.911Z" },
 ]
 
 [package.optional-dependencies]
@@ -1436,6 +1432,59 @@ webrtc = [
     { name = "twirp" },
     { name = "websocket-client" },
     { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.11.16" },
+    { name = "aiortc-getstream", marker = "extra == 'webrtc'", specifier = "==1.13.0.post1" },
+    { name = "dataclasses-json", specifier = ">=0.6.0,<0.7" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "ijson", specifier = ">=3.4.0" },
+    { name = "marshmallow", specifier = ">=3.21.0,<4" },
+    { name = "numpy", marker = "extra == 'webrtc'", specifier = ">=2.2.6" },
+    { name = "numpy", marker = "extra == 'webrtc'", specifier = ">=2.2.6,<2.3" },
+    { name = "openai", extras = ["realtime"], marker = "extra == 'openai-realtime'", specifier = ">=1.93.0" },
+    { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.26.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.26.0" },
+    { name = "ping3", marker = "extra == 'webrtc'", specifier = ">=4.0.8" },
+    { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=4.25.1" },
+    { name = "protobuf", marker = "extra == 'webrtc'", specifier = ">=6.31.1" },
+    { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "pydantic-settings", specifier = ">=2.9.1" },
+    { name = "pyee", specifier = ">=13.0.0" },
+    { name = "pyjwt", specifier = ">=2.8.0,<3" },
+    { name = "python-dateutil", specifier = ">=2.8.2" },
+    { name = "python-dateutil", marker = "extra == 'webrtc'", specifier = ">=2.8.2" },
+    { name = "scipy", marker = "extra == 'webrtc'", specifier = ">=1.15.3" },
+    { name = "scipy", marker = "extra == 'webrtc'", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", marker = "extra == 'webrtc'", specifier = ">=0.13.1" },
+    { name = "structlog", marker = "extra == 'webrtc'", specifier = "<24" },
+    { name = "tenacity", marker = "extra == 'webrtc'", specifier = ">=9.1.2" },
+    { name = "torch", marker = "extra == 'webrtc'", specifier = ">=2.7.1" },
+    { name = "torchaudio", marker = "extra == 'webrtc'", specifier = ">=2.7.1" },
+    { name = "twirp", marker = "extra == 'webrtc'", specifier = ">=0.0.7" },
+    { name = "websocket-client", marker = "extra == 'webrtc'", specifier = ">=1.8.0" },
+    { name = "websockets", marker = "extra == 'webrtc'", specifier = ">=15.0.1" },
+    { name = "websockets", marker = "extra == 'webrtc'", specifier = ">=15.0.1,<16" },
+]
+provides-extras = ["openai-realtime", "telemetry", "webrtc"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "grpcio-tools", specifier = ">=1.73.1" },
+    { name = "mypy-protobuf", specifier = "==3.5.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.37.0" },
+    { name = "opentelemetry-exporter-prometheus", specifier = ">=0.58b0" },
+    { name = "pre-commit", specifier = ">=4.2.0" },
+    { name = "prometheus-client", specifier = ">=0.23.1" },
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "pytest-timeout", specifier = ">=2.3.1" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
+    { name = "python-dateutil", specifier = ">=2.8.2,<3" },
+    { name = "python-dotenv", specifier = ">=1.1.1,<2" },
+    { name = "ruff", specifier = ">=0.12.1" },
 ]
 
 [[package]]
@@ -5437,7 +5486,7 @@ xai = [
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.8" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], editable = "../stream-py" },
     { name = "mcp", specifier = ">=1.16.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
