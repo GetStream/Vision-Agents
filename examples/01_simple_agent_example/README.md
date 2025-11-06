@@ -11,11 +11,12 @@ This example shows you how to build a basic video AI agent using [Vision Agents]
 
 - Python 3.13 or higher
 - API keys for:
-  - [OpenAI](https://openai.com) (for the LLM)
-  - [Cartesia](https://cartesia.ai/) (for text-to-speech)
+  - [Gemini](https://aistudio.google.com/) (for the LLM)
+  - [ElevenLabs](https://elevenlabs.io/) (for text-to-speech)
   - [Deepgram](https://deepgram.com/) (for speech-to-text)
   - [Stream](https://getstream.io/) (for video/audio infrastructure)
-  - [Smart Turn](https://fal.ai/models/fal-ai/smart-turn) (for turn detection)
+  - [Hugging Face](https://huggingface.co/) to access [Vogent 
+    model](https://huggingface.co/vogent/Vogent-Turn-80M) (for turn detection)
 
 ## Installation
 
@@ -26,12 +27,12 @@ This example shows you how to build a basic video AI agent using [Vision Agents]
 
 2. Create a `.env` file with your API keys:
    ```
-   OPENAI_API_KEY=your_openai_key
-   CARTESIA_API_KEY=your_cartesia_key
    DEEPGRAM_API_KEY=your_deepgram_key
+   ELEVENLABS_API_KEY=your_elevenlabs_key
+   GEMINI_API_KEY=your_gemini_key
+   HF_TOKEN=your_huggingface_key
    STREAM_API_KEY=your_stream_key
    STREAM_API_SECRET=your_stream_secret
-   FAL_KEY=your_fal_key
    ```
 
 ## Running the Example
@@ -58,10 +59,10 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="My happy AI friend", id="agent"),
     instructions="You're a video AI assistant...",
-    llm=openai.LLM(model="gpt-4o-mini"),
-    tts=cartesia.TTS(),
+    llm=gemini.LLM("gemini-2.0-flash"),
+    tts=elevenlabs.TTS(),
     stt=deepgram.STT(),
-    turn_detection=smart_turn.TurnDetection(),
+    turn_detection=vogent.TurnDetection(),
 )
 ```
 
