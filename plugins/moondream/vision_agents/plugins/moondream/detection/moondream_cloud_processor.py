@@ -16,7 +16,7 @@ from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
 )
 from vision_agents.plugins.moondream.moondream_utils import annotate_detections, parse_detection_bbox
-from vision_agents.plugins.moondream.moondream_video_track import MoondreamVideoTrack
+from vision_agents.plugins.moondream.detection.moondream_video_track import MoondreamVideoTrack
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 import moondream as md
 

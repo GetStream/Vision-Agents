@@ -20,7 +20,7 @@ from vision_agents.core.processors.base_processor import (
 )
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.plugins.moondream.moondream_utils import parse_detection_bbox, annotate_detections
-from vision_agents.plugins.moondream.moondream_video_track import MoondreamVideoTrack
+from vision_agents.plugins.moondream.detection.moondream_video_track import MoondreamVideoTrack
 
 logger = logging.getLogger(__name__)
 
