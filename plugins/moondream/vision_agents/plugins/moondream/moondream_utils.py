@@ -7,8 +7,6 @@ import torch
 def handle_device():
     if torch.cuda.is_available():
         return torch.device("cuda"), torch.float16
-    elif torch.backends.mps.is_available():
-        return torch.device("mps"), torch.float16
     else:
         return torch.device("cpu"), torch.float32
 

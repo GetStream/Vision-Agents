@@ -101,8 +101,6 @@ class LocalVLM(llm.VideoLLM):
         logger.info(f"Loading Moondream model: {self.model_name}")
         logger.info(f"Device: {self.device}")
 
-        # Load model in thread pool to avoid blocking event loop
-        # Transformers handles downloading and caching automatically via Hugging Face Hub
         self.model = await asyncio.to_thread(  # type: ignore[func-returns-value]
             lambda: self._load_model_sync()
         )
@@ -125,11 +123,9 @@ class LocalVLM(llm.VideoLLM):
                 "cache_dir": self.options.model_dir,
             }
 
-            # Add token if available (transformers will use env var automatically, but explicit is clearer)
             if hf_token:
                 load_kwargs["token"] = hf_token
             else:
-                # Use True to let transformers try to read from environment or cached login
                 load_kwargs["token"] = True
 
             model = AutoModelForCausalLM.from_pretrained(
