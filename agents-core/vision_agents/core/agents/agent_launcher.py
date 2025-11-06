@@ -98,6 +98,7 @@ class AgentLauncher:
                 logger.debug("Warming up processors")
                 for processor in agent.processors:
                     if hasattr(processor, 'warmup'):
+                        logger.debug("Warming up processor: %s", processor.__class__.__name__)
                         warmup_tasks.append(processor.warmup())
             
             # Run all warmups in parallel
