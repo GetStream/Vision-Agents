@@ -42,6 +42,7 @@ from ..stt.stt import STT
 from ..tts.tts import TTS
 from ..tts.events import TTSAudioEvent
 from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
+from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
     clear_call_context,
@@ -75,11 +76,9 @@ tracer: Tracer = trace.get_tracer("agents")
 
 """
 TODO:
-
 - can we change the track on a forwarder instead of having multiple forwarders?
-- for all start/stop/warmup/close, _attach_agent pattern could be easier
-- can tracing be private...
-
+- publish track logic is too verbose
+- configure events should be done in 1 place
 """
 
 class Agent:
@@ -105,6 +104,9 @@ class Agent:
     * agent.close() // cleanup
 
     Note: Don't reuse the agent object. Create a new agent object each time.
+
+    Dev guidelines
+    - Small methods so its easy to subclass/change behaviour
     """
 
     def __init__(
@@ -142,6 +144,7 @@ class Agent:
         else:
             options = default_agent_options().update(options)
         self.options = options
+        self._audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
 
         self.instructions = instructions
         self.edge = edge
@@ -216,6 +219,7 @@ class Agent:
         self._video_track: Optional[VideoStreamTrack] = None
         self._realtime_connection = None
         self._pc_track_handler_attached: bool = False
+        self._audio_consumer_task: Optional[asyncio.Task] = None
 
         # validation time
         self._validate_configuration()
@@ -585,6 +589,15 @@ class Agent:
         self._is_running = False
         self.clear_call_logging_context()
 
+        # Stop audio consumer task
+        if self._audio_consumer_task:
+            self._audio_consumer_task.cancel()
+            try:
+                await self._audio_consumer_task
+            except asyncio.CancelledError:
+                pass
+            self._audio_consumer_task = None
+
         # run stop on all subclasses
         await self._apply("stop")
         # run close on all subclasses
@@ -777,6 +790,12 @@ class Agent:
             self.events.subscribe(self._on_stt_error)
 
     async def _listen_to_audio_and_video(self) -> None:
+        # Start the audio consumer task if we need audio processing
+        if self.stt or _is_audio_llm(self.llm) or self.audio_processors or self.vad:
+            self.logger.info("🎵 Starting audio consumer task")
+            self._audio_consumer_task = asyncio.create_task(self._reply_to_audio_consumer())
+            self._audio_consumer_task.add_done_callback(_log_task_exception)
+        
         # Handle audio data for STT or Realtime
         @self.edge.events.subscribe
         async def on_audio_received(event: AudioReceivedEvent):
@@ -851,32 +870,53 @@ class Agent:
     async def _reply_to_audio(
         self, pcm_data: PcmData, participant: Participant
     ) -> None:
-        if participant and getattr(participant, "user_id", None) != self.agent_user.id:
-            # first forward to processors
-            # Extract audio bytes for processors using the proper PCM data structure
-            # PCM data has: format, sample_rate, samples, pts, dts, time_base
-            audio_bytes = pcm_data.samples.tobytes()
-            if self.vad:
-                asyncio.create_task(self.vad.process_audio(pcm_data, participant))
+        """Put audio data into the queue for processing by the consumer."""
+        # TODO: bit of a hack..
+        pcm_data.participant = participant
+        await self._audio_queue.put(pcm_data)
 
-            for processor in self.audio_processors:
-                if processor is None:
+    async def _reply_to_audio_consumer(self) -> None:
+        """Consumer that continuously processes audio from the queue."""
+        self.logger.info("🎵 Starting audio consumer")
+        try:
+            while self._is_running:
+                try:
+                    # Get audio data from queue with timeout to allow checking _is_running
+                    pcm_data = await asyncio.wait_for(
+                        self._audio_queue.get_duration(duration_ms=20), timeout=1.0
+                    )
+                    #TODO: how to get the participant here...
+                    participant = pcm_data.participant
+                    
+                    if participant and getattr(participant, "user_id", None) != self.agent_user.id:
+                        # first forward to processors
+                        # Extract audio bytes for processors using the proper PCM data structure
+                        # PCM data has: format, sample_rate, samples, pts, dts, time_base
+                        audio_bytes = pcm_data.samples.tobytes()
+
+                        for processor in self.audio_processors:
+                            if processor is None:
+                                continue
+                            await processor.process_audio(audio_bytes, participant.user_id)
+
+                        # when in Realtime mode call the Realtime directly (non-blocking)
+                        if _is_audio_llm(self.llm):
+                            await self.simple_audio_response(pcm_data, participant)
+
+                        # Process audio through STT
+                        elif self.stt:
+                            self.logger.debug(f"🎵 Processing audio from {participant}")
+                            await self.stt.process_audio(pcm_data, participant)
+                            
+                except asyncio.TimeoutError:
+                    # No audio data available, continue loop to check _is_running
                     continue
-                asyncio.create_task(
-                    processor.process_audio(audio_bytes, participant.user_id)
-                )
-
-            # when in Realtime mode call the Realtime directly (non-blocking)
-            if _is_audio_llm(self.llm):
-                # TODO: this behaviour should be easy to change in the agent class
-                asyncio.create_task(
-                    self.simple_audio_response(pcm_data, participant)
-                )
-
-            # Process audio through STT
-            elif self.stt:
-                self.logger.debug(f"🎵 Processing audio from {participant}")
-                asyncio.create_task(self.stt.process_audio(pcm_data, participant))
+                    
+        except asyncio.CancelledError:
+            self.logger.info("🎵 Audio consumer task cancelled")
+            raise
+        except Exception as e:
+            self.logger.error(f"❌ Error in audio consumer: {e}", exc_info=True)
 
     async def _switch_to_next_available_track(self) -> None:
         """Switch to any available video track."""
@@ -933,6 +973,7 @@ class Agent:
 
             # Wrap screenshare tracks to ensure even dimensions for H.264 encoding
             if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE:
+                # TODO: this works, but is not right...
 
                 class _EvenDimensionsTrack(VideoStreamTrack):
                     def __init__(self, src):
@@ -1024,6 +1065,7 @@ class Agent:
             timeout_errors = 0
             consecutive_errors = 0
 
+            # TODO: move image processor, somewhere sensible. Also this competes with the frames sent to openAI etc
             while True:
                 try:
                     # Use the raw forwarder instead of competing for track.recv()

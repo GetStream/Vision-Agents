@@ -7,7 +7,7 @@ import av
 from aiortc import VideoStreamTrack
 from av.frame import Frame
 
-from vision_agents.core.utils.queue import LatestNQueue
+from vision_agents.core.utils.video_queue import VideoLatestNQueue
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class VideoForwarder:
     """
     def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = 30, name: str = "video-forwarder"):
         self.input_track = input_track
-        self.queue: LatestNQueue[Frame] = LatestNQueue(maxlen=max_buffer)
+        self.queue: VideoLatestNQueue[Frame] = VideoLatestNQueue(maxlen=max_buffer)
         self.fps = fps  # None = unlimited, else forward at ~fps
         self._tasks: set[asyncio.Task] = set()
         self._stopped = asyncio.Event()

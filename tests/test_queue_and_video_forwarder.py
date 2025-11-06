@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 
-from vision_agents.core.utils.queue import LatestNQueue
+from vision_agents.core.utils.queue import VideoLatestNQueue
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 class TestLatestNQueue:
@@ -10,7 +10,7 @@ class TestLatestNQueue:
     @pytest.mark.asyncio
     async def test_basic_put_get(self):
         """Test basic put and get operations"""
-        queue = LatestNQueue[int](maxlen=3)
+        queue = VideoLatestNQueue[int](maxlen=3)
         
         await queue.put_latest(1)
         await queue.put_latest(2)
@@ -23,7 +23,7 @@ class TestLatestNQueue:
     @pytest.mark.asyncio
     async def test_put_latest_discards_oldest(self):
         """Test that put_latest discards oldest items when full"""
-        queue = LatestNQueue[int](maxlen=2)
+        queue = VideoLatestNQueue[int](maxlen=2)
         
         await queue.put_latest(1)
         await queue.put_latest(2)
@@ -39,7 +39,7 @@ class TestLatestNQueue:
     @pytest.mark.asyncio
     async def test_put_latest_nowait(self):
         """Test synchronous put_latest_nowait"""
-        queue = LatestNQueue[int](maxlen=2)
+        queue = VideoLatestNQueue[int](maxlen=2)
         
         queue.put_latest_nowait(1)
         queue.put_latest_nowait(2)
@@ -51,7 +51,7 @@ class TestLatestNQueue:
     @pytest.mark.asyncio
     async def test_put_latest_nowait_discards_oldest(self):
         """Test that put_latest_nowait discards oldest when full"""
-        queue = LatestNQueue[int](maxlen=3)
+        queue = VideoLatestNQueue[int](maxlen=3)
         
         # Fill queue
         queue.put_latest_nowait(1)
@@ -72,7 +72,7 @@ class TestLatestNQueue:
     @pytest.mark.asyncio
     async def test_queue_size_limits(self):
         """Test that queue respects size limits"""
-        queue = LatestNQueue[int](maxlen=1)
+        queue = VideoLatestNQueue[int](maxlen=1)
         
         await queue.put_latest(1)
         assert queue.full()
@@ -86,7 +86,7 @@ class TestLatestNQueue:
     async def test_generic_type_support(self):
         """Test that queue works with different types"""
         # Test with strings
-        str_queue = LatestNQueue[str](maxlen=2)
+        str_queue = VideoLatestNQueue[str](maxlen=2)
         await str_queue.put_latest("a")
         await str_queue.put_latest("b")
         await str_queue.put_latest("c")  # Should discard "a"
@@ -99,7 +99,7 @@ class TestLatestNQueue:
             def __init__(self, value):
                 self.value = value
         
-        obj_queue = LatestNQueue[TestObj](maxlen=2)
+        obj_queue = VideoLatestNQueue[TestObj](maxlen=2)
         await obj_queue.put_latest(TestObj(1))
         await obj_queue.put_latest(TestObj(2))
         await obj_queue.put_latest(TestObj(3))  # Should discard first
