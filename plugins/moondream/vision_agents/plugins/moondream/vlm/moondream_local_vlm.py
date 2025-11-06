@@ -104,15 +104,18 @@ class LocalVLM(llm.VideoLLM):
         """Load the Moondream model from Hugging Face."""
         logger.info(f"Loading Moondream model: {self.model_name}")
         logger.info(f"Device: {self.device}")
-
+        
+        # Load model in thread pool to avoid blocking event loop
+        # Transformers handles downloading and caching automatically via Hugging Face Hub
         self.model = await asyncio.to_thread(  # type: ignore[func-returns-value]
             lambda: self._load_model_sync()
         )
         logger.info("✅ Moondream model loaded")
-
+    
     def _load_model_sync(self):
         """Synchronous model loading function run in thread pool."""
         try:
+            # Check for Hugging Face token (required for gated models)
             hf_token = os.getenv("HF_TOKEN")
             if not hf_token:
                 logger.warning(
@@ -120,40 +123,48 @@ class LocalVLM(llm.VideoLLM):
                     "This model requires authentication. "
                     "Set HF_TOKEN or run 'huggingface-cli login'"
                 )
-
+            
             load_kwargs = {
                 "trust_remote_code": True,
                 "dtype": torch.bfloat16 if self.device == "cuda" else torch.float32,
-                "cache_dir": self.options.model_dir,
+                "cache_dir": self.options.model_dir,  # Use agent's model directory for caching
             }
-
+            
+            # Add token if available (transformers will use env var automatically, but explicit is clearer)
             if hf_token:
                 load_kwargs["token"] = hf_token
             else:
+                # Use True to let transformers try to read from environment or cached login
                 load_kwargs["token"] = True
-
+            
+            # Handle device placement based on device type
             if self.device == "cuda":
+                # CUDA: Use device_map for efficient multi-GPU support
                 load_kwargs["device_map"] = {"": "cuda"}
             else:
+                # CPU: load directly on CPU (MPS is automatically converted to CPU in __init__)
                 load_kwargs["device_map"] = "cpu"
-
+            
             model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
                 **load_kwargs,
             )
-
+            
+            # Ensure model is in eval mode for inference
             model.eval()
-
+            
             if self.device == "cuda":
                 logger.info("✅ Model loaded on CUDA device")
             else:
                 logger.info("✅ Model loaded on CPU device")
-
+            
+            # Compile model for fast inference (as per HF documentation)
             try:
                 model.compile()
             except Exception as compile_error:
+                # If compilation fails, log and continue without compilation
                 logger.warning(f"⚠️ Model compilation failed, continuing without compilation: {compile_error}")
-
+            
             return model
         except Exception as e:
             error_msg = str(e)
