@@ -38,7 +38,6 @@ class LocalVLM(llm.VideoLLM):
 
     Args:
         mode: "vqa" for visual question answering or "caption" for image captioning (default: "vqa")
-        conf_threshold: Confidence threshold (unused for VLM, kept for API compatibility)
         max_workers: Number of worker threads for async operations
         device: Device to run inference on ('cuda', 'mps', or 'cpu').
                 Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU.
@@ -51,7 +50,6 @@ class LocalVLM(llm.VideoLLM):
     def __init__(
             self,
             mode: str = "vqa",
-            conf_threshold: float = 0.3,
             max_workers: int = 10,
             device: Optional[str] = None,
             model_name: str = "moondream/moondream3-preview",
@@ -59,7 +57,6 @@ class LocalVLM(llm.VideoLLM):
     ):
         super().__init__()
 
-        self.conf_threshold = conf_threshold
         self.max_workers = max_workers
         self.mode = mode
         self.model_name = model_name

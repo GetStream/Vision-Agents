@@ -35,14 +35,12 @@ class CloudVLM(llm.VideoLLM):
     def __init__(
             self,
             api_key: Optional[str] = None,
-            conf_threshold: float = 0.3,
             mode: str = "vqa",  # Default to VQA
             max_workers: int = 10,
     ):
         super().__init__()
 
         self.api_key = api_key or os.getenv("MOONDREAM_API_KEY")
-        self.conf_threshold = conf_threshold
         self.max_workers = max_workers
         self.mode = mode
         self._shutdown = False
