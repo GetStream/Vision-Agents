@@ -4,10 +4,11 @@ import logging
 import tempfile
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
+import aiortc
 from hatch.cli import self
 
 import getstream.models
@@ -72,6 +73,15 @@ logger = logging.getLogger(__name__)
 tracer: Tracer = trace.get_tracer("agents")
 
 
+@dataclass
+class TrackInfo:
+    id: str
+    type: int
+    processor: str
+    priority: int # higher goes first
+    participant: Participant
+    track: aiortc.mediastreams.VideoStreamTrack
+    forwarder: VideoForwarder
 
 
 """
@@ -137,6 +147,7 @@ class Agent:
         log_level: Optional[int] = logging.INFO,
         profiler: Optional[Profiler] = None,
     ):
+        self._active_processed_track_id = None
         if log_level is not None:
             configure_default_logging(level=log_level)
         if options is None:
@@ -210,8 +221,8 @@ class Agent:
         self._interval_task = None
         self._callback_executed = False
         self._track_tasks: Dict[str, asyncio.Task] = {}
-        # Track metadata: track_id -> (track_type, participant, forwarder)
-        self._active_video_tracks: Dict[str, tuple[int, Any, Any]] = {}
+        # Track metadata: track_id -> TrackInfo
+        self._active_video_tracks: Dict[str, TrackInfo] = {}
         self._video_forwarders: List[VideoForwarder] = []
         self._current_video_track_id: Optional[str] = None
         self._connection: Optional[Connection] = None
@@ -816,28 +827,8 @@ class Agent:
             track_id = event.track_id
             track_type = event.track_type
             user = event.user
-            if not track_id or not track_type:
-                return
 
-            # If track is already being processed, just switch to it
-            if track_id in self._active_video_tracks:
-                track_type_name = TrackType.Name(track_type)
-                self.logger.info(
-                    f"🎥 Track re-added: {track_type_name} ({track_id}), switching to it"
-                )
-
-                if _is_video_llm(self.llm):
-                    # Get the existing forwarder and switch to this track
-                    _, _, forwarder = self._active_video_tracks[track_id]
-                    track = self.edge.add_track_subscriber(track_id)
-                    if track and forwarder:
-                        await self.llm.watch_video_track(
-                            track, shared_forwarder=forwarder
-                        )
-                        self._current_video_track_id = track_id
-                return
-
-            task = asyncio.create_task(self._process_track(track_id, track_type, user))
+            task = asyncio.create_task(self._on_track_added(track_id, track_type, user))
             self._track_tasks[track_id] = task
             task.add_done_callback(_log_task_exception)
 
@@ -845,27 +836,11 @@ class Agent:
         async def on_video_track_removed(event: TrackRemovedEvent):
             track_id = event.track_id
             track_type = event.track_type
-            if not track_id:
-                return
+            user = event.user
 
-            track_type_name = TrackType.Name(track_type) if track_type else "unknown"
-            self.logger.info(f"🎥 Track removed: {track_type_name} ({track_id})")
-
-            # Cancel the processing task for this track
-            if track_id in self._track_tasks:
-                self._track_tasks[track_id].cancel()
-                self._track_tasks.pop(track_id)
-
-            # Clean up track metadata
-            self._active_video_tracks.pop(track_id, None)
-
-            # If this was the active track, switch to any other available track
-            if _is_video_llm(self.llm) and track_id == self._current_video_track_id:
-                self.logger.info(
-                    "🎥 Active video track removed, switching to next available"
-                )
-                self._current_video_track_id = None
-                await self._switch_to_next_available_track()
+            task = asyncio.create_task(self._on_track_removed(track_id, track_type, user))
+            self._track_tasks[track_id] = task
+            task.add_done_callback(_log_task_exception)
 
     async def _reply_to_audio(
         self, pcm_data: PcmData, participant: Participant
@@ -918,215 +893,104 @@ class Agent:
         except Exception as e:
             self.logger.error(f"❌ Error in audio consumer: {e}", exc_info=True)
 
-    async def _switch_to_next_available_track(self) -> None:
-        """Switch to any available video track."""
-        if not self._active_video_tracks:
-            self.logger.info("🎥 No video tracks available")
-            self._current_video_track_id = None
-            return
-
-        # Just pick the first available video track
-        for track_id, (
-            track_type,
-            participant,
-            forwarder,
-        ) in self._active_video_tracks.items():
-            # Only consider video tracks (camera or screenshare)
-            if track_type not in (
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_SCREEN_SHARE,
-            ):
-                continue
-
-            track_type_name = TrackType.Name(track_type)
-            self.logger.info(f"🎥 Switching to track: {track_type_name} ({track_id})")
-
-            # Get the track and forwarder
-            track = self.edge.add_track_subscriber(track_id)
-            if track and forwarder and _is_video_llm(self.llm):
-                # Send to Realtime provider
-                await self.llm.watch_video_track(track, shared_forwarder=forwarder)
-                self._current_video_track_id = track_id
-                return
-            else:
-                self.logger.error(f"Failed to switch to track {track_id}")
-
-        self.logger.warning("🎥 No suitable video tracks found")
-
-    async def _process_track(self, track_id: str, track_type: int, participant):
-        raw_forwarder = None
-        processed_forwarder = None
-
-        try:
-            # we only process video tracks (camera video or screenshare)
-            if track_type not in (
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_SCREEN_SHARE,
-            ):
-                return
-
-            # subscribe to the video track
-            track = self.edge.add_track_subscriber(track_id)
-            if not track:
-                self.logger.error(f"Failed to subscribe to {track_id}")
-                return
-
-            # Wrap screenshare tracks to ensure even dimensions for H.264 encoding
-            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE:
-                # TODO: this works, but is not right...
-
-                class _EvenDimensionsTrack(VideoStreamTrack):
-                    def __init__(self, src):
-                        super().__init__()
-                        self.src = src
-
-                    async def recv(self):
-                        return ensure_even_dimensions(await self.src.recv())
-
-                track = _EvenDimensionsTrack(track)  # type: ignore[arg-type]
-
-            # Create a SHARED VideoForwarder for the RAW incoming track
-            # This prevents multiple recv() calls competing on the same track
-            raw_forwarder = VideoForwarder(
-                track,  # type: ignore[arg-type]
-                max_buffer=30,
-                fps=30,  # Max FPS for the producer (individual consumers can throttle down)
-                name=f"raw_video_forwarder_{track_id}",
-            )
-            await raw_forwarder.start()
-            self.logger.debug("🎥 Created raw VideoForwarder for track %s", track_id)
-
-            # Track forwarders for cleanup
-            self._video_forwarders.append(raw_forwarder)
-
-            # Store track metadata
-            self._active_video_tracks[track_id] = (
-                track_type,
-                participant,
-                raw_forwarder,
-            )
-
-            # If Realtime provider supports video, switch to this new track
-            track_type_name = TrackType.Name(track_type)
-
-            if _is_video_llm(self.llm):
-                if self._video_track:
-                    # We have a video publisher (e.g., YOLO processor)
-                    # Create a separate forwarder for the PROCESSED video track
-                    self.logger.info(
-                        "🎥 Forwarding PROCESSED video frames to Realtime provider"
-                    )
-                    processed_forwarder = VideoForwarder(
-                        self._video_track,  # type: ignore[arg-type]
-                        max_buffer=30,
-                        fps=30,
-                        name=f"processed_video_forwarder_{track_id}",
-                    )
-                    await processed_forwarder.start()
-                    self._video_forwarders.append(processed_forwarder)
-
-                    # Send PROCESSED frames with the processed forwarder
-                    await self.llm.watch_video_track(
-                        self._video_track, shared_forwarder=processed_forwarder
-                    )
-                    self._current_video_track_id = track_id
-                else:
-                    # No video publisher, send raw frames - switch to this new track
-                    self.logger.info(
-                        f"🎥 Switching to {track_type_name} track: {track_id}"
-                    )
-                    await self.llm.watch_video_track(
-                        track, shared_forwarder=raw_forwarder
-                    )
-                    self._current_video_track_id = track_id
-
-            has_image_processors = len(self.image_processors) > 0
-
-            # video processors - pass the raw forwarder (they process incoming frames)
-            for processor in self.video_processors:
-                try:
-                    await processor.process_video(
-                        track, participant.user_id, shared_forwarder=raw_forwarder
-                    )
-                except Exception as e:
-                    self.logger.error(
-                        f"Error in video processor {type(processor).__name__}: {e}"
-                    )
-
-            # Use raw forwarder for image processors - only if there are image processors
-            if not has_image_processors:
-                # No image processors, just keep the connection alive
-                self.logger.info(
-                    "No image processors, video processing handled by video processors only"
+    async def _track_to_video_processors(self, track: TrackInfo):
+        """
+        Send the track to the video processors
+        """
+        # video processors - pass the raw forwarder (they process incoming frames)
+        for processor in self.video_processors:
+            try:
+                await processor.process_video(
+                    track.track, track.participant.user_id, shared_forwarder=track.forwarder
                 )
-                return
+            except Exception as e:
+                self.logger.error(
+                    f"Error in video processor {type(processor).__name__}: {e}"
+                )
 
-            # Initialize error tracking counters
-            timeout_errors = 0
-            consecutive_errors = 0
+    async def _image_to_video_processors(self, track_id: str, track_type: int):
+        """
+        Send the current image to the image processors
+        """
+        track_info = self._active_video_tracks.get(track_id)
+        if not track_info:
+            return
+            
+        for processor in self.image_processors:
+            try:
+                pass
+                #TODO: run this better
+                #await processor.process_image(
+                #    img, track_info.participant.user_id, track_id=track_id, track_type=track_type
+                #)
+            except Exception as e:
+                self.logger.error(
+                    f"Error in image processor {type(processor).__name__}: {e}"
+                )
 
-            # TODO: move image processor, somewhere sensible. Also this competes with the frames sent to openAI etc
-            while True:
-                try:
-                    # Use the raw forwarder instead of competing for track.recv()
-                    video_frame = await raw_forwarder.next_frame(timeout=2.0)
+    async def _on_track_removed(self, track_id: str, track_type: int, participant: Participant):
+        self._active_video_tracks.pop(track_id)
+        await self._on_track_change(track_id)
 
-                    if video_frame:
-                        # Reset error counts on successful frame processing
-                        timeout_errors = 0
-                        consecutive_errors = 0
+    async def _on_track_change(self, track_id: str):
+        # shared logic between track remove and added
+        # Select a track. Prioritize screenshare over regular
+        # This is the track without processing
+        non_processed_tracks = [t for t in self._active_video_tracks.values() if not t.processor]
+        source_track = sorted(non_processed_tracks, key=lambda t: t.priority, reverse=True)[0]
+        # assign the tracks that we last used so we can notify of changes...
+        self._active_source_track_id = source_track.id
 
-                        if has_image_processors:
-                            img = video_frame.to_image()
+        await self._track_to_video_processors(source_track)
 
-                            for processor in self.image_processors:
-                                try:
-                                    await processor.process_image(
-                                        img, participant.user_id
-                                    )
-                                except Exception as e:
-                                    self.logger.error(
-                                        f"Error in image processor {type(processor).__name__}: {e}"
-                                    )
+        processed_track = sorted([t for t in self._active_video_tracks.values()], key=lambda t: t.priority, reverse=True)[0]
+        track_changed = self._active_processed_track_id != processed_track.id
+        self._active_processed_track_id = processed_track.id
 
-                    else:
-                        self.logger.warning("🎥VDP: Received empty frame")
-                        consecutive_errors += 1
+        # See if we have a processed track. If so forward that to LLM
+        # TODO: this should run in a loop. depends a bit on how the forwarder works. requires forwarder to handle multiple forwarding targets
+        #self._image_to_video_processors()
 
-                except asyncio.TimeoutError:
-                    # Exponential backoff for timeout errors
-                    timeout_errors += 1
-                    backoff_delay = min(2.0 ** min(timeout_errors, 5), 30.0)
-                    self.logger.debug(
-                        f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s"
-                    )
-                    await asyncio.sleep(backoff_delay)
-        except asyncio.CancelledError:
-            # Task was cancelled (e.g., track removed)
-            # Clean up forwarders that were created for this track
-            self.logger.debug(
-                f"🎥 Cleaning up forwarders for cancelled track {track_id}"
+        # If Realtime provider supports video, switch to this new track
+        if _is_video_llm(self.llm):
+            await self.llm.watch_video_track(
+                processed_track.track, shared_forwarder=processed_track.forwarder
             )
 
-            # Stop and remove the raw forwarder if it was created
-            if raw_forwarder is not None and hasattr(self, "_video_forwarders"):
-                if raw_forwarder in self._video_forwarders:
-                    try:
-                        await raw_forwarder.stop()
-                        self._video_forwarders.remove(raw_forwarder)
-                    except Exception as e:
-                        self.logger.error(f"Error stopping raw forwarder: {e}")
-
-            # Stop and remove processed forwarder if it was created
-            if processed_forwarder is not None and hasattr(self, "_video_forwarders"):
-                if processed_forwarder in self._video_forwarders:
-                    try:
-                        await processed_forwarder.stop()
-                        self._video_forwarders.remove(processed_forwarder)
-                    except Exception as e:
-                        self.logger.error(f"Error stopping processed forwarder: {e}")
-
+    async def _on_track_added(self, track_id: str, track_type: int, participant: Participant):
+        # We only process video tracks (camera video or screenshare)
+        if track_type not in (
+                TrackType.TRACK_TYPE_VIDEO,
+                TrackType.TRACK_TYPE_SCREEN_SHARE,
+        ):
             return
+
+        # Subscribe to the video track, we watch all tracks by default
+        track = self.edge.add_track_subscriber(track_id)
+        if not track:
+            self.logger.error(f"Failed to subscribe to {track_id}")
+            return
+
+        # Store track metadata
+        forwarder = VideoForwarder(
+            track,  # type: ignore[arg-type]
+            max_buffer=30,
+            fps=30,  # Max FPS for the producer (individual consumers can throttle down)
+            name=f"video_forwarder_{track_id}_{track_type}",
+        )
+        self._active_video_tracks[track_id] = TrackInfo(
+            id=track_id,
+            type=track_type,
+            processor="",
+            track=track,
+            participant=participant,
+            priority = 1 if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE else 0,
+            forwarder = forwarder
+        )
+
+        await self._on_track_change(track_id)
+
+
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
