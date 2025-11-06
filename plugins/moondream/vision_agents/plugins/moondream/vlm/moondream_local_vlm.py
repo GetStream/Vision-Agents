@@ -1,13 +1,14 @@
 import asyncio
 import logging
 import os
-from typing import Optional, List
+from typing import Optional, List, Literal
 from concurrent.futures import ThreadPoolExecutor
 
 import aiortc
 import av
 import torch
 from PIL import Image
+from torch import dtype
 from transformers import AutoModelForCausalLM
 
 from vision_agents.core import llm
@@ -22,6 +23,8 @@ from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.queue import LatestNQueue
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+
+from vision_agents.plugins.moondream.moondream_utils import handle_device
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +52,9 @@ class LocalVLM(llm.VideoLLM):
 
     def __init__(
             self,
-            mode: str = "vqa",
+            mode: Literal["vqa", "caption"] = "vqa",
             max_workers: int = 10,
-            device: Optional[str] = None,
+            force_cpu: bool = False,
             model_name: str = "moondream/moondream3-preview",
             options: Optional[AgentOptions] = None,
     ):
@@ -60,33 +63,26 @@ class LocalVLM(llm.VideoLLM):
         self.max_workers = max_workers
         self.mode = mode
         self.model_name = model_name
-        self._shutdown = False
 
         if options is None:
             self.options = default_agent_options()
         else:
             self.options = options
 
-        if device is None:
-            if torch.cuda.is_available():
-                self.device = "cuda"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                self.device = "cpu"
-                logger.info("⚠️ MPS detected but using CPU (moondream model has CUDA dependencies incompatible with MPS)")
-            else:
-                self.device = "cpu"
+        if torch.backends.mps.is_available():
+            force_cpu = True
+            logger.warning("⚠️ MPS detected but using CPU (moondream model has CUDA dependencies incompatible with MPS)")
+
+        if force_cpu:
+            self.device, self._dtype = torch.device("cpu"), torch.float32
         else:
-            if device == "mps":
-                self.device = "cpu"
-                logger.warning("⚠️ MPS device requested but using CPU instead (moondream model has CUDA dependencies incompatible with MPS)")
-            else:
-                self.device = device
+            self.device, self._dtype = handle_device()
 
         self._frame_buffer: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=10)
         self._latest_frame: Optional[av.VideoFrame] = None
         self._video_forwarder: Optional[VideoForwarder] = None
         self._stt_subscription_setup = False
-        self._is_processing = False
+        self._processing_lock = asyncio.Lock()
 
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.model = None
@@ -104,14 +100,14 @@ class LocalVLM(llm.VideoLLM):
         """Load the Moondream model from Hugging Face."""
         logger.info(f"Loading Moondream model: {self.model_name}")
         logger.info(f"Device: {self.device}")
-        
+
         # Load model in thread pool to avoid blocking event loop
         # Transformers handles downloading and caching automatically via Hugging Face Hub
         self.model = await asyncio.to_thread(  # type: ignore[func-returns-value]
             lambda: self._load_model_sync()
         )
         logger.info("✅ Moondream model loaded")
-    
+
     def _load_model_sync(self):
         """Synchronous model loading function run in thread pool."""
         try:
@@ -123,48 +119,34 @@ class LocalVLM(llm.VideoLLM):
                     "This model requires authentication. "
                     "Set HF_TOKEN or run 'huggingface-cli login'"
                 )
-            
+
             load_kwargs = {
                 "trust_remote_code": True,
-                "dtype": torch.bfloat16 if self.device == "cuda" else torch.float32,
-                "cache_dir": self.options.model_dir,  # Use agent's model directory for caching
+                "cache_dir": self.options.model_dir,
             }
-            
+
             # Add token if available (transformers will use env var automatically, but explicit is clearer)
             if hf_token:
                 load_kwargs["token"] = hf_token
             else:
                 # Use True to let transformers try to read from environment or cached login
                 load_kwargs["token"] = True
-            
-            # Handle device placement based on device type
-            if self.device == "cuda":
-                # CUDA: Use device_map for efficient multi-GPU support
-                load_kwargs["device_map"] = {"": "cuda"}
-            else:
-                # CPU: load directly on CPU (MPS is automatically converted to CPU in __init__)
-                load_kwargs["device_map"] = "cpu"
-            
+
             model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
+                device_map={"": self.device},
+                dtype=self._dtype,
                 **load_kwargs,
-            )
-            
-            # Ensure model is in eval mode for inference
-            model.eval()
-            
-            if self.device == "cuda":
-                logger.info("✅ Model loaded on CUDA device")
-            else:
-                logger.info("✅ Model loaded on CPU device")
-            
-            # Compile model for fast inference (as per HF documentation)
+            ).eval()
+
+            logger.info(f"✅ Model loaded on {self.device} device")
+
             try:
                 model.compile()
             except Exception as compile_error:
                 # If compilation fails, log and continue without compilation
                 logger.warning(f"⚠️ Model compilation failed, continuing without compilation: {compile_error}")
-            
+
             return model
         except Exception as e:
             error_msg = str(e)
@@ -256,12 +238,15 @@ class LocalVLM(llm.VideoLLM):
             logger.warning("No frames available, skipping Moondream processing")
             return None
 
-        if self._is_processing:
-            logger.debug("Moondream processing already in progress, skipping")
-            return None
-
         if self.model is None:
             logger.warning("Model not loaded, skipping Moondream processing")
+            return None
+
+        # Try to acquire lock without blocking - skip if already processing
+        try:
+            await asyncio.wait_for(self._processing_lock.acquire(), timeout=0)
+        except asyncio.TimeoutError:
+            logger.debug("Moondream processing already in progress, skipping")
             return None
 
         latest_frame = self._latest_frame
@@ -275,7 +260,6 @@ class LocalVLM(llm.VideoLLM):
                     logger.warning("VQA mode requires text/question")
                     return None
 
-                self._is_processing = True
                 result = await asyncio.to_thread(self.model.query, image, text, stream=True)
 
                 if isinstance(result, dict) and "answer" in result:
@@ -287,17 +271,14 @@ class LocalVLM(llm.VideoLLM):
 
                 if not answer:
                     logger.warning("Moondream query returned empty answer")
-                    self._is_processing = False
                     return None
 
                 self.events.send(LLMResponseChunkEvent(delta=answer))
                 self.events.send(LLMResponseCompletedEvent(text=answer))
                 logger.info(f"Moondream VQA response: {answer}")
-                self._is_processing = False
                 return LLMResponseEvent(original=answer, text=answer)
 
-            elif self.mode == "caption":
-                self._is_processing = True
+            else:
                 result = await asyncio.to_thread(self.model.caption, image, length="normal", stream=True)
 
                 if isinstance(result, dict) and "caption" in result:
@@ -309,23 +290,18 @@ class LocalVLM(llm.VideoLLM):
 
                 if not caption:
                     logger.warning("Moondream caption returned empty result")
-                    self._is_processing = False
                     return None
 
                 self.events.send(LLMResponseChunkEvent(delta=caption))
                 self.events.send(LLMResponseCompletedEvent(text=caption))
                 logger.info(f"Moondream caption: {caption}")
-                self._is_processing = False
                 return LLMResponseEvent(original=caption, text=caption)
-            else:
-                logger.error(f"Unknown mode: {self.mode}")
-                self._is_processing = False
-                return None
 
         except Exception as e:
             logger.exception(f"Error processing frame: {e}")
-            self._is_processing = False
             return LLMResponseEvent(original=None, text="", exception=e)
+        finally:
+            self._processing_lock.release()
 
     async def _on_stt_transcript(self, event: STTTranscriptEvent):
         """Handle STT transcript event - process with Moondream."""
@@ -366,9 +342,7 @@ class LocalVLM(llm.VideoLLM):
 
     def close(self):
         """Clean up resources."""
-        self._shutdown = True
-        if hasattr(self, "executor"):
-            self.executor.shutdown(wait=False)
+        self.executor.shutdown(wait=False)
         if self.model is not None:
             del self.model
             self.model = None

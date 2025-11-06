@@ -38,7 +38,7 @@ async def local_vlm_vqa() -> LocalVLM:
     if not hf_token:
         pytest.skip("HF_TOKEN not set")
     
-    vlm = LocalVLM(mode="vqa", device="cpu")
+    vlm = LocalVLM(mode="vqa")
     try:
         await vlm.warmup()
         yield vlm
@@ -53,7 +53,7 @@ async def local_vlm_caption() -> LocalVLM:
     if not hf_token:
         pytest.skip("HF_TOKEN not set")
     
-    vlm = LocalVLM(mode="caption", device="cpu")
+    vlm = LocalVLM(mode="caption")
     try:
         await vlm.warmup()
         yield vlm
