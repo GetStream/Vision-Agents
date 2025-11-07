@@ -3,25 +3,23 @@ import io
 import logging
 import os
 from collections import deque
-from typing import Iterator, Optional
+from typing import Iterator, Optional, cast
 
-import aiortc
 import av
-from PIL.Image import Resampling
-from openai import AsyncOpenAI
-
+from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-
-from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
+from openai import AsyncOpenAI, AsyncStream
+from openai.types.chat import ChatCompletionChunk
+from PIL.Image import Resampling
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
-from vision_agents.core.utils.video_forwarder import VideoForwarder
-from . import events
-
+from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
 from vision_agents.core.processors import Processor
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
+from . import events
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +116,7 @@ class BasetenVLM(VideoLLM):
             )
             return LLMResponseEvent(original=None, text="")
 
-        messages = []
-
+        messages: list[dict] = []
         # Add Agent's instructions as system prompt.
         if self.instructions:
             messages.append(
@@ -162,8 +159,10 @@ class BasetenVLM(VideoLLM):
 
         # TODO: Maybe move it to a method, too much code
         try:
-            response = await self._client.chat.completions.create(
-                messages=messages, model=self.model, stream=True
+            response = await self._client.chat.completions.create(  # type: ignore[arg-type]
+                messages=messages,  # type: ignore[arg-type]
+                model=self.model,
+                stream=True,
             )
         except Exception as e:
             # Send an error event if the request failed
@@ -180,12 +179,12 @@ class BasetenVLM(VideoLLM):
             return LLMResponseEvent(original=None, text="")
 
         i = 0
-        llm_response_event: Optional[LLMResponseEvent] = LLMResponseEvent(
-            original=None, text=""
+        llm_response_event: LLMResponseEvent[Optional[ChatCompletionChunk]] = (
+            LLMResponseEvent(original=None, text="")
         )
         text_chunks: list[str] = []
         total_text = ""
-        async for chunk in response:
+        async for chunk in cast(AsyncStream[ChatCompletionChunk], response):
             if not chunk.choices:
                 continue
 
@@ -226,7 +225,7 @@ class BasetenVLM(VideoLLM):
 
     async def watch_video_track(
         self,
-        track: aiortc.mediastreams.VideoStreamTrack,  # TODO: Check if this works, maybe I need to update typings everywhere
+        track: MediaStreamTrack,
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
         """
@@ -249,7 +248,7 @@ class BasetenVLM(VideoLLM):
         logger.info("🎥 BasetenVLM subscribing to VideoForwarder")
         if not shared_forwarder:
             self._video_forwarder = shared_forwarder or VideoForwarder(
-                track,
+                cast(VideoStreamTrack, track),
                 max_buffer=10,
                 fps=1.0,  # Low FPS for VLM
                 name="baseten_vlm_forwarder",
