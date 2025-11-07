@@ -279,8 +279,9 @@ class Agent:
 
         @self.edge.events.subscribe
         async def on_participant_joined(event: ParticipantJoinedEvent):
-            self.logger.info(f"Participant {event.participant.user_id} joined")
-            self.participants[event.participant.session_id] = event.participant
+            if event.participant is not None:
+                self.logger.info(f"Participant {event.participant.user_id} joined")
+                self.participants[event.participant.session_id] = event.participant
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
@@ -557,11 +558,12 @@ class Agent:
 
         @self.edge.events.subscribe
         async def on_participant_joined(event: ParticipantJoinedEvent):
-            is_agent = event.participant.user_id == self.agent_user.id
+            if event.participant is not None:
+                is_agent = event.participant.user_id == self.agent_user.id
 
-            self.logger.info(f"Participant {event.participant.user_id} joined is_agent {is_agent}")
-            if not is_agent:
-                participant_joined.set()
+                self.logger.info(f"Participant {event.participant.user_id} joined is_agent {is_agent}")
+                if not is_agent:
+                    participant_joined.set()
 
         # Wait for the event to be set
         await participant_joined.wait()
