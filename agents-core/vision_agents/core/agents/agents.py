@@ -76,7 +76,7 @@ class TrackInfo:
     type: int
     processor: str
     priority: int # higher goes first
-    participant: Participant
+    participant: Optional[Participant]
     track: aiortc.mediastreams.VideoStreamTrack
     forwarder: VideoForwarder
 
@@ -145,7 +145,8 @@ class Agent:
         log_level: Optional[int] = logging.INFO,
         profiler: Optional[Profiler] = None,
     ):
-        self._active_processed_track_id = None
+        self._active_processed_track_id: Optional[str] = None
+        self._active_source_track_id: Optional[str] = None
         if log_level is not None:
             configure_default_logging(level=log_level)
         if options is None:
@@ -248,7 +249,8 @@ class Agent:
         # write tts pcm to output track (this is the AI talking to us)
         @self.events.subscribe
         async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
-            await self._audio_track.write(event.data)
+            if self._audio_track is not None:
+                await self._audio_track.write(event.data)
 
         @self.llm.events.subscribe
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
@@ -260,15 +262,18 @@ class Agent:
         # listen to video tracks added/removed
         @self.edge.events.subscribe
         async def on_video_track_added(event: TrackAddedEvent | TrackRemovedEvent):
+            if event.track_id is None or event.track_type is None or event.user is None:
+                return
             if isinstance(event, TrackRemovedEvent):
-                task = asyncio.create_task(self._on_track_removed(event.track_id, event.track_type, event.user))
+                asyncio.create_task(self._on_track_removed(event.track_id, event.track_type, event.user))
             else:
-                task = asyncio.create_task(self._on_track_added(event.track_id, event.track_type, event.user))
+                asyncio.create_task(self._on_track_added(event.track_id, event.track_type, event.user))
 
         # audio event for the user talking to the AI
         @self.edge.events.subscribe
         async def on_audio_received(event: AudioReceivedEvent):
-            await self._reply_to_audio(event.pcm_data, event.participant)
+            if event.participant is not None:
+                await self._reply_to_audio(event.pcm_data, event.participant)
 
 
         @self.events.subscribe
@@ -434,7 +439,8 @@ class Agent:
         """
         Makes it easy to subclass how the agent calls the LLM for processing audio
         """
-        await self.llm.simple_audio_response(pcm, participant)
+        if _is_audio_llm(self.llm):
+            await self.llm.simple_audio_response(pcm, participant)
 
     def subscribe(self, function):
         """Subscribe a callback to the agent-wide event bus.
@@ -869,8 +875,9 @@ class Agent:
         # video processors - pass the raw forwarder (they process incoming frames)
         for processor in self.video_processors:
             try:
+                user_id = track.participant.user_id if track.participant else None
                 await processor.process_video(
-                    track.track, track.participant.user_id, shared_forwarder=track.forwarder
+                    track.track, user_id, shared_forwarder=track.forwarder
                 )
             except Exception as e:
                 self.logger.error(
@@ -913,7 +920,6 @@ class Agent:
         await self._track_to_video_processors(source_track)
 
         processed_track = sorted([t for t in self._active_video_tracks.values()], key=lambda t: t.priority, reverse=True)[0]
-        track_changed = self._active_processed_track_id != processed_track.id
         self._active_processed_track_id = processed_track.id
 
         # See if we have a processed track. If so forward that to LLM

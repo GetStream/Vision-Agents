@@ -6,7 +6,7 @@ import av
 from aiortc import MediaStreamTrack, VideoStreamTrack
 from PIL import Image
 
-from vision_agents.core.utils.queue import VideoLatestNQueue
+from vision_agents.core.utils.video_queue import VideoLatestNQueue
 
 logger = logging.getLogger(__name__)
 

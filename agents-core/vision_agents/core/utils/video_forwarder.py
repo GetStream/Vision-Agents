@@ -62,8 +62,8 @@ class VideoForwarder:
         """
         handler_name = name or f"handler-{len(self._frame_handlers)}"
         handler_fps = fps if fps is not None else self.fps
-        if fps and fps > self.fps:
-            raise ValueError("fps on handler %d cannot be greater than fps on forwarder %d" % (fps, self.fps))
+        if fps is not None and self.fps is not None and fps > self.fps:
+            raise ValueError(f"fps on handler {fps} cannot be greater than fps on forwarder {self.fps}")
 
         handler = FrameHandler(
             callback=on_frame,
@@ -103,8 +103,10 @@ class VideoForwarder:
         if not self._started:
             return
 
-        self._producer_task.cancel()
-        self._consumer_task.cancel()
+        if self._producer_task is not None:
+            self._producer_task.cancel()
+        if self._consumer_task is not None:
+            self._consumer_task.cancel()
         self._started = False
 
         return

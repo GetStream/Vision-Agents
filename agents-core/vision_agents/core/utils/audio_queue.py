@@ -162,7 +162,7 @@ class AudioQueue:
         Returns:
             PcmData containing exactly num_samples (or less if queue empties)
         """
-        collected_samples = []
+        collected_samples: list[np.ndarray] = []
         collected_count = 0
         last_item_format = None
         last_item_channels = 1
