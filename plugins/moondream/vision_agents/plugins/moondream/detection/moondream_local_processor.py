@@ -76,9 +76,9 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         self._shutdown = False
 
         if force_cpu:
-            self.device, self._dtype = torch.device("cpu"), torch.float32
+            self._device, self._dtype = torch.device("cpu"), torch.float32
         else:
-            self.device, self._dtype = handle_device()
+            self._device, self._dtype = handle_device()
 
         self._last_results: Dict[str, Any] = {}
         self._last_frame_time: Optional[float] = None
@@ -110,6 +110,11 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
         logger.info(f"🔧 Device: {self.device}")
 
+    @property
+    def device(self) -> str:
+        """Return the device type as a string (e.g., 'cuda', 'cpu')."""
+        return str(self._device)
+
     async def warmup(self):
         # Prepare model asynchronously
         await self._prepare_moondream()
@@ -117,7 +122,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
     async def _prepare_moondream(self):
         """Load the Moondream model from Hugging Face."""
         logger.info(f"Loading Moondream model: {self.model_name}")
-        logger.info(f"Device: {self.device}")
+        logger.info(f"Device: {self._device}")
 
         # Load model in thread pool to avoid blocking event loop
         # Transformers handles downloading and caching automatically via Hugging Face Hub
@@ -148,15 +153,15 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
 
             model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
-                device_map={"": self.device},
+                device_map={"": self._device},
                 dtype=self._dtype,
                 trust_remote_code=True,
                 cache_dir=self.options.model_dir,
                 **load_kwargs,
-            ).to(self.device)  # type: ignore[arg-type]
+            ).to(self._device)  # type: ignore[arg-type]
 
             model.eval()
-            logger.info(f"✅ Model loaded on {self.device} device")
+            logger.info(f"✅ Model loaded on {self._device} device")
 
             # Compile model for fast inference
             try:
