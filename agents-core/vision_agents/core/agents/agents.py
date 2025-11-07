@@ -84,6 +84,14 @@ class TrackInfo:
     forwarder: VideoForwarder
 
 
+"""
+TODO:
+- fix pcm_data.participant
+- fix image processors
+- verify processed tracks are setup correctly
+- cleanup events more
+"""
+
 class Agent:
     """
     Agent class makes it easy to build your own video AI.
@@ -837,8 +845,6 @@ class Agent:
                         await self.turn_detection.process_audio(
                             pcm, participant, conversation=self.conversation
                         )
-
-
                     
                     if participant and getattr(participant, "user_id", None) != self.agent_user.id:
                         # first forward to processors
