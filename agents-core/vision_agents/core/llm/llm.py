@@ -58,6 +58,8 @@ class LLM(abc.ABC):
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
+        self.instructions: Optional[str] = None
+        self.parsed_instructions: Optional[str] = None
 
     async def warmup(self) -> None:
         """
