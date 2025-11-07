@@ -16,7 +16,7 @@ from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
 )
 from vision_agents.plugins.moondream.moondream_utils import annotate_detections, parse_detection_bbox
-from vision_agents.plugins.moondream.moondream_video_track import MoondreamVideoTrack
+from vision_agents.plugins.moondream.detection.moondream_video_track import MoondreamVideoTrack
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 import moondream as md
 
@@ -28,18 +28,22 @@ DEFAULT_HEIGHT = 480
 
 
 class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
-    """Performs real-time object detection on video streams using Moondream Cloud API. By default the Moondream Cloud API has a 2rps second limit however this can be changed by contacting the Moondream team. If you are deploying to your own infrastructure, consider using the LocalProcessor instead.
+    """Performs real-time object detection on video streams using Moondream Cloud API.
+    
+    By default the Moondream Cloud API has a 2 RPS (requests per second) rate limit,
+    which can be increased by contacting the Moondream team. If you are deploying
+    to your own infrastructure, consider using LocalDetectionProcessor instead.
     
     Args:
         api_key: API key for Moondream Cloud API. If not provided, will attempt to read
                 from MOONDREAM_API_KEY environment variable.
-        conf_threshold: Confidence threshold for detections
+        conf_threshold: Confidence threshold for detections (default: 0.3)
         detect_objects: Object(s) to detect. Moondream uses zero-shot detection,
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
-        fps: Frame processing rate
-        interval: Processing interval in seconds
-        max_workers: Number of worker threads
+        fps: Frame processing rate (default: 30)
+        interval: Processing interval in seconds (default: 0)
+        max_workers: Number of worker threads for CPU-intensive operations (default: 10)
     """
     
     def __init__(

@@ -1,7 +1,14 @@
 from typing import List, Optional, Dict, Any
 import cv2
 import numpy as np
+import torch
 
+
+def handle_device():
+    if torch.cuda.is_available():
+        return torch.device("cuda"), torch.float16
+    else:
+        return torch.device("cpu"), torch.float32
 
 def parse_detection_bbox(obj: Dict, object_type: str, conf_threshold: float) -> Optional[Dict]:
     confidence = obj.get("confidence", 1.0)

@@ -1,0 +1,22 @@
+[project]
+name = "moondream-example"
+version = "0.1.0"
+description = "Example using Moondream Detect and VLM with Vision Agents"
+requires-python = ">=3.10"
+dependencies = [
+    "vision-agents",
+    "vision-agents-plugins-moondream",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-vogent",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+vision-agents = { workspace = true }
+vision-agents-plugins-moondream = { workspace = true }
+vision-agents-plugins-getstream = { workspace = true }
+vision-agents-plugins-deepgram = { workspace = true }
+vision-agents-plugins-elevenlabs = { workspace = true }
+vision-agents-plugins-vogent = { workspace = true }

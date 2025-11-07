@@ -41,7 +41,7 @@ class TestMoondreamLocalProcessor:
     @pytest.fixture
     def moondream_processor(self) -> Iterator[LocalDetectionProcessor]:
         """Create and manage MoondreamLocalProcessor lifecycle."""
-        processor = LocalDetectionProcessor(device="cpu")
+        processor = LocalDetectionProcessor(force_cpu=True)
         try:
             yield processor
         finally:
@@ -261,7 +261,7 @@ class TestMoondreamLocalProcessor:
             processor.close()
 
         # Also test explicit MPS parameter
-        processor2 = LocalDetectionProcessor(device="mps")
+        processor2 = LocalDetectionProcessor(force_cpu=True)
         try:
             # Verify explicit MPS is also converted to CPU
             assert processor2.device == "cpu"
@@ -270,7 +270,7 @@ class TestMoondreamLocalProcessor:
 
     def test_device_explicit_cpu(self):
         """Test explicit CPU device selection."""
-        processor = LocalDetectionProcessor(device="cpu")
+        processor = LocalDetectionProcessor(force_cpu=True)
         try:
             assert processor.device == "cpu"
         finally:
@@ -282,7 +282,7 @@ class TestMoondreamLocalProcessor:
     )
     def test_device_explicit_cuda(self):
         """Test explicit CUDA device selection (only if CUDA available)."""
-        processor = LocalDetectionProcessor(device="cuda")
+        processor = LocalDetectionProcessor()
         try:
             assert processor.device == "cuda"
         finally:
