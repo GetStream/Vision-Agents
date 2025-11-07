@@ -13,6 +13,7 @@ members = [
     "vision-agents",
     "vision-agents-plugins-anthropic",
     "vision-agents-plugins-aws",
+    "vision-agents-plugins-baseten",
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-deepgram",
     "vision-agents-plugins-elevenlabs",
@@ -5515,6 +5516,32 @@ dev = [
 requires-dist = [
     { name = "aws-sdk-bedrock-runtime", specifier = ">=0.1.0" },
     { name = "boto3", specifier = ">=1.28.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-baseten"
+source = { editable = "plugins/baseten" }
+dependencies = [
+    { name = "openai", extra = ["realtime"] },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "openai", extras = ["realtime"], specifier = ">=2.5.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

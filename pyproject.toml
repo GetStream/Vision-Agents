@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 vision-agents = { workspace = true }
 vision-agents-plugins-anthropic = { workspace = true }
 vision-agents-plugins-aws = { workspace = true }
+vision-agents-plugins-baseten = { workspace = true }
 vision-agents-plugins-cartesia = { workspace = true }
 vision-agents-plugins-deepgram = { workspace = true }
 vision-agents-plugins-elevenlabs = { workspace = true }
@@ -37,6 +38,7 @@ members = [
     "agents-core",
     "plugins/anthropic",
     "plugins/aws",
+    "plugins/baseten",
     "plugins/cartesia",
     "plugins/deepgram",
     "plugins/elevenlabs",
