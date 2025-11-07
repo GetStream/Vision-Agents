@@ -136,7 +136,7 @@ class LocalVLM(llm.VideoLLM):
             )
 
             if self.force_cpu:
-                model.to("cpu")
+                model.to("cpu")  # type: ignore[arg-type]
             model.eval()
             logger.info(f"✅ Model loaded on {self.device} device")
 

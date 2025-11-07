@@ -138,13 +138,13 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                     "Set HF_TOKEN or run 'huggingface-cli login'"
                 )
 
-            load_kwargs = {}
+            load_kwargs: Dict[str, Any] = {}
             # Add token if available (transformers will use env var automatically, but explicit is clearer)
             if hf_token:
                 load_kwargs["token"] = hf_token
             else:
                 # Use True to let transformers try to read from environment or cached login
-                load_kwargs["token"] = True
+                load_kwargs["token"] = True  # type: ignore[assignment]
 
             model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
@@ -153,7 +153,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 trust_remote_code=True,
                 cache_dir=self.options.model_dir,
                 **load_kwargs,
-            ).to(self.device)
+            ).to(self.device)  # type: ignore[arg-type]
 
             model.eval()
             logger.info(f"✅ Model loaded on {self.device} device")
