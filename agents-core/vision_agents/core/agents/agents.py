@@ -23,6 +23,7 @@ from ..edge.events import (
     TrackRemovedEvent,
     CallEndedEvent,
 )
+from ..edge.sfu_events import ParticipantJoinedEvent
 from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
 from ..events.manager import EventManager
 from ..llm import events as llm_events
@@ -145,6 +146,7 @@ class Agent:
         log_level: Optional[int] = logging.INFO,
         profiler: Optional[Profiler] = None,
     ):
+        self.call = None
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
         if log_level is not None:
@@ -275,6 +277,10 @@ class Agent:
             if event.participant is not None:
                 await self._reply_to_audio(event.pcm_data, event.participant)
 
+        @self.edge.events.subscribe
+        async def on_participant_joined(event: ParticipantJoinedEvent):
+            self.logger.info(f"Participant {event.participant.user_id} joined")
+            self.participants[event.participant.session_id] = event.participant
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
@@ -456,7 +462,7 @@ class Agent:
         """
         return self.events.subscribe(function)
 
-    async def join(self, call: Call) -> "AgentSessionContextManager":
+    async def join(self, call: Call, wait_for_participant=True) -> "AgentSessionContextManager":
         # TODO: validation. join can only be called once
         self.logger.info("joining call")
         # run start on all subclasses
@@ -497,6 +503,7 @@ class Agent:
 
             with self.span("edge.join"):
                 connection = await self.edge.join(self, call)
+                self.participants = connection._connection.participants_state._participant_by_prefix
         except Exception:
             self.clear_call_logging_context()
             raise
@@ -529,7 +536,38 @@ class Agent:
 
         # wait for conversation creation coro at the very end of the join flow
         self.conversation = await create_conversation_coro
+
+        if wait_for_participant:
+            self.logger.info("Agent is ready, waiting for participant to join")
+            await self.wait_for_participant()
+
         return AgentSessionContextManager(self, self._connection)
+
+    async def wait_for_participant(self):
+        """wait for a participant other than the AI agent to join"""
+        # Check if a non-agent participant is already present
+        if self.call and self.participants:
+            for p in self.participants.values():
+                if p.user_id != self.agent_user.id:
+                    self.logger.info(f"Participant {p.user_id} already in call")
+                    return
+
+        # If not, wait for one to join
+        participant_joined = asyncio.Event()
+
+        @self.edge.events.subscribe
+        async def on_participant_joined(event: ParticipantJoinedEvent):
+            is_agent = event.participant.user_id == self.agent_user.id
+
+            self.logger.info(f"Participant {event.participant.user_id} joined is_agent {is_agent}")
+            if not is_agent:
+                participant_joined.set()
+
+        # Wait for the event to be set
+        await participant_joined.wait()
+        
+        # Clean up the subscription
+        self.edge.events.unsubscribe(on_participant_joined)
 
     async def finish(self):
         """Wait for the call to end gracefully.

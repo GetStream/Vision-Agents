@@ -42,6 +42,8 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # Create a call
     call = await agent.create_call(call_type, call_id)
 
+    await agent.edge.open_demo(call)
+
     # Have the agent join the call/room
     with await agent.join(call):
         # Example 1: standardized simple response
@@ -61,8 +63,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         # await asyncio.sleep(5)
 
         # Open the demo UI
-        await agent.edge.open_demo(call)
-
         await agent.simple_response("tell me something interesting in a short sentence")
 
         # run till the call ends
