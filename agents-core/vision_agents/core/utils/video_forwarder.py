@@ -6,6 +6,7 @@ from typing import Optional, Callable, Any
 import av
 from aiortc import VideoStreamTrack
 from av.frame import Frame
+from hatch.cli import self
 
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
 
@@ -13,69 +14,95 @@ logger = logging.getLogger(__name__)
 
 class VideoForwarder:
     """
-    Pulls frames from `input_track` into a latest-N buffer.
-    Consumers can:
-      - call `await next_frame()` (pull model), OR
-      - register callbacks with `add_frame_handler()` and start with `start_consumers()` (push model).
-    `fps` limits how often frames are forwarded to consumers (coalescing to newest).
+    VideoForwarder handles forwarding a video track to 1 or multiple targets
+
+    Example:
+
+        forwarder = VideoForwarder(input_track=track, fps=5)
+        forwarder.add_frame_handler( lamba x: print("received frame"), fps =1 )
+        forwarder.stop()
+
+        # start's automatically when attaching handlers
+
     """
+    _producer_task: Optional[asyncio.Task] = None
+    _consumer_task: Optional[asyncio.Task] = None
+    _frame_handlers: list[tuple[Callable[[av.VideoFrame], Any], dict[str, Any]]] = []
+    _started = False
+
     def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = 30, name: str = "video-forwarder"):
+        self.name = name
         self.input_track = input_track
         self.queue: VideoLatestNQueue[Frame] = VideoLatestNQueue(maxlen=max_buffer)
         self.fps = fps  # None = unlimited, else forward at ~fps
-        self._tasks: set[asyncio.Task] = set()
-        self._stopped = asyncio.Event()
-        self._started = False
-        self.name = name
-        self._frame_handlers: list[tuple[Callable[[av.VideoFrame], Any], dict[str, Any]]] = []
 
-    # ---------- lifecycle ----------
+    def add_frame_handler(
+            self,
+            on_frame: Callable[[av.VideoFrame], Any],
+            *,
+            fps: Optional[float] = None,
+            name: Optional[str] = None,
+    ) -> None:
+        """
+        Register a callback to be called for each frame.
+
+        Args:
+            on_frame: Callback function (sync or async) to receive frames
+            fps: Frame rate for this handler (overrides default). None = unlimited.
+            name: Optional name for this handler (for logging)
+        """
+        handler_name = name or f"handler-{len(self._frame_handlers)}"
+        if fps > self.fps:
+            raise ValueError("fps on handler %d cannot be greater than fps on forwarder %d" % (fps, self.fps))
+        config = {
+            'fps': fps if fps is not None else self.fps,
+            'name': handler_name,
+        }
+
+        self._frame_handlers.append((on_frame, config))
+        self.start()
+
+    def remove_frame_handler(self, on_frame: Callable[[av.VideoFrame], Any]) -> bool:
+        """
+        Remove a previously registered callback.
+
+        Args:
+            on_frame: The callback to remove
+
+        Returns:
+            True if the handler was found and removed, False otherwise
+        """
+        original_len = len(self._frame_handlers)
+        self._frame_handlers = [(cb, cfg) for cb, cfg in self._frame_handlers if cb != on_frame]
+        removed = len(self._frame_handlers) < original_len
+
+        if len(self._frame_handlers) == 0:
+            self.stop()
+        return removed
+
     async def start(self) -> None:
         if self._started:
-            logger.warning("%s: start() called but already started", self.name)
             return
         self._started = True
-        self._stopped.clear()
-        task = asyncio.create_task(self._producer())
-        task.add_done_callback(self._task_done)
-        self._tasks.add(task)
+        self._producer_task = asyncio.create_task(self._producer())
+        self._consumer_task = asyncio.create_task(self._start_consumer())
 
     async def stop(self) -> None:
         if not self._started:
             return
-        self._stopped.set()
+
+        self._producer_task.cancel()
+        self._consumer_task.cancel()
         self._started = False
-        # Create snapshot of tasks to avoid race conditions
-        tasks_snapshot = list(self._tasks)
-        for t in tasks_snapshot:
-            t.cancel()
-        if tasks_snapshot:
-            await asyncio.gather(*tasks_snapshot, return_exceptions=True)
-        self._tasks.clear()
-        # drain queue
-        try:
-            while True:
-                self.queue.get_nowait()
-        except asyncio.QueueEmpty:
-            pass
 
-    def _task_done(self, task: asyncio.Task) -> None:
-        """Callback to remove completed tasks from the set."""
-        self._tasks.discard(task)
-        exc = task.exception()
-        if exc:
-            logger.error("%s: Task failed with exception: %s", self.name, exc, exc_info=exc)
+        return
 
-        if task.cancelled():
-            return
-
-    # ---------- producer (fills latest-N buffer) ----------
     async def _producer(self):
+        # read from the input track and stick it on a queue
         try:
-            while not self._stopped.is_set():
+            while self._started:
                 frame : Frame = await self.input_track.recv()
                 frame.dts = int(datetime.datetime.now().timestamp())
-
                 await self.queue.put_latest(frame)
         except asyncio.CancelledError:
             raise
@@ -83,101 +110,9 @@ class VideoForwarder:
             logger.error("%s: Producer failed with exception: %s", self.name, e, exc_info=True)
             raise
 
-    # ---------- consumer API (pull one frame; coalesce backlog to newest) ----------
-    async def next_frame(self, *, timeout: Optional[float] = None) -> av.VideoFrame:
-        """
-        Returns the newest available frame. If there's backlog, older frames
-        are drained so you get the latest (low latency).
-        """
-        if timeout is None:
-            frame = await self.queue.get()
-        else:
-            async with asyncio.timeout(timeout):
-                frame = await self.queue.get()
-
-        # drain to newest
-        while True:
-            try:
-
-                newer = self.queue.get_nowait()
-                frame = newer
-            except asyncio.QueueEmpty:
-                break
-
-        return frame
-
-    # ---------- frame handler management ----------
-    def add_frame_handler(
+    async def _start_consumer(
         self,
-        on_frame: Callable[[av.VideoFrame], Any],
-        *,
-        fps: Optional[float] = None,
-        name: Optional[str] = None,
     ) -> None:
-        """
-        Register a callback to be called for each frame.
-        
-        Args:
-            on_frame: Callback function (sync or async) to receive frames
-            fps: Frame rate for this handler (overrides default). None = unlimited.
-            name: Optional name for this handler (for logging)
-        """
-        handler_name = name or f"handler-{len(self._frame_handlers)}"
-        config = {
-            'fps': fps if fps is not None else self.fps,
-            'name': handler_name,
-        }
-        self._frame_handlers.append((on_frame, config))
-        logger.debug("%s: Added frame handler '%s' with fps=%s", self.name, handler_name, config['fps'])
-    
-    def remove_frame_handler(self, on_frame: Callable[[av.VideoFrame], Any]) -> bool:
-        """
-        Remove a previously registered callback.
-        
-        Args:
-            on_frame: The callback to remove
-            
-        Returns:
-            True if the handler was found and removed, False otherwise
-        """
-        original_len = len(self._frame_handlers)
-        self._frame_handlers = [(cb, cfg) for cb, cfg in self._frame_handlers if cb != on_frame]
-        removed = len(self._frame_handlers) < original_len
-        if removed:
-            logger.debug("%s: Removed frame handler", self.name)
-        return removed
-    
-    async def start_consumers(self) -> None:
-        """
-        Start consumer tasks for all registered frame handlers.
-        Each handler runs in its own task with its own fps throttling.
-        """
-        for on_frame, config in self._frame_handlers:
-            await self._start_consumer_task(
-                on_frame=on_frame,
-                fps=config['fps'],
-                consumer_name=config['name'],
-            )
-        logger.info("%s: Started %d consumer task(s)", self.name, len(self._frame_handlers))
-
-    # ---------- push model (broadcast via callback) ----------
-    async def _start_consumer_task(
-        self,
-        on_frame: Callable[[av.VideoFrame], Any],
-        *,
-        fps: Optional[float] = None,
-        log_interval_seconds: float = 10.0,
-        consumer_name: Optional[str] = None,
-    ) -> None:
-        """
-        Internal method to start a single consumer task.
-        
-        Args:
-            on_frame: Callback function to receive frames
-            fps: Frame rate for this consumer. None = unlimited.
-            log_interval_seconds: How often to log consumer statistics
-            consumer_name: Optional name for this consumer (for logging)
-        """
         consumer_fps = fps if fps is not None else self.fps
         consumer_label = consumer_name or "consumer"
         
@@ -185,14 +120,15 @@ class VideoForwarder:
             loop = asyncio.get_running_loop()
             min_interval = (1.0 / consumer_fps) if (consumer_fps and consumer_fps > 0) else 0.0
             last_ts = 0.0
+
             is_coro = asyncio.iscoroutinefunction(on_frame)
             frames_forwarded = 0
             last_log = loop.time()
             last_width: Optional[int] = None
             last_height: Optional[int] = None
-            while not self._stopped.is_set():
+            while self._is_started:
                 # Wait for at least one frame
-                frame = await self.next_frame()
+                frame = await self.queue.get()
                 # track latest resolution for summary logs
                 try:
                     last_width = int(getattr(frame, "width", 0)) or last_width
@@ -244,33 +180,3 @@ class VideoForwarder:
                         last_log = now_time
 
         task = asyncio.create_task(_consumer())
-        task.add_done_callback(self._task_done)
-        self._tasks.add(task)
-
-    async def start_event_consumer(
-        self,
-        on_frame: Callable[[av.VideoFrame], Any],  # async or sync
-        *,
-        fps: Optional[float] = None,
-        log_interval_seconds: float = 10.0,
-        consumer_name: Optional[str] = None,
-    ) -> None:
-        """
-        Starts a task that calls `on_frame(latest_frame)` at ~fps.
-        If fps is None, it forwards as fast as frames arrive (still coalescing).
-        
-        Deprecated: Consider using `add_frame_handler()` + `start_consumers()` instead
-        for better support of multiple handlers.
-        
-        Args:
-            on_frame: Callback function to receive frames
-            fps: Frame rate for this consumer (overrides default). None = unlimited.
-            log_interval_seconds: How often to log consumer statistics
-            consumer_name: Optional name for this consumer (for logging)
-        """
-        await self._start_consumer_task(
-            on_frame=on_frame,
-            fps=fps,
-            log_interval_seconds=log_interval_seconds,
-            consumer_name=consumer_name,
-        )

@@ -814,7 +814,6 @@ class Agent:
         """Put audio data into the queue for processing by the consumer."""
         # TODO: bit of a hack..
         pcm_data.participant = participant
-        self.logger.info("AUDIO: Writing on the queue")
         await self._audio_queue.put(pcm_data)
 
     async def _reply_to_audio_consumer(self) -> None:
@@ -829,8 +828,6 @@ class Agent:
                     )
 
                     participant = pcm.participant
-                    self.logger.info("AUDIO: Received loop loop %s", participant)
-
 
                     if self.turn_detection is not None and participant is not None:
                         await self.turn_detection.process_audio(
@@ -873,6 +870,7 @@ class Agent:
         """
         Send the track to the video processors
         """
+        logger.info("VIDEO PROCESSORS")
         # video processors - pass the raw forwarder (they process incoming frames)
         for processor in self.video_processors:
             try:
@@ -1199,6 +1197,22 @@ class Agent:
             video_publisher = self.video_publishers[0]
             # TODO: some lLms like moondream publish video
             self._video_track = video_publisher.publish_video_track()
+            forwarder = VideoForwarder(
+                self._video_track,  # type: ignore[arg-type]
+                max_buffer=30,
+                fps=30,  # Max FPS for the producer (individual consumers can throttle down)
+                name=f"video_forwarder_{video_publisher.name}",
+            )
+            self._active_video_tracks[self._video_track.id] = TrackInfo(
+                id=self._video_track.id,
+                type=TrackType.TRACK_TYPE_VIDEO,
+                processor=video_publisher.name,
+                track=self._video_track,
+                participant=None,
+                priority=2,
+                forwarder=forwarder
+            )
+
             self.logger.info("🎥 Video track initialized from video publisher")
 
     def _truncate_for_logging(self, obj, max_length=200):
