@@ -221,7 +221,6 @@ class LocalVLM(llm.VideoLLM):
         """Consume the generator stream from model query/caption methods."""
         chunks = []
         for chunk in generator:
-            logger.debug(f"Moondream stream chunk: {type(chunk)} - {chunk}")
             if isinstance(chunk, str):
                 chunks.append(chunk)
             else:
@@ -229,7 +228,6 @@ class LocalVLM(llm.VideoLLM):
                 if chunk:
                     chunks.append(str(chunk))
         result = "".join(chunks)
-        logger.debug(f"Moondream stream result: {result}")
         return result
 
     async def _process_frame(self, text: Optional[str] = None) -> Optional[LLMResponseEvent]:
@@ -241,11 +239,14 @@ class LocalVLM(llm.VideoLLM):
             logger.warning("Model not loaded, skipping Moondream processing")
             return None
 
-        # Try to acquire lock without blocking - skip if already processing
-        try:
-            await asyncio.wait_for(self._processing_lock.acquire(), timeout=0)
-        except asyncio.TimeoutError:
+        if self._processing_lock.locked():
             logger.debug("Moondream processing already in progress, skipping")
+            return None
+
+        try:
+            await self._processing_lock.acquire()
+        except Exception as e:
+            logger.warning(f"Failed to acquire lock: {e}")
             return None
 
         latest_frame = self._latest_frame
@@ -300,7 +301,8 @@ class LocalVLM(llm.VideoLLM):
             logger.exception(f"Error processing frame: {e}")
             return LLMResponseEvent(original=None, text="", exception=e)
         finally:
-            self._processing_lock.release()
+            if self._processing_lock.locked():
+                self._processing_lock.release()
 
     async def _on_stt_transcript(self, event: STTTranscriptEvent):
         """Handle STT transcript event - process with Moondream."""
