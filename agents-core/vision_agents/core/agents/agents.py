@@ -236,7 +236,6 @@ class Agent:
         # validation time
         self._validate_configuration()
         self._prepare_rtc()
-        self._setup_stt()
 
         self.events.send(events.AgentInitEvent())
 
@@ -463,7 +462,6 @@ class Agent:
             raise RuntimeError("Agent is already running")
 
         await self.create_user()
-        await self._setup_turn_detection()
 
         self.call = call
         self.conversation = None
@@ -475,9 +473,6 @@ class Agent:
         create_conversation_coro = self.edge.create_conversation(
             call, self.agent_user, self.instructions
         )
-
-        await self._setup_llm_events()
-        await self._setup_speech_events()
 
         try:
             # Connect to MCP servers if manager is available
@@ -584,7 +579,8 @@ class Agent:
         for subclass in subclasses:
             if subclass is not None and getattr(subclass, function_name, None) is not None:
                 func = getattr(subclass, function_name)
-                await func(*args, **kwargs)
+                if func is not None:
+                    await func(*args, **kwargs)
 
     def _end_tracing(self):
         if self._root_span is not None:
