@@ -6,7 +6,7 @@ import av
 from aiortc import MediaStreamTrack, VideoStreamTrack
 from PIL import Image
 
-from vision_agents.core.utils.queue import LatestNQueue
+from vision_agents.core.utils.video_queue import VideoLatestNQueue
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class HeyGenVideoTrack(VideoStreamTrack):
         self.height = height
         
         # Queue for incoming frames from HeyGen - keep minimal for low latency
-        self.frame_queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=2)
+        self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=2)
         
         # Create placeholder frame for when no frames are available
         placeholder = Image.new("RGB", (self.width, self.height), color=(30, 30, 40))

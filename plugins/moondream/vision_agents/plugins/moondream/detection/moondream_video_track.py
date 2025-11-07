@@ -5,7 +5,7 @@ import av
 from PIL import Image
 from aiortc import VideoStreamTrack
 
-from vision_agents.core.utils.queue import LatestNQueue
+from vision_agents.core.utils.video_queue import VideoLatestNQueue
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class MoondreamVideoTrack(VideoStreamTrack):
     def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT):
         super().__init__()
         logger.info("MoondreamVideoTrack: initializing")
-        self.frame_queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=10)
+        self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=10)
 
         # Set video quality parameters
         self.width = width

@@ -3,7 +3,7 @@ from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
-class LatestNQueue(asyncio.Queue, Generic[T]):
+class VideoLatestNQueue(asyncio.Queue, Generic[T]):
     """
     A generic asyncio queue that always keeps only the latest N items.
     If full on put, it discards oldest items to make room.

@@ -20,7 +20,7 @@ from vision_agents.core.llm.events import (
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
-from vision_agents.core.utils.queue import LatestNQueue
+from vision_agents.core.utils.video_queue import VideoLatestNQueue
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
 from vision_agents.plugins.moondream.moondream_utils import handle_device
@@ -80,7 +80,7 @@ class LocalVLM(llm.VideoLLM):
         else:
             self.device, self._dtype = handle_device()
 
-        self._frame_buffer: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=10)
+        self._frame_buffer: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=10)
         self._latest_frame: Optional[av.VideoFrame] = None
         self._video_forwarder: Optional[VideoForwarder] = None
         self._stt_subscription_setup = False
@@ -181,22 +181,19 @@ class LocalVLM(llm.VideoLLM):
         if shared_forwarder is not None:
             self._video_forwarder = shared_forwarder
             logger.info("🎥 Moondream Local VLM subscribing to shared VideoForwarder")
-            await self._video_forwarder.start_event_consumer(
+            self._video_forwarder.add_frame_handler(
                 self._on_frame_received,
                 fps=1.0,
-                consumer_name="moondream_local_vlm"
+                name="moondream_local_vlm"
             )
         else:
             self._video_forwarder = VideoForwarder(
-                track,  # type: ignore[arg-type]
+                input_track=track,  # type: ignore[arg-type]
                 max_buffer=10,
                 fps=1.0,
                 name="moondream_local_vlm_forwarder",
             )
-            await self._video_forwarder.start()
-            await self._video_forwarder.start_event_consumer(
-                self._on_frame_received
-            )
+            self._video_forwarder.add_frame_handler(self._on_frame_received)
 
         if not self._stt_subscription_setup and self.agent:
             self._setup_stt_subscription()

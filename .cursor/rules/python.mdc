@@ -8,6 +8,8 @@ never mock.
 tests use pytest. 
 never adjust sys.path.
 
+never write: except Exception as e
+
 docs should be short.
 docstrings should follow the google style guides for docstrings.
 

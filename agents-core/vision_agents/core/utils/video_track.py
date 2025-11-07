@@ -4,7 +4,7 @@ import av
 from PIL import Image
 from aiortc import VideoStreamTrack
 
-from vision_agents.core.utils.queue import LatestNQueue
+from vision_agents.core.utils.video_queue import VideoLatestNQueue
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ class QueuedVideoTrack(VideoStreamTrack):
 
     def __init__(self, width: int = 1280, height: int = 720, fps: int = 1):
         super().__init__()
-        self.frame_queue: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=10)
+        self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=10)
 
         # Set video quality parameters
         self.width = width

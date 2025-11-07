@@ -33,6 +33,7 @@ class ProcessorType(Enum):
 
 
 class Processor(Protocol):
+    name: str
     def state(self) -> Any:
         pass
 

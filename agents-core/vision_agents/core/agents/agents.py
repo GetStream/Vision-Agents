@@ -1,18 +1,20 @@
 import asyncio
 import contextlib
 import logging
-import tempfile
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
+
+import aiortc
 
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
+from .agent_options import AgentOptions, default_agent_options
 
 from ..edge import sfu_events
 from ..edge.events import (
@@ -39,6 +41,7 @@ from ..stt.stt import STT
 from ..tts.tts import TTS
 from ..tts.events import TTSAudioEvent
 from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
+from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
     clear_call_context,
@@ -46,13 +49,11 @@ from ..utils.logging import (
     configure_default_logging,
 )
 from ..utils.video_forwarder import VideoForwarder
-from ..utils.video_utils import ensure_even_dimensions
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
 from .conversation import Conversation
 from ..profiling import Profiler
-from dataclasses import dataclass
 from opentelemetry.trace import set_span_in_context
 from opentelemetry.trace.propagation import Span, Context
 from opentelemetry import trace, context as otel_context
@@ -69,58 +70,24 @@ logger = logging.getLogger(__name__)
 tracer: Tracer = trace.get_tracer("agents")
 
 
-def _log_task_exception(task: asyncio.Task):
-    try:
-        task.result()
-    except Exception:
-        logger.exception("Error in background task")
-
-
-class _AgentLoggerAdapter(logging.LoggerAdapter):
-    """
-    A logger adapter to include the agent_id to the logs
-    """
-
-    def process(self, msg: str, kwargs):
-        if self.extra:
-            return "[Agent: %s] | %s" % (self.extra["agent_id"], msg), kwargs
-        return super(_AgentLoggerAdapter, self).process(msg, kwargs)
-
-
-# TODO: move me
 @dataclass
-class AgentOptions:
-    model_dir: str
-
-    def update(self, other: "AgentOptions") -> "AgentOptions":
-        merged_dict = asdict(self)
-
-        for key, value in asdict(other).items():
-            if value is not None:
-                merged_dict[key] = value
-
-        return AgentOptions(**merged_dict)
+class TrackInfo:
+    id: str
+    type: int
+    processor: str
+    priority: int # higher goes first
+    participant: Optional[Participant]
+    track: aiortc.mediastreams.VideoStreamTrack
+    forwarder: VideoForwarder
 
 
-# Cache tempdir at module load time to avoid blocking I/O during async operations
-_DEFAULT_MODEL_DIR = tempfile.gettempdir()
-
-
-def default_agent_options():
-    return AgentOptions(model_dir=_DEFAULT_MODEL_DIR)
-
-
-def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:
-    return isinstance(llm, AudioLLM)
-
-
-def _is_video_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[VideoLLM]:
-    return isinstance(llm, VideoLLM)
-
-
-def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Realtime]:
-    return isinstance(llm, Realtime)
-
+"""
+TODO:
+- fix pcm_data.participant
+- fix image processors
+- verify processed tracks are setup correctly
+- cleanup events more
+"""
 
 class Agent:
     """
@@ -145,6 +112,9 @@ class Agent:
     * agent.close() // cleanup
 
     Note: Don't reuse the agent object. Create a new agent object each time.
+
+    Dev guidelines
+    - Small methods so its easy to subclass/change behaviour
     """
 
     def __init__(
@@ -175,6 +145,8 @@ class Agent:
         log_level: Optional[int] = logging.INFO,
         profiler: Optional[Profiler] = None,
     ):
+        self._active_processed_track_id: Optional[str] = None
+        self._active_source_track_id: Optional[str] = None
         if log_level is not None:
             configure_default_logging(level=log_level)
         if options is None:
@@ -182,6 +154,7 @@ class Agent:
         else:
             options = default_agent_options().update(options)
         self.options = options
+        self._audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
 
         self.instructions = instructions
         self.edge = edge
@@ -247,8 +220,8 @@ class Agent:
         self._interval_task = None
         self._callback_executed = False
         self._track_tasks: Dict[str, asyncio.Task] = {}
-        # Track metadata: track_id -> (track_type, participant, forwarder)
-        self._active_video_tracks: Dict[str, tuple[int, Any, Any]] = {}
+        # Track metadata: track_id -> TrackInfo
+        self._active_video_tracks: Dict[str, TrackInfo] = {}
         self._video_forwarders: List[VideoForwarder] = []
         self._current_video_track_id: Optional[str] = None
         self._connection: Optional[Connection] = None
@@ -256,74 +229,152 @@ class Agent:
         self._video_track: Optional[VideoStreamTrack] = None
         self._realtime_connection = None
         self._pc_track_handler_attached: bool = False
+        self._audio_consumer_task: Optional[asyncio.Task] = None
 
         # validation time
         self._validate_configuration()
         self._prepare_rtc()
-        self._setup_stt()
+
+        # start audio consumption loop
+        self.setup_event_handling()
 
         self.events.send(events.AgentInitEvent())
 
-    @contextlib.contextmanager
-    def span(self, name):
-        with tracer.start_as_current_span(name, context=self._root_ctx) as span:
-            yield span
+    def setup_event_handling(self):
+        logger.info("AUDIO: SUB TO EVENTS")
+        # listen to turn completed, started etc
+        # TODO: here we should handle eager turn taking
+        self.events.subscribe(self._on_turn_event)
 
-    def start_tracing(self):
-        self._root_span = tracer.start_span("join")
-        self._root_span.__enter__()
-        self._root_ctx = set_span_in_context(self._root_span)
-        # Activate the root context globally so all subsequent spans are nested under it
-        self._context_token = otel_context.attach(self._root_ctx)
+        # write tts pcm to output track (this is the AI talking to us)
+        @self.events.subscribe
+        async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
+            if self._audio_track is not None:
+                await self._audio_track.write(event.data)
 
-    def end_tracing(self):
-        if self._root_span is not None:
-            self._root_span.__exit__(None, None, None)
-            self._root_span = None
-            self._root_ctx = None
-        # Detach the context token if it was set
-        if hasattr(self, "_context_token") and self._context_token is not None:
-            otel_context.detach(self._context_token)
-            self._context_token = None
-
-    def __aexit__(self, exc_type, exc_val, exc_tb):
-        self.end_tracing()
-
-    async def simple_response(
-        self, text: str, participant: Optional[Participant] = None
-    ) -> None:
-        """
-        Overwrite simple_response if you want to change how the Agent class calls the LLM
-        """
-        self.logger.info('🤖 Asking LLM to reply to "%s"', text)
-        with self.tracer.start_as_current_span("simple_response") as span:
-            response = await self.llm.simple_response(
-                text=text, processors=self.processors, participant=participant
-            )
-            span.set_attribute("text", text)
-            span.set_attribute("response.text", response.text)
-            span.set_attribute("response.original", response.original)
-
-    def subscribe(self, function):
-        """Subscribe a callback to the agent-wide event bus.
-
-        The event bus is a merged stream of events from the edge, LLM, STT, TTS,
-        VAD, and other registered plugins.
-
-        Args:
-            function: Async or sync callable that accepts a single event object.
-
-        Returns:
-            A disposable subscription handle (depends on the underlying emitter).
-        """
-        return self.events.subscribe(function)
-
-    async def _setup_llm_events(self):
         @self.llm.events.subscribe
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
             # Trigger TTS directly instead of through event system
             if self.tts and event.text and event.text.strip():
                 await self.tts.send(event.text)
+            # TODO: here we should handle eager turn taking
+
+        # listen to video tracks added/removed
+        @self.edge.events.subscribe
+        async def on_video_track_added(event: TrackAddedEvent | TrackRemovedEvent):
+            if event.track_id is None or event.track_type is None or event.user is None:
+                return
+            if isinstance(event, TrackRemovedEvent):
+                asyncio.create_task(self._on_track_removed(event.track_id, event.track_type, event.user))
+            else:
+                asyncio.create_task(self._on_track_added(event.track_id, event.track_type, event.user))
+
+        # audio event for the user talking to the AI
+        @self.edge.events.subscribe
+        async def on_audio_received(event: AudioReceivedEvent):
+            if event.participant is not None:
+                await self._reply_to_audio(event.pcm_data, event.participant)
+
+
+        @self.events.subscribe
+        async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
+            if _is_audio_llm(self.llm):
+                # There is no need to send the response to the LLM if it handles audio itself.
+                return
+
+            user_id = event.user_id()
+            if user_id is None:
+                raise ValueError("user id is none, this indicates a bug in the code")
+
+            # Determine how to handle LLM triggering based on turn detection
+            if self.turn_detection is not None:
+                # With turn detection: accumulate transcripts and wait for TurnEndedEvent
+                # Store/append the transcript for this user
+                if user_id not in self._pending_user_transcripts:
+                    self._pending_user_transcripts[user_id] = event.text
+                else:
+                    # Append to existing transcript (user might be speaking in chunks)
+                    self._pending_user_transcripts[user_id] += " " + event.text
+
+                self.logger.debug(
+                    f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
+                    f"{self._pending_user_transcripts[user_id][:100]}..."
+                )
+            else:
+                # Without turn detection: trigger LLM immediately on transcript completion
+                # This is the traditional STT -> LLM flow
+                with self.span("agent.on_stt_transcript_event_create_response"):
+                    await self.simple_response(event.text, event.participant)
+
+        # Error handling
+        @self.events.subscribe
+        async def on_error(event: STTErrorEvent):
+            self.logger.error("stt error event %s", event)
+
+        @self.events.subscribe
+        async def on_stt_transcript_event_sync_conversation(event: STTTranscriptEvent):
+            self.logger.info(f"🎤 [Transcript]: {event.text}")
+
+            if self.conversation is None:
+                return
+
+            user_id = event.user_id()
+            if user_id is None:
+                raise ValueError("missing user_id")
+
+            with self.span("agent.on_stt_transcript_event_sync_conversation"):
+                await self.conversation.upsert_message(
+                    message_id=str(uuid.uuid4()),
+                    role="user",
+                    user_id=user_id,
+                    content=event.text or "",
+                    completed=True,
+                    replace=True,  # Replace any partial transcripts
+                    original=event,
+                )
+
+        @self.events.subscribe
+        async def on_realtime_user_speech_transcription(
+                event: RealtimeUserSpeechTranscriptionEvent,
+        ):
+            self.logger.info(f"🎤 [User transcript]: {event.text}")
+
+            if self.conversation is None or not event.text:
+                return
+
+            with self.span("agent.on_realtime_user_speech_transcription"):
+                await self.conversation.upsert_message(
+                    message_id=str(uuid.uuid4()),
+                    role="user",
+                    user_id=event.user_id() or "",
+                    content=event.text,
+                    completed=True,
+                    replace=True,
+                    original=event,
+                )
+
+        @self.events.subscribe
+        async def on_realtime_agent_speech_transcription(
+                event: RealtimeAgentSpeechTranscriptionEvent,
+        ):
+            self.logger.info(f"🎤 [Agent transcript]: {event.text}")
+
+            if self.conversation is None or not event.text:
+                return
+
+            with self.span("agent.on_realtime_agent_speech_transcription"):
+                await self.conversation.upsert_message(
+                    message_id=str(uuid.uuid4()),
+                    role="assistant",
+                    user_id=self.agent_user.id or "",
+                    content=event.text,
+                    completed=True,
+                    replace=True,
+                    original=event,
+                )
+
+
+
 
         @self.llm.events.subscribe
         async def on_llm_response_sync_conversation(event: LLMResponseCompletedEvent):
@@ -364,117 +415,53 @@ class Agent:
                     completed=False,  # Still streaming
                 )
 
-    async def _setup_speech_events(self):
-        self.logger.info("_setup_speech_events")
+        logger.info("AUDIO: SUB TO EVENTS DONE")
 
-        @self.events.subscribe
-        async def on_error(event: STTErrorEvent):
-            self.logger.error("stt error event %s", event)
 
-        @self.events.subscribe
-        async def on_stt_transcript_event_sync_conversation(event: STTTranscriptEvent):
-            self.logger.info(f"🎤 [Transcript]: {event.text}")
+    async def simple_response(
+        self, text: str, participant: Optional[Participant] = None
+    ) -> None:
+        """
+        Overwrite simple_response if you want to change how the Agent class calls the LLM
+        """
+        self.logger.info('🤖 Asking LLM to reply to "%s"', text)
+        with self.tracer.start_as_current_span("simple_response") as span:
+            response = await self.llm.simple_response(
+                text=text, processors=self.processors, participant=participant
+            )
+            span.set_attribute("text", text)
+            span.set_attribute("response.text", response.text)
+            span.set_attribute("response.original", response.original)
 
-            if self.conversation is None:
-                return
+    async def simple_audio_response(
+            self, pcm: PcmData, participant: Optional[Participant] = None
+    ) -> None:
+        """
+        Makes it easy to subclass how the agent calls the LLM for processing audio
+        """
+        if _is_audio_llm(self.llm):
+            await self.llm.simple_audio_response(pcm, participant)
 
-            user_id = event.user_id()
-            if user_id is None:
-                raise ValueError("missing user_id")
+    def subscribe(self, function):
+        """Subscribe a callback to the agent-wide event bus.
 
-            with self.span("agent.on_stt_transcript_event_sync_conversation"):
-                await self.conversation.upsert_message(
-                    message_id=str(uuid.uuid4()),
-                    role="user",
-                    user_id=user_id,
-                    content=event.text or "",
-                    completed=True,
-                    replace=True,  # Replace any partial transcripts
-                    original=event,
-                )
+        The event bus is a merged stream of events from the edge, LLM, STT, TTS,
+        VAD, and other registered plugins.
 
-        @self.events.subscribe
-        async def on_realtime_user_speech_transcription(
-            event: RealtimeUserSpeechTranscriptionEvent,
-        ):
-            self.logger.info(f"🎤 [User transcript]: {event.text}")
+        Args:
+            function: Async or sync callable that accepts a single event object.
 
-            if self.conversation is None or not event.text:
-                return
-
-            with self.span("agent.on_realtime_user_speech_transcription"):
-                await self.conversation.upsert_message(
-                    message_id=str(uuid.uuid4()),
-                    role="user",
-                    user_id=event.user_id() or "",
-                    content=event.text,
-                    completed=True,
-                    replace=True,
-                    original=event,
-                )
-
-        @self.events.subscribe
-        async def on_realtime_agent_speech_transcription(
-            event: RealtimeAgentSpeechTranscriptionEvent,
-        ):
-            self.logger.info(f"🎤 [Agent transcript]: {event.text}")
-
-            if self.conversation is None or not event.text:
-                return
-
-            with self.span("agent.on_realtime_agent_speech_transcription"):
-                await self.conversation.upsert_message(
-                    message_id=str(uuid.uuid4()),
-                    role="assistant",
-                    user_id=self.agent_user.id or "",
-                    content=event.text,
-                    completed=True,
-                    replace=True,
-                    original=event,
-                )
-
-        @self.events.subscribe
-        async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
-            if self._audio_track and event and event.data is not None:
-                await self._audio_track.write(event.data)
-
-        @self.events.subscribe
-        async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
-            if _is_audio_llm(self.llm):
-                # There is no need to send the response to the LLM if it handles audio itself.
-                return
-
-            user_id = event.user_id()
-            if user_id is None:
-                raise ValueError("user id is none, this indicates a bug in the code")
-
-            # Determine how to handle LLM triggering based on turn detection
-            if self.turn_detection is not None:
-                # With turn detection: accumulate transcripts and wait for TurnEndedEvent
-                # Store/append the transcript for this user
-                if user_id not in self._pending_user_transcripts:
-                    self._pending_user_transcripts[user_id] = event.text
-                else:
-                    # Append to existing transcript (user might be speaking in chunks)
-                    self._pending_user_transcripts[user_id] += " " + event.text
-
-                self.logger.debug(
-                    f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
-                    f"{self._pending_user_transcripts[user_id][:100]}..."
-                )
-            else:
-                # Without turn detection: trigger LLM immediately on transcript completion
-                # This is the traditional STT -> LLM flow
-                with self.span("agent.on_stt_transcript_event_create_response"):
-                    await self.simple_response(event.text, event.participant)
+        Returns:
+            A disposable subscription handle (depends on the underlying emitter).
+        """
+        return self.events.subscribe(function)
 
     async def join(self, call: Call) -> "AgentSessionContextManager":
         # TODO: validation. join can only be called once
         self.logger.info("joining call")
-        if self.stt:
-            # TODO: run this in parallel for various services?
-            await self.stt.start()
-        self.start_tracing()
+        # run start on all subclasses
+        await self._apply("start")
+        self._start_tracing()
 
         if self._root_span:
             self._root_span.set_attribute("call_id", call.id)
@@ -485,7 +472,6 @@ class Agent:
             raise RuntimeError("Agent is already running")
 
         await self.create_user()
-        await self._setup_turn_detection()
 
         self.call = call
         self.conversation = None
@@ -497,9 +483,6 @@ class Agent:
         create_conversation_coro = self.edge.create_conversation(
             call, self.agent_user, self.instructions
         )
-
-        await self._setup_llm_events()
-        await self._setup_speech_events()
 
         try:
             # Connect to MCP servers if manager is available
@@ -520,6 +503,7 @@ class Agent:
 
         self._connection = connection
         self._is_running = True
+        self._audio_consumer_task = asyncio.create_task(self._reply_to_audio_consumer())
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -540,12 +524,6 @@ class Agent:
             "*",
             lambda event_name, event: self.events.send(event),
         )
-
-        # Listen to incoming tracks if any component needs them
-        # This is independent of publishing - agents can listen without publishing
-        # (e.g., STT-only agents that respond via text chat)
-        if self._needs_audio_or_video_input():
-            await self._listen_to_audio_and_video()
 
         from .agent_session import AgentSessionContextManager
 
@@ -588,6 +566,47 @@ class Agent:
 
         await asyncio.shield(self.close())
 
+    @contextlib.contextmanager
+    def span(self, name):
+        with tracer.start_as_current_span(name, context=self._root_ctx) as span:
+            yield span
+
+    def _start_tracing(self):
+        self._root_span = tracer.start_span("join")
+        self._root_span.__enter__()
+        self._root_ctx = set_span_in_context(self._root_span)
+        # Activate the root context globally so all subsequent spans are nested under it
+        self._context_token = otel_context.attach(self._root_ctx)
+
+    async def _apply(self, function_name: str, *args, **kwargs):
+        subclasses = [self.llm, self.stt, self.tts, self.turn_detection, self.edge]
+        subclasses.extend(self.processors)
+        for subclass in subclasses:
+            if subclass is not None and getattr(subclass, function_name, None) is not None:
+                func = getattr(subclass, function_name)
+                if func is not None:
+                    await func(*args, **kwargs)
+
+    def _end_tracing(self):
+        if self._root_span is not None:
+            self._root_span.__exit__(None, None, None)
+            self._root_span = None
+            self._root_ctx = None
+        # Detach the context token if it was set
+        if hasattr(self, "_context_token") and self._context_token is not None:
+            otel_context.detach(self._context_token)
+            self._context_token = None
+
+    def __aexit__(self, exc_type, exc_val, exc_tb):
+        self._end_tracing()
+
+
+
+
+
+
+
+
     async def close(self):
         """Clean up all connections and resources.
 
@@ -598,16 +617,27 @@ class Agent:
         This is an async method because several components expose async shutdown
         hooks (e.g., WebRTC connections, plugin services).
         """
-        self.end_tracing()
+        self._end_tracing()
         self._is_running = False
         self.clear_call_logging_context()
+
+        # Stop audio consumer task
+        if self._audio_consumer_task:
+            self._audio_consumer_task.cancel()
+            try:
+                await self._audio_consumer_task
+            except asyncio.CancelledError:
+                pass
+            self._audio_consumer_task = None
+
+        # run stop on all subclasses
+        await self._apply("stop")
+        # run close on all subclasses
+        await self._apply("close")
 
         # Disconnect from MCP servers
         if self.mcp_manager:
             await self.mcp_manager.disconnect_all()
-
-        for processor in self.processors:
-            processor.close()
 
         # Stop all video forwarders
         if hasattr(self, "_video_forwarders"):
@@ -632,18 +662,6 @@ class Agent:
             await self._connection.close()
         self._connection = None
 
-        # Close STT
-        if self.stt:
-            await self.stt.close()
-
-        # Close TTS
-        if self.tts:
-            await self.tts.close()
-
-        # Stop turn detection
-        if self.turn_detection:
-            await self.turn_detection.stop()
-
         # Stop audio track
         if self._audio_track:
             self._audio_track.stop()
@@ -658,9 +676,6 @@ class Agent:
         if self._interval_task:
             self._interval_task.cancel()
         self._interval_task = None
-
-        # Close edge transport
-        self.edge.close()
 
     # ------------------------------------------------------------------
     # Logging context helpers
@@ -796,326 +811,161 @@ class Agent:
                 completed=True,
             )
 
-    async def _setup_turn_detection(self):
-        if self.turn_detection:
-            self.logger.info("🎙️ Setting up turn detection listeners")
-            self.events.subscribe(self._on_turn_event)
-            await self.turn_detection.start()
-
-    def _setup_stt(self):
-        if self.stt:
-            self.logger.info("🎙️ Setting up STT event listeners")
-            self.events.subscribe(self._on_stt_error)
-
-    async def _listen_to_audio_and_video(self) -> None:
-        # Handle audio data for STT or Realtime
-        @self.edge.events.subscribe
-        async def on_audio_received(event: AudioReceivedEvent):
-            pcm = event.pcm_data
-            participant = event.participant
-
-            if self.turn_detection is not None and participant is not None:
-                await self.turn_detection.process_audio(
-                    pcm, participant, conversation=self.conversation
-                )
-
-            if participant is not None:
-                await self._reply_to_audio(pcm, participant)
-
-        # Always listen to remote video tracks so we can forward frames to Realtime providers
-        @self.edge.events.subscribe
-        async def on_video_track_added(event: TrackAddedEvent):
-            track_id = event.track_id
-            track_type = event.track_type
-            user = event.user
-            if not track_id or not track_type:
-                return
-
-            # If track is already being processed, just switch to it
-            if track_id in self._active_video_tracks:
-                track_type_name = TrackType.Name(track_type)
-                self.logger.info(
-                    f"🎥 Track re-added: {track_type_name} ({track_id}), switching to it"
-                )
-
-                if _is_video_llm(self.llm):
-                    # Get the existing forwarder and switch to this track
-                    _, _, forwarder = self._active_video_tracks[track_id]
-                    track = self.edge.add_track_subscriber(track_id)
-                    if track and forwarder:
-                        await self.llm.watch_video_track(
-                            track, shared_forwarder=forwarder
-                        )
-                        self._current_video_track_id = track_id
-                return
-
-            task = asyncio.create_task(self._process_track(track_id, track_type, user))
-            self._track_tasks[track_id] = task
-            task.add_done_callback(_log_task_exception)
-
-        @self.edge.events.subscribe
-        async def on_video_track_removed(event: TrackRemovedEvent):
-            track_id = event.track_id
-            track_type = event.track_type
-            if not track_id:
-                return
-
-            track_type_name = TrackType.Name(track_type) if track_type else "unknown"
-            self.logger.info(f"🎥 Track removed: {track_type_name} ({track_id})")
-
-            # Cancel the processing task for this track
-            if track_id in self._track_tasks:
-                self._track_tasks[track_id].cancel()
-                self._track_tasks.pop(track_id)
-
-            # Clean up track metadata
-            self._active_video_tracks.pop(track_id, None)
-
-            # If this was the active track, switch to any other available track
-            if _is_video_llm(self.llm) and track_id == self._current_video_track_id:
-                self.logger.info(
-                    "🎥 Active video track removed, switching to next available"
-                )
-                self._current_video_track_id = None
-                await self._switch_to_next_available_track()
-
     async def _reply_to_audio(
         self, pcm_data: PcmData, participant: Participant
     ) -> None:
-        if participant and getattr(participant, "user_id", None) != self.agent_user.id:
-            # first forward to processors
-            # Extract audio bytes for processors using the proper PCM data structure
-            # PCM data has: format, sample_rate, samples, pts, dts, time_base
-            audio_bytes = pcm_data.samples.tobytes()
-            if self.vad:
-                asyncio.create_task(self.vad.process_audio(pcm_data, participant))
+        """Put audio data into the queue for processing by the consumer."""
+        # TODO: bit of a hack..
+        pcm_data.participant = participant
+        await self._audio_queue.put(pcm_data)
 
-            for processor in self.audio_processors:
-                if processor is None:
-                    continue
-                asyncio.create_task(
-                    processor.process_audio(audio_bytes, participant.user_id)
-                )
-
-            # when in Realtime mode call the Realtime directly (non-blocking)
-            if _is_audio_llm(self.llm):
-                # TODO: this behaviour should be easy to change in the agent class
-                asyncio.create_task(
-                    self.llm.simple_audio_response(pcm_data, participant)
-                )
-
-            # Process audio through STT
-            elif self.stt:
-                self.logger.debug(f"🎵 Processing audio from {participant}")
-                asyncio.create_task(self.stt.process_audio(pcm_data, participant))
-
-    async def _switch_to_next_available_track(self) -> None:
-        """Switch to any available video track."""
-        if not self._active_video_tracks:
-            self.logger.info("🎥 No video tracks available")
-            self._current_video_track_id = None
-            return
-
-        # Just pick the first available video track
-        for track_id, (
-            track_type,
-            participant,
-            forwarder,
-        ) in self._active_video_tracks.items():
-            # Only consider video tracks (camera or screenshare)
-            if track_type not in (
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_SCREEN_SHARE,
-            ):
-                continue
-
-            track_type_name = TrackType.Name(track_type)
-            self.logger.info(f"🎥 Switching to track: {track_type_name} ({track_id})")
-
-            # Get the track and forwarder
-            track = self.edge.add_track_subscriber(track_id)
-            if track and forwarder and _is_video_llm(self.llm):
-                # Send to Realtime provider
-                await self.llm.watch_video_track(track, shared_forwarder=forwarder)
-                self._current_video_track_id = track_id
-                return
-            else:
-                self.logger.error(f"Failed to switch to track {track_id}")
-
-        self.logger.warning("🎥 No suitable video tracks found")
-
-    async def _process_track(self, track_id: str, track_type: int, participant):
-        raw_forwarder = None
-        processed_forwarder = None
-
+    async def _reply_to_audio_consumer(self) -> None:
+        """Consumer that continuously processes audio from the queue."""
+        self.logger.info("AUDIO: Starting audio consumer")
         try:
-            # we only process video tracks (camera video or screenshare)
-            if track_type not in (
+            while self._is_running:
+                try:
+                    # Get audio data from queue with timeout to allow checking _is_running
+                    pcm = await asyncio.wait_for(
+                        self._audio_queue.get_duration(duration_ms=20), timeout=1.0
+                    )
+
+                    participant = pcm.participant
+
+                    if self.turn_detection is not None and participant is not None:
+                        await self.turn_detection.process_audio(
+                            pcm, participant, conversation=self.conversation
+                        )
+                    
+                    if participant and getattr(participant, "user_id", None) != self.agent_user.id:
+                        # first forward to processors
+                        # Extract audio bytes for processors using the proper PCM data structure
+                        # PCM data has: format, sample_rate, samples, pts, dts, time_base
+                        audio_bytes = pcm.samples.tobytes()
+
+                        for processor in self.audio_processors:
+                            if processor is None:
+                                continue
+                            await processor.process_audio(audio_bytes, participant.user_id)
+
+                        # when in Realtime mode call the Realtime directly (non-blocking)
+                        if _is_audio_llm(self.llm):
+                            await self.simple_audio_response(pcm, participant)
+
+                        # Process audio through STT
+                        elif self.stt:
+                            await self.stt.process_audio(pcm, participant)
+                            
+                except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                    await asyncio.sleep(0.02)
+
+                    # No audio data available, continue loop to check _is_running
+                    continue
+                    
+        except asyncio.CancelledError:
+            self.logger.info("🎵 Audio consumer task cancelled")
+            raise
+        except Exception as e:
+            self.logger.error(f"❌ Error in audio consumer: {e}", exc_info=True)
+
+    async def _track_to_video_processors(self, track: TrackInfo):
+        """
+        Send the track to the video processors
+        """
+        # video processors - pass the raw forwarder (they process incoming frames)
+        for processor in self.video_processors:
+            try:
+                user_id = track.participant.user_id if track.participant else None
+                await processor.process_video(
+                    track.track, user_id, shared_forwarder=track.forwarder
+                )
+            except Exception as e:
+                self.logger.error(
+                    f"Error in video processor {type(processor).__name__}: {e}"
+                )
+
+    async def _image_to_video_processors(self, track_id: str, track_type: int):
+        """
+        Send the current image to the image processors
+        """
+        track_info = self._active_video_tracks.get(track_id)
+        if not track_info:
+            return
+            
+        for processor in self.image_processors:
+            try:
+                pass
+                #TODO: run this better
+                #await processor.process_image(
+                #    img, track_info.participant.user_id, track_id=track_id, track_type=track_type
+                #)
+            except Exception as e:
+                self.logger.error(
+                    f"Error in image processor {type(processor).__name__}: {e}"
+                )
+
+    async def _on_track_removed(self, track_id: str, track_type: int, participant: Participant):
+        self._active_video_tracks.pop(track_id)
+        await self._on_track_change(track_id)
+
+    async def _on_track_change(self, track_id: str):
+        # shared logic between track remove and added
+        # Select a track. Prioritize screenshare over regular
+        # This is the track without processing
+        non_processed_tracks = [t for t in self._active_video_tracks.values() if not t.processor]
+        source_track = sorted(non_processed_tracks, key=lambda t: t.priority, reverse=True)[0]
+        # assign the tracks that we last used so we can notify of changes...
+        self._active_source_track_id = source_track.id
+
+        await self._track_to_video_processors(source_track)
+
+        processed_track = sorted([t for t in self._active_video_tracks.values()], key=lambda t: t.priority, reverse=True)[0]
+        self._active_processed_track_id = processed_track.id
+
+        # See if we have a processed track. If so forward that to LLM
+        # TODO: this should run in a loop and handle multiple forwarders
+        #self._image_to_video_processors()
+
+        # If Realtime provider supports video, switch to this new track
+        if _is_video_llm(self.llm):
+            await self.llm.watch_video_track(
+                processed_track.track, shared_forwarder=processed_track.forwarder
+            )
+
+    async def _on_track_added(self, track_id: str, track_type: int, participant: Participant):
+        # We only process video tracks (camera video or screenshare)
+        if track_type not in (
                 TrackType.TRACK_TYPE_VIDEO,
                 TrackType.TRACK_TYPE_SCREEN_SHARE,
-            ):
-                return
-
-            # subscribe to the video track
-            track = self.edge.add_track_subscriber(track_id)
-            if not track:
-                self.logger.error(f"Failed to subscribe to {track_id}")
-                return
-
-            # Wrap screenshare tracks to ensure even dimensions for H.264 encoding
-            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE:
-
-                class _EvenDimensionsTrack(VideoStreamTrack):
-                    def __init__(self, src):
-                        super().__init__()
-                        self.src = src
-
-                    async def recv(self):
-                        return ensure_even_dimensions(await self.src.recv())
-
-                track = _EvenDimensionsTrack(track)  # type: ignore[arg-type]
-
-            # Create a SHARED VideoForwarder for the RAW incoming track
-            # This prevents multiple recv() calls competing on the same track
-            raw_forwarder = VideoForwarder(
-                track,  # type: ignore[arg-type]
-                max_buffer=30,
-                fps=30,  # Max FPS for the producer (individual consumers can throttle down)
-                name=f"raw_video_forwarder_{track_id}",
-            )
-            await raw_forwarder.start()
-            self.logger.debug("🎥 Created raw VideoForwarder for track %s", track_id)
-
-            # Track forwarders for cleanup
-            self._video_forwarders.append(raw_forwarder)
-
-            # Store track metadata
-            self._active_video_tracks[track_id] = (
-                track_type,
-                participant,
-                raw_forwarder,
-            )
-
-            # If Realtime provider supports video, switch to this new track
-            track_type_name = TrackType.Name(track_type)
-
-            if _is_video_llm(self.llm):
-                if self._video_track:
-                    # We have a video publisher (e.g., YOLO processor)
-                    # Create a separate forwarder for the PROCESSED video track
-                    self.logger.info(
-                        "🎥 Forwarding PROCESSED video frames to Realtime provider"
-                    )
-                    processed_forwarder = VideoForwarder(
-                        self._video_track,  # type: ignore[arg-type]
-                        max_buffer=30,
-                        fps=30,
-                        name=f"processed_video_forwarder_{track_id}",
-                    )
-                    await processed_forwarder.start()
-                    self._video_forwarders.append(processed_forwarder)
-
-                    # Send PROCESSED frames with the processed forwarder
-                    await self.llm.watch_video_track(
-                        self._video_track, shared_forwarder=processed_forwarder
-                    )
-                    self._current_video_track_id = track_id
-                else:
-                    # No video publisher, send raw frames - switch to this new track
-                    self.logger.info(
-                        f"🎥 Switching to {track_type_name} track: {track_id}"
-                    )
-                    await self.llm.watch_video_track(
-                        track, shared_forwarder=raw_forwarder
-                    )
-                    self._current_video_track_id = track_id
-
-            has_image_processors = len(self.image_processors) > 0
-
-            # video processors - pass the raw forwarder (they process incoming frames)
-            for processor in self.video_processors:
-                try:
-                    await processor.process_video(
-                        track, participant.user_id, shared_forwarder=raw_forwarder
-                    )
-                except Exception as e:
-                    self.logger.error(
-                        f"Error in video processor {type(processor).__name__}: {e}"
-                    )
-
-            # Use raw forwarder for image processors - only if there are image processors
-            if not has_image_processors:
-                # No image processors, just keep the connection alive
-                self.logger.info(
-                    "No image processors, video processing handled by video processors only"
-                )
-                return
-
-            # Initialize error tracking counters
-            timeout_errors = 0
-            consecutive_errors = 0
-
-            while True:
-                try:
-                    # Use the raw forwarder instead of competing for track.recv()
-                    video_frame = await raw_forwarder.next_frame(timeout=2.0)
-
-                    if video_frame:
-                        # Reset error counts on successful frame processing
-                        timeout_errors = 0
-                        consecutive_errors = 0
-
-                        if has_image_processors:
-                            img = video_frame.to_image()
-
-                            for processor in self.image_processors:
-                                try:
-                                    await processor.process_image(
-                                        img, participant.user_id
-                                    )
-                                except Exception as e:
-                                    self.logger.error(
-                                        f"Error in image processor {type(processor).__name__}: {e}"
-                                    )
-
-                    else:
-                        self.logger.warning("🎥VDP: Received empty frame")
-                        consecutive_errors += 1
-
-                except asyncio.TimeoutError:
-                    # Exponential backoff for timeout errors
-                    timeout_errors += 1
-                    backoff_delay = min(2.0 ** min(timeout_errors, 5), 30.0)
-                    self.logger.debug(
-                        f"🎥VDP: Applying backoff delay: {backoff_delay:.1f}s"
-                    )
-                    await asyncio.sleep(backoff_delay)
-        except asyncio.CancelledError:
-            # Task was cancelled (e.g., track removed)
-            # Clean up forwarders that were created for this track
-            self.logger.debug(
-                f"🎥 Cleaning up forwarders for cancelled track {track_id}"
-            )
-
-            # Stop and remove the raw forwarder if it was created
-            if raw_forwarder is not None and hasattr(self, "_video_forwarders"):
-                if raw_forwarder in self._video_forwarders:
-                    try:
-                        await raw_forwarder.stop()
-                        self._video_forwarders.remove(raw_forwarder)
-                    except Exception as e:
-                        self.logger.error(f"Error stopping raw forwarder: {e}")
-
-            # Stop and remove processed forwarder if it was created
-            if processed_forwarder is not None and hasattr(self, "_video_forwarders"):
-                if processed_forwarder in self._video_forwarders:
-                    try:
-                        await processed_forwarder.stop()
-                        self._video_forwarders.remove(processed_forwarder)
-                    except Exception as e:
-                        self.logger.error(f"Error stopping processed forwarder: {e}")
-
+        ):
             return
+
+        # Subscribe to the video track, we watch all tracks by default
+        track = self.edge.add_track_subscriber(track_id)
+        if not track:
+            self.logger.error(f"Failed to subscribe to {track_id}")
+            return
+
+        # Store track metadata
+        forwarder = VideoForwarder(
+            track,  # type: ignore[arg-type]
+            max_buffer=30,
+            fps=30,  # Max FPS for the producer (individual consumers can throttle down)
+            name=f"video_forwarder_{track_id}_{track_type}",
+        )
+        self._active_video_tracks[track_id] = TrackInfo(
+            id=track_id,
+            type=track_type,
+            processor="",
+            track=track,
+            participant=participant,
+            priority = 1 if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE else 0,
+            forwarder = forwarder
+        )
+
+        await self._on_track_change(track_id)
+
+
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
@@ -1180,9 +1030,6 @@ class Agent:
                 # Clear the pending transcript for this speaker
                 self._pending_user_transcripts[event.participant.user_id] = ""
 
-    async def _on_stt_error(self, error):
-        """Handle STT service errors."""
-        self.logger.error(f"❌ STT Error: {error}")
 
     @property
     def publish_audio(self) -> bool:
@@ -1345,6 +1192,22 @@ class Agent:
             video_publisher = self.video_publishers[0]
             # TODO: some lLms like moondream publish video
             self._video_track = video_publisher.publish_video_track()
+            forwarder = VideoForwarder(
+                self._video_track,  # type: ignore[arg-type]
+                max_buffer=30,
+                fps=30,  # Max FPS for the producer (individual consumers can throttle down)
+                name=f"video_forwarder_{video_publisher.name}",
+            )
+            self._active_video_tracks[self._video_track.id] = TrackInfo(
+                id=self._video_track.id,
+                type=TrackType.TRACK_TYPE_VIDEO,
+                processor=video_publisher.name,
+                track=self._video_track,
+                participant=None,
+                priority=2,
+                forwarder=forwarder
+            )
+
             self.logger.info("🎥 Video track initialized from video publisher")
 
     def _truncate_for_logging(self, obj, max_length=200):
@@ -1353,3 +1216,33 @@ class Agent:
         if len(obj_str) > max_length:
             obj_str = obj_str[:max_length] + "... (truncated)"
         return obj_str
+
+
+def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:
+    return isinstance(llm, AudioLLM)
+
+
+def _is_video_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[VideoLLM]:
+    return isinstance(llm, VideoLLM)
+
+
+def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Realtime]:
+    return isinstance(llm, Realtime)
+
+
+def _log_task_exception(task: asyncio.Task):
+    try:
+        task.result()
+    except Exception:
+        logger.exception("Error in background task")
+
+
+class _AgentLoggerAdapter(logging.LoggerAdapter):
+    """
+    A logger adapter to include the agent_id to the logs
+    """
+
+    def process(self, msg: str, kwargs):
+        if self.extra:
+            return "[Agent: %s] | %s" % (self.extra["agent_id"], msg), kwargs
+        return super(_AgentLoggerAdapter, self).process(msg, kwargs)

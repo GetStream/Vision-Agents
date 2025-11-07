@@ -57,6 +57,7 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
     - Converts it to an ND array
 
     """
+    name = "yolo_pose"
 
     def __init__(
         self,
@@ -117,31 +118,14 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         participant: Any,
         shared_forwarder=None,
     ):
-        logger.info("✅ process_video starting")
-
-        if shared_forwarder is not None:
-            # Use the shared forwarder
-            self._video_forwarder = shared_forwarder
-            logger.info(
-                f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS"
-            )
-            await self._video_forwarder.start_event_consumer(
-                self._add_pose_and_add_frame, fps=float(self.fps), consumer_name="yolo"
-            )
-        else:
-            # Create our own VideoForwarder (legacy behavior)
-            self._video_forwarder = VideoForwarder(
-                incoming_track,  # type: ignore[arg-type]
-                max_buffer=30,  # 1 second
-                fps=self.fps,
-                name="yolo_forwarder",
-            )
-
-            # Start the forwarder
-            await self._video_forwarder.start()
-            await self._video_forwarder.start_event_consumer(
-                self._add_pose_and_add_frame
-            )
+        # Use the shared forwarder
+        self._video_forwarder = shared_forwarder
+        logger.info(
+            f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS"
+        )
+        self._video_forwarder.add_frame_handler(
+            self._add_pose_and_add_frame, fps=float(self.fps), name="yolo"
+        )
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
         frame_with_pose = await self.add_pose_to_frame(frame)

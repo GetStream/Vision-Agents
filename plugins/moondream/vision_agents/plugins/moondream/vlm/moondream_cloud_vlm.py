@@ -17,7 +17,7 @@ from vision_agents.core.llm.events import (
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
-from vision_agents.core.utils.queue import LatestNQueue
+from vision_agents.core.utils.video_queue import VideoLatestNQueue
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 import moondream as md
 
@@ -51,8 +51,8 @@ class CloudVLM(llm.VideoLLM):
         self.max_workers = max_workers
         self.mode = mode
 
-        # Frame buffer using LatestNQueue (maintains last 10 frames)
-        self._frame_buffer: LatestNQueue[av.VideoFrame] = LatestNQueue(maxlen=10)
+        # Frame buffer using VideoLatestNQueue (maintains last 10 frames)
+        self._frame_buffer: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=10)
         # Keep latest frame reference for fast synchronous access
         self._latest_frame: Optional[av.VideoFrame] = None
         self._video_forwarder: Optional[VideoForwarder] = None
@@ -77,23 +77,20 @@ class CloudVLM(llm.VideoLLM):
             # Use shared forwarder
             self._video_forwarder = shared_forwarder
             logger.info("🎥 Moondream subscribing to shared VideoForwarder")
-            await self._video_forwarder.start_event_consumer(
+            self._video_forwarder.add_frame_handler(
                 self._on_frame_received,
                 fps=1.0,  # Low FPS for VLM
-                consumer_name="moondream_vlm"
+                name="moondream_vlm"
             )
         else:
             # Create our own VideoForwarder
             self._video_forwarder = VideoForwarder(
-                track,  # type: ignore[arg-type]
+                input_track=track,  # type: ignore[arg-type]
                 max_buffer=10,
                 fps=1.0,  # Low FPS for VLM
                 name="moondream_vlm_forwarder",
             )
-            await self._video_forwarder.start()
-            await self._video_forwarder.start_event_consumer(
-                self._on_frame_received
-            )
+            self._video_forwarder.add_frame_handler(self._on_frame_received)
 
         # Setup STT subscription (only once)
         if not self._stt_subscription_setup and self.agent:
