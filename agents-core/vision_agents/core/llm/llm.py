@@ -60,6 +60,7 @@ class LLM(abc.ABC):
         self.function_registry = FunctionRegistry()
         self.instructions: Optional[str] = None
         self.parsed_instructions: Optional[str] = None
+        self._conversation: Optional[Conversation] = None
 
     async def warmup(self) -> None:
         """
@@ -78,12 +79,6 @@ class LLM(abc.ABC):
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         raise NotImplementedError
-
-    @property
-    def _conversation(self) -> Optional[Conversation]:
-        if not self.agent:
-            return None
-        return self.agent.conversation
 
     def _build_enhanced_instructions(self) -> Optional[str]:
         """
@@ -195,6 +190,18 @@ class LLM(abc.ABC):
         """
         self.agent = agent
         self._set_instructions(agent.instructions)
+
+    def set_conversation(self, conversation: Conversation):
+        """
+        Provide the Conversation object to the LLM to access the chat history.
+        To be called by the Agent after it joins the call.
+
+        Args:
+            conversation: a Conversation object
+
+        Returns:
+        """
+        self._conversation = conversation
 
     def _set_instructions(self, instructions: str):
         self.instructions = instructions

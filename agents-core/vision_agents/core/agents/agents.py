@@ -537,6 +537,8 @@ class Agent:
 
         # wait for conversation creation coro at the very end of the join flow
         self.conversation = await create_conversation_coro
+        # Provide conversation to the LLM so it can access the chat history.
+        self.llm.set_conversation(self.conversation)
 
         if wait_for_participant:
             self.logger.info("Agent is ready, waiting for participant to join")
