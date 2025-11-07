@@ -25,11 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 class CloudVLM(llm.VideoLLM):
-    """
-    Using the CloudVLM, you can send frames to the hosted Moondream model to perform either captioning or Visual queries.
-    The instructions are taken from the STT service and sent to the model along with the frame. Once the model has an output, the results are then vocalised with the supplied TTS service.
-
-    You can specify whether to use the caption endpoint or query (VQA).
+    """Cloud-hosted VLM using Moondream model for captioning or visual queries.
+    
+    This VLM sends frames to the hosted Moondream model to perform either captioning
+    or visual question answering. The instructions are taken from the STT service and
+    sent to the model along with the frame. Once the model has an output, the results
+    are then vocalized with the supplied TTS service.
+    
+    Args:
+        api_key: API key for Moondream Cloud API. If not provided, will attempt to read
+                from MOONDREAM_API_KEY environment variable.
+        mode: "vqa" for visual question answering or "caption" for image captioning (default: "vqa")
+        max_workers: Number of worker threads for async operations (default: 10)
     """
 
     def __init__(

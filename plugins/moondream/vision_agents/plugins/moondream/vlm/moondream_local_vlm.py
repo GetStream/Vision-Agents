@@ -29,9 +29,11 @@ logger = logging.getLogger(__name__)
 
 
 class LocalVLM(llm.VideoLLM):
-    """
-    Local VLM using Moondream model for captioning or visual queries.
-
+    """Local VLM using Moondream model for captioning or visual queries.
+    
+    This VLM downloads and runs the moondream3-preview model locally from Hugging Face,
+    providing captioning and visual question answering capabilities without requiring an API key.
+    
     Note: The moondream3-preview model is gated and requires authentication:
     - Request access at https://huggingface.co/moondream/moondream3-preview
     - Once approved, authenticate using one of:
@@ -40,10 +42,10 @@ class LocalVLM(llm.VideoLLM):
 
     Args:
         mode: "vqa" for visual question answering or "caption" for image captioning (default: "vqa")
-        max_workers: Number of worker threads for async operations
-        device: Device to run inference on ('cuda', 'mps', or 'cpu').
-                Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU.
-                Note: MPS is automatically converted to CPU due to model compatibility.
+        max_workers: Number of worker threads for async operations (default: 10)
+        force_cpu: If True, force CPU usage even if CUDA/MPS is available (default: False).
+                  Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU.
+                  Note: MPS is automatically converted to CPU due to model compatibility. We recommend running on CUDA for best performance.
         model_name: Hugging Face model identifier (default: "moondream/moondream3-preview")
         options: AgentOptions for model directory configuration.
                 If not provided, uses default_agent_options()

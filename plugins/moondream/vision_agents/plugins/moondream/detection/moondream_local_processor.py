@@ -38,15 +38,15 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
       - Run: huggingface-cli login
     
     Args:
-        conf_threshold: Confidence threshold for detections
+        conf_threshold: Confidence threshold for detections (default: 0.3)
         detect_objects: Object(s) to detect. Moondream uses zero-shot detection,
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
-        fps: Frame processing rate
-        interval: Processing interval in seconds
-        max_workers: Number of worker threads
-        device: Device to run inference on ('cuda', 'mps', or 'cpu'). 
-               Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU.
+        fps: Frame processing rate (default: 30)
+        interval: Processing interval in seconds (default: 0)
+        max_workers: Number of worker threads for CPU-intensive operations (default: 10)
+        force_cpu: If True, force CPU usage even if CUDA/MPS is available (default: False).
+                  Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU. We recommend running on CUDA for best performance.
         model_name: Hugging Face model identifier (default: "moondream/moondream3-preview")
         options: AgentOptions for model directory configuration. If not provided,
                  uses default_agent_options() which defaults to tempfile.gettempdir()
