@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from getstream.video.rtc import AudioStreamTrack, PcmData
 from vision_agents.core.processors import Processor
-from vision_agents.core.utils.utils import parse_instructions
+from vision_agents.core.utils.utils import Instructions, parse_instructions
 from vision_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
 from .llm_types import ToolSchema, NormalizedToolCallItem
@@ -59,7 +59,7 @@ class LLM(abc.ABC):
         self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
         self.instructions: Optional[str] = None
-        self.parsed_instructions: Optional[str] = None
+        self.parsed_instructions: Optional[Instructions] = None
         self._conversation: Optional[Conversation] = None
 
     async def warmup(self) -> None:
