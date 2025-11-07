@@ -111,515 +111,100 @@ class TestLatestNQueue:
 
 
 class TestVideoForwarder:
-    """Test suite for VideoForwarder using real video data"""
+    """Test suite for VideoForwarder"""
     
     @pytest.mark.asyncio
-    async def test_video_forwarder_initialization(self, bunny_video_track):
-        """Test VideoForwarder initialization"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=5, fps=30.0)
-        
-        assert forwarder.input_track == bunny_video_track
-        assert forwarder.queue.maxsize == 5
-        assert forwarder.fps == 30.0
-        assert len(forwarder._tasks) == 0
-        assert not forwarder._stopped.is_set()
-    
-    @pytest.mark.asyncio
-    async def test_start_stop_lifecycle(self, bunny_video_track):
-        """Test start and stop lifecycle"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
-        
-        # Start forwarder
-        await forwarder.start()
-        assert len(forwarder._tasks) == 1
-        assert not forwarder._stopped.is_set()
-        
-        # Let it run briefly
-        await asyncio.sleep(0.01)
-        
-        # Stop forwarder
-        await forwarder.stop()
-        assert len(forwarder._tasks) == 0
-        assert forwarder._stopped.is_set()
-    
-    @pytest.mark.asyncio
-    async def test_next_frame_pull_model(self, bunny_video_track):
-        """Test next_frame pull model"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
-        
-        await forwarder.start()
-        
-        try:
-            # Get first frame
-            frame = await forwarder.next_frame(timeout=1.0)
-            assert hasattr(frame, 'to_ndarray')  # Real video frame
-            
-            # Get a few more frames
-            for _ in range(3):
-                frame = await forwarder.next_frame(timeout=1.0)
-                assert hasattr(frame, 'to_ndarray')  # Real video frame
-                
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_next_frame_coalesces_to_newest(self, bunny_video_track):
-        """Test that next_frame coalesces backlog to newest frame"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=5)
-        
-        await forwarder.start()
-        
-        try:
-            # Let multiple frames accumulate
-            await asyncio.sleep(0.05)
-            
-            # Get frame - should be the newest available
-            frame = await forwarder.next_frame(timeout=1.0)
-            assert hasattr(frame, 'to_ndarray')  # Real video frame
-            
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_callback_push_model(self, bunny_video_track):
-        """Test callback-based push model"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
-        
-        received_frames = []
-        
-        def on_frame(frame):
-            received_frames.append(frame)
-        
-        await forwarder.start()
-        
-        try:
-            # Start callback consumer
-            await forwarder.start_event_consumer(on_frame)
-            
-            # Let it run and collect frames
-            await asyncio.sleep(0.1)
-            
-            # Should have received some frames
-            assert len(received_frames) > 0
-            for frame in received_frames:
-                assert hasattr(frame, 'to_ndarray')  # Real video frame
-                
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_async_callback_push_model(self, bunny_video_track):
-        """Test async callback-based push model"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
-        
-        received_frames = []
-        
-        async def async_on_frame(frame):
-            received_frames.append(frame)
-            await asyncio.sleep(0.001)  # Simulate async work
-        
-        await forwarder.start()
-        
-        try:
-            # Start async callback consumer
-            await forwarder.start_event_consumer(async_on_frame)
-            
-            # Let it run and collect frames
-            await asyncio.sleep(0.1)
-            
-            # Should have received some frames
-            assert len(received_frames) > 0
-            for frame in received_frames:
-                assert hasattr(frame, 'to_ndarray')  # Real video frame
-                
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_fps_throttling(self, bunny_video_track):
-        """Test FPS throttling in callback mode"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=5.0)  # 5 FPS
-        
-        received_frames = []
-        timestamps = []
-        
-        def on_frame(frame):
-            received_frames.append(frame)
-            timestamps.append(asyncio.get_event_loop().time())
-        
-        await forwarder.start()
-        
-        try:
-            await forwarder.start_event_consumer(on_frame)
-            
-            # Let it run for a bit
-            await asyncio.sleep(0.5)
-            
-            # Should have received frames
-            assert len(received_frames) > 0
-            
-            # Check that frames are throttled (roughly 5 FPS)
-            if len(timestamps) > 1:
-                intervals = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps)-1)]
-                avg_interval = sum(intervals) / len(intervals)
-                # Should be roughly 1/5 = 0.2 seconds between frames
-                assert avg_interval >= 0.15  # Allow some tolerance
-                
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_producer_handles_track_errors(self, bunny_video_track):
-        """Test that producer handles track errors gracefully"""
-        # Mock track to raise exception after a few frames
-        call_count = 0
-        original_recv = bunny_video_track.recv
-        
-        async def failing_recv():
-            nonlocal call_count
-            call_count += 1
-            if call_count > 3:
-                raise Exception("Track error")
-            return await original_recv()
-        
-        bunny_video_track.recv = failing_recv
-        
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3)
-        
-        await forwarder.start()
-        
-        try:
-            # Should still be able to get some frames before error
-            frame = await forwarder.next_frame(timeout=1.0)
-            assert hasattr(frame, 'to_ndarray')  # Real video frame
-            
-            # Let it run a bit more to trigger error
-            await asyncio.sleep(0.1)
-            
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_stop_drains_queue(self, bunny_video_track):
-        """Test that stop drains the queue"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=5)
-        
-        await forwarder.start()
-        
-        try:
-            # Let some frames accumulate
-            await asyncio.sleep(0.05)
-            
-            # Stop should drain queue
-            await forwarder.stop()
-            
-            # Queue should be empty after stop
-            assert forwarder.queue.empty()
-            
-        except Exception:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_no_fps_limit(self, bunny_video_track):
-        """Test behavior when fps is None (no limit)"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=None)
-        
-        received_frames = []
-        timestamps = []
-        
-        def on_frame(frame):
-            received_frames.append(frame)
-            timestamps.append(asyncio.get_event_loop().time())
-        
-        await forwarder.start()
-        
-        try:
-            await forwarder.start_event_consumer(on_frame)
-            
-            # Let it run briefly
-            await asyncio.sleep(0.1)
-            
-            # Should have received frames
-            assert len(received_frames) > 0
-            
-            # With no FPS limit, frames should come as fast as possible
-            # (limited by track delay and processing time)
-            
-        finally:
-            await forwarder.stop()
-    
-    async def test_bunny_video_track_frame_count(self, bunny_video_track):
-        """Test how many frames are actually available from bunny_video_track"""
-        frame_count = 0
-        frames = []
-        
-        try:
-            while True:
-                frame = await bunny_video_track.recv()
-                if frame is not None:
-                    frame_count += 1
-                    frames.append(frame)
-        except asyncio.CancelledError as e:
-            print(f"Track finished after {frame_count} frames: {e}")
-        except Exception as e:
-            print(f"Error after {frame_count} frames: {e}")
-
-        assert frame_count == 45
-    
-    async def test_frame_count_at_10fps(self, bunny_video_track):
-        """Test that VideoForwarder generates ~30 frames at 10fps from 3-second video"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=10, fps=10.0)
-        
-        received_frames = []
-        timestamps = []
-        
-        def on_frame(frame):
-            received_frames.append(frame)
-            timestamps.append(asyncio.get_event_loop().time())
-        
-        await forwarder.start()
-        
-        try:
-            await forwarder.start_event_consumer(on_frame)
-            
-            # Let it run for the full 3-second video duration
-            await asyncio.sleep(10)  # Slightly longer to ensure we get all frames
-            
-            # Should have received approximately 30 frames (3 seconds * 10 fps)
-            # Allow some tolerance for timing variations
-            assert 25 <= len(received_frames) <= 35, f"Expected ~30 frames, got {len(received_frames)}"
-            
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_add_frame_handler(self, bunny_video_track):
-        """Test adding frame handlers"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
-        
-        received_frames = []
-        
-        def on_frame(frame):
-            received_frames.append(frame)
-        
-        # Add handler
-        forwarder.add_frame_handler(on_frame, fps=10, name="test-handler")
-        
-        # Verify handler was added
-        assert len(forwarder._frame_handlers) == 1
-        callback, config = forwarder._frame_handlers[0]
-        assert callback == on_frame
-        assert config['fps'] == 10
-        assert config['name'] == "test-handler"
-    
-    @pytest.mark.asyncio
-    async def test_add_multiple_frame_handlers(self, bunny_video_track):
-        """Test adding multiple frame handlers"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
-        
-        received_frames_1 = []
-        received_frames_2 = []
-        received_frames_3 = []
-        
-        def handler1(frame):
-            received_frames_1.append(frame)
-        
-        def handler2(frame):
-            received_frames_2.append(frame)
-        
-        async def handler3(frame):
-            received_frames_3.append(frame)
-        
-        # Add multiple handlers
-        forwarder.add_frame_handler(handler1, fps=5, name="handler-1")
-        forwarder.add_frame_handler(handler2, fps=10, name="handler-2")
-        forwarder.add_frame_handler(handler3, fps=15, name="handler-3")
-        
-        # Verify all handlers were added
-        assert len(forwarder._frame_handlers) == 3
-        assert forwarder._frame_handlers[0][1]['name'] == "handler-1"
-        assert forwarder._frame_handlers[1][1]['name'] == "handler-2"
-        assert forwarder._frame_handlers[2][1]['name'] == "handler-3"
-    
-    @pytest.mark.asyncio
-    async def test_remove_frame_handler(self, bunny_video_track):
-        """Test removing frame handlers"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
-        
-        def handler1(frame):
-            pass
-        
-        def handler2(frame):
-            pass
-        
-        # Add handlers
-        forwarder.add_frame_handler(handler1, name="handler-1")
-        forwarder.add_frame_handler(handler2, name="handler-2")
-        assert len(forwarder._frame_handlers) == 2
-        
-        # Remove first handler
-        removed = forwarder.remove_frame_handler(handler1)
-        assert removed is True
-        assert len(forwarder._frame_handlers) == 1
-        assert forwarder._frame_handlers[0][0] == handler2
-        
-        # Try removing again (should return False)
-        removed = forwarder.remove_frame_handler(handler1)
-        assert removed is False
-        assert len(forwarder._frame_handlers) == 1
-        
-        # Remove second handler
-        removed = forwarder.remove_frame_handler(handler2)
-        assert removed is True
-        assert len(forwarder._frame_handlers) == 0
-    
-    @pytest.mark.asyncio
-    async def test_start_consumers(self, bunny_video_track):
-        """Test starting all registered consumers"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
-        
-        received_frames_1 = []
-        received_frames_2 = []
-        
-        def handler1(frame):
-            received_frames_1.append(frame)
-        
-        def handler2(frame):
-            received_frames_2.append(frame)
-        
-        # Add handlers
-        forwarder.add_frame_handler(handler1, fps=10, name="handler-1")
-        forwarder.add_frame_handler(handler2, fps=10, name="handler-2")
-        
-        await forwarder.start()
-        
-        try:
-            # Start all consumers
-            await forwarder.start_consumers()
-            
-            # Let it run and collect frames
-            await asyncio.sleep(0.15)
-            
-            # Both handlers should have received frames
-            assert len(received_frames_1) > 0
-            assert len(received_frames_2) > 0
-            
-            # Verify frames are real video frames
-            for frame in received_frames_1:
-                assert hasattr(frame, 'to_ndarray')
-            for frame in received_frames_2:
-                assert hasattr(frame, 'to_ndarray')
-                
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_multiple_handlers_different_fps(self, bunny_video_track):
-        """Test multiple handlers with different fps rates running independently"""
+    async def test_multiple_handlers_with_different_fps(self, bunny_video_track):
+        """Test forwarding to 2 handlers with different FPS rates"""
         forwarder = VideoForwarder(bunny_video_track, max_buffer=5, fps=30.0)
         
         handler1_frames = []
+        handler1_timestamps = []
         handler2_frames = []
-        handler3_frames = []
+        handler2_timestamps = []
         
-        def handler1(frame):
+        def handler_5fps(frame):
             handler1_frames.append(frame)
+            handler1_timestamps.append(asyncio.get_event_loop().time())
         
-        def handler2(frame):
+        def handler_10fps(frame):
             handler2_frames.append(frame)
-        
-        def handler3(frame):
-            handler3_frames.append(frame)
-        
-        # Add handlers with different fps rates
-        forwarder.add_frame_handler(handler1, fps=5, name="handler-5fps")
-        forwarder.add_frame_handler(handler2, fps=10, name="handler-10fps")
-        forwarder.add_frame_handler(handler3, fps=15, name="handler-15fps")
-        
-        await forwarder.start()
+            handler2_timestamps.append(asyncio.get_event_loop().time())
         
         try:
-            await forwarder.start_consumers()
+            forwarder.add_frame_handler(handler_5fps, fps=5, name="handler-5fps")
+            forwarder.add_frame_handler(handler_10fps, fps=10, name="handler-10fps")
             
-            # Let it run to collect frames
-            await asyncio.sleep(0.6)
+            # Run for 1 second
+            await asyncio.sleep(1.0)
             
-            # All handlers should have received frames independently
-            assert len(handler1_frames) > 0, "Handler 1 should have received frames"
-            assert len(handler2_frames) > 0, "Handler 2 should have received frames"
-            assert len(handler3_frames) > 0, "Handler 3 should have received frames"
+            # Verify both received frames
+            assert len(handler1_frames) > 0
+            assert len(handler2_frames) > 0
             
-            # Verify all are real video frames
-            for frame in handler1_frames:
-                assert hasattr(frame, 'to_ndarray')
-            for frame in handler2_frames:
-                assert hasattr(frame, 'to_ndarray')
-            for frame in handler3_frames:
-                assert hasattr(frame, 'to_ndarray')
+            # Verify FPS rates (5 fps handler should get ~5 frames, 10 fps should get ~10 frames)
+            assert 3 <= len(handler1_frames) <= 7, f"Expected ~5 frames for 5fps handler, got {len(handler1_frames)}"
+            assert 7 <= len(handler2_frames) <= 13, f"Expected ~10 frames for 10fps handler, got {len(handler2_frames)}"
+            
+            # Verify timing for 5fps handler (should be ~0.2s between frames)
+            if len(handler1_timestamps) > 1:
+                intervals = [handler1_timestamps[i+1] - handler1_timestamps[i] for i in range(len(handler1_timestamps)-1)]
+                avg_interval = sum(intervals) / len(intervals)
+                assert 0.15 <= avg_interval <= 0.25, f"Expected ~0.2s between 5fps frames, got {avg_interval:.2f}s"
+            
+            # Verify timing for 10fps handler (should be ~0.1s between frames)
+            if len(handler2_timestamps) > 1:
+                intervals = [handler2_timestamps[i+1] - handler2_timestamps[i] for i in range(len(handler2_timestamps)-1)]
+                avg_interval = sum(intervals) / len(intervals)
+                assert 0.08 <= avg_interval <= 0.15, f"Expected ~0.1s between 10fps frames, got {avg_interval:.2f}s"
                 
         finally:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_handlers_with_async_and_sync(self, bunny_video_track):
-        """Test that both async and sync handlers work together"""
+    async def test_handler_fps_exceeds_forwarder_fps_raises_error(self, bunny_video_track):
+        """Test that adding handler with FPS > forwarder FPS raises ValueError"""
         forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
         
-        sync_frames = []
-        async_frames = []
+        def handler(frame):
+            pass
         
-        def sync_handler(frame):
-            sync_frames.append(frame)
-        
-        async def async_handler(frame):
-            await asyncio.sleep(0.001)  # Simulate async work
-            async_frames.append(frame)
-        
-        # Add both types of handlers
-        forwarder.add_frame_handler(sync_handler, fps=10, name="sync")
-        forwarder.add_frame_handler(async_handler, fps=10, name="async")
-        
-        await forwarder.start()
-        
+        # Try to add handler with higher FPS than forwarder
         try:
-            await forwarder.start_consumers()
-            
-            # Let it run
-            await asyncio.sleep(0.15)
-            
-            # Both should have received frames
-            assert len(sync_frames) > 0
-            assert len(async_frames) > 0
-            
-            # Verify all are real video frames
-            for frame in sync_frames:
-                assert hasattr(frame, 'to_ndarray')
-            for frame in async_frames:
-                assert hasattr(frame, 'to_ndarray')
-                
+            with pytest.raises(ValueError, match="fps on handler.*cannot be greater than fps on forwarder"):
+                forwarder.add_frame_handler(handler, fps=15)
         finally:
             await forwarder.stop()
     
     @pytest.mark.asyncio
-    async def test_handler_default_fps_from_forwarder(self, bunny_video_track):
-        """Test that handlers inherit default fps from forwarder"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=15.0)
+    async def test_stop_stops_handlers(self, bunny_video_track):
+        """Test that stop() stops frame delivery to handlers"""
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
         
         received_frames = []
         
         def handler(frame):
             received_frames.append(frame)
         
-        # Add handler without specifying fps (should use forwarder's default)
-        forwarder.add_frame_handler(handler, name="default-fps-handler")
+        # Start receiving frames
+        forwarder.add_frame_handler(handler, fps=10)
+        await asyncio.sleep(0.1)
         
-        # Verify handler config has forwarder's fps
-        callback, config = forwarder._frame_handlers[0]
-        assert config['fps'] == 15.0
+        frames_before_stop = len(received_frames)
+        assert frames_before_stop > 0, "Should have received some frames before stop"
+        
+        # Stop forwarder
+        await forwarder.stop()
+        assert not forwarder._started
+        
+        # Wait a bit and verify no new frames are received
+        await asyncio.sleep(0.1)
+        frames_after_stop = len(received_frames)
+        assert frames_after_stop == frames_before_stop, "Should not receive frames after stop"
     
     @pytest.mark.asyncio
-    async def test_handler_auto_naming(self, bunny_video_track):
-        """Test automatic handler naming"""
+    async def test_add_and_remove_handlers(self, bunny_video_track):
+        """Test adding and removing frame handlers"""
         forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
         
         def handler1(frame):
@@ -628,114 +213,26 @@ class TestVideoForwarder:
         def handler2(frame):
             pass
         
-        # Add handlers without names
-        forwarder.add_frame_handler(handler1)
-        forwarder.add_frame_handler(handler2)
+        # Add handlers
+        forwarder.add_frame_handler(handler1, fps=5, name="handler-1")
+        forwarder.add_frame_handler(handler2, fps=10, name="handler-2")
+        assert len(forwarder._frame_handlers) == 2
+        assert forwarder._started
         
-        # Verify auto-generated names
-        assert forwarder._frame_handlers[0][1]['name'] == "handler-0"
-        assert forwarder._frame_handlers[1][1]['name'] == "handler-1"
-    
-    @pytest.mark.asyncio
-    async def test_backwards_compatibility_start_event_consumer(self, bunny_video_track):
-        """Test that old start_event_consumer API still works"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
+        # Remove first handler
+        removed = await forwarder.remove_frame_handler(handler1)
+        assert removed is True
+        assert len(forwarder._frame_handlers) == 1
+        assert forwarder._frame_handlers[0].callback == handler2
+        assert forwarder._started  # Should still be running
         
-        received_frames = []
+        # Try removing handler that doesn't exist
+        removed = await forwarder.remove_frame_handler(handler1)
+        assert removed is False
+        assert len(forwarder._frame_handlers) == 1
         
-        def on_frame(frame):
-            received_frames.append(frame)
-        
-        await forwarder.start()
-        
-        try:
-            # Use old API
-            await forwarder.start_event_consumer(on_frame, fps=10, consumer_name="legacy")
-            
-            # Let it run
-            await asyncio.sleep(0.1)
-            
-            # Should have received frames
-            assert len(received_frames) > 0
-            for frame in received_frames:
-                assert hasattr(frame, 'to_ndarray')
-                
-        finally:
-            await forwarder.stop()
-    
-    @pytest.mark.asyncio
-    async def test_mixed_api_usage(self, bunny_video_track):
-        """Test using both new and old API together"""
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
-        
-        new_api_frames = []
-        old_api_frames = []
-        
-        def new_handler(frame):
-            new_api_frames.append(frame)
-        
-        def old_handler(frame):
-            old_api_frames.append(frame)
-        
-        # Add handler using new API
-        forwarder.add_frame_handler(new_handler, fps=10, name="new-api")
-        
-        await forwarder.start()
-        
-        try:
-            # Start consumers using new API
-            await forwarder.start_consumers()
-            
-            # Also add a consumer using old API
-            await forwarder.start_event_consumer(old_handler, fps=10, consumer_name="old-api")
-            
-            # Let it run longer to ensure both consumers get frames
-            await asyncio.sleep(0.3)
-            
-            # Both should have received frames
-            assert len(new_api_frames) > 0
-            assert len(old_api_frames) > 0
-                
-        finally:
-            await forwarder.stop()
-
-
-class TestVideoForwarderIntegration:
-    """Integration tests for VideoForwarder with real video data"""
-    
-    @pytest.mark.asyncio
-    async def test_video_forwarder_with_callback_processing(self, bunny_video_track):
-        """Test VideoForwarder with callback-based processing"""
-        processed_frames = []
-        
-        async def process_frame(frame):
-            # Simulate frame processing
-            processed_data = frame.to_ndarray()
-            processed_frames.append({
-                'data_shape': processed_data.shape,
-                'has_to_ndarray': hasattr(frame, 'to_ndarray')
-            })
-        
-        forwarder = VideoForwarder(bunny_video_track, max_buffer=4, fps=20.0)
-        
-        await forwarder.start()
-        
-        try:
-            await forwarder.start_event_consumer(process_frame)
-            
-            # Let processing run
-            await asyncio.sleep(0.15)
-            
-            # Verify frames were processed
-            assert len(processed_frames) > 0
-            
-            # Verify processing data
-            for processed in processed_frames:
-                assert 'data_shape' in processed
-                assert 'has_to_ndarray' in processed
-                assert processed['has_to_ndarray'] is True
-                # Real video frames will have varying shapes
-                assert len(processed['data_shape']) == 3  # height, width, channels
-                
-        finally:
-            await forwarder.stop()
+        # Remove last handler (should auto-stop)
+        removed = await forwarder.remove_frame_handler(handler2)
+        assert removed is True
+        assert len(forwarder._frame_handlers) == 0
+        assert not forwarder._started  # Should have stopped automatically
