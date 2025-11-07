@@ -120,10 +120,10 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             logger.info(
                 f"🎥 Moondream subscribing to shared VideoForwarder at {self.fps} FPS"
             )
-            await self._video_forwarder.start_event_consumer(
+            self._video_forwarder.add_frame_handler(
                 self._process_and_add_frame,
                 fps=float(self.fps),
-                consumer_name="moondream"
+                name="moondream"
             )
         else:
             # Create our own VideoForwarder
@@ -134,9 +134,8 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 name="moondream_forwarder",
             )
             
-            # Start the forwarder
-            await self._video_forwarder.start()
-            await self._video_forwarder.start_event_consumer(
+            # Add frame handler (starts automatically)
+            self._video_forwarder.add_frame_handler(
                 self._process_and_add_frame
             )
             

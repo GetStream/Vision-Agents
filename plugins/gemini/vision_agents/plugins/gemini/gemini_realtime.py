@@ -409,8 +409,8 @@ class Realtime(realtime.Realtime):
             self.logger.info(
                 f"🎥 Gemini subscribing to shared VideoForwarder at {self.fps} FPS"
             )
-            await self._video_forwarder.start_event_consumer(
-                self._send_video_frame, fps=float(self.fps), consumer_name="gemini"
+            self._video_forwarder.add_frame_handler(
+                self._send_video_frame, fps=float(self.fps), name="gemini"
             )
         else:
             # Create our own VideoForwarder with the input track (legacy behavior)
@@ -421,11 +421,8 @@ class Realtime(realtime.Realtime):
                 name="gemini_forwarder",
             )
 
-            # Start the forwarder
-            await self._video_forwarder.start()
-
-            # Start the callback consumer that sends frames to Gemini
-            await self._video_forwarder.start_event_consumer(self._send_video_frame)
+            # Add frame handler (starts automatically)
+            self._video_forwarder.add_frame_handler(self._send_video_frame)
 
             self.logger.info(f"Started video forwarding with {self.fps} FPS")
 

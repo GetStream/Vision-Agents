@@ -125,8 +125,8 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         logger.info(
             f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS"
         )
-        await self._video_forwarder.start_event_consumer(
-            self._add_pose_and_add_frame, fps=float(self.fps), consumer_name="yolo"
+        self._video_forwarder.add_frame_handler(
+            self._add_pose_and_add_frame, fps=float(self.fps), name="yolo"
         )
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):

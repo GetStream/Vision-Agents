@@ -290,9 +290,9 @@ class RTCManager:
             logger.error("❌ Video sending not enabled for this session")
             raise RuntimeError("Video sending not enabled for this session")
 
-        # Create forwarding track and start its forwarder
-        await shared_forwarder.start_event_consumer(
-            self._send_video_frame, fps=float(fps), consumer_name="openai"
+        # Add frame handler to shared forwarder
+        shared_forwarder.add_frame_handler(
+            self._send_video_frame, fps=float(fps), name="openai"
         )
 
         logger.info(
