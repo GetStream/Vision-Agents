@@ -4,17 +4,17 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import deepgram, getstream, vogent, elevenlabs, moondream, gemini
+from vision_agents.plugins import deepgram, getstream, vogent, elevenlabs, moondream
 from vision_agents.core.events import CallSessionParticipantJoinedEvent
+import os
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
-    llm = moondream.LocalDetectionProcessor(
-        # api_key=os.getenv("MOONDREAM_API_KEY"),
-
+    llm = moondream.CloudVLM(
+        api_key=os.getenv("MOONDREAM_API_KEY"),
     )
     # create an agent to run with Stream's edge, openAI llm
     agent = Agent(
@@ -22,11 +22,9 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(
             name="My happy AI friend", id="agent"
         ),
-        llm=gemini.LLM("gemini-2.0-flash"),
+        llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        turn_detection=vogent.TurnDetection(),
-        processors=[llm]
     )
     return agent
 
