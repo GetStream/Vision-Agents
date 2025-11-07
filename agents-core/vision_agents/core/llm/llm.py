@@ -50,7 +50,6 @@ class LLM(abc.ABC):
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
     agent: Optional["Agent"]
-    _conversation: Optional["Conversation"]
     function_registry: FunctionRegistry
 
     def __init__(self):
@@ -77,6 +76,12 @@ class LLM(abc.ABC):
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         raise NotImplementedError
+
+    @property
+    def _conversation(self) -> Optional[Conversation]:
+        if not self.agent:
+            return None
+        return self.agent.conversation
 
     def _build_enhanced_instructions(self) -> Optional[str]:
         """
@@ -187,7 +192,6 @@ class LLM(abc.ABC):
         Attach agent to the llm
         """
         self.agent = agent
-        self._conversation = agent.conversation
         self._set_instructions(agent.instructions)
 
     def _set_instructions(self, instructions: str):
