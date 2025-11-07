@@ -917,11 +917,17 @@ class Agent:
         # assign the tracks that we last used so we can notify of changes...
         self._active_source_track_id = source_track.id
 
+        logger.info("VIDEO TRACK _active_source_track_id changed. now pointing at %s", self._active_source_track_id)
+
+
         await self._track_to_video_processors(source_track)
 
         processed_track = sorted([t for t in self._active_video_tracks.values()], key=lambda t: t.priority, reverse=True)[0]
         track_changed = self._active_processed_track_id != processed_track.id
         self._active_processed_track_id = processed_track.id
+
+        logger.info("VIDEO TRACK _active_processed_track_id changed. now pointing at %s", self._active_processed_track_id)
+
 
         # See if we have a processed track. If so forward that to LLM
         # TODO: this should run in a loop. depends a bit on how the forwarder works. requires forwarder to handle multiple forwarding targets

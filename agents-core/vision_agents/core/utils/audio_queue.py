@@ -166,6 +166,7 @@ class AudioQueue:
         collected_count = 0
         last_item_format = None
         last_item_channels = 1
+        last_participant = None
 
         while collected_count < num_samples:
             # Wait for items if queue is empty, with timeout
@@ -188,6 +189,7 @@ class AudioQueue:
                 
                 item = self._buffer.popleft()
                 self._total_samples -= len(item.samples)
+                last_participant = item.participant
                 
                 last_item_format = item.format
                 last_item_channels = item.channels
@@ -225,12 +227,14 @@ class AudioQueue:
         all_samples = np.concatenate(collected_samples)
         
         # Use properties from the last item we got
-        return PcmData(
+        pcm = PcmData(
             samples=all_samples,
             sample_rate=self._sample_rate,
             format=last_item_format,
             channels=last_item_channels
         )
+        pcm.participant = last_participant
+        return pcm
 
     async def get_duration(self, duration_ms: float) -> PcmData:
         """
