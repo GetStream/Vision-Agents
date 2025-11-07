@@ -36,7 +36,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, call_id)
 
     with await agent.join(call):
-        await agent.edge.open_demo(call)
         await agent.llm.simple_response(text="Describe what you see and say hi")
         await agent.finish()  # run till the call ends
 

@@ -180,7 +180,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
         # Join call and start moderation
         with await agent.join(call):
-            await agent.edge.open_demo(call)
             print("🎧 Listening for audio... (Press Ctrl+C to stop)")
             await agent.finish()
     except asyncio.CancelledError:

@@ -153,7 +153,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
             await agent.simple_response("Describe what you currently see")
 
     with await agent.join(call):
-        await agent.edge.open_demo(call)
         await agent.finish()
 
 if __name__ == "__main__":

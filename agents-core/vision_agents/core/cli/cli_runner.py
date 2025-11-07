@@ -150,7 +150,13 @@ def cli(launcher: "AgentLauncher") -> None:
         default="INFO",
         help="Set the logging level",
     )
-    def run_agent(call_type: str, call_id: Optional[str], debug: bool, log_level: str) -> None:
+    @click.option(
+        "--no-demo",
+        is_flag=True,
+        default=False,
+        help="Disable opening the demo UI",
+    )
+    def run_agent(call_type: str, call_id: Optional[str], debug: bool, log_level: str, no_demo: bool) -> None:
         """Run the agent with the specified configuration."""
         # Configure logging
         numeric_level = getattr(logging, log_level.upper(), logging.INFO)
@@ -171,6 +177,11 @@ def cli(launcher: "AgentLauncher") -> None:
                 # Launch agent with warmup
                 agent = await launcher.launch(call_type=call_type, call_id=call_id)
                 logger.info("✅ Agent warmed up and ready")
+                
+                # Open demo UI by default
+                if not no_demo and hasattr(agent, 'edge') and hasattr(agent.edge, 'open_demo_for_agent'):
+                    logger.info("🌐 Opening demo UI...")
+                    await agent.edge.open_demo_for_agent(agent, call_type, call_id)
                 
                 # Join call if join_call function is provided
                 if launcher.join_call:

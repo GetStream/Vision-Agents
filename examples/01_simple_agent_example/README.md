@@ -78,7 +78,6 @@ agent = Agent(
 
 ```python
 call = agent.edge.client.video.call("default", str(uuid4()))
-await agent.edge.open_demo(call)
 
 with await agent.join(call):
     await agent.finish()
@@ -86,9 +85,10 @@ with await agent.join(call):
 
 This code:
 1. Creates a new video call with a unique ID
-2. Opens the demo UI
-3. Has the agent join the call
-4. Keeps the agent running until the call ends
+2. Has the agent join the call
+3. Keeps the agent running until the call ends
+
+**Note:** The CLI automatically opens the demo UI by default. Use `--no-demo` flag to disable it.
 
 
 

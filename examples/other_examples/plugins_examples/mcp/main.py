@@ -82,7 +82,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Join call and start MCP-enabled conversation
     with await agent.join(call):
-        await agent.edge.open_demo(call)
         await agent.say("Hello! I have access to MCP tools including weather information. How can I help you?")
         await agent.finish()
 
