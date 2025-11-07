@@ -118,8 +118,6 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         participant: Any,
         shared_forwarder=None,
     ):
-        logger.info("✅ VIDEO PROCESSORS starting yolo pose processor")
-
         # Use the shared forwarder
         self._video_forwarder = shared_forwarder
         logger.info(
@@ -130,7 +128,6 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         )
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
-        logger.info("VIDEO PROCESSORS _add_pose_and_add_frame")
         frame_with_pose = await self.add_pose_to_frame(frame)
         if frame_with_pose is None:
             logger.info(

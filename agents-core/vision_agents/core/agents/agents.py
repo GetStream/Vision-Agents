@@ -1,15 +1,13 @@
 import asyncio
 import contextlib
 import logging
-import tempfile
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
 import aiortc
-from hatch.cli import self
 
 import getstream.models
 from aiortc import VideoStreamTrack
@@ -51,7 +49,6 @@ from ..utils.logging import (
     configure_default_logging,
 )
 from ..utils.video_forwarder import VideoForwarder
-from ..utils.video_utils import ensure_even_dimensions
 from ..vad import VAD
 from ..vad.events import VADAudioEvent
 from . import events
@@ -851,7 +848,6 @@ class Agent:
 
                         # Process audio through STT
                         elif self.stt:
-                            self.logger.info(f"STT Processing audio from {participant}")
                             await self.stt.process_audio(pcm, participant)
                             
                 except (asyncio.TimeoutError, asyncio.QueueEmpty):
@@ -870,7 +866,6 @@ class Agent:
         """
         Send the track to the video processors
         """
-        logger.info("VIDEO PROCESSORS")
         # video processors - pass the raw forwarder (they process incoming frames)
         for processor in self.video_processors:
             try:
@@ -915,20 +910,14 @@ class Agent:
         # assign the tracks that we last used so we can notify of changes...
         self._active_source_track_id = source_track.id
 
-        logger.info("VIDEO TRACK _active_source_track_id changed. now pointing at %s", self._active_source_track_id)
-
-
         await self._track_to_video_processors(source_track)
 
         processed_track = sorted([t for t in self._active_video_tracks.values()], key=lambda t: t.priority, reverse=True)[0]
         track_changed = self._active_processed_track_id != processed_track.id
         self._active_processed_track_id = processed_track.id
 
-        logger.info("VIDEO TRACK _active_processed_track_id changed. now pointing at %s", self._active_processed_track_id)
-
-
         # See if we have a processed track. If so forward that to LLM
-        # TODO: this should run in a loop. depends a bit on how the forwarder works. requires forwarder to handle multiple forwarding targets
+        # TODO: this should run in a loop and handle multiple forwarders
         #self._image_to_video_processors()
 
         # If Realtime provider supports video, switch to this new track
