@@ -42,7 +42,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # Create a call
     call = await agent.create_call(call_type, call_id)
 
-    await agent.edge.open_demo(call)
+    await agent.edge.open_demo_for_agent(agent, call_type, call_id)
 
     # Have the agent join the call/room
     with await agent.join(call):
