@@ -1,0 +1,1 @@
+Please see root plugin readme. 

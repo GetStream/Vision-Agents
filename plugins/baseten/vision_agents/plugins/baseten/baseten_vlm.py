@@ -30,7 +30,6 @@ PLUGIN_NAME = "baseten_vlm"
 class BasetenVLM(VideoLLM):
     """
     TODO: Docs
-    TODO: Tool calling support?
 
     Examples:
 
