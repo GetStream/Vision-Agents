@@ -26,7 +26,7 @@ async def create_agent(**kwargs) -> Agent:
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        turn_detection=vogent.TurnDetection(),
+        # turn_detection=vogent.TurnDetection(), (not needed with deepgram, it has built-in turn detection)
         # enable profiler by uncommenting the following line
         # profiler=Profiler(),
         # vad=silero.VAD(),

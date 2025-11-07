@@ -237,9 +237,13 @@ class Agent:
         self._validate_configuration()
         self._prepare_rtc()
 
+        # start audio consumption loop
+        self.setup_event_handling()
+
         self.events.send(events.AgentInitEvent())
 
-    async def setup_event_handling(self):
+    def setup_event_handling(self):
+        logger.info("AUDIO: SUB TO EVENTS")
         # listen to turn completed, started etc
         # TODO: here we should handle eager turn taking
         self.events.subscribe(self._on_turn_event)
@@ -409,6 +413,9 @@ class Agent:
                     completed=False,  # Still streaming
                 )
 
+        logger.info("AUDIO: SUB TO EVENTS DONE")
+
+
     async def simple_response(
         self, text: str, participant: Optional[Participant] = None
     ) -> None:
@@ -493,6 +500,7 @@ class Agent:
 
         self._connection = connection
         self._is_running = True
+        self._audio_consumer_task = asyncio.create_task(self._reply_to_audio_consumer())
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -513,12 +521,6 @@ class Agent:
             "*",
             lambda event_name, event: self.events.send(event),
         )
-
-        # Listen to incoming tracks if any component needs them
-        # This is independent of publishing - agents can listen without publishing
-        # (e.g., STT-only agents that respond via text chat)
-        if self._needs_audio_or_video_input():
-            await self._listen_to_audio_and_video()
 
         from .agent_session import AgentSessionContextManager
 
@@ -806,26 +808,18 @@ class Agent:
                 completed=True,
             )
 
-
-
-    async def _listen_to_audio_and_video(self) -> None:
-        # Start the audio consumer task if we need audio processing
-        if self.stt or _is_audio_llm(self.llm) or self.audio_processors or self.vad:
-            self.logger.info("🎵 Starting audio consumer task")
-            self._audio_consumer_task = asyncio.create_task(self._reply_to_audio_consumer())
-            self._audio_consumer_task.add_done_callback(_log_task_exception)
-
     async def _reply_to_audio(
         self, pcm_data: PcmData, participant: Participant
     ) -> None:
         """Put audio data into the queue for processing by the consumer."""
         # TODO: bit of a hack..
         pcm_data.participant = participant
+        self.logger.info("AUDIO: Writing on the queue")
         await self._audio_queue.put(pcm_data)
 
     async def _reply_to_audio_consumer(self) -> None:
         """Consumer that continuously processes audio from the queue."""
-        self.logger.info("🎵 Starting audio consumer")
+        self.logger.info("AUDIO: Starting audio consumer")
         try:
             while self._is_running:
                 try:
@@ -834,8 +828,9 @@ class Agent:
                         self._audio_queue.get_duration(duration_ms=20), timeout=1.0
                     )
 
-                    #TODO: how to get the participant here...
                     participant = pcm.participant
+                    self.logger.info("AUDIO: Received loop loop %s", participant)
+
 
                     if self.turn_detection is not None and participant is not None:
                         await self.turn_detection.process_audio(
@@ -859,10 +854,12 @@ class Agent:
 
                         # Process audio through STT
                         elif self.stt:
-                            self.logger.debug(f"🎵 Processing audio from {participant}")
+                            self.logger.info(f"STT Processing audio from {participant}")
                             await self.stt.process_audio(pcm, participant)
                             
-                except asyncio.TimeoutError:
+                except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                    await asyncio.sleep(0.02)
+
                     # No audio data available, continue loop to check _is_running
                     continue
                     
