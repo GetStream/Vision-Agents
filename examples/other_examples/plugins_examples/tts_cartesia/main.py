@@ -71,7 +71,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Join call and wait
     with await agent.join(call):
-        await agent.edge.open_demo(call)
         await agent.finish()
 
 

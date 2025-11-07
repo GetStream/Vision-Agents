@@ -88,7 +88,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.edge.open_demo(call)
         await agent.say("Hello! I'm your transcription bot. I'll listen to what you say, transcribe it, and respond to you. Try saying something!")
         await agent.finish()
 

@@ -115,8 +115,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # Have the agent join the call/room
     with await agent.join(call):
         logger.info("Joining call")
-
-        await agent.edge.open_demo(call)
         logger.info("LLM ready")
         
         # Give the agent a moment to connect

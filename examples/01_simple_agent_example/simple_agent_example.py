@@ -37,8 +37,7 @@ async def create_agent(**kwargs) -> Agent:
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    # ensure the agent user is created
-    await agent.create_user()
+
     # Create a call
     call = await agent.create_call(call_type, call_id)
 
@@ -61,8 +60,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         # await asyncio.sleep(5)
 
         # Open the demo UI
-        await agent.edge.open_demo(call)
-
         await agent.simple_response("tell me something interesting in a short sentence")
 
         # run till the call ends

@@ -99,9 +99,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         # Have the agent join the call/room
         logger.info("🎤 Agent joining call...")
         with await agent.join(call):
-            # Open the demo UI
-            logger.info("🌐 Opening browser with demo UI...")
-            await agent.edge.open_demo(call)
             logger.info(
                 "✅ Agent is now live with OpenAI Realtime! You can talk to it in the browser."
             )

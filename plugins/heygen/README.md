@@ -57,7 +57,6 @@ async def start_avatar_agent():
     call = agent.edge.client.video.call("default", str(uuid4()))
     
     with await agent.join(call):
-        await agent.edge.open_demo(call)
         await agent.simple_response("Hello! I'm your AI assistant with an avatar.")
         await agent.finish()
 
