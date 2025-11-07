@@ -349,8 +349,9 @@ class StreamEdge(EdgeTransport):
     @tracer.start_as_current_span("stream_edge.open_demo")
     async def open_demo_for_agent(self, agent: "Agent", call_type: str, call_id: str) -> str:
         client = agent.edge.client
-        call = await agent.create_call(call_type, call_id)
         await agent.create_user()
+        call = await agent.create_call(call_type, call_id)
+
         await self.open_demo(call)
 
     @tracer.start_as_current_span("stream_edge.open_demo")
