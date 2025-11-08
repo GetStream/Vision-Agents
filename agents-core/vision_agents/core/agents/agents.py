@@ -82,14 +82,6 @@ class TrackInfo:
     forwarder: VideoForwarder
 
 
-"""
-TODO:
-- fix pcm_data.participant
-- fix image processors
-- verify processed tracks are setup correctly
-- cleanup events more
-"""
-
 class Agent:
     """
     Agent class makes it easy to build your own video AI.
