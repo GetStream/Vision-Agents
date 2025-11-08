@@ -235,6 +235,19 @@ class Agent:
         self.events.send(events.AgentInitEvent())
 
     def setup_event_handling(self):
+        """
+        Agent event handling:
+
+        - STT: AudioReceivedEvent -> STTTranscriptEvent -> TurnCompleted -> LLMResponseCompletedEvent -> TTSAudioEvent
+        - Eager: AudioReceivedEvent -> STTTranscriptEvent -> EagerTurnCompleted -> LLMResponseCompletedEvent
+            - > if TurnCompleted -> TTSAudioEvent
+        - Realtime: Transcriptions
+
+        Other events
+        - Tracks for video added/removed
+        - Error events
+
+        """
         logger.info("AUDIO: SUB TO EVENTS")
         # listen to turn completed, started etc
         # TODO: here we should handle eager turn taking
@@ -304,6 +317,8 @@ class Agent:
                 # This is the traditional STT -> LLM flow
                 with self.span("agent.on_stt_transcript_event_create_response"):
                     await self.simple_response(event.text, event.participant)
+
+        # TODO: chat event handling needs work
 
         # Error handling
         @self.events.subscribe
@@ -413,9 +428,6 @@ class Agent:
                     content_index=event.content_index,
                     completed=False,  # Still streaming
                 )
-
-        logger.info("AUDIO: SUB TO EVENTS DONE")
-
 
     async def simple_response(
         self, text: str, participant: Optional[Participant] = None
