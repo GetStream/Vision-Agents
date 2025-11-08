@@ -972,6 +972,7 @@ class Agent:
 
         # If Realtime provider supports video, switch to this new track
         if _is_video_llm(self.llm):
+            logger.info("watch video called with track %s", processed_track)
             await self.llm.watch_video_track(
                 processed_track.track, shared_forwarder=processed_track.forwarder
             )

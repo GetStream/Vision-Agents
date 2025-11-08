@@ -64,6 +64,7 @@ class RTCManager:
         self.send_video = send_video
 
         self.instructions: Optional[str] = None
+        self._current_video_forwarder = None
 
     def _setup_connection_logging(self) -> None:
         """Set up event handlers for connection monitoring and error logging."""
@@ -290,7 +291,14 @@ class RTCManager:
             logger.error("❌ Video sending not enabled for this session")
             raise RuntimeError("Video sending not enabled for this session")
 
-        # Add frame handler to shared forwarder
+        # This method can be called twice with different forwarders
+        # Remove handler from old forwarder if it exists
+        if self._current_video_forwarder is not None:
+            await self._current_video_forwarder.remove_frame_handler(self._send_video_frame)
+            logger.debug("Removed old video frame handler from previous forwarder")
+
+        # Store reference to new forwarder and add handler
+        self._current_video_forwarder = shared_forwarder
         shared_forwarder.add_frame_handler(
             self._send_video_frame, fps=float(fps), name="openai"
         )
