@@ -276,17 +276,18 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
                     # Read audio frame from HeyGen
                     frame = await source_track.recv()
                     frame_count += 1
-                    
-                    if hasattr(frame, 'to_ndarray'):
-                        audio_array = frame.to_ndarray()
-                        audio_bytes = audio_array.tobytes()
-                        await dest_track.write(audio_bytes)
-                    else:
-                        logger.warning("Received frame without to_ndarray() method")
-                        
+
+                    # Convert AV frame to PcmData
+                    pcm = PcmData.from_av_frame(frame)
+                    # Resample to match destination track format (48000 Hz, 2 channels)
+                    pcm = pcm.resample(target_sample_rate=48000, target_channels=2)
+                    await dest_track.write(pcm)
+
                 except Exception as e:
                     if "ended" in str(e).lower() or "closed" in str(e).lower():
-                        logger.info(f"HeyGen audio track ended (forwarded {frame_count} frames)")
+                        logger.info(
+                            f"HeyGen audio track ended (forwarded {frame_count} frames)"
+                        )
                         break
                     logger.error(f"Error forwarding audio frame: {e}", exc_info=True)
                     break
