@@ -245,18 +245,17 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         logger.info("Received audio track from HeyGen")
         
         # Check if we're using a Realtime LLM
-        using_realtime_llm = False
-        if hasattr(self, '_agent') and self._agent:
+        if self._agent and hasattr(self._agent, "llm"):
             from vision_agents.core.llm.realtime import Realtime
-            if hasattr(self._agent, 'llm') and isinstance(self._agent.llm, Realtime):
-                using_realtime_llm = True
-        
-        if using_realtime_llm:
-            # For Realtime LLMs, don't forward HeyGen audio - use the LLM's native audio
-            # HeyGen is only used for lip-synced video based on text transcriptions
-            logger.info("Using Realtime LLM - skipping HeyGen audio forwarding (using LLM's native audio)")
-            return
-        
+
+            if isinstance(self._agent.llm, Realtime):
+                # For Realtime LLMs, don't forward HeyGen audio - use the LLM's native audio
+                # HeyGen is only used for lip-synced video based on text transcriptions
+                logger.info(
+                    "Using Realtime LLM - skipping HeyGen audio forwarding (using LLM's native audio)"
+                )
+                return
+
         # For standard LLMs, forward HeyGen's audio to our audio track
         logger.info("Forwarding HeyGen audio to audio track")
         asyncio.create_task(self._forward_audio_frames(track, self._audio_track))
