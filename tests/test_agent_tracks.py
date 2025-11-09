@@ -453,4 +453,3 @@ class TestAgentTrackHandling:
         
         # Verify regular LLM doesn't have watch_video_track method called
         assert not hasattr(regular_llm, 'watch_video_track_calls')
-
