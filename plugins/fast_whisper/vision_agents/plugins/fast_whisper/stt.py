@@ -60,10 +60,8 @@ class STT(stt.STT):
         self.device = device
         self.compute_type = compute_type
         
-        # Use provided client or initialize in warmup
         self.whisper = client
         
-        # Audio buffering
         self._audio_buffer = PcmData(
             sample_rate=RATE, channels=1, format=AudioFormat.F32
         )
@@ -109,18 +107,14 @@ class STT(stt.STT):
             return
         
         # Check for empty audio
-        if not hasattr(pcm_data, "samples") or pcm_data.samples is None:
-            return
-        
-        if isinstance(pcm_data.samples, np.ndarray) and pcm_data.samples.size == 0:
+        if pcm_data.samples.size == 0:
             return
         
         try:
             # Ensure audio is in the right format: 16kHz, float32
             audio_data = pcm_data.resample(RATE).to_float32()
             self._audio_buffer = self._audio_buffer.append(audio_data)
-            
-            # Check if we should process the buffer
+
             current_time = time.time()
             buffer_duration_ms = self._audio_buffer.duration_ms
             time_since_last_process = (current_time - self._last_process_time) * 1000
@@ -132,7 +126,6 @@ class STT(stt.STT):
             )
             
             if should_process:
-                # Process buffer asynchronously
                 asyncio.create_task(self._process_buffer(participant))
                 
         except Exception as e:
@@ -146,7 +139,6 @@ class STT(stt.STT):
         Args:
             participant: Optional participant metadata
         """
-        # Use lock to prevent concurrent processing
         if self._processing_lock.locked():
             return
         
@@ -169,7 +161,6 @@ class STT(stt.STT):
                 if audio_array.size == 0:
                     return
                 
-                # Run transcription in thread pool to avoid blocking
                 start_time = time.time()
                 segments, info = await asyncio.to_thread(
                     self.whisper.transcribe,
