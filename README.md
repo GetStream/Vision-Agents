@@ -162,9 +162,13 @@ Our favorite people & projects to follow for vision AI
 | :-------------------------------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------: |
 | [@juberti](https://x.com/juberti)<br>Head of Realtime AI @ OpenAI<br><sub>Realtime AI systems</sub> | [@romainhuet](https://x.com/romainhuet)<br>Head of DX @ OpenAI<br><sub>Developer tooling & APIs</sub> |   [@thorwebdev](https://x.com/thorwebdev)<br>Eleven Labs<br><sub>Voice and AI experiments</sub>   |
 
-|    [<img src="https://github.com/user-attachments/assets/ab5ef918-7c97-4c6d-be10-2e2aeefec015" width="80"/>](https://x.com/mervenoyann)    |        [<img src="https://github.com/user-attachments/assets/af936e13-22cf-4000-a35b-bfe30d44c320" width="80"/>](https://x.com/stash_pomichter)         |
-| :------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------: |
-| [@mervenoyann](https://x.com/mervenoyann)<br>Hugging Face<br><sub>Posts extensively about Video AI</sub> | [@stash_pomichter](https://x.com/stash_pomichter)<br>Spatial memory for robots<br><sub>Robotics & AI navigation</sub> |
+|    [<img src="https://github.com/user-attachments/assets/ab5ef918-7c97-4c6d-be10-2e2aeefec015" width="80"/>](https://x.com/mervenoyann)    |        [<img src="https://github.com/user-attachments/assets/af936e13-22cf-4000-a35b-bfe30d44c320" width="80"/>](https://x.com/stash_pomichter)         |            [<img src="https://pbs.twimg.com/profile_images/1893061651152121856/Op4W8mza_400x400.jpg" width="80"/>](https://x.com/Mentraglass)            |
+| :------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: |
+| [@mervenoyann](https://x.com/mervenoyann)<br>Hugging Face<br><sub>Posts extensively about Video AI</sub> | [@stash_pomichter](https://x.com/stash_pomichter)<br>Spatial memory for robots<br><sub>Robotics & AI navigation</sub> | [@Mentraglass](https://x.com/Mentraglass)<br>Open-source smart glasses<br><sub>Open-Source, hackable AR glasses with AI capabilities built in</sub> |
+
+|            [<img src="https://pbs.twimg.com/profile_images/1664559115581145088/UMD1vtMw_400x400.jpg" width="80"/>](https://x.com/vikhyatk)            |
+| :----------------------------------------------------------------------------------------------------------------------: |
+| [@vikhyatk](https://x.com/vikhyatk)<br>AI Engineer<br><sub>Open-source AI projects, Creator of Moondream AI</sub> | 
 
 ## Inspiration
 
