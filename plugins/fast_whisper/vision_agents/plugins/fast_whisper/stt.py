@@ -48,7 +48,6 @@ class STT(stt.STT):
             model_size: Whisper model size (tiny, base, small, medium, large)
             language: Language code (e.g., "en", "es", "fr") or None for auto-detect
             device: Device to run on ("cpu" or "cuda")
-            compute_type: Compute type ("int8", "float16", "float32")
             client: Optional pre-initialized WhisperModel instance
         """
         super().__init__(provider_name="faster_whisper")
@@ -101,8 +100,8 @@ class STT(stt.STT):
             return
         
         if self.whisper is None:
-            logger.warning("Whisper model not loaded, call warmup() first")
-            return
+            logger.error("Whisper model not loaded, call warmup() first")
+            raise ValueError("Whisper model not loaded, call warmup() first")
         
         # Check for empty audio
         if pcm_data.samples.size == 0:
@@ -158,6 +157,10 @@ class STT(stt.STT):
                 
                 if audio_array.size == 0:
                     return
+
+                if self.whisper is None:
+                    logger.error("Whisper model not loaded, call warmup() first")
+                    raise ValueError("Whisper model not loaded, call warmup() first")
                 
                 start_time = time.time()
                 segments, info = await asyncio.to_thread(
