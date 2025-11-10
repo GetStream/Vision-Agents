@@ -1398,7 +1398,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.9"
+version = "2.5.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1412,7 +1412,7 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/c0/7a4c9d1e62fd2cb21c4e42fa224b5143e55812dca1b7b4832e7f2390151a/getstream-2.5.9-py3-none-any.whl", hash = "sha256:867786b809178b4dce83f1b41888d7dc7b10331c3baf1d7a54e4a0a64d03b2a3", size = 241556 },
+    { url = "https://files.pythonhosted.org/packages/8e/7a/675181c3b5b47c7ea055203114fef007c1becb6f893e408dcbfec7ef1e53/getstream-2.5.11-py3-none-any.whl", hash = "sha256:a230cc70c8b686abcdd607af20d5b9395f46e3f5a67975ff00bf532aebda7db9", size = 247238 },
 ]
 
 [package.optional-dependencies]
@@ -5429,7 +5429,7 @@ xai = [
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.9" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.11" },
     { name = "mcp", specifier = ">=1.16.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
