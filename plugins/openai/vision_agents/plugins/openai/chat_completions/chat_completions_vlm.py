@@ -232,7 +232,7 @@ class ChatCompletionsVLM(VideoLLM):
 
     def _get_frames_bytes(self) -> Iterator[bytes]:
         """
-        Iterate over all bufferred video frames.
+        Iterate over all buffered video frames.
         """
         for frame in self._frame_buffer:
             yield frame_to_jpeg_bytes(
@@ -263,7 +263,7 @@ class ChatCompletionsVLM(VideoLLM):
                     }
                 )
 
-        # Attach the latest bufferred frames to the request
+        # Attach the latest buffered frames to the request
         frames_data = []
         for frame_bytes in self._get_frames_bytes():
             frame_b64 = base64.b64encode(frame_bytes).decode("utf-8")
