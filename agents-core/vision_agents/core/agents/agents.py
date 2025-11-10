@@ -1059,7 +1059,7 @@ class Agent:
                 )
 
                 # Create participant object if we have metadata
-                participant = event.participant.user_id if event.participant else "unknown"
+                participant = event.participant
                 if event.custom:
                     # Try to extract participant info from custom metadata
                     participant = event.custom.get("participant")
