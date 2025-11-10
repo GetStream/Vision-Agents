@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Literal, Optional
 
 import numpy as np
 from faster_whisper import WhisperModel
@@ -39,8 +39,8 @@ class STT(stt.STT):
         self,
         model_size: str = "tiny",
         language: Optional[str] = "en",
-        device: str = "cpu",
-        compute_type: str = "int8",
+        device: Literal["cpu", "cuda"] = "cpu",
+        compute_type: Literal["int8", "float16", "float32"] = "int8",
         client: Optional[WhisperModel] = None,
     ):
         """
