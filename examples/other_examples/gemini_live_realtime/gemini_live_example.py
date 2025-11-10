@@ -22,7 +22,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(
             name="My happy AI friend"
         ),  # the user object for the agent (name, image etc)
-        instructions="Read @voice-agent.md",
+        # instructions="Read @voice-agent.md",
         llm=gemini.Realtime(),
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
     )
@@ -36,7 +36,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, call_id)
 
     with await agent.join(call):
-        await agent.llm.simple_response(text="Describe what you see and say hi")
+        await agent.llm.simple_response(text="Count until 20")
         await agent.finish()  # run till the call ends
 
 

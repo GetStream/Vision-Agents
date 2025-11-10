@@ -82,7 +82,7 @@ packages = ["vision_agents"]
 [tool.hatch.build.targets.sdist]
 include = ["vision_agents"]
 
-#[tool.uv.sources]
+[tool.uv.sources]
 #krisp-audio = [
 #    { path = "./vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", marker = "sys_platform == 'darwin' and platform_machine == 'aarch64'" },
 #    { path = "./vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
@@ -91,5 +91,5 @@ include = ["vision_agents"]
 #]
 # getstream = { git = "https://github.com/GetStream/stream-py.git", branch = "audio-more" }
 # for local development
-#getstream = { git = "https://github.com/GetStream/stream-py.git", rev = "85bd8ef00859ef6ed5ef4ffe7b7f40ae12d12973" }
+getstream = { git = "https://github.com/GetStream/stream-py.git", branch = "output-track" }
 # aiortc = { path = "../stream-py/", editable = true }
