@@ -5,7 +5,7 @@ description = "Example using Qwen3 VL hosted on Baseten with Vision Agents"
 requires-python = ">=3.10"
 dependencies = [
     "vision-agents",
-    "vision-agents-plugins-baseten",
+    "vision-agents-plugins-openai",
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-deepgram",
     "vision-agents-plugins-elevenlabs",
@@ -14,7 +14,7 @@ dependencies = [
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
-vision-agents-plugins-baseten = { workspace = true }
+vision-agents-plugins-openai = { workspace = true }
 vision-agents-plugins-elevenlabs = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
 vision-agents-plugins-deepgram = { workspace = true }

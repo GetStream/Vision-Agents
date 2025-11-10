@@ -1,5 +1,7 @@
 # Qwen3-VL hosted on Baseten 
-Qwen3-VL is the latest open-source Video Language Model (VLM) from Alibaba. This plugin allows developers to easily run the model hosted on [Baseten](https://www.baseten.co/) with Vision Agents. The model accepts text and video and responds with text vocalised with the TTS service of your choice. 
+Qwen3-VL is the latest open-source Video Language Model (VLM) from Alibaba. 
+This plugin allows developers to easily run the model hosted on [Baseten](https://www.baseten.co/) with Vision Agents. 
+The model accepts text and video and responds with text vocalised with the TTS service of your choice. 
 
 ## Features
 
@@ -11,18 +13,19 @@ Qwen3-VL is the latest open-source Video Language Model (VLM) from Alibaba. This
 ## Installation
 
 ```bash
-uv add vision-agents[baseten]
+uv add vision-agents[openai]
 ```
 
 ## Quick Start
 
 ```python
 from vision_agents.core import Agent, User
-from vision_agents.plugins import baseten, getstream, deepgram, elevenlabs, vogent
+from vision_agents.plugins import openai, getstream, deepgram, elevenlabs, vogent
 
 async def create_agent(**kwargs) -> Agent:
     # Initialize the Baseten VLM
-    llm = baseten.VLM(model="qwen3vl")
+    # The api key and base url can be passed via OPENAI_API_KEY and OPENAI_BASE_URL environment variables.
+    llm = openai.ChatCompletionsVLM(model="qwen3vl")
     
     # Create an agent with video understanding capabilities
     agent = Agent(
@@ -50,16 +53,16 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 ### Environment Variables
 
-- **`BASETEN_API_KEY`**: Your Baseten API key (required)
-- **`BASETEN_BASE_URL`**: The base URL for your Baseten API endpoint (required)
+- **`OPENAI_API_KEY`**: Your Baseten API key (required)
+- **`OPENAI_BASE_URL`**: The base URL for your Baseten API endpoint (required)
 
 ### Initialization Parameters
 
 ```python
-baseten.VLM(
+openai.ChatCompletionsVLM(
     model: str,                    # Baseten model name (e.g., "qwen3vl")
-    api_key: Optional[str] = None,  # API key (defaults to BASETEN_API_KEY env var)
-    base_url: Optional[str] = None, # Base URL (defaults to BASETEN_BASE_URL env var)
+    api_key: Optional[str] = None,  # API key (defaults to OPENAI_API_KEY env var)
+    base_url: Optional[str] = None, # Base URL (defaults to OPENAI_BASE_URL env var)
     fps: int = 1,                   # Frames per second to process (default: 1)
     frame_buffer_seconds: int = 10, # Seconds of video to buffer (default: 10)
     client: Optional[AsyncOpenAI] = None,  # Custom OpenAI client (optional)
@@ -69,8 +72,8 @@ baseten.VLM(
 ### Parameters
 
 - **`model`**: The name of the Baseten-hosted model to use. Must be a vision-capable model.
-- **`api_key`**: Your Baseten API key. If not provided, reads from `BASETEN_API_KEY` environment variable.
-- **`base_url`**: The base URL for Baseten API. If not provided, reads from `BASETEN_BASE_URL` environment variable.
+- **`api_key`**: Your Baseten API key. If not provided, reads from `OPENAI_API_KEY` environment variable.
+- **`base_url`**: The base URL for Baseten API. If not provided, reads from `OPENAI_BASE_URL` environment variable.
 - **`fps`**: Number of video frames per second to capture and send to the model. Lower values reduce API costs but may miss fast-moving content. Default is 1 fps.
 - **`frame_buffer_seconds`**: How many seconds of video to buffer. Total buffer size = `fps * frame_buffer_seconds`. Default is 10 seconds.
 - **`client`**: Optional pre-configured `AsyncOpenAI` client. If provided, `api_key` and `base_url` are ignored.
@@ -113,5 +116,5 @@ The plugin emits the following events:
 ## Troubleshooting
 
 - **No video processing**: Ensure the agent has joined a call with video tracks available. The plugin automatically subscribes to video when tracks are added.
-- **API errors**: Verify your `BASETEN_API_KEY` and `BASETEN_BASE_URL` are set correctly and the model name is valid.
+- **API errors**: Verify your `OPENAI_API_KEY` and `OPENAI_BASE_URL` are set correctly and the model name is valid.
 - **High latency**: Consider reducing `fps` or `frame_buffer_seconds` to decrease the number of frames sent per request.

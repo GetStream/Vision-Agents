@@ -1,19 +1,17 @@
 import asyncio
 
 from dotenv import load_dotenv
-
 from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import baseten, getstream, deepgram, elevenlabs
 from vision_agents.core.events import CallSessionParticipantJoinedEvent
-
+from vision_agents.plugins import deepgram, elevenlabs, getstream, openai
 
 load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
     # Initialize the Baseten VLM
-    llm = baseten.VLM(model="qwen3vl")
+    llm = openai.ChatCompletionsVLM(model="qwen3vl")
 
     # Create an agent with video understanding capabilities
     agent = Agent(
@@ -26,6 +24,7 @@ async def create_agent(**kwargs) -> Agent:
         processors=[],
     )
     return agent
+
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     await agent.create_user()
@@ -41,6 +40,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         await agent.edge.open_demo(call)
         # The agent will automatically process video frames and respond to user input
         await agent.finish()
+
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

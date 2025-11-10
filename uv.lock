@@ -13,7 +13,6 @@ members = [
     "vision-agents",
     "vision-agents-plugins-anthropic",
     "vision-agents-plugins-aws",
-    "vision-agents-plugins-baseten",
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-deepgram",
     "vision-agents-plugins-elevenlabs",
@@ -1399,7 +1398,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.8"
+version = "2.5.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1413,7 +1412,7 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/94/2befd2313d3370c5432aa1c1448a48b3df939ff544048d9e037b0cf16255/getstream-2.5.8-py3-none-any.whl", hash = "sha256:2df91640e2c197ee72bb55a1f8c33e9f900f67be9b73c9fecafbdc05d38c864c", size = 241467, upload-time = "2025-11-04T15:03:36.911Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/c0/7a4c9d1e62fd2cb21c4e42fa224b5143e55812dca1b7b4832e7f2390151a/getstream-2.5.9-py3-none-any.whl", hash = "sha256:867786b809178b4dce83f1b41888d7dc7b10331c3baf1d7a54e4a0a64d03b2a3", size = 241556, upload-time = "2025-11-09T20:00:36.257Z" },
 ]
 
 [package.optional-dependencies]
@@ -5438,7 +5437,7 @@ xai = [
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.8" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.9" },
     { name = "mcp", specifier = ">=1.16.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
@@ -5524,32 +5523,6 @@ dev = [
 requires-dist = [
     { name = "aws-sdk-bedrock-runtime", specifier = ">=0.1.0" },
     { name = "boto3", specifier = ">=1.28.0" },
-    { name = "vision-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "vision-agents-plugins-baseten"
-source = { editable = "plugins/baseten" }
-dependencies = [
-    { name = "openai" },
-    { name = "vision-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "openai", specifier = ">=2.5.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

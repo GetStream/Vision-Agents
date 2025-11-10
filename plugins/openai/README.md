@@ -16,7 +16,7 @@ pip install getstream-plugins-openai
 ## Usage
 
 ```python
-from getstream.plugins.openai import OpenAIRealtime
+from vision_agents.plugins.openai import Realtime
 
 # Initialize with API key
 sts = OpenAIRealtime(api_key="your_openai_api_key", voice="alloy")
