@@ -36,14 +36,14 @@ async def conversation():
 @pytest.fixture()
 async def llm(openai_client_mock, conversation):
     llm_ = ChatCompletionsLLM(client=openai_client_mock, model="test")
-    llm_._conversation = conversation
+    llm_.set_conversation(conversation)
     return llm_
 
 
 @pytest.fixture()
 async def vlm(openai_client_mock, conversation):
     llm_ = ChatCompletionsVLM(client=openai_client_mock, model="test")
-    llm_._conversation = conversation
+    llm_.set_conversation(conversation)
     return llm_
 
 
