@@ -89,7 +89,14 @@ class ChatCompletionsLLM(LLM):
             )
             return LLMResponseEvent(original=None, text="")
 
-        messages = await self._build_model_request(text=text, participant=participant)
+        # The simple_response is called directly without providing the participant -
+        # assuming it's an initial prompt.
+        if participant is None:
+            await self._conversation.send_message(
+                role="system", user_id="system", content=text
+            )
+
+        messages = await self._build_model_request()
 
         try:
             response = await self._client.chat.completions.create(  # type: ignore[arg-type]
@@ -158,22 +165,14 @@ class ChatCompletionsLLM(LLM):
 
         return llm_response_event
 
-    async def _build_model_request(
-        self, text: str, participant: Optional[Participant]
-    ) -> list[dict]:
+    async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
         # Add Agent's instructions as system prompt.
         if self.instructions:
             messages.append({"role": "system", "content": self.instructions})
 
-        # The simple_response is called directly without providing the participant -
-        # assuming it's an initial prompt.
-        if participant is None:
-            await self._conversation.send_message(
-                role="system", user_id="system", content=text
-            )
-
         # Add all messages from the conversation to the prompt
-        for message in self._conversation.messages:
-            messages.append({"role": message.role, "content": message.content})
+        if self._conversation is not None:
+            for message in self._conversation.messages:
+                messages.append({"role": message.role, "content": message.content})
         return messages
