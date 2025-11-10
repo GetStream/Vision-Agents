@@ -197,7 +197,7 @@ class ChatCompletionsVLM(VideoLLM):
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
         """
-        Setup video forwarding and start bufferring video frames.
+        Setup video forwarding and start buffering video frames.
         This method is called by the `Agent`.
 
         Args:
