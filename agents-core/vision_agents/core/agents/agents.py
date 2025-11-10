@@ -1058,14 +1058,8 @@ class Agent:
                     f"🤖 Triggering LLM response after turn ended for {event.participant.user_id}"
                 )
 
-                # Create participant object if we have metadata
-                participant = event.participant
-                if event.custom:
-                    # Try to extract participant info from custom metadata
-                    participant = event.custom.get("participant")
-
                 # Trigger LLM response with the complete transcript
-                await self.simple_response(transcript, participant)
+                await self.simple_response(transcript, event.participant)
 
                 # Clear the pending transcript for this speaker
                 self._pending_user_transcripts[event.participant.user_id] = ""
