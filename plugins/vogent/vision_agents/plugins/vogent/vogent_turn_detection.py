@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Optional, Any
 
 import numpy as np
-from faster_whisper import WhisperModel
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 from vogent_turn import TurnDetector as VogentDetector
 
@@ -17,6 +16,7 @@ from vision_agents.core.turn_detection import (
     TurnEndedEvent,
 )
 from vision_agents.core.utils.utils import ensure_model
+from vision_agents.plugins import fast_whisper
 
 import logging
 
@@ -107,7 +107,13 @@ class VogentTurnDetection(TurnDetector):
         
         # Model instances (initialized in start())
         self.vad = None
-        self.whisper = None
+        self.whisper_stt = fast_whisper.STT(
+            model_size=whisper_model_size,
+            device="cpu",
+            compute_type="int8",
+            language="en",
+        )
+        self.whisper = None  # Will be set after warmup
         self.vogent = None
 
     async def start(self):
@@ -138,12 +144,12 @@ class VogentTurnDetection(TurnDetector):
         )
 
     async def _prepare_whisper(self) -> None:
-        """Load faster-whisper model for transcription."""
+        """Load faster-whisper model for transcription . """
         logger.info(f"Loading faster-whisper model: {self.whisper_model_size}")
-        # Load whisper in thread pool to avoid blocking event loop
-        self.whisper = await asyncio.to_thread(  # type: ignore[func-returns-value]
-            lambda: WhisperModel(self.whisper_model_size, device="cpu", compute_type="int8")
-        )
+        # Use the fast_whisper plugin's warmup method
+        await self.whisper_stt.warmup()
+        # Access the underlying WhisperModel instance
+        self.whisper = self.whisper_stt.whisper
         logger.info("Faster-whisper model loaded")
 
     async def _prepare_vogent(self) -> None:
@@ -338,6 +344,8 @@ class VogentTurnDetection(TurnDetector):
             except asyncio.CancelledError:
                 pass
             self._processing_task = None
+        if self.whisper_stt:
+            await self.whisper_stt.close()
 
     async def _transcribe_segment(self, pcm: PcmData) -> str:
         """
