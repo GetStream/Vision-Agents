@@ -3,7 +3,6 @@ import logging
 import time
 from typing import Literal, Optional
 
-import numpy as np
 from faster_whisper import WhisperModel
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 
@@ -40,7 +39,6 @@ class STT(stt.STT):
         model_size: str = "tiny",
         language: Optional[str] = "en",
         device: Literal["cpu", "cuda"] = "cpu",
-        compute_type: Literal["int8", "float16", "float32"] = "int8",
         client: Optional[WhisperModel] = None,
     ):
         """
@@ -58,7 +56,7 @@ class STT(stt.STT):
         self.model_size = model_size
         self.language = language
         self.device = device
-        self.compute_type = compute_type
+        self.compute_type = "int8"
         
         self.whisper = client
         
@@ -69,9 +67,9 @@ class STT(stt.STT):
         self._processing_lock = asyncio.Lock()
         
     async def warmup(self) -> None:
-        """Load the Whisper model if not already provided."""
-        await super().warmup()
-        
+        """
+         The Whisper model if not already provided."""
+
         if self.whisper is None:
             logger.info(f"Loading faster-whisper model: {self.model_size}")
             # Load whisper in thread pool to avoid blocking event loop

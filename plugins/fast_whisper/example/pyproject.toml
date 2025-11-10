@@ -14,10 +14,10 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-vision-agents = { path = "../../../agents-core", editable = true }
-vision-agents-plugins-fast-whisper = { path = "../../", editable = true }
-vision-agents-plugins-aws = { path = "../../../aws", editable = true }
-vision-agents-plugins-cartesia = { path = "../../../cartesia", editable = true }
-vision-agents-plugins-getstream = { path = "../../../getstream", editable = true }
-vision-agents-plugins-smart-turn = { path = "../../../smart_turn", editable = true }
+vision-agents = { editable = true }
+vision-agents-plugins-fast-whisper = { editable = true }
+vision-agents-plugins-aws = { editable = true }
+vision-agents-plugins-cartesia = { editable = true }
+vision-agents-plugins-getstream = { editable = true }
+vision-agents-plugins-smart-turn = { editable = true }
 

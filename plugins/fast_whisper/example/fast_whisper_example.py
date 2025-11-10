@@ -29,10 +29,8 @@ async def create_agent(**kwargs) -> Agent:
         llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
         tts=cartesia.TTS(),
         stt=fast_whisper.STT(
-            model_size="base",  # Use base for good balance of speed and accuracy
+            model_size="tiny",  # Use base for good balance of speed and accuracy
             device="cpu",       # Use "cuda" if you have GPU support
-            compute_type="int8",  # Use int8 for faster inference
-            language=None,       # Auto-detect language
         ),
         turn_detection=smart_turn.TurnDetection(
             buffer_in_seconds=2.0,
