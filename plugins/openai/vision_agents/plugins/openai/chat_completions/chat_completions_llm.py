@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Optional, cast
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
