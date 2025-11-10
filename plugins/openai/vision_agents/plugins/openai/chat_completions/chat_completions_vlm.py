@@ -214,16 +214,16 @@ class ChatCompletionsVLM(VideoLLM):
             logger.info("Stopped video forwarding")
 
         logger.info(f'🎥Subscribing plugin "{PLUGIN_NAME}" to VideoForwarder')
-        if not shared_forwarder:
-            self._video_forwarder = shared_forwarder or VideoForwarder(
+        if shared_forwarder:
+            self._video_forwarder = shared_forwarder
+        else:
+            self._video_forwarder = VideoForwarder(
                 cast(VideoStreamTrack, track),
                 max_buffer=10,
                 fps=1.0,  # Low FPS for VLM
                 name=f"{PLUGIN_NAME}_forwarder",
             )
             self._video_forwarder.start()
-        else:
-            self._video_forwarder = shared_forwarder
 
         # Start buffering video frames
         self._video_forwarder.add_frame_handler(
