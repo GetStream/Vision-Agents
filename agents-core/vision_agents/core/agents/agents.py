@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import datetime
 import logging
 import time
 import uuid
@@ -81,6 +82,17 @@ class TrackInfo:
     track: aiortc.mediastreams.VideoStreamTrack
     forwarder: VideoForwarder
 
+@dataclass
+class LLMTurn:
+    input: str
+    participant: Optional[Participant]
+    started_at: datetime.datetime
+    finished_at: Optional[datetime.datetime]
+    canceled_at: Optional[datetime.datetime]
+    response: Optional[LLMResponseCompletedEvent]
+    turn_finished: bool = False
+
+
 
 class Agent:
     """
@@ -138,6 +150,7 @@ class Agent:
         log_level: Optional[int] = logging.INFO,
         profiler: Optional[Profiler] = None,
     ):
+        self._llm_turns: Dict[str, LLMTurn] = {}
         self.call = None
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
@@ -248,9 +261,7 @@ class Agent:
         - Error events
 
         """
-        logger.info("AUDIO: SUB TO EVENTS")
         # listen to turn completed, started etc
-        # TODO: here we should handle eager turn taking
         self.events.subscribe(self._on_turn_event)
 
         # write tts pcm to output track (this is the AI talking to us)
@@ -261,10 +272,14 @@ class Agent:
 
         @self.llm.events.subscribe
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
-            # Trigger TTS directly instead of through event system
-            if self.tts and event.text and event.text.strip():
-                await self.tts.send(event.text)
-            # TODO: here we should handle eager turn taking
+            # TODO: Id system for turns?
+            llm_turn = self._llm_turns[event.input_text]
+            if llm_turn.turn_finished:
+                if self.tts and event.text and event.text.strip():
+                    await self.tts.send(event.text)
+            else:
+                # we are in eager turn completion mode. wait for confirmation
+                llm_turn.response = event
 
         # listen to video tracks added/removed
         @self.edge.events.subscribe
@@ -313,10 +328,49 @@ class Agent:
                     f"{self._pending_user_transcripts[user_id][:100]}..."
                 )
             else:
-                # Without turn detection: trigger LLM immediately on transcript completion
-                # This is the traditional STT -> LLM flow
-                with self.span("agent.on_stt_transcript_event_create_response"):
-                    await self.simple_response(event.text, event.participant)
+                """
+                Eager turn taking:
+                
+                - When eager mode is enabled we can receive turn completed twice. 1 eager end of turn and 1 turn completed event
+                If the text didn't change, there's no need to call the LLM again on the 2nd pass
+                
+                - When LLMResponseCompletedEvent is received. If we this turn is still in eager mode, we shouldn't play it yet
+                
+                - If eager... generate the response. 
+                - When completes check if turn ended and text didn't change
+                - Discard if text changed
+                
+                on turn complete
+                - if pending llm request with same text wait for that
+                
+                Request LLM response to have both question and answer
+                
+                TODO: how to know when to cancel an eager turn
+                """
+
+                # there is already a response pending
+                if not event.text in self._llm_turns:
+                    # Without turn detection: trigger LLM immediately on transcript completion
+                    # This is the traditional STT -> LLM flow
+                    with self.span("agent.on_stt_transcript_event_create_response"):
+                        llm_turn = LLMTurn(
+                            input= event.text,
+                            participant=event.participant,
+                            started_at=datetime.datetime.now(),
+                            turn_finished=not event.eager_end_of_turn
+                        )
+                        self._llm_turns[event.text] = llm_turn
+                        await self.simple_response(event.text, event.participant)
+                else:
+                    # mark the turn completed
+                    if not event.eager_end_of_turn:
+                        self._llm_turns[event.text].turn_finished = True
+                        if self._llm_turns[event.text].response is not None:
+                            # TODO: clean this up...
+                            if self.tts and event.text and event.text.strip():
+                                await self.tts.send(event.text)
+
+
 
         # TODO: chat event handling needs work
 

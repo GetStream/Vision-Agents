@@ -36,6 +36,7 @@ class STT(stt.STT):
         api_key: Optional[str] = None,
         model: str = "flux-general-en",
         language: Optional[str] = None,
+        eager_turn_detection: bool = False,
         eot_threshold: Optional[float] = None,
         eager_eot_threshold: Optional[float] = None,
         client: Optional[AsyncDeepgramClient] = None,
@@ -68,6 +69,9 @@ class STT(stt.STT):
         self.model = model
         self.language = language
         self.eot_threshold = eot_threshold
+        self.eager_turn_detection = eager_turn_detection
+        if self.eager_turn_detection and eager_eot_threshold is None:
+            eager_eot_threshold = 0.5
         self.eager_eot_threshold = eager_eot_threshold
         self._current_participant: Optional[Participant] = None
         self.connection: Optional[AsyncV2SocketClient] = None
@@ -181,6 +185,9 @@ class STT(stt.STT):
             event = getattr(message, "event", "")
 
             is_final = event == "EndOfTurn"
+            eager_end_of_turn = event == "EagerEndOfTurn"
+
+            logger.info(f"Received message '{message}' from Deepgram")
 
             # Get end of turn confidence
             end_of_turn_confidence = getattr(message, "end_of_turn_confidence", 0.0)
@@ -218,9 +225,12 @@ class STT(stt.STT):
                 return
 
             if is_final:
-                # Final transcript (event == "EndOfTurn")
                 self._emit_transcript_event(
                     transcript_text, participant, response_metadata
+                )
+            elif eager_end_of_turn:
+                self._emit_transcript_event(
+                    transcript_text, participant, response_metadata, eager_end_of_turn=True
                 )
             else:
                 # Partial transcript (event == "StartOfTurn" or "Update")
