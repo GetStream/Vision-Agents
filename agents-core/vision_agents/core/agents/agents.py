@@ -865,10 +865,7 @@ class Agent:
                             pcm, participant, conversation=self.conversation
                         )
 
-                    if (
-                        participant
-                        and getattr(participant, "user_id", None) != self.agent_user.id
-                    ):
+                    if participant and getattr(participant, "user_id", None) != self.agent_user.id:
                         # first forward to processors
                         # Extract audio bytes for processors using the proper PCM data structure
                         # PCM data has: format, sample_rate, samples, pts, dts, time_base
@@ -1061,14 +1058,8 @@ class Agent:
                     f"🤖 Triggering LLM response after turn ended for {event.participant.user_id}"
                 )
 
-                # Create participant object if we have metadata
-                participant = None
-                if hasattr(event, "custom") and event.custom:
-                    # Try to extract participant info from custom metadata
-                    participant = event.custom.get("participant")
-
                 # Trigger LLM response with the complete transcript
-                await self.simple_response(transcript, participant)
+                await self.simple_response(transcript, event.participant)
 
                 # Clear the pending transcript for this speaker
                 self._pending_user_transcripts[event.participant.user_id] = ""
