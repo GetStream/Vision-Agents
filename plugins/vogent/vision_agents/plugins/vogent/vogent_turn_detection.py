@@ -144,7 +144,7 @@ class VogentTurnDetection(TurnDetector):
         )
 
     async def _prepare_whisper(self) -> None:
-        """Load faster-whisper model for transcription . """
+        """Load faster-whisper model for transcription."""
         logger.info(f"Loading faster-whisper model: {self.whisper_model_size}")
         # Use the fast_whisper plugin's warmup method
         await self.whisper_stt.warmup()
