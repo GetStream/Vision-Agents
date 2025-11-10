@@ -544,8 +544,6 @@ class Agent:
             self.logger.info("Agent is ready, waiting for participant to join")
             await self.wait_for_participant()
 
-        # Provide conversation to the LLM so it can access the chat history.
-        self.llm.set_conversation(self.conversation)
         return AgentSessionContextManager(self, self._connection)
 
     async def wait_for_participant(self):
