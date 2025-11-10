@@ -49,7 +49,6 @@ class ChatCompletionsLLM(LLM):
             model (str): The model id to use.
             api_key: optional API key. By default, loads from OPENAI_API_KEY environment variable.
             base_url: optional base url. By default, loads from OPENAI_BASE_URL environment variable.
-                Total buffer size = fps * frame_buffer_seconds.
             client: optional `AsyncOpenAI` client. By default, creates a new client object.
         """
         super().__init__()
