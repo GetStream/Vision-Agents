@@ -27,3 +27,4 @@ PcmData.from_response
 * AudioForwarder to forward audio. See audio_forwarder.py
 * QueuedVideoTrack to have a writable video track
 * QueuedAudioTrack to have a writable audio track
+* AudioQueue enables you to buffer audio, and read a certain number of ms or number of samples of audio
