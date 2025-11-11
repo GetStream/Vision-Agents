@@ -220,7 +220,7 @@ class ChatCompletionsVLM(VideoLLM):
             self._video_forwarder = VideoForwarder(
                 cast(VideoStreamTrack, track),
                 max_buffer=10,
-                fps=1.0,  # Low FPS for VLM
+                fps=self._fps,
                 name=f"{PLUGIN_NAME}_forwarder",
             )
             self._video_forwarder.start()
