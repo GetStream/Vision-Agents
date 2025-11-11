@@ -1,5 +1,6 @@
 import asyncio
 import fractions
+import os
 import time
 import uuid
 from typing import AsyncIterator, Literal, Optional
@@ -191,6 +192,23 @@ class TestChatCompletionsLLM:
         assert len(events) == 1
         assert events[0].type == "plugin.llm.error"
         assert events[0].error_message == "test"
+
+    @pytest.mark.integration
+    async def test_simple_response_model_baseten_deepseek(self, conversation):
+        base_url = os.getenv("BASETEN_BASE_URL")
+        api_key = os.getenv("BASETEN_API_KEY")
+        if not base_url:
+            pytest.skip("BASETEN_BASE_URL not set, skipping test")
+        if not api_key:
+            pytest.skip("BASETEN_API_KEY not set, skipping test")
+
+        llm = ChatCompletionsLLM(
+            api_key=api_key, base_url=base_url, model="deepseek-ai/DeepSeek-V3.1"
+        )
+        llm.set_conversation(conversation)
+
+        response = await llm.simple_response(text="greet the user")
+        assert response.text
 
 
 class AsyncStreamStub:
