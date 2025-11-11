@@ -415,7 +415,11 @@ class EventManager:
             logger.debug(f"Received event {_truncate_event_for_logging(event)}")
             return event
         elif self._ignore_unknown_events:
-            logger.debug(f"Event not registered {_truncate_event_for_logging(event)}")
+            logger.warning(
+                f"Event not registered {_truncate_event_for_logging(event)}. "
+                "Use self.register(EventClass) to register it. "
+                "Or self.register_events_from_module(module) to register all events from a module."
+            )
         else:
             raise RuntimeError(f"Event not registered {event}")
 

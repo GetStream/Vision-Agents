@@ -36,6 +36,7 @@ class STT(abc.ABC):
         self.provider_name = provider_name or self.__class__.__name__
 
         self.events = EventManager()
+        self.events.register(TurnEndedEvent)
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
     async def warmup(self) -> None:

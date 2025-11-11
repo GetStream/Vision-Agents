@@ -376,6 +376,7 @@ class StreamEdge(EdgeTransport):
                         user_id=human_id,
                         # TODO: get rid of this when codegen for stream-py is fixed, these fields are meaningless
                         banned=False,
+                        is_global_banned=False,
                         channel_role="",
                         created_at=datetime.datetime.now(datetime.UTC),
                         notifications_muted=False,
