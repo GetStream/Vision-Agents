@@ -229,9 +229,7 @@ class STT(stt.STT):
                     transcript_text, participant, response_metadata
                 )
 
-                # TODO: make a nice utility method
                 self._emit_turn_ended_event(participant=participant, eager_end_of_turn=eager_end_of_turn)
-                logger.info("DEEPGRAM end of turn event eager: %s", eager_end_of_turn)
 
             else:
                 # Partial transcript (event == "StartOfTurn" or "Update")

@@ -5,15 +5,23 @@ from dotenv import load_dotenv
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
-# from vision_agents.core.profiling import Profiler
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+"""
+Agent example optimized for fast response time.
+
+Eager turn taking STT, LLM, TTS workflow
+- deepgram for optimal latency
+- eleven labs for TTS
+- gemini-2.5-flash-lite for fast responses
+- stream's edge network for video transport
+"""
 
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-2.0-flash")
+    llm = gemini.LLM("gemini-2.5-flash-lite")
     # create an agent to run with Stream's edge, openAI llm
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.

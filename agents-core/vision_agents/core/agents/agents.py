@@ -1087,7 +1087,6 @@ class Agent:
             self.logger.info(
                 f"👉 Turn ended - participant {participant_id} finished (confidence: {event.confidence})"
             )
-            import pdb; pdb.set_trace()
             if not event.participant or event.participant.user_id == self.agent_user.id:
                 # Exit early if the event is triggered by the model response.
                 return
@@ -1103,23 +1102,19 @@ class Agent:
                 )
 
                 # Create participant object if we have metadata
-                participant = None
-                if hasattr(event, "custom") and event.custom:
-                    # Try to extract participant info from custom metadata
-                    participant = event.custom.get("participant")
+                participant = event.participant
 
                 # Clear the pending transcript for this speaker
                 self._pending_user_transcripts[participant.user_id] = ""
                 # cancel the old task if the text changed in the meantime
 
                 if self._pending_turn is not None and self._pending_turn.input != transcript:
-                    logger.info("Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
+                    logger.debug("Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
                                 self._pending_turn.input, transcript)
                     self._pending_turn.task.cancel()
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:
-                    logger.info("TADA Creating a new turn. Eager:%s", event.eager_end_of_turn)
                     # Without turn detection: trigger LLM immediately on transcript completion
                     # This is the traditional STT -> LLM flow
                     llm_turn = LLMTurn(
@@ -1136,7 +1131,7 @@ class Agent:
                     is_finished = not event.eager_end_of_turn
                     now = datetime.datetime.now()
                     elapsed = now - self._pending_turn.started_at
-                    logger.info("TADA Updating existing turn. is_finished: %s time elapsed: %.2f ms saved", is_finished,
+                    logger.debug("Marking eager turn as completed. Eager turn detection saved %.2f",
                                 elapsed.total_seconds() * 1000)
 
                     if is_finished:

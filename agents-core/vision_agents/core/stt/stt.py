@@ -84,7 +84,6 @@ class STT(abc.ABC):
             participant = participant,
             eager_end_of_turn=eager_end_of_turn
         ))
-        logger.info("done sending evnet")
 
     def _emit_partial_transcript_event(
         self,
