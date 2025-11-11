@@ -636,7 +636,12 @@ class Agent:
             ):
                 func = getattr(subclass, function_name)
                 if func is not None:
-                    await func(*args, **kwargs)
+                    try:
+                        await func(*args, **kwargs)
+                    except Exception as e:
+                        self.logger.exception(
+                            f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
+                        )
 
     def _end_tracing(self):
         if self._root_span is not None:
@@ -1230,7 +1235,8 @@ class Agent:
 
             @self.events.subscribe
             async def forward_audio(event: RealtimeAudioOutputEvent):
-                await self._audio_track.write(event.data)
+                if self._audio_track is not None:
+                    await self._audio_track.write(event.data)
 
         # Set up video track if video publishers are available
         if self.publish_video:
