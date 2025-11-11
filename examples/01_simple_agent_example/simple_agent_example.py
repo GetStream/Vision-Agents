@@ -25,7 +25,7 @@ async def create_agent(**kwargs) -> Agent:
         # llm with tts & stt. if you use a realtime (sts capable) llm the tts, stt and vad aren't needed
         llm=llm,
         tts=elevenlabs.TTS(),
-        stt=deepgram.STT(),
+        stt=deepgram.STT(eager_turn_detection=True), # lower latency (but increase LLM token usage)
         # turn_detection=vogent.TurnDetection(), (not needed with deepgram, it has built-in turn detection)
         # enable profiler by uncommenting the following line
         # profiler=Profiler(),

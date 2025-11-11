@@ -187,8 +187,6 @@ class STT(stt.STT):
             is_final = event == "EndOfTurn"
             eager_end_of_turn = event == "EagerEndOfTurn"
 
-            logger.info(f"Received message '{message}' from Deepgram")
-
             # Get end of turn confidence
             end_of_turn_confidence = getattr(message, "end_of_turn_confidence", 0.0)
 
