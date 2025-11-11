@@ -4,12 +4,9 @@ import datetime
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
-import aiortc
-from hatch.cli import self
 
 import getstream.models
 from aiortc import VideoStreamTrack
@@ -17,7 +14,7 @@ from getstream.video.rtc import Call
 
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
-from .agent_options import AgentOptions, default_agent_options
+from .agent_types import AgentOptions, default_agent_options, LLMTurn, TrackInfo
 
 from ..edge import sfu_events
 from ..edge.events import (
@@ -71,33 +68,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 tracer: Tracer = trace.get_tracer("agents")
-
-"""
-TODO
-- Standardize turn taking between turn detection models and STT
-"""
-
-
-@dataclass
-class TrackInfo:
-    id: str
-    type: int
-    processor: str
-    priority: int  # higher goes first
-    participant: Optional[Participant]
-    track: aiortc.mediastreams.VideoStreamTrack
-    forwarder: VideoForwarder
-
-@dataclass
-class LLMTurn:
-    input: str
-    participant: Optional[Participant]
-    started_at: datetime.datetime
-    finished_at: Optional[datetime.datetime] = None
-    canceled_at: Optional[datetime.datetime] = None
-    response: Optional[LLMResponseCompletedEvent] = None
-    task: Optional[asyncio.Task] = None
-    turn_finished: bool = False
 
 
 
@@ -261,7 +231,7 @@ class Agent:
         turn = self._pending_turn
         self._pending_turn = None
         event = turn.response
-        if self.tts and event.text and event.text.strip():
+        if self.tts and event and event.text and event.text.strip():
             await self.tts.send(event.text)
 
     def setup_event_handling(self):
@@ -281,9 +251,10 @@ class Agent:
         # listen to turn completed, started etc
         self.events.subscribe(self._on_turn_event)
 
-        @self.stt.events.subscribe
-        async def on_turn_ended(event: TurnEndedEvent):
-            logger.info(f"Received TurnEndedEvent %s", event)
+        if self.stt:
+            @self.stt.events.subscribe
+            async def on_turn_ended(event: TurnEndedEvent):
+                logger.info("Received TurnEndedEvent %s", event)
 
         @self.llm.events.subscribe
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
@@ -351,7 +322,6 @@ class Agent:
 
             # if turn detection is disabled, treat the transcript event as an end of turn
             if not self.turn_detection_enabled:
-                logger.info("manually triggering turn end")
                 self.events.send(TurnEndedEvent(
                     participant = event.participant,
                 ))
@@ -1111,7 +1081,8 @@ class Agent:
                 if self._pending_turn is not None and self._pending_turn.input != transcript:
                     logger.debug("Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
                                 self._pending_turn.input, transcript)
-                    self._pending_turn.task.cancel()
+                    if self._pending_turn.task:
+                        self._pending_turn.task.cancel()
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:

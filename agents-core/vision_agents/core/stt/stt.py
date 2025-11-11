@@ -54,7 +54,6 @@ class STT(abc.ABC):
         text: str,
         participant: Participant,
         response: TranscriptResponse,
-        eager_end_of_turn: bool = False,
     ):
         """
         Emit a final transcript event with structured data.
@@ -70,7 +69,6 @@ class STT(abc.ABC):
             text=text,
             participant=participant,
             response=response,
-            eager_end_of_turn=eager_end_of_turn
         ))
 
     def _emit_turn_ended_event(

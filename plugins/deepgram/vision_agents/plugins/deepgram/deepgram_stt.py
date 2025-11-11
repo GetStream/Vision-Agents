@@ -12,7 +12,6 @@ from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.turn_detection import TurnEndedEvent
 
 logger = logging.getLogger(__name__)
 

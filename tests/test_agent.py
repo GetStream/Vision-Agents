@@ -9,6 +9,7 @@ import asyncio
 from unittest.mock import Mock
 import pytest
 
+from getstream.video.rtc.participants import ParticipantsState
 from vision_agents.core.agents.agents import Agent
 from vision_agents.core.edge.types import User
 from vision_agents.core.edge.sfu_events import Participant
@@ -80,7 +81,31 @@ class TestAgentWaitForParticipant:
         
         # Set up call and participants state
         agent.call = Mock(id="test-call")
-        agent.participants = {}
+        
+        # Create a mock ParticipantsState with the needed behavior
+        mock_participants = Mock(spec=ParticipantsState)
+        mock_participants._participants = []
+        mock_participants._callbacks = []
+        
+        def mock_map(callback):
+            """Mock the map method to store callback and call it with current participants"""
+            # Store callback for later updates
+            mock_participants._callbacks.append(callback)
+            # Call immediately with current state
+            callback(mock_participants._participants)
+            
+            subscription = Mock()
+            subscription.unsubscribe = Mock(side_effect=lambda: mock_participants._callbacks.remove(callback))
+            return subscription
+        
+        def trigger_update():
+            """Helper to trigger all callbacks with current participants"""
+            for cb in mock_participants._callbacks:
+                cb(mock_participants._participants)
+        
+        mock_participants.map = mock_map
+        mock_participants.trigger_update = trigger_update
+        agent.participants = mock_participants
         
         return agent
     
@@ -94,7 +119,7 @@ class TestAgentWaitForParticipant:
             user_id="user-1",
             session_id="session-1"
         )
-        agent.participants["session-1"] = participant
+        agent.participants._participants.append(participant)
         
         # This should return immediately without waiting
         await asyncio.wait_for(agent.wait_for_participant(), timeout=1.0)
@@ -111,7 +136,7 @@ class TestAgentWaitForParticipant:
             user_id=agent.agent_user.id,
             session_id="agent-session"
         )
-        agent.participants["agent-session"] = agent_participant
+        agent.participants._participants.append(agent_participant)
         
         # This should timeout since only agent is present
         with pytest.raises(asyncio.TimeoutError):
@@ -119,20 +144,12 @@ class TestAgentWaitForParticipant:
     
     @pytest.mark.asyncio
     async def test_wait_for_participant_event_triggered(self):
-        """Test that wait_for_participant completes when ParticipantJoinedEvent is triggered"""
-        from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
-        from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
-        from vision_agents.core.edge.sfu_events import ParticipantJoinedEvent
-        
+        """Test that wait_for_participant completes when a participant joins"""
         agent = self.create_mock_agent()
         
-        # Register the ParticipantJoinedEvent so it can be sent
-        agent.edge.events.register(ParticipantJoinedEvent)
+        # No participants present initially (participants list is empty by default)
         
-        # No participants present initially
-        agent.participants = {}
-        
-        # Create a task to wait for participant
+        # Create a task to wait for participant  
         wait_task = asyncio.create_task(agent.wait_for_participant())
         
         # Give it a moment to set up the event handler
@@ -141,21 +158,18 @@ class TestAgentWaitForParticipant:
         # Task should be waiting
         assert not wait_task.done()
         
-        # Create a proper protobuf ParticipantJoined event
-        participant_proto = models_pb2.Participant(
+        # Add a participant to simulate someone joining
+        new_participant = Participant(
             user_id="user-1",
             session_id="session-1"
         )
-        proto_event = events_pb2.ParticipantJoined(
-            call_cid="test-call",
-            participant=participant_proto
-        )
+        agent.participants._participants.append(new_participant)
         
-        # Send the raw protobuf message (it gets auto-wrapped by the event manager)
-        agent.edge.events.send(proto_event)
+        # Trigger the participants update to notify subscribers
+        agent.participants.trigger_update()
         
-        # Wait for the event to be processed
-        await agent.edge.events.wait()
+        # Give it a moment to process
+        await asyncio.sleep(0.05)
         
         # Wait task should complete now
         await asyncio.wait_for(wait_task, timeout=1.0)

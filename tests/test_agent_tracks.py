@@ -9,7 +9,7 @@ Tests cover:
 """
 
 import asyncio
-from unittest.mock import AsyncMock, Mock, MagicMock, patch
+from unittest.mock import Mock
 import pytest
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType

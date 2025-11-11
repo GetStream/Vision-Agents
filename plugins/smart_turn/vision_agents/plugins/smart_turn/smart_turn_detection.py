@@ -10,13 +10,12 @@ import onnxruntime as ort
 from transformers import WhisperFeatureExtractor
 
 from vision_agents.core.agents import Conversation
-from vision_agents.core.agents.agents import default_agent_options, AgentOptions
+from vision_agents.core.agents.agent_types import default_agent_options, AgentOptions
 from vision_agents.core.edge.types import Participant
 
 from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
-    TurnEndedEvent,
 )
 from vision_agents.core.utils.utils import ensure_model
 
@@ -273,12 +272,10 @@ class SmartTurnDetection(TurnDetector):
                     turn_ended = prediction > 0.5
                     if turn_ended:
                         self._emit_end_turn_event(
-                            TurnEndedEvent(
-                                participant=participant,
-                                confidence=prediction,
-                                trailing_silence_ms=trailing_silence_ms,
-                                duration_ms=self._active_segment.duration_ms,
-                            )
+                            participant=participant,
+                            confidence=prediction,
+                            trailing_silence_ms=trailing_silence_ms,
+                            duration_ms=self._active_segment.duration_ms,
                         )
                         self._active_segment = None
                         self._silence = Silence()

@@ -51,10 +51,22 @@ class TurnDetector(ABC):
         self.events.send(event)
 
     def _emit_end_turn_event(
-        self, event: TurnEndedEvent
+        self,
+        participant: Participant,
+        confidence: Optional[float] = None,
+        trailing_silence_ms: Optional[float] = None,
+        duration_ms: Optional[float] = None,
+        eager_end_of_turn: bool = False,
     ) -> None:
-        event.session_id = self.session_id
-        event.plugin_name = self.provider_name
+        event = TurnEndedEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            participant=participant,
+            confidence=confidence,
+            trailing_silence_ms=trailing_silence_ms,
+            duration_ms=duration_ms,
+            eager_end_of_turn=eager_end_of_turn,
+        )
         self.events.send(event)
 
     @abstractmethod
