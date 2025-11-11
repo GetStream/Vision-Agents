@@ -59,7 +59,7 @@ class STT(stt.STT):
         self.target_language = target_language
         self._fal_client = client if client is not None else fal_client.AsyncClient()
 
-    async def process_audio(
+    async def _process_audio(
         self,
         pcm_data: PcmData,
         participant: Optional["Participant"] = None,
@@ -89,8 +89,7 @@ class STT(stt.STT):
 
             # Create temporary file for upload (async to avoid blocking)
             temp_file_path = os.path.join(
-                tempfile.gettempdir(), 
-                f"wizper_{os.getpid()}_{id(pcm_data)}.wav"
+                tempfile.gettempdir(), f"wizper_{os.getpid()}_{id(pcm_data)}.wav"
             )
             async with aiofiles.open(temp_file_path, "wb") as f:
                 await f.write(wav_data)
@@ -119,8 +118,11 @@ class STT(stt.STT):
                         # Create a default participant if none provided
                         if participant is None:
                             from vision_agents.core.edge.types import Participant
-                            participant = Participant(original=None, user_id="test-user")
-                        
+
+                            participant = Participant(
+                                original=None, user_id="test-user"
+                            )
+
                         response_metadata = TranscriptResponse()
                         self._emit_transcript_event(
                             text, participant, response_metadata

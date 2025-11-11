@@ -75,7 +75,7 @@ class STT(stt.STT):
         self._connection_context: Optional[Any] = None
         self._listen_task: Optional[asyncio.Task[Any]] = None
 
-    async def process_audio(
+    async def _process_audio(
         self,
         pcm_data: PcmData,
         participant: Optional[Participant] = None,
@@ -127,20 +127,19 @@ class STT(stt.STT):
             "encoding": "linear16",
             "sample_rate": "16000",
         }
-        
+
         # Add optional parameters if specified
         if self.eot_threshold is not None:
             connect_params["eot_threshold"] = str(self.eot_threshold)
         if self.eager_eot_threshold is not None:
             connect_params["eager_eot_threshold"] = str(self.eager_eot_threshold)
-        
+
         # Connect to Deepgram v2 listen WebSocket with timeout
         self._connection_context = self.client.listen.v2.connect(**connect_params)
-        
+
         # Add timeout for connection establishment
         self.connection = await asyncio.wait_for(
-            self._connection_context.__aenter__(),
-            timeout=10.0
+            self._connection_context.__aenter__(), timeout=10.0
         )
 
         # Register event handlers
@@ -149,7 +148,7 @@ class STT(stt.STT):
             self.connection.on(EventType.MESSAGE, self._on_message)
             self.connection.on(EventType.ERROR, self._on_error)
             self.connection.on(EventType.CLOSE, self._on_close)
-            
+
             # Start listening for events
             self._listen_task = asyncio.create_task(self.connection.start_listening())
 
@@ -159,7 +158,7 @@ class STT(stt.STT):
     def _on_message(self, message):
         """
         Event handler for messages from Deepgram.
-        
+
         Args:
             message: The message object from Deepgram
         """
@@ -189,7 +188,9 @@ class STT(stt.STT):
             words = getattr(message, "words", [])
             if words:
                 confidences = [w.confidence for w in words if hasattr(w, "confidence")]
-                avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+                avg_confidence = (
+                    sum(confidences) / len(confidences) if confidences else 0.0
+                )
             else:
                 avg_confidence = 0.0
 
@@ -207,7 +208,7 @@ class STT(stt.STT):
                     "end_of_turn_confidence": end_of_turn_confidence,
                     "turn_index": getattr(message, "turn_index", None),
                     "event": event,
-                }
+                },
             )
 
             # Use the participant from the most recent process_audio call
@@ -234,7 +235,7 @@ class STT(stt.STT):
     def _on_error(self, error):
         """
         Event handler for errors from Deepgram.
-        
+
         Args:
             error: The error from Deepgram
         """

@@ -76,6 +76,35 @@ class LLM(abc.ABC):
         processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
+        """
+        Wrapper method that tracks metrics and delegates to _simple_response.
+        """
+        from vision_agents.core.observability.metrics import Timer, llm_latency_ms
+
+        with Timer(llm_latency_ms) as timer:
+            timer.attributes["llm_class"] = (
+                f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+            )
+            timer.attributes["provider"] = getattr(self, "provider_name", "unknown")
+
+            try:
+                result = await self._simple_response(text, processors, participant)
+                return result
+            except Exception as e:
+                timer.attributes["error"] = type(e).__name__
+                raise
+
+    @abc.abstractmethod
+    async def _simple_response(
+        self,
+        text: str,
+        processors: Optional[List[Processor]] = None,
+        participant: Optional[Participant] = None,
+    ) -> LLMResponseEvent[Any]:
+        """
+        Implementation-specific response generation.
+        Subclasses must implement this method.
+        """
         raise NotImplementedError
 
     def _build_enhanced_instructions(self) -> Optional[str]:

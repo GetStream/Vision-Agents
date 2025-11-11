@@ -75,7 +75,7 @@ class TurnDetection(TurnDetector):
         """Check if turn detection is currently active."""
         return self._is_detecting
 
-    async def process_audio(
+    async def detect_turn(
         self,
         audio_data: PcmData,
         participant: Participant,

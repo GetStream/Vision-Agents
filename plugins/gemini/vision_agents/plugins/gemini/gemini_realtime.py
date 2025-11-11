@@ -133,6 +133,24 @@ class Realtime(realtime.Realtime):
         self.logger.info("Simple response called with text: %s", text)
         await self.send_realtime_input(text=text)
 
+    async def _simple_response(
+        self,
+        text: str,
+        processors: Optional[List[Processor]] = None,
+        participant: Optional[Participant] = None,
+    ):
+        """
+        Internal simple response implementation required by LLM base class.
+
+        Note: Gemini Realtime is event-driven and doesn't return responses directly.
+        This implementation sends the text via the public simple_response method.
+        """
+        from vision_agents.core.llm.llm import LLMResponseEvent
+
+        await self.simple_response(text, processors, participant)
+        # Return empty LLMResponseEvent since Realtime API is event-driven
+        return LLMResponseEvent(original=None, text="")
+
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
     ):

@@ -18,14 +18,15 @@ from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
 )
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.observability.metrics import Timer, meter
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WIDTH = 640
-DEFAULT_HEIGHT = 480
-DEFAULT_WIDTH = 1920
-DEFAULT_HEIGHT = 1080
+# Metrics for YOLO pose detection
+yolo_pose_inference_ms = meter.create_histogram(
+    "yolo.pose.inference.ms", unit="ms", description="YOLO pose inference latency"
+)
 
 """
 TODO: video track & Queuing need more testing/ thought
@@ -48,6 +49,7 @@ class YOLOPoseVideoTrack(QueuedVideoTrack):
     """
 
     pass
+
 
 class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """
@@ -232,16 +234,28 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
             )
 
             # Run pose detection
-            yolo_start = time.perf_counter()
-            pose_results = self.pose_model(
-                frame_array,
-                verbose=False,
-                # imgsz=self.imgsz,
-                conf=self.conf_threshold,
-                device=self.device,
+            with Timer(yolo_pose_inference_ms) as timer:
+                timer.attributes["frame_width"] = frame_array.shape[1]
+                timer.attributes["frame_height"] = frame_array.shape[0]
+                timer.attributes["conf_threshold"] = self.conf_threshold
+                timer.attributes["device"] = str(self.device)
+
+                pose_results = self.pose_model(
+                    frame_array,
+                    verbose=False,
+                    # imgsz=self.imgsz,
+                    conf=self.conf_threshold,
+                    device=self.device,
+                )
+
+                # Add detected person count to metrics
+                timer.attributes["persons_detected"] = (
+                    len(pose_results) if pose_results else 0
+                )
+
+            logger.debug(
+                f"🎯 YOLO inference completed in {timer.last_elapsed_ms:.1f}ms"
             )
-            yolo_time = time.perf_counter() - yolo_start
-            logger.debug(f"🎯 YOLO inference completed in {yolo_time:.3f}s")
 
             if not pose_results:
                 logger.debug("❌ No pose results detected")

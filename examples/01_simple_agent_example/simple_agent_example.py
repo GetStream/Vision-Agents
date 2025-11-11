@@ -68,11 +68,14 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 def setup_telemetry():
     import atexit
-    from opentelemetry import trace
+    from opentelemetry import trace, metrics
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    from prometheus_client import start_http_server
 
     resource = Resource.create(
         {
@@ -84,6 +87,13 @@ def setup_telemetry():
 
     tp.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(tp)
+
+    reader = PrometheusMetricReader()
+    metrics.set_meter_provider(
+        MeterProvider(resource=resource, metric_readers=[reader])
+    )
+
+    start_http_server(port=9464)
 
     def _flush_and_shutdown():
         tp.force_flush()

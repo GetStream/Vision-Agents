@@ -37,8 +37,8 @@ class GeminiLLM(LLM):
 
     Examples:
 
-          from vision_agents.plugins import gemini
-          llm = gemini.LLM()
+    from vision_agents.plugins import gemini
+    llm = gemini.LLM()
     """
 
     def __init__(
@@ -59,13 +59,14 @@ class GeminiLLM(LLM):
         self.events.register_events_from_module(events)
         self.model = model
         self.chat: Optional[Any] = None
+        self.provider_name = "gemini"
 
         if client is not None:
             self.client = client
         else:
             self.client = Client(api_key=api_key).aio
 
-    async def simple_response(
+    async def _simple_response(
         self,
         text: str,
         processors: Optional[List[Processor]] = None,
@@ -84,7 +85,7 @@ class GeminiLLM(LLM):
         """
         return await self.send_message(message=text)
 
-    async def send_message(self, *args, **kwargs):
+    async def send_message(self, *args, **kwargs) -> LLMResponseEvent[Any]:
         """
         send_message gives you full support/access to the native Gemini chat send message method
         under the hood it calls chat.send_message_stream(*args, **kwargs)
@@ -163,7 +164,6 @@ class GeminiLLM(LLM):
                     sanitized_res = {}
                     for k, v in res.items():
                         sanitized_res[k] = self._sanitize_tool_output(v)
-
                     parts.append(
                         types.Part.from_function_response(
                             name=tc["name"], response=sanitized_res

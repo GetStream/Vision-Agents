@@ -73,7 +73,7 @@ class TTS(abc.ABC):
     async def warmup(self) -> None:
         """
         Warm up the TTS service.
-        
+
         This method can be overridden by implementations to perform
         model loading, connection establishment, or other initialization
         that should happen before the first synthesis request.
@@ -142,7 +142,7 @@ class TTS(abc.ABC):
         # Resample to desired format if needed
         pcm = pcm.resample(
             target_sample_rate=self._desired_sample_rate,
-            target_channels=self._desired_channels
+            target_channels=self._desired_channels,
         )
 
         self.events.send(
@@ -297,9 +297,9 @@ class TTS(abc.ABC):
             raise
         finally:
             elapsed_ms = (time.time() - start_time) * 1000.0
-            tts_latency_ms.record(
-                elapsed_ms, attributes={"tts_class": self.__class__.__name__}
-            )
+            # Use fully qualified class path for better identification
+            class_path = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+            tts_latency_ms.record(elapsed_ms, attributes={"tts_class": class_path})
 
     async def close(self):
         """Close the TTS service and release any resources."""

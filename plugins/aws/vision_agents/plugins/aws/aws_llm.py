@@ -90,12 +90,12 @@ class BedrockLLM(LLM):
             await asyncio.to_thread(_create_client)
         return self._client
 
-    async def simple_response(
+    async def _simple_response(
         self,
         text: str,
         processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
-    ):
+    ) -> LLMResponseEvent[Any]:
         """
         Simple response is a standardized way to create a response.
 
