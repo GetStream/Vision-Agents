@@ -280,6 +280,10 @@ class Agent:
         # listen to turn completed, started etc
         self.events.subscribe(self._on_turn_event)
 
+        @self.stt.events.subscribe
+        async def on_turn_ended(event: TurnEndedEvent):
+            logger.info(f"Received TurnEndedEvent %s", event)
+
         @self.llm.events.subscribe
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
             # turns started outside of the agent (instructions from code)
@@ -333,53 +337,26 @@ class Agent:
                 raise ValueError("user id is none, this indicates a bug in the code")
 
             # Determine how to handle LLM triggering based on turn detection
-            if self.turn_detection is not None:
-                # With turn detection: accumulate transcripts and wait for TurnEndedEvent
-                # Store/append the transcript for this user
-                if user_id not in self._pending_user_transcripts:
-                    self._pending_user_transcripts[user_id] = event.text
-                else:
-                    # Append to existing transcript (user might be speaking in chunks)
-                    self._pending_user_transcripts[user_id] += " " + event.text
-
-                self.logger.debug(
-                    f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
-                    f"{self._pending_user_transcripts[user_id][:100]}..."
-                )
-                if not self.turn_detection_enabled:
-                    # trigger turn completed here when there is no turn detection...
-                    pass
+            # With turn detection: accumulate transcripts and wait for TurnEndedEvent
+            # Store/append the transcript for this user
+            if user_id not in self._pending_user_transcripts:
+                self._pending_user_transcripts[user_id] = event.text
             else:
-                # cancel the old task if the text changed in the meantime
-                if self._pending_turn is not None and self._pending_turn.input != event.text:
-                    logger.info("Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ", self._pending_turn.input, event.text)
-                    self._pending_turn.task.cancel()
+                # Append to existing transcript (user might be speaking in chunks)
+                self._pending_user_transcripts[user_id] += " " + event.text
 
-                # create a new LLM turn
-                if self._pending_turn is None or self._pending_turn.input != event.text:
-                    logger.info("TADA Creating a new turn. Eager:%s", event.eager_end_of_turn)
-                    # Without turn detection: trigger LLM immediately on transcript completion
-                    # This is the traditional STT -> LLM flow
-                    llm_turn = LLMTurn(
-                        input=event.text,
-                        participant=event.participant,
-                        started_at=datetime.datetime.now(),
-                        turn_finished=not event.eager_end_of_turn
-                    )
-                    self._pending_turn = llm_turn
-                    task = asyncio.create_task(self.simple_response(event.text, event.participant))
-                    llm_turn.task = task
-                elif self._pending_turn.input == event.text:
-                    # same text as pending turn
-                    is_finished = not event.eager_end_of_turn
-                    now = datetime.datetime.now()
-                    elapsed = now - self._pending_turn.started_at
-                    logger.info("TADA Updating existing turn. is_finished: %s time elapsed: %.2f ms saved", is_finished, elapsed.total_seconds() * 1000)
+            self.logger.debug(
+                f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
+                f"{self._pending_user_transcripts[user_id][:100]}..."
+            )
 
-                    if is_finished:
-                        self._pending_turn.turn_finished = True
-                        if self._pending_turn.response is not None:
-                            await self._finish_llm_turn()
+            # if turn detection is disabled, treat the transcript event as an end of turn
+            if not self.turn_detection_enabled:
+                logger.info("manually triggering turn end")
+                self.events.send(TurnEndedEvent(
+                    participant = event.participant,
+                ))
+
 
         # TODO: chat event handling needs work
 
@@ -1077,6 +1054,7 @@ class Agent:
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
+        logger.info("_on_turn_event")
         # Skip the turn event handling if the model doesn't require TTS or SST audio itself.
         if _is_audio_llm(self.llm):
             return
@@ -1109,6 +1087,7 @@ class Agent:
             self.logger.info(
                 f"👉 Turn ended - participant {participant_id} finished (confidence: {event.confidence})"
             )
+            import pdb; pdb.set_trace()
             if not event.participant or event.participant.user_id == self.agent_user.id:
                 # Exit early if the event is triggered by the model response.
                 return
@@ -1129,22 +1108,41 @@ class Agent:
                     # Try to extract participant info from custom metadata
                     participant = event.custom.get("participant")
 
-                # Trigger LLM response with the complete transcript
-                # TODO: eager end of turn, should create the
-                llm_turn = LLMTurn(
-                    input=transcript,
-                    participant=participant,
-                    started_at=datetime.datetime.now(),
-                    turn_finished=not event.eager_end_of_turn
-                )
-                self._llm_turns[transcript] = llm_turn
-                await self.simple_response(transcript, participant)
-                if not event.eager_end_of_turn:
-                    # finish logic here
-                    pass
-
                 # Clear the pending transcript for this speaker
                 self._pending_user_transcripts[event.participant.user_id] = ""
+                # cancel the old task if the text changed in the meantime
+
+                if self._pending_turn is not None and self._pending_turn.input != transcript:
+                    logger.info("Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
+                                self._pending_turn.input, transcript)
+                    self._pending_turn.task.cancel()
+
+                # create a new LLM turn
+                if self._pending_turn is None or self._pending_turn.input != transcript:
+                    logger.info("TADA Creating a new turn. Eager:%s", event.eager_end_of_turn)
+                    # Without turn detection: trigger LLM immediately on transcript completion
+                    # This is the traditional STT -> LLM flow
+                    llm_turn = LLMTurn(
+                        input=transcript,
+                        participant=event.participant,
+                        started_at=datetime.datetime.now(),
+                        turn_finished=not event.eager_end_of_turn
+                    )
+                    self._pending_turn = llm_turn
+                    task = asyncio.create_task(self.simple_response(transcript, event.participant))
+                    llm_turn.task = task
+                elif self._pending_turn.input == transcript:
+                    # same text as pending turn
+                    is_finished = not event.eager_end_of_turn
+                    now = datetime.datetime.now()
+                    elapsed = now - self._pending_turn.started_at
+                    logger.info("TADA Updating existing turn. is_finished: %s time elapsed: %.2f ms saved", is_finished,
+                                elapsed.total_seconds() * 1000)
+
+                    if is_finished:
+                        self._pending_turn.turn_finished = True
+                        if self._pending_turn.response is not None:
+                            await self._finish_llm_turn()
 
     @property
     def turn_detection_enabled(self):

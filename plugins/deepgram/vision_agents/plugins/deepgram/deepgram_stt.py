@@ -12,6 +12,7 @@ from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.turn_detection import TurnEndedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -223,14 +224,15 @@ class STT(stt.STT):
                 logger.warning("Received transcript but no participant set")
                 return
 
-            if is_final:
+            if is_final or eager_end_of_turn:
                 self._emit_transcript_event(
                     transcript_text, participant, response_metadata
                 )
-            elif eager_end_of_turn:
-                self._emit_transcript_event(
-                    transcript_text, participant, response_metadata, eager_end_of_turn=True
-                )
+
+                # TODO: make a nice utility method
+                self._emit_turn_ended_event(participant=participant, eager_end_of_turn=eager_end_of_turn)
+                logger.info("DEEPGRAM end of turn event eager: %s", eager_end_of_turn)
+
             else:
                 # Partial transcript (event == "StartOfTurn" or "Update")
                 self._emit_partial_transcript_event(

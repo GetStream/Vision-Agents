@@ -8,6 +8,7 @@ from ..edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 from . import events
 from .events import TranscriptResponse
+from ..turn_detection import TurnEndedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,19 @@ class STT(abc.ABC):
             response=response,
             eager_end_of_turn=eager_end_of_turn
         ))
+
+    def _emit_turn_ended_event(
+        self,
+        participant: Participant,
+        eager_end_of_turn: bool = False,
+    ):
+        self.events.send(TurnEndedEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            participant = participant,
+            eager_end_of_turn=eager_end_of_turn
+        ))
+        logger.info("done sending evnet")
 
     def _emit_partial_transcript_event(
         self,
