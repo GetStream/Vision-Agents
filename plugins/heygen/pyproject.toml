@@ -1,12 +1,13 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "vision-agents-plugins-heygen"
-version = "0.1.0"
+dynamic = ["version"]
 description = "HeyGen avatar plugin for Vision Agents"
 readme = "README.md"
+keywords = ["heygen", "avatars", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
@@ -25,7 +26,7 @@ source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
-packages = ["vision_agents"]
+packages = [".", "vision_agents"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/vision_agents"]
