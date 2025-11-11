@@ -1,20 +1,20 @@
 import asyncio
 import contextlib
+import datetime
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
-import aiortc
 
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
 
+from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
-from .agent_options import AgentOptions, default_agent_options
+from .agent_types import AgentOptions, default_agent_options, LLMTurn, TrackInfo
 
 from ..edge import sfu_events
 from ..edge.events import (
@@ -23,7 +23,6 @@ from ..edge.events import (
     TrackRemovedEvent,
     CallEndedEvent,
 )
-from ..edge.sfu_events import ParticipantJoinedEvent
 from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
 from ..events.manager import EventManager
 from ..llm import events as llm_events
@@ -70,26 +69,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 tracer: Tracer = trace.get_tracer("agents")
-
-
-@dataclass
-class TrackInfo:
-    id: str
-    type: int
-    processor: str
-    priority: int  # higher goes first
-    participant: Optional[Participant]
-    track: aiortc.mediastreams.VideoStreamTrack
-    forwarder: VideoForwarder
-
-
-"""
-TODO:
-- fix pcm_data.participant
-- fix image processors
-- verify processed tracks are setup correctly
-- cleanup events more
-"""
 
 
 class Agent:
@@ -148,6 +127,8 @@ class Agent:
         log_level: Optional[int] = logging.INFO,
         profiler: Optional[Profiler] = None,
     ):
+        self._pending_turn: Optional[LLMTurn] = None
+        self.participants: Optional[ParticipantsState] = None
         self.call = None
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
@@ -244,24 +225,59 @@ class Agent:
 
         self.events.send(events.AgentInitEvent())
 
+    async def _finish_llm_turn(self):
+        if self._pending_turn is None or self._pending_turn.response is None:
+            raise ValueError(
+                "Finish LLM turn should only be called after self._pending_turn is set"
+            )
+        turn = self._pending_turn
+        self._pending_turn = None
+        event = turn.response
+        if self.tts and event and event.text and event.text.strip():
+            await self.tts.send(event.text)
+
     def setup_event_handling(self):
-        logger.info("AUDIO: SUB TO EVENTS")
+        """
+        Agent event handling:
+
+        - STT: AudioReceivedEvent -> STTTranscriptEvent -> TurnCompleted -> LLMResponseCompletedEvent -> TTSAudioEvent
+        - Eager: AudioReceivedEvent -> STTTranscriptEvent -> EagerTurnCompleted -> LLMResponseCompletedEvent
+            - > if TurnCompleted -> TTSAudioEvent
+        - Realtime: Transcriptions
+
+        Other events
+        - Tracks for video added/removed
+        - Error events
+
+        """
         # listen to turn completed, started etc
-        # TODO: here we should handle eager turn taking
         self.events.subscribe(self._on_turn_event)
+
+        if self.stt:
+
+            @self.stt.events.subscribe
+            async def on_turn_ended(event: TurnEndedEvent):
+                logger.info("Received TurnEndedEvent %s", event)
+
+        @self.llm.events.subscribe
+        async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
+            # turns started outside of the agent (instructions from code)
+            if self._pending_turn is None:
+                if self.tts and event.text and event.text.strip():
+                    await self.tts.send(event.text)
+            else:
+                self._pending_turn.response = event
+                if self._pending_turn.turn_finished:
+                    await self._finish_llm_turn()
+                else:
+                    # we are in eager turn completion mode. wait for confirmation
+                    self._pending_turn.response = event
 
         # write tts pcm to output track (this is the AI talking to us)
         @self.events.subscribe
         async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
             if self._audio_track is not None:
                 await self._audio_track.write(event.data)
-
-        @self.llm.events.subscribe
-        async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
-            # Trigger TTS directly instead of through event system
-            if self.tts and event.text and event.text.strip():
-                await self.tts.send(event.text)
-            # TODO: here we should handle eager turn taking
 
         # listen to video tracks added/removed
         @self.edge.events.subscribe
@@ -283,12 +299,6 @@ class Agent:
             if event.participant is not None:
                 await self._reply_to_audio(event.pcm_data, event.participant)
 
-        @self.edge.events.subscribe
-        async def on_participant_joined(event: ParticipantJoinedEvent):
-            if event.participant is not None:
-                self.logger.info(f"Participant {event.participant.user_id} joined")
-                self.participants[event.participant.session_id] = event.participant
-
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
             if _is_audio_llm(self.llm):
@@ -300,24 +310,28 @@ class Agent:
                 raise ValueError("user id is none, this indicates a bug in the code")
 
             # Determine how to handle LLM triggering based on turn detection
-            if self.turn_detection is not None:
-                # With turn detection: accumulate transcripts and wait for TurnEndedEvent
-                # Store/append the transcript for this user
-                if user_id not in self._pending_user_transcripts:
-                    self._pending_user_transcripts[user_id] = event.text
-                else:
-                    # Append to existing transcript (user might be speaking in chunks)
-                    self._pending_user_transcripts[user_id] += " " + event.text
-
-                self.logger.debug(
-                    f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
-                    f"{self._pending_user_transcripts[user_id][:100]}..."
-                )
+            # With turn detection: accumulate transcripts and wait for TurnEndedEvent
+            # Store/append the transcript for this user
+            if user_id not in self._pending_user_transcripts:
+                self._pending_user_transcripts[user_id] = event.text
             else:
-                # Without turn detection: trigger LLM immediately on transcript completion
-                # This is the traditional STT -> LLM flow
-                with self.span("agent.on_stt_transcript_event_create_response"):
-                    await self.simple_response(event.text, event.participant)
+                # Append to existing transcript (user might be speaking in chunks)
+                self._pending_user_transcripts[user_id] += " " + event.text
+
+            self.logger.debug(
+                f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
+                f"{self._pending_user_transcripts[user_id][:100]}..."
+            )
+
+            # if turn detection is disabled, treat the transcript event as an end of turn
+            if not self.turn_detection_enabled:
+                self.events.send(
+                    TurnEndedEvent(
+                        participant=event.participant,
+                    )
+                )
+
+        # TODO: chat event handling needs work
 
         # Error handling
         @self.events.subscribe
@@ -425,8 +439,6 @@ class Agent:
                     completed=False,  # Still streaming
                 )
 
-        logger.info("AUDIO: SUB TO EVENTS DONE")
-
     async def simple_response(
         self, text: str, participant: Optional[Participant] = None
     ) -> None:
@@ -508,9 +520,8 @@ class Agent:
 
             with self.span("edge.join"):
                 connection = await self.edge.join(self, call)
-                self.participants = (
-                    connection._connection.participants_state._participant_by_prefix
-                )
+                self.participants = connection.participants
+
         except Exception:
             self.clear_call_logging_context()
             raise
@@ -552,32 +563,23 @@ class Agent:
 
     async def wait_for_participant(self):
         """wait for a participant other than the AI agent to join"""
-        # Check if a non-agent participant is already present
-        if self.call and self.participants:
-            for p in self.participants.values():
-                if p.user_id != self.agent_user.id:
-                    self.logger.info(f"Participant {p.user_id} already in call")
-                    return
 
-        # If not, wait for one to join
+        if self.participants is None:
+            return
+
         participant_joined = asyncio.Event()
 
-        @self.edge.events.subscribe
-        async def on_participant_joined(event: ParticipantJoinedEvent):
-            if event.participant is not None:
-                is_agent = event.participant.user_id == self.agent_user.id
-
-                self.logger.info(
-                    f"Participant {event.participant.user_id} joined is_agent {is_agent}"
-                )
-                if not is_agent:
+        def on_participants(participants):
+            for p in participants:
+                if p.user_id != self.agent_user.id:
                     participant_joined.set()
 
-        # Wait for the event to be set
-        await participant_joined.wait()
+        subscription = self.participants.map(on_participants)
 
-        # Clean up the subscription
-        self.edge.events.unsubscribe(on_participant_joined)
+        try:
+            await participant_joined.wait()
+        finally:
+            subscription.unsubscribe()
 
     async def finish(self):
         """Wait for the call to end gracefully.
@@ -764,7 +766,7 @@ class Agent:
 
         return call
 
-    def _on_vad_audio(self, event: VADAudioEvent):
+    async def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.debug(f"Vad audio event {self._truncate_for_logging(event)}")
 
     def _on_rtc_reconnect(self):
@@ -992,6 +994,7 @@ class Agent:
 
         # If Realtime provider supports video, switch to this new track
         if _is_video_llm(self.llm):
+            logger.info("watch video called with track %s", processed_track)
             await self.llm.watch_video_track(
                 processed_track.track, shared_forwarder=processed_track.forwarder
             )
@@ -1033,6 +1036,7 @@ class Agent:
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
+        logger.info("_on_turn_event")
         # Skip the turn event handling if the model doesn't require TTS or SST audio itself.
         if _is_audio_llm(self.llm):
             return
@@ -1044,10 +1048,7 @@ class Agent:
                     self.logger.info(
                         f"👉 Turn started - interrupting TTS for participant {event.participant.user_id}"
                     )
-                    try:
-                        await self.tts.stop_audio()
-                    except Exception as e:
-                        self.logger.error(f"Error stopping TTS: {e}")
+                    await self.tts.stop_audio()
                 else:
                     participant_id = (
                         event.participant.user_id if event.participant else "unknown"
@@ -1085,16 +1086,60 @@ class Agent:
                 )
 
                 # Create participant object if we have metadata
-                participant = None
-                if hasattr(event, "custom") and event.custom:
-                    # Try to extract participant info from custom metadata
-                    participant = event.custom.get("participant")
-
-                # Trigger LLM response with the complete transcript
-                await self.simple_response(transcript, participant)
+                participant = event.participant
 
                 # Clear the pending transcript for this speaker
-                self._pending_user_transcripts[event.participant.user_id] = ""
+                self._pending_user_transcripts[participant.user_id] = ""
+                # cancel the old task if the text changed in the meantime
+
+                if (
+                    self._pending_turn is not None
+                    and self._pending_turn.input != transcript
+                ):
+                    logger.debug(
+                        "Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
+                        self._pending_turn.input,
+                        transcript,
+                    )
+                    if self._pending_turn.task:
+                        self._pending_turn.task.cancel()
+
+                # create a new LLM turn
+                if self._pending_turn is None or self._pending_turn.input != transcript:
+                    # Without turn detection: trigger LLM immediately on transcript completion
+                    # This is the traditional STT -> LLM flow
+                    llm_turn = LLMTurn(
+                        input=transcript,
+                        participant=event.participant,
+                        started_at=datetime.datetime.now(),
+                        turn_finished=not event.eager_end_of_turn,
+                    )
+                    self._pending_turn = llm_turn
+                    task = asyncio.create_task(
+                        self.simple_response(transcript, event.participant)
+                    )
+                    llm_turn.task = task
+                elif self._pending_turn.input == transcript:
+                    # same text as pending turn
+                    is_finished = not event.eager_end_of_turn
+                    now = datetime.datetime.now()
+                    elapsed = now - self._pending_turn.started_at
+                    logger.debug(
+                        "Marking eager turn as completed. Eager turn detection saved %.2f",
+                        elapsed.total_seconds() * 1000,
+                    )
+
+                    if is_finished:
+                        self._pending_turn.turn_finished = True
+                        if self._pending_turn.response is not None:
+                            await self._finish_llm_turn()
+
+    @property
+    def turn_detection_enabled(self):
+        # return true if either turn detection or stt provide turn detection capabilities
+        return self.turn_detection is not None or (
+            self.stt is not None and self.stt.turn_detection
+        )
 
     @property
     def publish_audio(self) -> bool:

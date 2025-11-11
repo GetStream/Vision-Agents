@@ -14,7 +14,6 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
-    TurnEndedEvent,
 )
 from vision_agents.core.utils.utils import ensure_model
 
@@ -288,12 +287,10 @@ class VogentTurnDetection(TurnDetector):
                     
                     if is_complete:
                         self._emit_end_turn_event(
-                            TurnEndedEvent(
-                                participant=participant,
-                                confidence=1.0,  # Vogent gives probability, we already thresholded
-                                trailing_silence_ms=trailing_silence_ms,
-                                duration_ms=self._active_segment.duration_ms,
-                            )
+                            participant=participant,
+                            confidence=1.0,  # Vogent gives probability, we already thresholded
+                            trailing_silence_ms=trailing_silence_ms,
+                            duration_ms=self._active_segment.duration_ms,
                         )
                         self._active_segment = None
                         self._silence = Silence()

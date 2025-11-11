@@ -11,7 +11,7 @@ from PIL import Image
 from transformers import AutoModelForCausalLM
 
 from vision_agents.core import llm
-from vision_agents.core.agents.agents import AgentOptions, default_agent_options
+from vision_agents.core.agents.agent_types import AgentOptions, default_agent_options
 from vision_agents.core.stt.events import STTTranscriptEvent
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,

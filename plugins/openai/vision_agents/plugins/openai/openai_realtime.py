@@ -29,9 +29,13 @@ logger = logging.getLogger(__name__)
 
 """
 TODO
-- support passing full client options in __init__. at that's not possible.
+- improve event parsing, reuse built-in types where possible
+- not clear why we resize video to width=640, height=480
+- reconnect flow isn't implemented properly
+- is it needed to redo the SDP offer/answer cycle when receiving a new track?
+- support passing full client options in __init__
 - review either SessionCreateParams or RealtimeSessionCreateRequestParam
-- send video should depend on if the RTC connection with stream is sending video.
+- send video should depend on if the RTC connection with stream is sending video. not always send
 """
 
 client = RealtimeSessionCreateRequestParam

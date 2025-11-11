@@ -13,7 +13,7 @@ class MyTurnDetector(TurnDetector):
     ) -> None:
     
         self._emit_start_turn_event(TurnStartedEvent(participant=participant))
-        self._emit_end_turn_event(TurnEndedEvent(participant=participant, confidence=0.7))
+        self._emit_end_turn_event(participant=participant, confidence=0.7)
 
     def start(self):
         super().start()

@@ -390,9 +390,11 @@ class Realtime(realtime.Realtime):
             shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one
         """
 
-        if self._video_forwarder is not None and shared_forwarder is None:
-            self.logger.warning("Video sender already running, stopping previous one")
-            await self._stop_watching_video_track()
+        # This method can be called multiple times with different forwarders
+        # Remove handler from old forwarder if it exists
+        if self._video_forwarder is not None:
+            await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+            self.logger.debug("Removed old video frame handler from previous forwarder")
 
         if shared_forwarder is not None:
             # Use the shared forwarder - just register as a consumer
