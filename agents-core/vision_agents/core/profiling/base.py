@@ -1,4 +1,3 @@
-import pyinstrument
 import logging
 
 from vision_agents.core.events import EventManager
@@ -29,6 +28,8 @@ class Profiler:
             output_path: Path where the HTML profile report will be saved.
                 Defaults to './profile.html'.
         """
+        import pyinstrument
+
         self.output_path = output_path
         self.events = EventManager()
         self.events.register_events_from_module(events)
