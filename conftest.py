@@ -17,6 +17,7 @@ from torchvision.io.video import av
 
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
+from vision_agents.core.edge.types import Participant
 
 load_dotenv()
 
@@ -125,6 +126,12 @@ def get_assets_dir():
 def assets_dir():
     """Fixture providing the test assets directory path."""
     return get_assets_dir()
+
+
+@pytest.fixture
+def participant():
+    """Create a test participant for STT testing."""
+    return Participant({}, user_id="test-user")
 
 
 @pytest.fixture
