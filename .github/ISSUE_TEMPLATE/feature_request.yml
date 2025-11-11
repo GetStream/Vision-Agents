@@ -1,0 +1,117 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please fill out the form below to help us understand your request.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component would this feature affect?
+      options:
+        - Core Agent
+        - LLM Integration
+        - STT (Speech-to-Text)
+        - TTS (Text-to-Speech)
+        - Video Processing
+        - Audio Processing
+        - Plugin System
+        - Edge/Stream Integration
+        - Examples
+        - Documentation
+        - New Plugin
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: Feature Description
+      description: A clear and concise description of the feature you'd like to see
+      placeholder: Describe the feature...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve?
+      placeholder: Describe the problem this feature would solve...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your proposed solution
+      placeholder: Describe how you think this feature should work...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Any alternative solutions or workarounds you've considered
+      placeholder: Describe any alternatives you've considered...
+    validations:
+      required: false
+
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: Use Cases
+      description: Describe specific use cases for this feature
+      placeholder: |
+        1. Use case 1
+        2. Use case 2
+        3. Use case 3
+    validations:
+      required: true
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Code Example
+      description: If you have ideas for the API, show us how it might look
+      render: python
+      placeholder: |
+        ```python
+        # Example of how the feature might be used
+        ```
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact Assessment
+      description: What would this feature impact?
+      options:
+        - label: Breaking change to existing API
+          required: false
+        - label: New plugin required
+          required: false
+        - label: Documentation updates needed
+          required: false
+        - label: Example updates needed
+          required: false
+        - label: Performance implications
+          required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, mockups, or references
+      placeholder: Add any other context, screenshots, or references here...
+    validations:
+      required: false
