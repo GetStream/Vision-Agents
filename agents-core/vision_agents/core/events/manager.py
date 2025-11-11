@@ -333,6 +333,9 @@ class EventManager:
         is_union = False
         annotations = typing.get_type_hints(function)
 
+        if not asyncio.iscoroutinefunction(function):
+            raise RuntimeError("Handlers must be coroutines. Use async def handler(event: EventType):")
+
         for name, event_class in annotations.items():
             origin = get_origin(event_class)
             events: typing.List[type] = []

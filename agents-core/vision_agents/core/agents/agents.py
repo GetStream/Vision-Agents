@@ -799,7 +799,7 @@ class Agent:
 
         return call
 
-    def _on_vad_audio(self, event: VADAudioEvent):
+    async def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.debug(f"Vad audio event {self._truncate_for_logging(event)}")
 
     def _on_rtc_reconnect(self):
