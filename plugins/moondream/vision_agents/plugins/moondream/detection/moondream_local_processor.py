@@ -12,7 +12,7 @@ import torch
 from PIL import Image
 from transformers import AutoModelForCausalLM
 
-from vision_agents.core.agents.agents import AgentOptions, default_agent_options
+from vision_agents.core.agents.agent_types import AgentOptions, default_agent_options
 from vision_agents.core.processors.base_processor import (
     VideoProcessorMixin,
     VideoPublisherMixin,

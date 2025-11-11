@@ -379,7 +379,6 @@ class StreamEdge(EdgeTransport):
                 members=[
                     ChannelMemberRequest(
                         user_id=human_id,
-                        custom={},
                     )
                 ],
             )

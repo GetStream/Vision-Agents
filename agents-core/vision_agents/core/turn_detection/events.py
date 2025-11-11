@@ -43,6 +43,8 @@ class TurnEndedEvent(PluginBaseEvent):
     trailing_silence_ms: Optional[float] = None
     duration_ms: Optional[float] = None
     custom: Optional[Dict[str, Any]] = None
+    eager_end_of_turn: bool = False
+
 
 
 __all__ = ["TurnStartedEvent", "TurnEndedEvent"]
