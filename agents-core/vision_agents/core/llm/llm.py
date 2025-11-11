@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Conversation
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from getstream.video.rtc import AudioStreamTrack, PcmData
+from getstream.video.rtc import PcmData
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.utils import Instructions, parse_instructions
 from vision_agents.core.events.manager import EventManager
@@ -437,13 +437,6 @@ class AudioLLM(LLM, metaclass=abc.ABCMeta):
         Args:
             pcm: PCM audio frame to forward upstream.
             participant: Optional participant information for the audio source.
-        """
-
-    @property
-    @abc.abstractmethod
-    def output_audio_track(self) -> AudioStreamTrack:
-        """
-        An output audio track from the LLM.
         """
 
 

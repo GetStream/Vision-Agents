@@ -12,7 +12,7 @@ class TestDeepgramSTT:
     @pytest.fixture
     async def stt(self):
         """Create and manage Deepgram STT lifecycle"""
-        stt = deepgram.STT()
+        stt = deepgram.STT(eager_turn_detection=True)
         try:
             await stt.start()
             yield stt

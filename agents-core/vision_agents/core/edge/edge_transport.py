@@ -35,7 +35,7 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def close(self):
+    async def close(self):
         pass
 
     @abc.abstractmethod

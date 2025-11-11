@@ -4,7 +4,6 @@ from asyncio import CancelledError
 from typing import Optional, List, Dict, Any
 
 import aiortc
-from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
 from google.genai.live import AsyncSession
@@ -103,18 +102,11 @@ class Realtime(realtime.Realtime):
         self.client = client
         self.config: LiveConnectConfigDict = self._create_config(config)
         self.logger = logging.getLogger(__name__)
-        # Gemini generates at 24k. webrtc automatically translates it to 48khz
-        self._output_audio_track = AudioStreamTrack(
-            sample_rate=24000, channels=1, format="s16"
-        )
+
         self._video_forwarder: Optional[VideoForwarder] = None
         self._session_context: Optional[Any] = None
         self._session: Optional[AsyncSession] = None
         self._receive_task: Optional[asyncio.Task[Any]] = None
-
-    @property
-    def output_audio_track(self) -> AudioStreamTrack:
-        return self._output_audio_track
 
     async def simple_response(
         self,
@@ -315,7 +307,6 @@ class Realtime(realtime.Realtime):
                                         self._emit_audio_output_event(
                                             audio_data=pcm,
                                         )
-                                        await self._output_audio_track.write(pcm)
                                     elif (
                                         hasattr(typed_part, "function_call")
                                         and typed_part.function_call
@@ -399,9 +390,11 @@ class Realtime(realtime.Realtime):
             shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one
         """
 
-        if self._video_forwarder is not None and shared_forwarder is None:
-            self.logger.warning("Video sender already running, stopping previous one")
-            await self._stop_watching_video_track()
+        # This method can be called multiple times with different forwarders
+        # Remove handler from old forwarder if it exists
+        if self._video_forwarder is not None:
+            await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+            self.logger.debug("Removed old video frame handler from previous forwarder")
 
         if shared_forwarder is not None:
             # Use the shared forwarder - just register as a consumer

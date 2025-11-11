@@ -49,3 +49,21 @@ A good example of testing the STT can be found in plugins/fish/tests/test_fish_s
 
 Use `PcmData` and other utils available from the `getstream.video.rtc.track_util` module.
 Do not write code that directly manipulates PCM, use the audio utilities instead.
+
+## Turn keeping
+
+If your STT supports Turn detection/turn events do the following
+
+```
+class MySTT(stt.STT):
+    turn_detection: bool = True
+    
+    async def process_audio(
+        self,
+        pcm_data: PcmData,
+        participant: Optional[Participant] = None,
+    ):
+        ...
+        self._emit_turn_ended_event(participant=participant, eager_end_of_turn=eager_end_of_turn)
+        ...
+```

@@ -347,7 +347,7 @@ class StreamEdge(EdgeTransport):
             ]
         )
 
-    def close(self):
+    async def close(self):
         # Note: Not calling super().close() as it's an abstract method with trivial body
         pass
 
@@ -379,7 +379,6 @@ class StreamEdge(EdgeTransport):
                 members=[
                     ChannelMemberRequest(
                         user_id=human_id,
-                        custom={},
                     )
                 ],
             )
