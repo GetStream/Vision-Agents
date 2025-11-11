@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 import aiortc
 from getstream import AsyncStream
 from getstream.chat.async_client import ChatClient
-from getstream.models import ChannelInput, ChannelMember
+from getstream.models import ChannelInput, ChannelMember, ChannelMemberRequest
 from getstream.video import rtc
 from getstream.video.async_call import Call
 from getstream.video.rtc import ConnectionManager, audio_track
@@ -377,15 +377,8 @@ class StreamEdge(EdgeTransport):
             data=ChannelInput(
                 created_by_id=self.agent_user_id,
                 members=[
-                    ChannelMember(
+                    ChannelMemberRequest(
                         user_id=human_id,
-                        # TODO: get rid of this when codegen for stream-py is fixed, these fields are meaningless
-                        banned=False,
-                        channel_role="",
-                        created_at=datetime.datetime.now(datetime.UTC),
-                        notifications_muted=False,
-                        shadow_banned=False,
-                        updated_at=datetime.datetime.now(datetime.UTC),
                         custom={},
                     )
                 ],
