@@ -31,6 +31,7 @@ from ..llm.events import (
     LLMResponseCompletedEvent,
     RealtimeUserSpeechTranscriptionEvent,
     RealtimeAgentSpeechTranscriptionEvent,
+    RealtimeAudioOutputEvent,
 )
 from ..llm.llm import AudioLLM, LLM, VideoLLM
 from ..llm.realtime import Realtime
@@ -68,7 +69,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 tracer: Tracer = trace.get_tracer("agents")
-
 
 
 class Agent:
@@ -227,7 +227,9 @@ class Agent:
 
     async def _finish_llm_turn(self):
         if self._pending_turn is None or self._pending_turn.response is None:
-            raise ValueError("Finish LLM turn should only be called after self._pending_turn is set")
+            raise ValueError(
+                "Finish LLM turn should only be called after self._pending_turn is set"
+            )
         turn = self._pending_turn
         self._pending_turn = None
         event = turn.response
@@ -252,6 +254,7 @@ class Agent:
         self.events.subscribe(self._on_turn_event)
 
         if self.stt:
+
             @self.stt.events.subscribe
             async def on_turn_ended(event: TurnEndedEvent):
                 logger.info("Received TurnEndedEvent %s", event)
@@ -322,10 +325,11 @@ class Agent:
 
             # if turn detection is disabled, treat the transcript event as an end of turn
             if not self.turn_detection_enabled:
-                self.events.send(TurnEndedEvent(
-                    participant = event.participant,
-                ))
-
+                self.events.send(
+                    TurnEndedEvent(
+                        participant=event.participant,
+                    )
+                )
 
         # TODO: chat event handling needs work
 
@@ -634,7 +638,12 @@ class Agent:
             ):
                 func = getattr(subclass, function_name)
                 if func is not None:
-                    await func(*args, **kwargs)
+                    try:
+                        await func(*args, **kwargs)
+                    except Exception as e:
+                        self.logger.exception(
+                            f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
+                        )
 
     def _end_tracing(self):
         if self._root_span is not None:
@@ -879,7 +888,10 @@ class Agent:
                             pcm, participant, conversation=self.conversation
                         )
 
-                    if participant and getattr(participant, "user_id", None) != self.agent_user.id:
+                    if (
+                        participant
+                        and getattr(participant, "user_id", None) != self.agent_user.id
+                    ):
                         # first forward to processors
                         # Extract audio bytes for processors using the proper PCM data structure
                         # PCM data has: format, sample_rate, samples, pts, dts, time_base
@@ -1044,6 +1056,8 @@ class Agent:
                     self.logger.info(
                         f"👉 Turn started - participant speaking {participant_id} : {event.confidence}"
                     )
+                if self._audio_track is not None:
+                    await self._audio_track.flush()
             else:
                 # Agent itself started speaking - this is normal
                 participant_id = (
@@ -1078,9 +1092,15 @@ class Agent:
                 self._pending_user_transcripts[participant.user_id] = ""
                 # cancel the old task if the text changed in the meantime
 
-                if self._pending_turn is not None and self._pending_turn.input != transcript:
-                    logger.debug("Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
-                                self._pending_turn.input, transcript)
+                if (
+                    self._pending_turn is not None
+                    and self._pending_turn.input != transcript
+                ):
+                    logger.debug(
+                        "Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
+                        self._pending_turn.input,
+                        transcript,
+                    )
                     if self._pending_turn.task:
                         self._pending_turn.task.cancel()
 
@@ -1092,18 +1112,22 @@ class Agent:
                         input=transcript,
                         participant=event.participant,
                         started_at=datetime.datetime.now(),
-                        turn_finished=not event.eager_end_of_turn
+                        turn_finished=not event.eager_end_of_turn,
                     )
                     self._pending_turn = llm_turn
-                    task = asyncio.create_task(self.simple_response(transcript, event.participant))
+                    task = asyncio.create_task(
+                        self.simple_response(transcript, event.participant)
+                    )
                     llm_turn.task = task
                 elif self._pending_turn.input == transcript:
                     # same text as pending turn
                     is_finished = not event.eager_end_of_turn
                     now = datetime.datetime.now()
                     elapsed = now - self._pending_turn.started_at
-                    logger.debug("Marking eager turn as completed. Eager turn detection saved %.2f",
-                                elapsed.total_seconds() * 1000)
+                    logger.debug(
+                        "Marking eager turn as completed. Eager turn detection saved %.2f",
+                        elapsed.total_seconds() * 1000,
+                    )
 
                     if is_finished:
                         self._pending_turn.turn_finished = True
@@ -1113,8 +1137,9 @@ class Agent:
     @property
     def turn_detection_enabled(self):
         # return true if either turn detection or stt provide turn detection capabilities
-        return self.turn_detection is not None or (self.stt is not None and self.stt.turn_detection)
-
+        return self.turn_detection is not None or (
+            self.stt is not None and self.stt.turn_detection
+        )
 
     @property
     def publish_audio(self) -> bool:
@@ -1246,30 +1271,17 @@ class Agent:
     def _prepare_rtc(self):
         # Variables are now initialized in __init__
 
-        # Set up audio track if TTS is available
         if self.publish_audio:
-            if _is_audio_llm(self.llm):
-                self._audio_track = self.llm.output_audio_track
-                self.logger.info("🎵 Using Realtime provider output track for audio")
-            elif self.audio_publishers:
-                # Get the first audio publisher to create the track
-                audio_publisher = self.audio_publishers[0]
-                self._audio_track = audio_publisher.publish_audio_track()
-                self.logger.info("🎵 Audio track initialized from audio publisher")
-            else:
-                # Default to WebRTC-friendly format unless configured differently
-                framerate = 48000
-                stereo = True
-                self._audio_track = self.edge.create_audio_track(
-                    framerate=framerate, stereo=stereo
-                )
-                # Inform TTS of desired output format so it can resample accordingly
-                if self.tts:
-                    channels = 2 if stereo else 1
-                    self.tts.set_output_format(
-                        sample_rate=framerate,
-                        channels=channels,
-                    )
+            framerate = 48000
+            stereo = True
+            self._audio_track = self.edge.create_audio_track(
+                framerate=framerate, stereo=stereo
+            )
+
+            @self.events.subscribe
+            async def forward_audio(event: RealtimeAudioOutputEvent):
+                if self._audio_track is not None:
+                    await self._audio_track.write(event.data)
 
         # Set up video track if video publishers are available
         if self.publish_video:

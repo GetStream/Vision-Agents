@@ -4,7 +4,6 @@ from asyncio import CancelledError
 from typing import Optional, List, Dict, Any
 
 import aiortc
-from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
 from google.genai.live import AsyncSession
@@ -103,18 +102,11 @@ class Realtime(realtime.Realtime):
         self.client = client
         self.config: LiveConnectConfigDict = self._create_config(config)
         self.logger = logging.getLogger(__name__)
-        # Gemini generates at 24k. webrtc automatically translates it to 48khz
-        self._output_audio_track = AudioStreamTrack(
-            sample_rate=24000, channels=1, format="s16"
-        )
+
         self._video_forwarder: Optional[VideoForwarder] = None
         self._session_context: Optional[Any] = None
         self._session: Optional[AsyncSession] = None
         self._receive_task: Optional[asyncio.Task[Any]] = None
-
-    @property
-    def output_audio_track(self) -> AudioStreamTrack:
-        return self._output_audio_track
 
     async def simple_response(
         self,
@@ -315,7 +307,6 @@ class Realtime(realtime.Realtime):
                                         self._emit_audio_output_event(
                                             audio_data=pcm,
                                         )
-                                        await self._output_audio_track.write(pcm)
                                     elif (
                                         hasattr(typed_part, "function_call")
                                         and typed_part.function_call

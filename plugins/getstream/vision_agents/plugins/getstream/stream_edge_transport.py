@@ -347,7 +347,7 @@ class StreamEdge(EdgeTransport):
             ]
         )
 
-    def close(self):
+    async def close(self):
         # Note: Not calling super().close() as it's an abstract method with trivial body
         pass
 
