@@ -255,7 +255,8 @@ class Agent:
         self.events.send(events.AgentInitEvent())
 
     async def _finish_llm_turn(self):
-        self.logger.debug(f"Finish LLM turn")
+        if self._pending_turn is None or self._pending_turn.response is None:
+            raise ValueError("Finish LLM turn should only be called after self._pending_turn is set")
         turn = self._pending_turn
         self._pending_turn = None
         event = turn.response
@@ -345,9 +346,12 @@ class Agent:
                     f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
                     f"{self._pending_user_transcripts[user_id][:100]}..."
                 )
+                if not self.turn_detection_enabled:
+                    # trigger turn completed here when there is no turn detection...
+                    pass
             else:
                 # cancel the old task if the text changed in the meantime
-                if self._video_track is not None and self._pending_turn.input != event.text:
+                if self._pending_turn is not None and self._pending_turn.input != event.text:
                     logger.info("Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ", self._pending_turn.input, event.text)
                     self._pending_turn.task.cancel()
 
@@ -1084,10 +1088,7 @@ class Agent:
                     self.logger.info(
                         f"👉 Turn started - interrupting TTS for participant {event.participant.user_id}"
                     )
-                    try:
-                        await self.tts.stop_audio()
-                    except Exception as e:
-                        self.logger.error(f"Error stopping TTS: {e}")
+                    await self.tts.stop_audio()
                 else:
                     participant_id = (
                         event.participant.user_id if event.participant else "unknown"
@@ -1145,6 +1146,10 @@ class Agent:
                 # Clear the pending transcript for this speaker
                 self._pending_user_transcripts[event.participant.user_id] = ""
 
+    @property
+    def turn_detection_enabled(self):
+        # return true if either turn detection or stt provide turn detection capabilities
+        return self.turn_detection is not None or (self.stt is not None and self.stt.turn_detection)
 
     @property
     def publish_audio(self) -> bool:

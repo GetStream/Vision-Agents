@@ -30,6 +30,7 @@ class STT(stt.STT):
     - eot_threshold controls turn end sensitivity
     - eager_eot_threshold controls eager turn ending (so you can already prepare the LLM response)
     """
+    turn_detection: bool = True  # we support turn detection with deepgram
 
     def __init__(
         self,

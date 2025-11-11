@@ -25,6 +25,7 @@ class STT(abc.ABC):
     """
     closed: bool = False
     started: bool = False
+    turn_detection: bool = False # if the STT supports turn detection
 
     def __init__(
         self,
