@@ -26,13 +26,13 @@ class TestElevenLabsSTT:
             await stt.close()
 
     @pytest.mark.integration
-    async def test_transcribe_mia_audio_16khz(self, stt, mia_audio_16khz):
+    async def test_transcribe_mia_audio_16khz(self, stt, mia_audio_16khz, participant):
         """Test transcription with 16kHz audio (native sample rate)"""
         # Create session to collect transcripts and errors
         session = STTSession(stt)
         
-        # Process the audio
-        await stt.process_audio(mia_audio_16khz)
+        # Process the audio with participant
+        await stt.process_audio(mia_audio_16khz, participant=participant)
         
         # Wait for result
         await session.wait_for_result(timeout=30.0)
@@ -49,13 +49,13 @@ class TestElevenLabsSTT:
         assert any(word in full_transcript.lower() for word in ["village", "quiet", "mia", "treasures"])
 
     @pytest.mark.integration
-    async def test_transcribe_mia_audio_48khz(self, stt, mia_audio_48khz):
+    async def test_transcribe_mia_audio_48khz(self, stt, mia_audio_48khz, participant):
         """Test transcription with 48kHz audio (requires resampling)"""
         # Create session to collect transcripts and errors
         session = STTSession(stt)
         
-        # Process the audio
-        await stt.process_audio(mia_audio_48khz)
+        # Process the audio with participant
+        await stt.process_audio(mia_audio_48khz, participant=participant)
         
         # Wait for result
         await session.wait_for_result(timeout=30.0)
@@ -98,7 +98,7 @@ class TestElevenLabsSTT:
         assert session.transcripts[0].participant.user_id == "test-user-123"
 
     @pytest.mark.integration
-    async def test_transcribe_chunked_audio(self, stt, mia_audio_48khz_chunked):
+    async def test_transcribe_chunked_audio(self, stt, mia_audio_48khz_chunked, participant):
         """Test transcription with chunked audio stream"""
         # Create session to collect transcripts and errors
         session = STTSession(stt)
@@ -107,7 +107,7 @@ class TestElevenLabsSTT:
         # Use more chunks to ensure we get a complete phrase
         import asyncio
         for chunk in mia_audio_48khz_chunked[:100]:  # Use first 100 chunks (~2 seconds)
-            await stt.process_audio(chunk)
+            await stt.process_audio(chunk, participant=participant)
             await asyncio.sleep(0.02)  # 20ms delay between chunks (real-time simulation)
         
         # Wait for result
@@ -121,13 +121,13 @@ class TestElevenLabsSTT:
         assert len(session.transcripts) > 0 or len(session.partial_transcripts) > 0
 
     @pytest.mark.integration
-    async def test_partial_transcripts(self, stt, mia_audio_48khz):
+    async def test_partial_transcripts(self, stt, mia_audio_48khz, participant):
         """Test that partial transcripts are emitted"""
         # Create session to collect transcripts and errors
         session = STTSession(stt)
         
-        # Process the audio
-        await stt.process_audio(mia_audio_48khz)
+        # Process the audio with participant
+        await stt.process_audio(mia_audio_48khz, participant=participant)
         
         # Wait for result
         await session.wait_for_result(timeout=30.0)
@@ -145,23 +145,23 @@ class TestElevenLabsSTT:
         assert stt.turn_detection is False
 
     @pytest.mark.integration
-    async def test_multiple_audio_segments(self, stt, mia_audio_16khz, silence_2s_48khz):
+    async def test_multiple_audio_segments(self, stt, mia_audio_16khz, silence_2s_48khz, participant):
         """Test processing multiple audio segments"""
         # Create session to collect transcripts and errors
         session = STTSession(stt)
         
         # Process first audio segment
-        await stt.process_audio(mia_audio_16khz)
+        await stt.process_audio(mia_audio_16khz, participant=participant)
         
         # Wait for first result
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
         
         # Add silence to help VAD separate the segments
-        await stt.process_audio(silence_2s_48khz)
+        await stt.process_audio(silence_2s_48khz, participant=participant)
         
         # Process second audio segment
-        await stt.process_audio(mia_audio_16khz)
+        await stt.process_audio(mia_audio_16khz, participant=participant)
         
         # Wait a bit longer for second result
         await session.wait_for_result(timeout=30.0)

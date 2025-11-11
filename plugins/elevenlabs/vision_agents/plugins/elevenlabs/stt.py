@@ -150,10 +150,11 @@ class STT(stt.STT):
         )
 
         # Register event handlers
-        self.connection.on(RealtimeEvents.PARTIAL_TRANSCRIPT, self._on_partial_transcript)
-        self.connection.on(RealtimeEvents.COMMITTED_TRANSCRIPT, self._on_committed_transcript)
-        self.connection.on(RealtimeEvents.ERROR, self._on_error)
-        self.connection.on(RealtimeEvents.CLOSE, self._on_close)
+        if self.connection is not None:
+            self.connection.on(RealtimeEvents.PARTIAL_TRANSCRIPT, self._on_partial_transcript)
+            self.connection.on(RealtimeEvents.COMMITTED_TRANSCRIPT, self._on_committed_transcript)
+            self.connection.on(RealtimeEvents.ERROR, self._on_error)
+            self.connection.on(RealtimeEvents.CLOSE, self._on_close)
 
         logger.info("ElevenLabs WebSocket connection established")
 
@@ -231,6 +232,9 @@ class STT(stt.STT):
         # Use the participant from the most recent process_audio call
         participant = self._current_participant
 
+        if participant is None:
+            raise ValueError("No participant set - audio must be processed with a participant")
+
         # Emit partial transcript
         self._emit_partial_transcript_event(
             transcript_text, participant, response_metadata
@@ -265,9 +269,7 @@ class STT(stt.STT):
         participant = self._current_participant
 
         if participant is None:
-            # Create a default participant if none was set
-            from vision_agents.core.edge.types import Participant
-            participant = Participant(original=None, user_id="default-user")
+            raise ValueError("No participant set - audio must be processed with a participant")
 
         # Emit final transcript
         self._emit_transcript_event(
