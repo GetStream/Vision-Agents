@@ -1,40 +1,43 @@
 import asyncio
+import contextlib
+import copy
 import logging
 from asyncio import CancelledError
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional, cast
 
 import aiortc
+import av
+from aiortc import VideoStreamTrack
+from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
 from google.genai.live import AsyncSession
-from google.genai.types import SessionResumptionConfigDict
 from google.genai.types import (
-    LiveConnectConfigDict,
-    Modality,
-    SpeechConfigDict,
-    VoiceConfigDict,
-    PrebuiltVoiceConfigDict,
     AudioTranscriptionConfigDict,
-    RealtimeInputConfigDict,
-    TurnCoverage,
-    ContextWindowCompressionConfigDict,
-    SlidingWindowDict,
-    HttpOptions,
-    LiveServerMessage,
     Blob,
+    ContextWindowCompressionConfigDict,
+    FunctionResponse,
+    HttpOptions,
+    LiveConnectConfigDict,
+    LiveServerMessage,
+    Modality,
     Part,
+    PrebuiltVoiceConfigDict,
+    RealtimeInputConfigDict,
+    SessionResumptionConfigDict,
+    SlidingWindowDict,
+    SpeechConfigDict,
+    TurnCoverage,
+    VoiceConfigDict,
 )
-
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
 )
-from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.utils import frame_to_png_bytes
-import av
-
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 logger = logging.getLogger(__name__)
@@ -42,16 +45,42 @@ logger = logging.getLogger(__name__)
 
 """
 TODO:
-- mcp & functions - Deven ✅ COMPLETED
 - chat/transcription integration (trigger the right events when receiving transcriptions) - Tommaso
 """
 
 DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
 
+DEFAULT_CONFIG = LiveConnectConfigDict(
+    response_modalities=[Modality.AUDIO],
+    input_audio_transcription=AudioTranscriptionConfigDict(),
+    output_audio_transcription=AudioTranscriptionConfigDict(),
+    speech_config=SpeechConfigDict(
+        voice_config=VoiceConfigDict(
+            prebuilt_voice_config=PrebuiltVoiceConfigDict(voice_name="Leda")
+        ),
+        language_code="en-US",
+    ),
+    realtime_input_config=RealtimeInputConfigDict(
+        turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
+    ),
+    enable_affective_dialog=False,
+    context_window_compression=ContextWindowCompressionConfigDict(
+        trigger_tokens=25600,
+        sliding_window=SlidingWindowDict(target_tokens=12800),
+    ),
+)
 
-class Realtime(realtime.Realtime):
+
+# TODO: Move reconnection to the decorator
+# TODO: self._session - make a property?
+# TODO: Reconnect logic is broken: is_temporary always returns False
+# TODO: Cleanup hasattr everywhere
+# TODO: Cleanup tool calling, maybe move it
+
+
+class GeminiRealtime(realtime.Realtime):
     """
-    Realtime on Gemini. https://ai.google.dev/gemini-api/docs/live
+    Gemini Realtime API implementation for real-time AI audio and video communication using Live API https://ai.google.dev/gemini-api/docs/live.
 
     Examples:
 
@@ -63,21 +92,17 @@ class Realtime(realtime.Realtime):
         # native API call (forwards to gemini's send_realtime_input)
         llm.send_realtime_input()
 
-        #Alternatively you can also pass an existing client
+        # Alternatively, you can also pass an existing client
 
         client = genai.Client()
         llm = Realtime(client=client)
 
-    Development notes
+    Development notes:
+
     - Audio data in the Live API is always raw, little-endian, 16-bit PCM.
     - Audio output always uses a sample rate of 24kHz.
     - Input audio is natively 16kHz, but the Live API will resample if needed
     """
-
-    model: str
-    session_resumption_id: Optional[str] = None
-    config: LiveConnectConfigDict
-    connected: bool = False
 
     def __init__(
         self,
@@ -90,23 +115,37 @@ class Realtime(realtime.Realtime):
     ) -> None:
         super().__init__(**kwargs)
         self.model = model
-        if http_options is None:
-            http_options = HttpOptions(api_version="v1alpha")
+        self.session_resumption_id: Optional[str] = None
+        self.connected: bool = False
 
-        if client is None:
-            if api_key:
-                client = genai.Client(api_key=api_key, http_options=http_options)
-            else:
-                client = genai.Client(http_options=http_options)
+        http_options = http_options or HttpOptions(api_version="v1alpha")
 
-        self.client = client
-        self.config: LiveConnectConfigDict = self._create_config(config)
-        self.logger = logging.getLogger(__name__)
+        if client is not None:
+            self._client = client
+        elif api_key:
+            self._client = genai.Client(api_key=api_key, http_options=http_options)
+        else:
+            self._client = genai.Client(http_options=http_options)
+
+        self._config = copy.deepcopy(DEFAULT_CONFIG)
+        # Merge custom config to the default config if provided
+        if config:
+            self._config.update(config)
 
         self._video_forwarder: Optional[VideoForwarder] = None
-        self._session_context: Optional[Any] = None
-        self._session: Optional[AsyncSession] = None
+        self._real_session: Optional[AsyncSession] = None
         self._receive_task: Optional[asyncio.Task[Any]] = None
+        self._exit_stack = contextlib.AsyncExitStack()
+
+    @property
+    def output_audio_track(self) -> AudioStreamTrack:
+        return self._output_audio_track
+
+    @property
+    def _session(self):
+        if not self._real_session:
+            raise ValueError("The Gemini Session is not established yet")
+        return self._real_session
 
     async def simple_response(
         self,
@@ -120,10 +159,19 @@ class Realtime(realtime.Realtime):
         Example:
             llm.simple_response("tell me a poem about Boulder")
 
-        For more advanced use cases you can use the native send_realtime_input
         """
-        self.logger.info("Simple response called with text: %s", text)
-        await self.send_realtime_input(text=text)
+        logger.info("Simple response called with text: %s", text)
+        try:
+            await self._session.send_realtime_input(text=text)
+        except Exception as e:
+            # TODO: Move reconnection to the decorator
+            # reconnect here in some cases
+            logger.exception(e)
+            is_temp = self._is_temporary_error(e)
+            if is_temp:
+                await self._reconnect()
+            else:
+                raise
 
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
@@ -153,56 +201,96 @@ class Realtime(realtime.Realtime):
         mime = "audio/pcm;rate=16000"
         blob = Blob(data=audio_bytes, mime_type=mime)
 
-        await self._require_session().send_realtime_input(audio=blob)
-
-    async def send_realtime_input(self, *args, **kwargs):
-        """
-        send_realtime_input wraps the native send_realtime_input
-        """
-        try:
-            await self._require_session().send_realtime_input(*args, **kwargs)
-        except Exception as e:
-            # reconnect here in some cases
-            self.logger.error(e)
-            is_temp = self._is_temporary_error(e)
-            if is_temp:
-                await self._reconnect()
-            else:
-                raise
+        await self._session.send_realtime_input(audio=blob)
 
     async def send_client_content(self, *args, **kwargs):
         """
         Don't use send client content, it can cause bugs when combined with send_realtime_input
         """
-        await self._require_session().send_client_content(*args, **kwargs)
+        await self._session.send_client_content(*args, **kwargs)
+
+    async def watch_video_track(
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        """
+        Start sending video frames to Gemini using VideoForwarder.
+        We follow the on_track from Stream. If video is turned on or off this gets forwarded.
+
+        Args:
+            track: Video track to watch
+            shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one
+        """
+
+        if self._video_forwarder is not None and shared_forwarder is None:
+            logger.info(
+                "There's already a video forwarder already running, stopping previous one"
+            )
+            await self._stop_watching_video_track()
+
+        self._video_forwarder = shared_forwarder or VideoForwarder(
+            input_track=cast(VideoStreamTrack, track),
+            max_buffer=5,
+            fps=float(self.fps),
+            name="gemini_forwarder",
+        )
+
+        # Add frame handler (starts automatically)
+        self._video_forwarder.add_frame_handler(self._send_video_frame)
+        logger.info(f"Started video forwarding with {self.fps} FPS")
+
+    async def _stop_watching_video_track(self) -> None:
+        if self._video_forwarder is not None:
+            await self._video_forwarder.stop()
+            self._video_forwarder = None
+            logger.info("Stopped video forwarding")
 
     async def connect(self):
         """
         Connect to Gemini's websocket
         """
-        self.logger.info("Connecting to gemini live, config set to %s", self.config)
-        self._session_context = self.client.aio.live.connect(
-            model=self.model, config=self._get_config_with_resumption()
+        logger.info("Connecting to Gemini live, config set to %s", self._config)
+        self._real_session = await self._exit_stack.enter_async_context(
+            self._client.aio.live.connect(  # type: ignore[arg-type]
+                model=self.model, config=self._get_config_with_resumption()
+            )
         )
-        self._session = await self._session_context.__aenter__()
         self.connected = True
-        self.logger.info("Gemini live connected to session %s", self._session)
+        logger.info("Gemini live connected to session %s", self._session)
 
         # Start the receive loop task
         self._receive_task = asyncio.create_task(self._receive_loop())
+
+    async def close(self):
+        self.connected = False
+
+        if self._receive_task is not None:
+            # TODO: Maybe we don't need to cancel it, we can just switch the connected flag and drain it
+            self._receive_task.cancel()
+            await self._receive_task
+
+        try:
+            await self._exit_stack.aclose()
+        except Exception as e:
+            logger.warning(f"Error closing session: {e}")
+        self._real_session = None
 
     async def _reconnect(self):
         await self.connect()
 
     async def _receive_loop(self):
         """
-        Main loop for receiving messages. Gemini's event system isn't ideal. It doesn't specify an event type with a clear structure
-        So you end up having to detect the type and reply as needed
-        Hopefully they will improve this in the future
+        Main loop for receiving messages.
+
+        Gemini's event system isn't ideal. It doesn't specify an event type with a clear structure.
+        So you end up having to detect the type and reply as needed.
+        Hopefully they will improve this in the future.
         """
+        logger.info("Start processing events from Gemini Live API")
         try:
-            while True:
-                async for response in self._require_session().receive():
+            while True:  # TODO: while Connected maybe?
+                async for response in self._session.receive():
                     server_message: LiveServerMessage = response
 
                     is_input_transcript = (
@@ -266,7 +354,7 @@ class Realtime(realtime.Realtime):
                             server_message.server_content
                             and server_message.server_content.interrupted
                         ):
-                            self.logger.info(
+                            logger.info(
                                 "interrupted: %s",
                                 server_message.server_content.interrupted,
                             )
@@ -288,13 +376,11 @@ class Realtime(realtime.Realtime):
                                     typed_part: Part = current_part
                                     if typed_part.text:
                                         if typed_part.thought:
-                                            self.logger.info(
+                                            logger.info(
                                                 "Gemini thought %s", typed_part.text
                                             )
                                         else:
-                                            self.logger.info(
-                                                "output: %s", typed_part.text
-                                            )
+                                            logger.info("output: %s", typed_part.text)
                                             event = LLMResponseChunkEvent(
                                                 delta=typed_part.text
                                             )
@@ -312,44 +398,43 @@ class Realtime(realtime.Realtime):
                                         and typed_part.function_call
                                     ):
                                         # Handle function calls from Gemini Live
-                                        self.logger.info(
+                                        logger.info(
                                             f"Received function call: {typed_part.function_call.name}"
                                         )
                                         await self._handle_function_call(
                                             typed_part.function_call
                                         )
                                     else:
-                                        self.logger.debug(
+                                        logger.debug(
                                             "Unrecognized part type: %s", typed_part
                                         )
                     elif is_turn_complete:
-                        self.logger.info("is_turn_complete complete")
+                        logger.info("is_turn_complete complete")
                     elif is_generation_complete:
-                        self.logger.info("is_generation_complete complete")
+                        logger.info("is_generation_complete complete")
                     elif server_message.tool_call:
                         # Handle tool calls from Gemini Live
-                        self.logger.info(
-                            f"Received tool call: {server_message.tool_call}"
-                        )
+                        logger.info(f"Received tool call: {server_message.tool_call}")
                         await self._handle_tool_call(server_message.tool_call)
                     else:
-                        self.logger.warning(
+                        logger.warning(
                             "Unrecognized event structure for gemini %s", server_message
                         )
         except CancelledError:
+            # TODO: Not sure about that
             logger.error("Stop async iteration exception")
             return
 
         except Exception as e:
             # reconnect here for some errors
-            self.logger.error(f"_receive_loop error: {e}")
+            logger.exception("Error while processing events from Gemini Live API")
             is_temp = self._is_temporary_error(e)
             if is_temp:
                 await self._reconnect()
             else:
                 raise e
         finally:
-            self.logger.info("_receive_loop ended")
+            logger.info("Stop processing events from Gemini Live API")
 
     @staticmethod
     def _is_temporary_error(e: Exception):
@@ -357,6 +442,7 @@ class Realtime(realtime.Realtime):
         Temporary errors should typically trigger a reconnect
         So if the websocket breaks this should return True and trigger a reconnect
         """
+
         should_reconnect = False
         return should_reconnect
 
@@ -435,50 +521,15 @@ class Realtime(realtime.Realtime):
         try:
             png_bytes = frame_to_png_bytes(frame)
             blob = Blob(data=png_bytes, mime_type="image/png")
-            await self._require_session().send_realtime_input(media=blob)
+            await self._session.send_realtime_input(media=blob)
         except Exception as e:
-            self.logger.error(f"Error sending video frame: {e}")
-
-    def _create_config(
-        self, config: Optional[LiveConnectConfigDict] = None
-    ) -> LiveConnectConfigDict:
-        """
-        _create_config combines the default config with your settings
-        """
-        default_config = LiveConnectConfigDict(
-            response_modalities=[Modality.AUDIO],
-            input_audio_transcription=AudioTranscriptionConfigDict(),
-            output_audio_transcription=AudioTranscriptionConfigDict(),
-            speech_config=SpeechConfigDict(
-                voice_config=VoiceConfigDict(
-                    prebuilt_voice_config=PrebuiltVoiceConfigDict(voice_name="Leda")
-                ),
-                language_code="en-US",
-            ),
-            realtime_input_config=RealtimeInputConfigDict(
-                turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
-            ),
-            enable_affective_dialog=False,
-            context_window_compression=ContextWindowCompressionConfigDict(
-                trigger_tokens=25600,
-                sliding_window=SlidingWindowDict(target_tokens=12800),
-            ),
-        )
-
-        # Note: Tools will be added later in _get_config_with_resumption()
-        # when functions are actually registered
-
-        if config is not None:
-            for k, v in config.items():
-                if k in default_config:
-                    default_config[k] = v  # type: ignore[literal-required]
-        return default_config
+            logger.error(f"Error sending video frame: {e}")
 
     def _get_config_with_resumption(self) -> LiveConnectConfigDict:
         """
         _get_config_with_resumption adds the system instructions, session resumption, and tools
         """
-        config = self.config.copy()
+        config = self._config.copy()
         # resume if we have a session resumption id/handle
         if self.session_resumption_id:
             resumption_config: SessionResumptionConfigDict = {
@@ -496,9 +547,9 @@ class Realtime(realtime.Realtime):
             # Add tools to the live config
             # Note: The exact key name may need adjustment based on Gemini Live API documentation
             config["tools"] = conv_tools  # type: ignore[typeddict-item]
-            self.logger.info(f"Added {len(tools_spec)} tools to Gemini Live config")
+            logger.info(f"Added {len(tools_spec)} tools to Gemini Live config")
         else:
-            self.logger.debug("No tools available - function calling will not work")
+            logger.debug("No tools available - function calling will not work")
 
         return config
 
@@ -560,7 +611,7 @@ class Realtime(realtime.Realtime):
                             }
                             calls.append(call_item)
         except Exception as e:
-            self.logger.debug(f"Error extracting tool calls from response: {e}")
+            logger.debug(f"Error extracting tool calls from response: {e}")
 
         return calls
 
@@ -573,7 +624,7 @@ class Realtime(realtime.Realtime):
                 for function_call in tool_call.function_calls:
                     await self._handle_function_call(function_call)
         except Exception as e:
-            self.logger.error(f"Error handling tool call: {e}")
+            logger.error(f"Error handling tool call: {e}")
 
     async def _handle_function_call(self, function_call: Any) -> None:
         """
@@ -590,7 +641,7 @@ class Realtime(realtime.Realtime):
                 "id": getattr(function_call, "id", None),
             }
 
-            self.logger.info(
+            logger.info(
                 f"Executing function call: {tool_call['name']} with args: {tool_call['arguments_json']}"
             )
 
@@ -600,14 +651,14 @@ class Realtime(realtime.Realtime):
             # Prepare response data
             if error:
                 response_data = {"error": str(error)}
-                self.logger.error(f"Function call {tool_call['name']} failed: {error}")
+                logger.error(f"Function call {tool_call['name']} failed: {error}")
             else:
                 # Ensure response is a dictionary for Gemini Live
                 if not isinstance(result, dict):
                     response_data = {"result": result}
                 else:
                     response_data = result
-                self.logger.info(
+                logger.info(
                     f"Function call {tool_call['name']} succeeded: {response_data}"
                 )
 
@@ -620,7 +671,7 @@ class Realtime(realtime.Realtime):
             )
 
         except Exception as e:
-            self.logger.error(f"Error handling function call: {e}")
+            logger.error(f"Error handling function call: {e}")
             # Send error response back
             await self._send_function_response(
                 getattr(function_call, "name", "unknown"),
@@ -644,9 +695,8 @@ class Realtime(realtime.Realtime):
         """
         try:
             # Create function response part
-            from google.genai import types
 
-            function_response = types.FunctionResponse(
+            function_response = FunctionResponse(
                 id=call_id,  # Use the call_id if provided
                 name=function_name,
                 response=response_data,
@@ -654,19 +704,10 @@ class Realtime(realtime.Realtime):
 
             # Send the function response using the correct method
             # The Gemini Live API uses send_tool_response for function responses
-            await self._require_session().send_tool_response(
+            await self._session.send_tool_response(
                 function_responses=[function_response]
             )
-            self.logger.debug(
-                f"Sent function response for {function_name}: {response_data}"
-            )
+            logger.debug(f"Sent function response for {function_name}: {response_data}")
 
-        except Exception as e:
-            self.logger.error(
-                f"Error sending function response for {function_name}: {e}"
-            )
-
-    def _require_session(self) -> AsyncSession:
-        if not self._session:
-            raise Exception("Session must be established")
-        return self._session
+        except Exception:
+            logger.exception(f"Error sending function response for {function_name}")
