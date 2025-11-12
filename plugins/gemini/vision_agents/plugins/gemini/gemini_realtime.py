@@ -283,7 +283,7 @@ class GeminiRealtime(realtime.Realtime):
         """
         self.connected = False
 
-        await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+        await self._stop_watching_video_track()
 
         # Do not wait for threads to complete to avoid blocking the loop
         self._executor.shutdown(wait=False)
