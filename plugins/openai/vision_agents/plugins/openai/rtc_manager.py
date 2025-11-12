@@ -1,7 +1,6 @@
 import asyncio
 import json
 from typing import Any, Optional, Callable, cast
-from os import getenv
 
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
@@ -33,7 +32,7 @@ class RTCManager:
     and data channel communication with OpenAI's servers.
     """
 
-    def __init__(self, realtime_session: RealtimeSessionCreateRequestParam, client: AsyncOpenAI, send_video: bool = True):
+    def __init__(self, realtime_session: RealtimeSessionCreateRequestParam, client: AsyncOpenAI):
         """Initialize the RTC manager.
 
         Args:
@@ -42,6 +41,7 @@ class RTCManager:
             voice: Voice to use for audio responses (e.g., "marin", "alloy").
             send_video: Whether to enable video track negotiation for potential video input.
         """
+        self._video_sender = None
         self.client = client
         self.realtime_session = realtime_session
 
@@ -61,7 +61,6 @@ class RTCManager:
         self._audio_callback: Optional[Callable[[PcmData], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
-        self.send_video = send_video
 
         self.instructions: Optional[str] = None
         self._current_video_forwarder = None
@@ -124,9 +123,6 @@ class RTCManager:
 
         await self._set_audio_track()
 
-        if self.send_video:
-            await self._set_video_track()
-
         @self.pc.on("track")
         async def on_track(track):
             if track.kind == "audio":
@@ -135,12 +131,28 @@ class RTCManager:
                     audio_forwarder = AudioForwarder(track, self._audio_callback)
                     await audio_forwarder.start()
 
+        await self._renegotiate()
+
+    async def _renegotiate(self) -> None:
+        """Perform offer/answer exchange with OpenAI.
+        
+        Creates a new offer, exchanges SDP with OpenAI, and sets the remote description.
+        Can be called to renegotiate the connection when tracks change.
+        """
         answer_sdp = await self._setup_sdp_exchange()
 
-        # Set the remote SDP we got from OpenAI TODO: shouldnt we repeat this after track changes?
+        # Set the remote SDP we got from OpenAI
         answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
         await self.pc.setRemoteDescription(answer)
         logger.info("Remote description set; WebRTC established")
+    
+    async def renegotiate(self) -> None:
+        """Renegotiate the connection with OpenAI.
+        
+        Public method to repeat the offer/answer cycle, useful when tracks are added
+        or modified after the initial connection.
+        """
+        await self._renegotiate()
 
     async def _add_data_channel(self) -> None:
         # Add data channel
@@ -162,8 +174,13 @@ class RTCManager:
         self.pc.addTrack(self._audio_to_openai_track)
 
     async def _set_video_track(self) -> None:
+        logger.info("_set_video_track")
         if self._video_to_openai_track:
-            self._video_sender = self.pc.addTrack(self._video_to_openai_track)
+            if self._video_sender is None:
+                logger.info("_set_video_track enableing addTrack")
+                self._video_sender = self.pc.addTrack(self._video_to_openai_track)
+                # adding tracks requires renegotiation
+                await self._renegotiate()
 
     async def send_audio_pcm(self, pcm: PcmData) -> None:
         await self._audio_to_openai_track.write(pcm)
@@ -242,9 +259,8 @@ class RTCManager:
             fps: Target frames per second.
             shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one.
         """
-        if not self.send_video:
-            logger.error("❌ Video sending not enabled for this session")
-            raise RuntimeError("Video sending not enabled for this session")
+
+        await self._set_video_track()
 
         # This method can be called twice with different forwarders
         # Remove handler from old forwarder if it exists

@@ -5,8 +5,7 @@ import aiortc
 from openai import AsyncOpenAI
 from openai.types.beta.realtime import RateLimitsUpdatedEvent
 from openai.types.realtime import RealtimeSessionCreateRequestParam, RealtimeAudioConfigParam, \
-    RealtimeAudioConfigOutputParam, RealtimeAudioConfigInputParam, AudioTranscriptionParam, \
-    RealtimeAudioInputTurnDetectionParam
+    RealtimeAudioConfigOutputParam, RealtimeAudioConfigInputParam, AudioTranscriptionParam
 from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
 
 from getstream.video.rtc import AudioStreamTrack
@@ -35,9 +34,9 @@ logger = logging.getLogger(__name__)
 
 """
 TODO: Future improvements
-- send video should depend on if the RTC connection with stream is sending video. not always send
-- reconnect flow is not as easy as with Gemini or AWS. there is no resumption id. 
-- video resolution?
+- send video should depend on if the RTC connection with stream is sending video. not always send (requires SDP renegotiation)
+- naming and cleanup
+- more testing with adding/removing video tracks
 """
 
 client = RealtimeSessionCreateRequestParam
