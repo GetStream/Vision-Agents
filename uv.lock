@@ -1408,7 +1408,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.14"
+version = "2.5.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1423,7 +1423,7 @@ dependencies = [
     { name = "twirp" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/2d/4deb1d94dd9d7e82ca2c43c836129e3677c9370223938ff1957762a9e16f/getstream-2.5.14-py3-none-any.whl", hash = "sha256:8589c8c2994c1da282f507cf7d4246094ac1162c88d54b78f229872c6480fadb", size = 247226 },
+    { url = "https://files.pythonhosted.org/packages/eb/19/db9d445c4752cfa83a8c991908b88d237547b777269c6267e9b60de3f387/getstream-2.5.15-py3-none-any.whl", hash = "sha256:528c4e66f975e7935c50e840fad8b8f2e55197d880727e09096e7652df906dd6", size = 247586 },
 ]
 
 [package.optional-dependencies]
@@ -5365,7 +5365,7 @@ xai = [
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.14" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.15" },
     { name = "mcp", specifier = ">=1.16.0" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
