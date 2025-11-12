@@ -120,9 +120,9 @@ class RTCManager:
         Sets up the peer connection, negotiates audio and video tracks,
         and establishes the data channel for real-time communication.
         """
-        result = await self.client.realtime.client_secrets.create(session = self.realtime_session)
-        self.token = result.value
-
+        # For server-side WebRTC, we don't need client_secrets
+        # Just use the regular API key directly
+        
         await self._add_data_channel()
 
         await self._set_audio_track()
@@ -276,20 +276,23 @@ class RTCManager:
 
     async def _exchange_sdp(self, local_sdp: str) -> Optional[str]:
         """Exchange SDP with OpenAI."""
-        # IMPORTANT: Use the ephemeral client secret token from session.create
-        token = self.token
-        if not token:
-            raise ValueError("missing token, can't connect to OpenAI realtime")
+        # Use the regular API key for server-side WebRTC
+        api_key = self.client.api_key
+        if not api_key:
+            raise ValueError("missing API key, can't connect to OpenAI realtime")
         headers = {
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/sdp",
             "OpenAI-Beta": "realtime=v1",
         }
-        model = self.realtime_session["model"]
+        # POST SDP to /v1/realtime with model parameter
+        model = self.realtime_session.get("model", "gpt-realtime")
         url = f"{OPENAI_REALTIME_BASE}?model={model}"
 
         try:
             async with AsyncClient() as client:
+                logger.debug(f"POSTing SDP to {url}")
+                logger.debug(f"SDP length: {len(local_sdp)} bytes")
                 response = await client.post(
                     url, headers=headers, content=local_sdp, timeout=20
                 )
