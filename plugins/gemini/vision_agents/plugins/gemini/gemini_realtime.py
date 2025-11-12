@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, cast
 import aiortc
 import av
 from aiortc import VideoStreamTrack
-from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
 from google.genai.live import AsyncSession
@@ -72,7 +71,6 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
 
 
 # TODO: Move reconnection to the decorator
-# TODO: self._session - make a property?
 # TODO: Reconnect logic is broken: is_temporary always returns False
 # TODO: Cleanup hasattr everywhere
 # TODO: Cleanup tool calling, maybe move it
@@ -136,10 +134,6 @@ class GeminiRealtime(realtime.Realtime):
         self._real_session: Optional[AsyncSession] = None
         self._receive_task: Optional[asyncio.Task[Any]] = None
         self._exit_stack = contextlib.AsyncExitStack()
-
-    @property
-    def output_audio_track(self) -> AudioStreamTrack:
-        return self._output_audio_track
 
     @property
     def _session(self):
@@ -223,11 +217,11 @@ class GeminiRealtime(realtime.Realtime):
             shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one
         """
 
-        if self._video_forwarder is not None and shared_forwarder is None:
-            logger.info(
-                "There's already a video forwarder already running, stopping previous one"
-            )
-            await self._stop_watching_video_track()
+        # This method can be called multiple times with different forwarders
+        # Remove handler from old forwarder if it exists
+        if self._video_forwarder is not None:
+            await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+            logger.debug("Removed old video frame handler from previous forwarder")
 
         self._video_forwarder = shared_forwarder or VideoForwarder(
             input_track=cast(VideoStreamTrack, track),
@@ -241,6 +235,7 @@ class GeminiRealtime(realtime.Realtime):
         logger.info(f"Started video forwarding with {self.fps} FPS")
 
     async def _stop_watching_video_track(self) -> None:
+        # TODO: Do we need it anywhere except tests?
         if self._video_forwarder is not None:
             await self._video_forwarder.stop()
             self._video_forwarder = None
@@ -446,70 +441,6 @@ class GeminiRealtime(realtime.Realtime):
         should_reconnect = False
         return should_reconnect
 
-    async def close(self):
-        self.connected = False
-
-        if hasattr(self, "_receive_task") and self._receive_task:
-            self._receive_task.cancel()
-            await self._receive_task
-
-        if hasattr(self, "_session_context") and self._session_context:
-            # Properly close the session using the context manager's __aexit__
-            try:
-                await self._session_context.__aexit__(None, None, None)
-            except Exception as e:
-                self.logger.warning(f"Error closing session: {e}")
-            self._session_context = None
-            self._session = None
-
-    async def watch_video_track(
-        self,
-        track: aiortc.mediastreams.MediaStreamTrack,
-        shared_forwarder: Optional[VideoForwarder] = None,
-    ) -> None:
-        """
-        Start sending video frames to Gemini using VideoForwarder.
-        We follow the on_track from Stream. If video is turned on or off this gets forwarded.
-
-        Args:
-            track: Video track to watch
-            shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one
-        """
-
-        # This method can be called multiple times with different forwarders
-        # Remove handler from old forwarder if it exists
-        if self._video_forwarder is not None:
-            await self._video_forwarder.remove_frame_handler(self._send_video_frame)
-            self.logger.debug("Removed old video frame handler from previous forwarder")
-
-        if shared_forwarder is not None:
-            # Use the shared forwarder - just register as a consumer
-            self._video_forwarder = shared_forwarder
-            self.logger.info(
-                f"🎥 Gemini subscribing to shared VideoForwarder at {self.fps} FPS"
-            )
-            self._video_forwarder.add_frame_handler(
-                self._send_video_frame, fps=float(self.fps), name="gemini"
-            )
-        else:
-            # Create our own VideoForwarder with the input track (legacy behavior)
-            self._video_forwarder = VideoForwarder(
-                track,  # type: ignore[arg-type]
-                max_buffer=5,
-                fps=float(self.fps),
-                name="gemini_forwarder",
-            )
-
-            # Add frame handler (starts automatically)
-            self._video_forwarder.add_frame_handler(self._send_video_frame)
-
-            self.logger.info(f"Started video forwarding with {self.fps} FPS")
-
-    async def _stop_watching_video_track(self) -> None:
-        if self._video_forwarder is not None:
-            await self._video_forwarder.stop()
-            self._video_forwarder = None
-            self.logger.info("Stopped video forwarding")
 
     async def _send_video_frame(self, frame: av.VideoFrame) -> None:
         """
