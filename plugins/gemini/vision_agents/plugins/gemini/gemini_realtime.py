@@ -39,8 +39,8 @@ from vision_agents.core.llm.events import (
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.llm.llm_types import ToolSchema
 from vision_agents.core.processors import Processor
-from vision_agents.core.utils.video_utils import frame_to_png_bytes
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.utils.video_utils import frame_to_png_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,17 @@ def _should_reconnect(exc: Exception) -> bool:
     So if the websocket breaks this should return True and trigger a reconnect
     """
     # Gemini WS API returns code 1011 on session timeout
-    if isinstance(exc, websockets.ConnectionClosedError) and exc.rcvd.code == 1011:
+    reconnect_close_codes = [
+        1011,  # Server-side exception or session timeout
+        1012,  # Service restart
+        1013,  # Try again later
+        1014,  # Bad gateway
+    ]
+    if (
+        isinstance(exc, websockets.ConnectionClosedError)
+        and exc.rcvd
+        and exc.rcvd.code in reconnect_close_codes
+    ):
         return True
     return False
 
