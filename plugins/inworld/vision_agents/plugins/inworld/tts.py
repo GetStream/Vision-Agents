@@ -72,11 +72,9 @@ class TTS(tts.TTS):
         """
         url = f"{self.base_url}/tts/v1/voice:stream"
 
-        # Prepare Basic auth header
-        # Inworld expects base64-encoded credentials
-        credentials = base64.b64encode(f"{self.api_key}:".encode()).decode()
+        credentials = f"Basic {self.api_key}"
         headers = {
-            "Authorization": f"Basic {credentials}",
+            "Authorization": credentials,
             "Content-Type": "application/json",
         }
 
