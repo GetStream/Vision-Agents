@@ -12,7 +12,7 @@ load_dotenv()
 
 
 @pytest.fixture
-async def realtime(self):
+async def realtime():
     """Create and manage Realtime connection lifecycle"""
     realtime = Realtime(
         model="gemini-2.0-flash-exp",
