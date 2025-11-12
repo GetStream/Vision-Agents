@@ -114,19 +114,13 @@ To see how the agent work open up agents.py
 Some important things about audio inside the library:
 
 1. WebRTC uses Opus 48khz stereo but inside the library audio is always in PCM format
-2. Plugins / AI models work with different PCM formats, usually 16khz mono
+2. Plugins / AI models work with different PCM formats, passing bytes around without a container type leads to kaos and is forbidden
 3. PCM data is always passed around using the `PcmData` object which contains information about sample rate, channels and format
-4. Text-to-speech plugins automatically return PCM in the format needed by WebRTC. This is exposed via the `set_output_format` method
-5. Audio resampling can be done using `PcmData.resample` method
-6. When resampling audio in chunks, it is important to re-use the same `av.AudioResampler` resampler (see `PcmData.resample` and `core.tts.TTS`)
-7. Adjusting from stereo to mono and vice-versa can be done using the `PcmData.resample` method
+4. Audio resampling can be done using `PcmData.resample` method
+5. Adjusting from stereo to mono and vice-versa can be done using the `PcmData.resample` method
+6. `PcmData` comes with convenience constructor methods to build from bytes, iterators, ndarray, ...
 
-Some ground rules:
-
-1. Do not build code to resample / adjust audio unless it is not covered already by `PcmData`
-2. Do not pass PCM as plain bytes around and write code that assumes specific sample rate or format. Use `PcmData` instead
-
-## Example
+## Simple Example
 
 ```python
 import asyncio
@@ -158,21 +152,14 @@ async def example():
     # resample pcm to be 48khz stereo
     resampled_pcm = pcm_data.resample(48_000, 2)
 
-    # play-out pcm using ffplay
-    from vision_agents.core.edge.types import play_pcm_with_ffplay
+    # play-out pcm using ffplay (you need to have PLAY_AUDIO=1 envvar)
+    from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
 
     await play_pcm_with_ffplay(resampled_pcm)
 
 if __name__ == "__main__":
     asyncio.run(example())
 ```
-
-Other things that you get from the audio utilities:
-
-1. Changing PCM format
-2. Iterate over audio chunks (`PcmData.chunks`)
-3. Process audio with pre/post buffers (`AudioSegmentCollector`)
-4. Accumulating audio (`PcmData.append`)
 
 ### Testing audio manually
 
@@ -181,6 +168,157 @@ Sometimes you need to test audio manually, here's some tips:
 1. Do not use earplugs when testing PCM playback ;)
 2. You can use the `PcmData.to_wav_bytes` method to convert PCM into wav bytes (see `manual_tts_to_wav` for an example)
 3. If you have `ffplay` installed, you can playback pcm directly to check if audio is correct
+
+## Creating PcmData
+
+### from_bytes
+Build from raw PCM bytes
+
+```python
+from getstream.video.rtc import PcmData
+
+PcmData.from_bytes(audio_bytes, sample_rate=16000, format=AudioFormat.S16, channels=1)
+```
+
+### from_numpy
+Build from numpy arrays with automatic dtype/shape conversion
+
+```python
+# Automatically converts dtype and handles channel reshaping
+PcmData.from_numpy(np.array([1, 2], np.int16), sample_rate=16000, format=AudioFormat.S16, channels=1)
+```
+
+### from_response
+Construct from API response (bytes, iterators, async iterators, objects with .data)
+
+```python
+# Handles streaming responses
+PcmData.from_response(
+    response, sample_rate=16000, channels=1, format=AudioFormat.S16
+)
+```
+
+### from_av_frame
+Create from PyAV AudioFrame
+
+```python
+PcmData.from_av_frame(frame)
+```
+
+## Converting Format
+
+### to_float32
+Convert samples to float32 in [-1, 1]
+
+```python
+pcm_f32 = pcm.to_float32()
+```
+
+### to_int16
+Convert samples to int16 PCM format
+
+```python
+pcm_s16 = pcm.to_int16()
+```
+
+### to_bytes
+Return interleaved PCM bytes
+
+```python
+audio_bytes = pcm.to_bytes()
+```
+
+### to_wav_bytes
+Return WAV file bytes (header + frames)
+
+```python
+wav_bytes = pcm.to_wav_bytes()
+```
+
+## Resampling and Channels
+
+### resample
+
+Resample to target sample rate and/or channels
+
+```python
+pcm = pcm.resample(16000, target_channels=1)  # to 16khz, mono
+```
+
+## Manipulating Audio
+
+### append
+Append another PcmData in-place (adjusts format/rate automatically)
+
+```python
+pcm.append(other_pcm)
+```
+
+### copy
+Create a deep copy
+
+```python
+pcm_copy = pcm.copy()
+```
+
+### clear
+Clear all samples in-place (keeps metadata)
+
+```python
+pcm.clear()
+```
+
+## Slicing and Chunking
+
+### head
+Keep only the first N seconds
+
+```python
+pcm_head = pcm.head(duration_s=3.0)
+```
+
+### tail
+Keep only the last N seconds
+
+```python
+pcm_tail = pcm.tail(duration_s=5.0)
+```
+
+### chunks
+Iterate over fixed-size chunks with optional overlap
+
+```python
+for chunk in pcm.chunks(chunk_size=4000, overlap=200):
+    process(chunk)
+```
+
+# Audio Queue
+
+Use `AudioQueue` from `utils.audio_queue` if you need to enqueue PCM and dequeue audio with a given format and duration.
+
+```python
+from vision_agents.core.utils.audio_queue import AudioQueue
+
+queue = AudioQueue(buffer_limit_ms=1000)
+
+# enqueue PcmData into the queue
+queue.put(pcm)
+
+# dequeue the oldest PcmData entry from the queue
+await queue.get()
+
+# dequeue 100ms of audio
+pcm = await queue.get_duration(100)
+```
+
+# AudioTrack
+
+Use `getstream.video.rtc.AudioTrack` if you need to publish audio using PyAV, this class ensures that `recv` paces audio correctly every 20ms.
+
+- Use `.write()` method to enqueue audio (PcmData)
+- Use `.flush()` to empty all the enqueued audio (eg. barge-in event)
+
+By default AudioTrack holds 30s of audio in the buffer.
 
 ## Dev / Contributor Guidelines
 
@@ -324,7 +462,7 @@ async def start_agent() -> None:
         turn_detection=vogent.TurnDetection(),
         profiler=Profiler(output_path='./profile.html'),  # Optional: specify output path
     )
-    
+
     call = agent.edge.client.video.call("default", str(uuid4()))
     with await agent.join(call):
         await agent.simple_response("Hello!")
@@ -363,7 +501,7 @@ You can open the generated HTML file in a browser to view the performance profil
 
 **Audio Formats**
 
-You'll notice that audio comes in many formats. PCM, wav, mp3. 16khz, 48khz. 
+You'll notice that audio comes in many formats. PCM, wav, mp3. 16khz, 48khz.
 Encoded as i16 or f32. Note that webrtc by default is 48khz.
 
 A good first intro to audio formats can be found here:

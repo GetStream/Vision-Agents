@@ -15,7 +15,6 @@ from getstream.video.async_call import Call
 from getstream.video.rtc import ConnectionManager, audio_track
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
-    Participant,
     TrackType,
 )
 from getstream.video.rtc.track_util import PcmData
@@ -294,12 +293,12 @@ class StreamEdge(EdgeTransport):
         self.events.silent(events.AudioReceivedEvent)
 
         @connection.on("audio")
-        async def on_audio_received(pcm: PcmData | None, participant: Participant):
+        async def on_audio_received(pcm: PcmData):
             self.events.send(
                 events.AudioReceivedEvent(
                     plugin_name="getstream",
                     pcm_data=pcm,
-                    participant=participant,
+                    participant=pcm.participant,
                 )
             )
 

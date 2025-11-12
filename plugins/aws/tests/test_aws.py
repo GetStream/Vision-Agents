@@ -35,7 +35,7 @@ class TestBedrockLLM:
     async def llm(self) -> BedrockLLM:
         """Test BedrockLLM initialization with a provided client."""
         llm = BedrockLLM(model="qwen.qwen3-32b-v1:0", region_name="us-east-1")
-        llm._conversation = InMemoryConversation("be friendly", [])
+        llm.set_conversation(InMemoryConversation("be friendly", []))
         return llm
 
     @pytest.mark.asyncio

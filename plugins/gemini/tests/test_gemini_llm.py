@@ -14,9 +14,7 @@ from vision_agents.plugins.gemini import events
 load_dotenv()
 
 
-
 class TestGeminiLLM:
-
     def test_message(self):
         messages = GeminiLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
@@ -32,7 +30,7 @@ class TestGeminiLLM:
     @pytest.fixture
     async def llm(self) -> GeminiLLM:
         llm = GeminiLLM(model="gemini-2.0-flash-exp")
-        llm._conversation = InMemoryConversation("be friendly", [])
+        llm.set_conversation(InMemoryConversation("be friendly", []))
         return llm
 
     @pytest.mark.integration
@@ -51,14 +49,14 @@ class TestGeminiLLM:
     @pytest.mark.integration
     async def test_stream(self, llm: GeminiLLM):
         streamingWorks = False
-        
+
         @llm.events.subscribe
         async def passed(event: LLMResponseChunkEvent):
             nonlocal streamingWorks
             streamingWorks = True
-        
+
         await llm.simple_response("Explain magma to a 5 year old")
-        
+
         # Wait for all events in queue to be processed
         await llm.events.wait()
 
@@ -67,7 +65,9 @@ class TestGeminiLLM:
     @pytest.mark.integration
     async def test_memory(self, llm: GeminiLLM):
         await llm.simple_response(text="There are 2 dogs in the room")
-        response = await llm.simple_response(text="How many paws are there in the room?")
+        response = await llm.simple_response(
+            text="How many paws are there in the room?"
+        )
 
         assert "8" in response.text or "eight" in response.text
 
@@ -82,7 +82,7 @@ class TestGeminiLLM:
     @pytest.mark.integration
     async def test_instruction_following(self):
         llm = GeminiLLM(model="gemini-2.0-flash-exp")
-        llm._conversation = InMemoryConversation("be friendly", [])
+        llm.set_conversation(InMemoryConversation("be friendly", []))
 
         llm._set_instructions("only reply in 2 letter country shortcuts")
 
@@ -165,11 +165,11 @@ class TestGeminiLLM:
             )
             chunk_item_ids.add(chunk_event.item_id)
             total_delta_text += chunk_event.delta
-            
+
             # Validate content_index: should be sequential (0, 1, 2, ...) or None
             if chunk_event.content_index is not None:
                 content_indices.append(chunk_event.content_index)
-        
+
         # Verify content_index sequencing if any are provided
         if content_indices:
             # Should be sequential starting from 0

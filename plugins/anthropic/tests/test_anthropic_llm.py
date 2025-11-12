@@ -18,7 +18,7 @@ class TestClaudeLLM:
     async def llm(self) -> ClaudeLLM:
         """Test ClaudeLLM initialization with a provided client."""
         llm = ClaudeLLM(model="claude-sonnet-4-20250514")
-        llm._conversation = InMemoryConversation("be friendly", [])
+        llm.set_conversation(InMemoryConversation("be friendly", []))
         return llm
 
     @pytest.mark.asyncio
@@ -58,7 +58,7 @@ class TestClaudeLLM:
     @pytest.mark.integration
     async def test_stream(self, llm: ClaudeLLM):
         streamingWorks = False
-        
+
         @llm.events.subscribe
         async def passed(event: LLMResponseChunkEvent):
             nonlocal streamingWorks
@@ -69,7 +69,6 @@ class TestClaudeLLM:
         await llm.events.wait()
 
         assert streamingWorks
-
 
     @pytest.mark.integration
     async def test_memory(self, llm: ClaudeLLM):
