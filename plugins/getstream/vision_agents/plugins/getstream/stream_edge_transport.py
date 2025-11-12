@@ -294,14 +294,13 @@ class StreamEdge(EdgeTransport):
 
         @connection.on("audio")
         async def on_audio_received(pcm: PcmData):
-            if pcm is not None:
-                self.events.send(
-                    events.AudioReceivedEvent(
-                        plugin_name="getstream",
-                        pcm_data=pcm,
-                        participant=pcm.participant,
-                    )
+            self.events.send(
+                events.AudioReceivedEvent(
+                    plugin_name="getstream",
+                    pcm_data=pcm,
+                    participant=pcm.participant,
                 )
+            )
 
         await (
             connection.__aenter__()
