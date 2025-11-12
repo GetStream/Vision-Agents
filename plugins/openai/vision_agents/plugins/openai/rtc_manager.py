@@ -118,7 +118,8 @@ class RTCManager:
         """
         # For server-side WebRTC, we don't need client_secrets
         # Just use the regular API key directly
-        
+
+
         await self._add_data_channel()
 
         await self._set_audio_track()
@@ -130,6 +131,9 @@ class RTCManager:
                 if self._audio_callback:
                     audio_forwarder = AudioForwarder(track, self._audio_callback)
                     await audio_forwarder.start()
+
+        self._video_sender = self.pc.addTrack(self._video_to_openai_track)
+
 
         await self._renegotiate()
 
@@ -242,7 +246,7 @@ class RTCManager:
         """
         Send a video frame to Gemini using send_realtime_input
         """
-        logger.debug(f"Sending video frame: {frame}")
+        logger.info(f"Sending video frame: {frame}")
         if self._video_to_openai_track:
             await self._video_to_openai_track.add_frame(frame)
 
