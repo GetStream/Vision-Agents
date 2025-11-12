@@ -56,10 +56,7 @@ class RTCManager:
             sample_rate=48000
         )
         # video to openAI
-        # TODO: resolution low?
-        self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack(
-            width=640, height=480
-        )
+        self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack()
 
         self._audio_callback: Optional[Callable[[PcmData], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None

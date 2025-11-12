@@ -35,9 +35,9 @@ logger = logging.getLogger(__name__)
 
 """
 TODO: Future improvements
-- reconnect flow isn't implemented properly
-- is it needed to redo the SDP offer/answer cycle when receiving a new track?
 - send video should depend on if the RTC connection with stream is sending video. not always send
+- reconnect flow is not as easy as with Gemini or AWS. there is no resumption id. 
+- video resolution?
 """
 
 client = RealtimeSessionCreateRequestParam
