@@ -187,10 +187,8 @@ class Realtime(realtime.Realtime):
             "response.audio_transcript.done",
             "response.output_audio_transcript.done",
         ]:
-            event_copy = event.copy()
-            event_copy["type"] = "response.output_audio_transcript.done"
             transcript_event: ResponseAudioTranscriptDoneEvent = (
-                ResponseAudioTranscriptDoneEvent.model_validate(event_copy)
+                ResponseAudioTranscriptDoneEvent.model_validate(event)
             )
             self._emit_agent_speech_transcription(
                 text=transcript_event.transcript, original=event
