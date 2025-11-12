@@ -62,9 +62,9 @@ class TestOpenRouterLLM:
         """Fixture for OpenRouter LLM with z-ai/glm-4.6 model."""
         if not os.environ.get("OPENROUTER_API_KEY"):
             pytest.skip("OPENROUTER_API_KEY environment variable not set")
-        
+
         llm = LLM(model="anthropic/claude-haiku-4.5")
-        llm._conversation = InMemoryConversation("be friendly", [])
+        llm.set_conversation(InMemoryConversation("be friendly", []))
         return llm
 
     @pytest.mark.integration
@@ -114,7 +114,7 @@ class TestOpenRouterLLM:
         response = await llm.simple_response(
             text="How many paws are there in the room?",
         )
-        
+
         self.assert_response_successful(response)
         assert "8" in response.text or "eight" in response.text.lower(), (
             f"Expected '8' or 'eight' in response, got: {response.text}"
@@ -129,7 +129,7 @@ class TestOpenRouterLLM:
         response = await llm.create_response(
             input="How many paws are there in the room?",
         )
-        
+
         self.assert_response_successful(response)
         assert "8" in response.text or "eight" in response.text.lower(), (
             f"Expected '8' or 'eight' in response, got: {response.text}"
@@ -153,4 +153,3 @@ class TestOpenRouterLLM:
         assert "nl" in response.text.lower(), (
             f"Expected 'NL' in response, got: {response.text}"
         )
-
