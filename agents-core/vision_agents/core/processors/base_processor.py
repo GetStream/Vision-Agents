@@ -158,9 +158,7 @@ class AudioLogger(AudioVideoProcessor, AudioProcessorMixin):
 
         if self.should_process():
             self.audio_count += 1
-            user_id = "unknown"
-            if hasattr(audio_data, "participant") and audio_data.participant:
-                user_id = getattr(audio_data.participant, "user_id", "unknown")
+            user_id = getattr(audio_data.participant, "user_id", "unknown")
             audio_bytes = audio_data.to_bytes()
 
             logger.info(
