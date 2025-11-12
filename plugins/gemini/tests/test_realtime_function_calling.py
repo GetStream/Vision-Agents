@@ -41,7 +41,6 @@ class TestGeminiRealtimeFunctionCalling:
         finally:
             await realtime.close()
 
-    @pytest.mark.asyncio
     async def test_convert_tools_to_provider_format(self):
         """Test tool conversion to Gemini Live format."""
         # Create a minimal instance just for testing the conversion method
@@ -92,7 +91,6 @@ class TestGeminiRealtimeFunctionCalling:
         assert "expression" in tool2["parameters"]["properties"]
 
     @pytest.mark.integration
-    @pytest.mark.asyncio
     async def test_live_function_calling_basic(self, realtime_instance):
         """Test basic live function calling with weather function."""
         realtime = realtime_instance
@@ -116,7 +114,7 @@ class TestGeminiRealtimeFunctionCalling:
         # Set up event listeners for audio output
         @realtime.events.subscribe
         async def handle_audio_output(event: RealtimeAudioOutputEvent):
-            if event.audio_data:
+            if event.data:
                 # Audio was received - this indicates Gemini responded
                 text_responses.append("audio_response_received")
 
@@ -143,7 +141,6 @@ class TestGeminiRealtimeFunctionCalling:
         # Remove the text response assertion
 
     @pytest.mark.integration
-    @pytest.mark.asyncio
     async def test_live_function_calling_error_handling(self, realtime_instance):
         """Test live function calling with error handling."""
         realtime = realtime_instance
@@ -164,7 +161,7 @@ class TestGeminiRealtimeFunctionCalling:
         # Set up event listeners for audio output
         @realtime.events.subscribe
         async def handle_audio_output(event: RealtimeAudioOutputEvent):
-            if event.audio_data:
+            if event.data:
                 # Audio was received - this indicates Gemini responded
                 text_responses.append("audio_response_received")
         
@@ -191,7 +188,6 @@ class TestGeminiRealtimeFunctionCalling:
         assert len(text_responses) > 0, "No response received from Gemini"
 
     @pytest.mark.integration
-    @pytest.mark.asyncio
     async def test_live_function_calling_multiple_functions(self, realtime_instance):
         """Test live function calling with multiple functions in one request."""
         realtime = realtime_instance
@@ -216,7 +212,7 @@ class TestGeminiRealtimeFunctionCalling:
         # Set up event listeners for audio output
         @realtime.events.subscribe
         async def handle_audio_output(event: RealtimeAudioOutputEvent):
-            if event.audio_data:
+            if event.data:
                 # Audio was received - this indicates Gemini responded
                 text_responses.append("audio_response_received")
         
@@ -245,8 +241,7 @@ class TestGeminiRealtimeFunctionCalling:
         # Verify we got a response
         assert len(text_responses) > 0, "No response received from Gemini"
 
-    @pytest.mark.asyncio
-    async def test_create_config_with_tools(self):
+    async def test_get_config_with_tools(self):
         """Test that tools are added to the config."""
         # Create a minimal instance for testing config creation
         realtime = gemini.Realtime(model="test-model", api_key="test-key")
@@ -256,7 +251,7 @@ class TestGeminiRealtimeFunctionCalling:
         def test_func(param: str) -> str:
             return f"test: {param}"
         
-        config = realtime._get_config_with_resumption()
+        config = realtime.get_config()
         
         # Verify tools were added
         assert "tools" in config
@@ -265,13 +260,12 @@ class TestGeminiRealtimeFunctionCalling:
         assert len(config["tools"][0]["function_declarations"]) == 1
         assert config["tools"][0]["function_declarations"][0]["name"] == "test_func"
 
-    @pytest.mark.asyncio
-    async def test_create_config_without_tools(self):
+    async def test_get_config_without_tools(self):
         """Test config creation when no tools are available."""
         # Create a minimal instance without registering any functions
         realtime = gemini.Realtime(model="test-model", api_key="test-key")
         
-        config = realtime._create_config()
+        config = realtime.get_config()
         
         # Verify tools were not added
         assert "tools" not in config
