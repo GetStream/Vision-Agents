@@ -5,6 +5,9 @@ from os import getenv
 
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+from openai import AsyncOpenAI
+from openai.types.realtime import RealtimeSessionCreateRequestParam
+
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from httpx import AsyncClient, HTTPStatusError
 import logging
@@ -30,19 +33,18 @@ class RTCManager:
     and data channel communication with OpenAI's servers.
     """
 
-    def __init__(self, model: str, voice: str, send_video: bool):
+    def __init__(self, realtime_session: RealtimeSessionCreateRequestParam, client: AsyncOpenAI, send_video: bool = True):
         """Initialize the RTC manager.
 
         Args:
+            client: Open AI aysync client
             model: OpenAI model to use for the session (e.g., "gpt-realtime").
             voice: Voice to use for audio responses (e.g., "marin", "alloy").
             send_video: Whether to enable video track negotiation for potential video input.
         """
-        self.api_key = getenv("OPENAI_API_KEY")
-        self.model = model
-        self.voice = voice
-        self.token = ""
-        self.session_info: Optional[dict] = None  # Store session information
+        self.client = client
+        self.realtime_session = realtime_session
+
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
 
@@ -54,6 +56,7 @@ class RTCManager:
             sample_rate=48000
         )
         # video to openAI
+        # TODO: resolution low?
         self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack(
             width=640, height=480
         )
@@ -117,7 +120,9 @@ class RTCManager:
         Sets up the peer connection, negotiates audio and video tracks,
         and establishes the data channel for real-time communication.
         """
-        self.token = await self._get_session_token()
+        result = await self.client.realtime.client_secrets.create(session = self.realtime_session)
+        self.token = result.value
+
         await self._add_data_channel()
 
         await self._set_audio_track()
@@ -140,37 +145,6 @@ class RTCManager:
         await self.pc.setRemoteDescription(answer)
         logger.info("Remote description set; WebRTC established")
 
-    async def _get_session_token(self) -> str:
-        url = OPENAI_SESSIONS_URL
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        # TODO: replace with regular openai client SDK when support for this endpoint is added
-        # TODO: voice is not the right param or typing is wrong here
-        # Not quite: RealtimeSessionCreateRequestParam
-        payload = {"model": self.model, "voice": self.voice}  # type: ignore[typeddict-unknown-key]
-        if self.instructions:
-            payload["instructions"] = self.instructions
-
-        async with AsyncClient() as client:
-            for attempt in range(2):
-                try:
-                    resp = await client.post(
-                        url, headers=headers, json=payload, timeout=15
-                    )
-                    resp.raise_for_status()
-                    data: dict = resp.json()
-                    secret = data.get("client_secret", {})
-                    return secret.get("value")
-                except Exception as e:
-                    if attempt == 0:
-                        await asyncio.sleep(1.0)
-                        continue
-                    logger.error(f"Failed to get OpenAI Realtime session token: {e}")
-                    raise
-            raise Exception("Failed to get OpenAI Realtime session token")
-
     async def _add_data_channel(self) -> None:
         # Add data channel
         self.data_channel = self.pc.createDataChannel("oai-events")
@@ -178,21 +152,6 @@ class RTCManager:
         @self.data_channel.on("open")
         async def on_open():
             self._data_channel_open_event.set()
-
-            # Immediately switch to semantic VAD and enable input audio transcription
-            await self._send_event(
-                {
-                    "type": "session.update",
-                    "session": {
-                        "turn_detection": {"type": "semantic_vad"},
-                        "input_audio_transcription": {"model": "whisper-1"},
-                    },
-                }
-            )
-            # Session information will be automatically stored when session.created event is received
-            logger.info(
-                "Requested semantic_vad and input_audio_transcription via session.update"
-            )
 
         @self.data_channel.on("message")
         def on_message(message):
@@ -318,13 +277,16 @@ class RTCManager:
     async def _exchange_sdp(self, local_sdp: str) -> Optional[str]:
         """Exchange SDP with OpenAI."""
         # IMPORTANT: Use the ephemeral client secret token from session.create
-        token = self.token or self.api_key
+        token = self.token
+        if not token:
+            raise ValueError("missing token, can't connect to OpenAI realtime")
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/sdp",
             "OpenAI-Beta": "realtime=v1",
         }
-        url = f"{OPENAI_REALTIME_BASE}?model={self.model}"
+        model = self.realtime_session["model"]
+        url = f"{OPENAI_REALTIME_BASE}?model={model}"
 
         try:
             async with AsyncClient() as client:
@@ -346,26 +308,6 @@ class RTCManager:
         cb = self._event_callback
         if cb is not None:
             await cb(event)
-
-        # Store session information when we receive session.created event
-        # FIXME Typing
-        if event.get("type") == "session.created" and "session" in event:
-            self.session_info = event["session"]
-            logger.info(f"Stored session info: {self.session_info}")
-
-    async def request_session_info(self) -> None:
-        """Request and log current session information.
-
-        Note:
-            Session information is automatically stored when session.created event is received.
-            This method only logs the stored information.
-        """
-        if self.session_info:
-            logger.info(f"Current session info: {self.session_info}")
-        else:
-            logger.info(
-                "No session information available yet. Waiting for session.created event."
-            )
 
     def set_audio_callback(self, callback: Callable[[PcmData], Any]) -> None:
         """Set callback for receiving audio data from OpenAI.

@@ -2,8 +2,12 @@ import json
 from typing import Any, Optional, List, Dict
 
 import aiortc
+from openai import AsyncOpenAI
 from openai.types.beta.realtime import RateLimitsUpdatedEvent
-from openai.types.realtime import RealtimeSessionCreateRequestParam
+from openai.types.realtime import RealtimeSessionCreateRequestParam, RealtimeAudioConfigParam, \
+    RealtimeAudioConfigOutputParam, RealtimeAudioConfigInputParam, AudioTranscriptionParam, \
+    RealtimeAudioInputTurnDetectionParam
+from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
 
 from getstream.video.rtc import AudioStreamTrack
 from openai.types.beta.realtime import (
@@ -31,13 +35,11 @@ logger = logging.getLogger(__name__)
 
 """
 TODO
-- improve event parsing, reuse built-in types where possible
-- not clear why we resize video to width=640, height=480
+- cleanup logging
 - reconnect flow isn't implemented properly
 - is it needed to redo the SDP offer/answer cycle when receiving a new track?
-- support passing full client options in __init__
-- review either SessionCreateParams or RealtimeSessionCreateRequestParam
 - send video should depend on if the RTC connection with stream is sending video. not always send
+
 """
 
 client = RealtimeSessionCreateRequestParam
@@ -54,7 +56,10 @@ class Realtime(realtime.Realtime):
     Args:
         model: OpenAI model to use (e.g., "gpt-realtime").
         voice: Voice for audio responses (e.g., "marin", "alloy").
-        send_video: Enable video streaming capabilities. Defaults to False.
+        realtime_session: Configure RealtimeSessionCreateRequestParam
+
+        api_key: Optionally specify an API key
+        client: pass your own AsyncOpenAI client
 
         This class uses:
         - RTCManager to handle WebRTC connection and media streaming.
@@ -65,19 +70,54 @@ class Realtime(realtime.Realtime):
     """
 
     def __init__(
-        self, model: str = "gpt-realtime", voice: str = "marin", *args, **kwargs
+        self, model: str = "gpt-realtime", api_key: Optional[str] = None, voice: str = "marin", client: Optional[AsyncOpenAI] = None, fps: int = 1,
+        realtime_session: Optional[RealtimeSessionCreateRequestParam] = None
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__(fps)
         self.model = model
         self.voice = voice
-        # TODO: send video should depend on if the RTC connection with stream is sending video.
-        self.rtc = RTCManager(self.model, self.voice, True)
+
+        self.realtime_session: RealtimeSessionCreateRequestParam = realtime_session or RealtimeSessionCreateRequestParam(
+            type="realtime"
+        )
+        self.realtime_session["model"] = self.model
+        
+        # Set audio and output if they are None
+        # TODO: handle more edge cases of updating the passed settings/ good defaults
+        if self.realtime_session.get("audio") is None:
+            self.realtime_session["audio"] = RealtimeAudioConfigParam(
+                input=RealtimeAudioConfigInputParam(
+                    transcription=AudioTranscriptionParam(model="gpt-4o-mini-transcribe"),
+                    turn_detection=SemanticVad(type="semantic_vad")
+
+            ))
+        if self.realtime_session["audio"].get("output") is None:
+            self.realtime_session["audio"]["output"] = RealtimeAudioConfigOutputParam()
+        self.realtime_session["audio"]["output"]["voice"] = self.voice
+
+        self.realtime_session["instructions"] = self.instructions
+
         self._output_audio_track = AudioStreamTrack(
             sample_rate=48000, channels=2, format="s16"
         )
         # Map conversation item_id to participant to handle multi-user scenarios
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
+
+        # create the client
+        if client is not None:
+            self.client = client
+        elif api_key is not None and api_key != "":
+            self.client = AsyncOpenAI(api_key=api_key)
+        else:
+            self.client = AsyncOpenAI() # will get it from the env vars
+
+        # Start the realtime connection manager
+        self.rtc = RTCManager(realtime_session=self.realtime_session, client=self.client)
+
+    def _set_instructions(self, instructions: str):
+        super()._set_instructions(instructions)
+        self.realtime_session["instructions"] = self._build_enhanced_instructions()
 
     @property
     def output_audio_track(self) -> AudioStreamTrack:
@@ -177,7 +217,6 @@ class Realtime(realtime.Realtime):
             Registered as callback with RTC manager.
         """
         et = event.get("type")
-        logger.debug(f"OpenAI Realtime event: {et}")
 
         # code here is weird because OpenAI does something strange
         # see issue: https://github.com/openai/openai-python/issues/2698
@@ -218,14 +257,6 @@ class Realtime(realtime.Realtime):
 
             # Look up the correct participant for this transcription
             participant = self._item_to_participant.get(item_id)
-            if participant:
-                logger.info(
-                    f"User speech transcript from {participant.user_id}: {user_transcript_event.transcript}"
-                )
-            else:
-                logger.info(
-                    f"User speech transcript (no participant mapping): {user_transcript_event.transcript}"
-                )
 
             # Temporarily set the correct participant for this specific transcription
             original_participant = self._current_participant
@@ -257,7 +288,6 @@ class Realtime(realtime.Realtime):
         elif et == "rate_limits.updated":
             e = RateLimitsUpdatedEvent(**event)
         elif et == "response.done":
-            logger.info("OpenAI response done %s", event)
             e = ResponseDoneEvent.model_validate(event)
 
             if e.response.status == "failed":
@@ -267,22 +297,22 @@ class Realtime(realtime.Realtime):
             # e = SessionUpdatedEvent(**event)
         elif et == "response.content_part.added":
             # Content part added to response - logged for debugging
-            logger.debug(f"Response content part added: {event}")
+            pass
         elif et == "response.audio_transcript.delta":
             # Streaming transcript delta - logged at debug level to avoid clutter
-            logger.debug(f"Audio transcript delta: {event.get('delta', '')}")
+            pass
         elif et == "output_audio_buffer.started":
             # Output audio buffer started - acknowledgment of audio playback start
-            logger.debug(f"Output audio buffer started: {event}")
+            pass
         elif et == "response.audio.done":
             # Audio generation complete for this response item
-            logger.debug(f"Response audio done: {event}")
+            pass
         elif et == "response.content_part.done":
             # Content part complete - contains full transcript
-            logger.debug(f"Response content part done: {event}")
+            pass
         elif et == "response.output_item.done":
             # Output item complete - logged for debugging
-            logger.debug(f"Response output item done: {event}")
+            pass
         else:
             logger.info(f"Unrecognized OpenAI Realtime event: {et} {event}")
 
