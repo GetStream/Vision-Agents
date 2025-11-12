@@ -285,7 +285,8 @@ class GeminiRealtime(realtime.Realtime):
 
         await self._video_forwarder.remove_frame_handler(self._send_video_frame)
 
-        self._executor.shutdown()
+        # Do not wait for threads to complete to avoid blocking the loop
+        self._executor.shutdown(wait=False)
 
         if self._processing_task is not None:
             self._processing_task.cancel()
