@@ -8,7 +8,6 @@ from typing import Any, Optional, cast
 
 import aiortc
 import av
-import ipdb
 import websockets
 from aiortc import VideoStreamTrack
 from getstream.video.rtc.track_util import PcmData
@@ -69,8 +68,15 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
 )
 
 
-# TODO: Check if reconnect flow works
-# TODO: chat/transcription integration (trigger the right events when receiving transcriptions) - Tommaso
+def _should_reconnect(exc: Exception) -> bool:
+    """
+    Temporary errors should typically trigger a reconnect
+    So if the websocket breaks this should return True and trigger a reconnect
+    """
+    # Gemini WS API returns code 1011 on session timeout
+    if isinstance(exc, websockets.ConnectionClosedError) and exc.rcvd.code == 1011:
+        return True
+    return False
 
 
 class GeminiRealtime(realtime.Realtime):
@@ -156,11 +162,10 @@ class GeminiRealtime(realtime.Realtime):
             await self._session.send_realtime_input(text=text)
             return LLMResponseEvent(text="", original=None)
         except Exception as e:
-            # TODO: Move reconnection to the decorator
             # reconnect here in some cases
-            logger.exception("Failed to send realtime input to Gemini")
-            if self._should_reconnect(e):
+            if _should_reconnect(e):
                 await self.connect()
+            logger.exception("Failed to send realtime input to Gemini")
             return LLMResponseEvent(text="", original=None, exception=e)
 
     async def simple_audio_response(
@@ -416,27 +421,18 @@ class GeminiRealtime(realtime.Realtime):
             while True:
                 try:
                     await self._process_events()
-                except Exception as e:
+                except websockets.ConnectionClosedError as e:
+                    if not _should_reconnect(e):
+                        raise e
+                    # Reconnect here for some errors
+                    await self.connect()
+                except Exception:
                     logger.exception(
                         "Error while processing events from Gemini Live API"
                     )
-                    if not self._should_reconnect(e):
-                        raise e
-                    # Reconnect here for some errors and keep the loop running
-                    await self.connect()
+
         except CancelledError:
             logger.debug("Processing loop has been cancelled")
-
-    def _should_reconnect(self, e: Exception):
-        """
-        Temporary errors should typically trigger a reconnect
-        So if the websocket breaks this should return True and trigger a reconnect
-        """
-        # Reconnect if the session was closed normally by timeout
-        ipdb.set_trace()
-        if isinstance(e, websockets.ConnectionClosedOK):
-            return True
-        return False
 
     def _convert_tools_to_provider_format(
         self, tools: list[ToolSchema]
