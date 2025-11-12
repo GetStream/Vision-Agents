@@ -893,16 +893,11 @@ class Agent:
                         and getattr(participant, "user_id", None) != self.agent_user.id
                     ):
                         # first forward to processors
-                        # Extract audio bytes for processors using the proper PCM data structure
-                        # PCM data has: format, sample_rate, samples, pts, dts, time_base
-                        audio_bytes = pcm.samples.tobytes()
 
                         for processor in self.audio_processors:
                             if processor is None:
                                 continue
-                            await processor.process_audio(
-                                audio_bytes, participant.user_id
-                            )
+                            await processor.process_audio(pcm)
 
                         # when in Realtime mode call the Realtime directly (non-blocking)
                         if _is_audio_llm(self.llm):
@@ -1194,7 +1189,7 @@ class Agent:
         """Get processors that can process audio.
 
         Returns:
-            List of processors that implement `process_audio(audio_bytes, user_id)`.
+            List of processors that implement `process_audio(pcm_data: PcmData)`.
         """
         return filter_processors(self.processors, ProcessorType.AUDIO)
 
