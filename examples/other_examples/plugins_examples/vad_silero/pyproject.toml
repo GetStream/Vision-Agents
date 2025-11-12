@@ -12,6 +12,3 @@ dependencies = [
     "getstream-plugins-common>=0.1.0",
 ]
 
-[tool.uv.sources]
-vision-agents-plugins-silero = { path = "../../../plugins/silero", editable = true }
-getstream-plugins-common = { path = "../../../plugins/common", editable = true }

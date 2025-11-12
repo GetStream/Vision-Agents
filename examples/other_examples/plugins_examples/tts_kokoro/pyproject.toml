@@ -12,4 +12,4 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-getstream-plugins-kokoro = { path = "../../../plugins/kokoro", editable = true }
+getstream-plugins-kokoro = { path = "../../../../plugins/kokoro", editable = true }
