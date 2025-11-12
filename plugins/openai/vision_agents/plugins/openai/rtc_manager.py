@@ -127,7 +127,6 @@ class RTCManager:
 
         @self.pc.on("track")
         async def on_track(track):
-            logger.info("receiving track from openai")
             if track.kind == "audio":
                 track = cast(AudioStreamTrack, track)
                 if self._audio_callback:

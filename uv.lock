@@ -5790,7 +5790,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "openai", extras = ["realtime"], specifier = ">=2.5.0" },
+    { name = "openai", extras = ["realtime"], specifier = ">=2.7.2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

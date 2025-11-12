@@ -2,13 +2,15 @@ import json
 from typing import Any, Optional, List, Dict
 
 import aiortc
+from openai.types.beta.realtime import RateLimitsUpdatedEvent
+from openai.types.realtime import RealtimeSessionCreateRequestParam
+
 from getstream.video.rtc import AudioStreamTrack
-from openai.types.realtime import (
-    RealtimeSessionCreateRequestParam,
+from openai.types.beta.realtime import (
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
     ConversationItemInputAudioTranscriptionCompletedEvent,
-    ResponseDoneEvent,
+    ResponseDoneEvent, SessionCreatedEvent,
 )
 
 from vision_agents.core.llm import realtime
@@ -252,15 +254,37 @@ class Realtime(realtime.Realtime):
             await self._handle_tool_call_event(event)
         elif et == "response.created":
             pass
+        elif et == "session.created":
+            e = SessionCreatedEvent(**event)
+        elif et == "rate_limits.updated":
+            e = RateLimitsUpdatedEvent(**event)
         elif et == "response.done":
             logger.info("OpenAI response done %s", event)
-            e = ResponseDoneEvent(**event)
+            e = ResponseDoneEvent.model_validate(event)
 
             if e.response.status == "failed":
                 raise Exception("OpenAI realtime failure %s", e.response)
         elif et == "session.updated":
             pass
             # e = SessionUpdatedEvent(**event)
+        elif et == "response.content_part.added":
+            # Content part added to response - logged for debugging
+            logger.debug(f"Response content part added: {event}")
+        elif et == "response.audio_transcript.delta":
+            # Streaming transcript delta - logged at debug level to avoid clutter
+            logger.debug(f"Audio transcript delta: {event.get('delta', '')}")
+        elif et == "output_audio_buffer.started":
+            # Output audio buffer started - acknowledgment of audio playback start
+            logger.debug(f"Output audio buffer started: {event}")
+        elif et == "response.audio.done":
+            # Audio generation complete for this response item
+            logger.debug(f"Response audio done: {event}")
+        elif et == "response.content_part.done":
+            # Content part complete - contains full transcript
+            logger.debug(f"Response content part done: {event}")
+        elif et == "response.output_item.done":
+            # Output item complete - logged for debugging
+            logger.debug(f"Response output item done: {event}")
         else:
             logger.info(f"Unrecognized OpenAI Realtime event: {et} {event}")
 

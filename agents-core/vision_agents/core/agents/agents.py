@@ -963,8 +963,9 @@ class Agent:
     async def _on_track_removed(
         self, track_id: str, track_type: int, participant: Participant
     ):
-        self._active_video_tracks.pop(track_id)
-        await self._on_track_change(track_id)
+        track = self._active_video_tracks.pop(track_id, None)
+        if track is not None:
+            await self._on_track_change(track_id)
 
     async def _on_track_change(self, track_id: str):
         # shared logic between track remove and added
@@ -973,6 +974,8 @@ class Agent:
         non_processed_tracks = [
             t for t in self._active_video_tracks.values() if not t.processor
         ]
+        if not non_processed_tracks:
+            return
         source_track = sorted(
             non_processed_tracks, key=lambda t: t.priority, reverse=True
         )[0]
