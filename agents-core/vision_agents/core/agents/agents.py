@@ -139,7 +139,9 @@ class Agent:
         else:
             options = default_agent_options().update(options)
         self.options = options
-        self._audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
+
+        # audio incoming is enqueued to self._incoming_audio_queue (eg. human audio)
+        self._incoming_audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
 
         self.instructions = instructions
         self.edge = edge
@@ -210,8 +212,13 @@ class Agent:
         self._video_forwarders: List[VideoForwarder] = []
         self._current_video_track_id: Optional[str] = None
         self._connection: Optional[Connection] = None
+
+        # the outgoing audio track
         self._audio_track: Optional[OutputAudioTrack] = None
+
+        # the outgoing video track
         self._video_track: Optional[VideoStreamTrack] = None
+
         self._realtime_connection = None
         self._pc_track_handler_attached: bool = False
         self._audio_consumer_task: Optional[asyncio.Task] = None
@@ -296,8 +303,10 @@ class Agent:
         # audio event for the user talking to the AI
         @self.edge.events.subscribe
         async def on_audio_received(event: AudioReceivedEvent):
-            if event.participant is not None:
-                await self._reply_to_audio(event.pcm_data, event.participant)
+            if event.pcm_data is None:
+                return
+
+            await self._incoming_audio_queue.put(event.pcm_data)
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
@@ -528,7 +537,7 @@ class Agent:
 
         self._connection = connection
         self._is_running = True
-        self._audio_consumer_task = asyncio.create_task(self._reply_to_audio_consumer())
+        self._audio_consumer_task = asyncio.create_task(self._consume_incoming_audio())
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -862,23 +871,17 @@ class Agent:
                 completed=True,
             )
 
-    async def _reply_to_audio(
-        self, pcm_data: PcmData, participant: Participant
-    ) -> None:
-        """Put audio data into the queue for processing by the consumer."""
-        # TODO: bit of a hack..
-        pcm_data.participant = participant
-        await self._audio_queue.put(pcm_data)
-
-    async def _reply_to_audio_consumer(self) -> None:
+    async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from the queue."""
+
         self.logger.info("AUDIO: Starting audio consumer")
         try:
             while self._is_running:
                 try:
                     # Get audio data from queue with timeout to allow checking _is_running
                     pcm = await asyncio.wait_for(
-                        self._audio_queue.get_duration(duration_ms=20), timeout=1.0
+                        self._incoming_audio_queue.get_duration(duration_ms=20),
+                        timeout=1.0,
                     )
 
                     participant = pcm.participant
@@ -893,16 +896,10 @@ class Agent:
                         and getattr(participant, "user_id", None) != self.agent_user.id
                     ):
                         # first forward to processors
-                        # Extract audio bytes for processors using the proper PCM data structure
-                        # PCM data has: format, sample_rate, samples, pts, dts, time_base
-                        audio_bytes = pcm.samples.tobytes()
-
                         for processor in self.audio_processors:
                             if processor is None:
                                 continue
-                            await processor.process_audio(
-                                audio_bytes, participant.user_id
-                            )
+                            await processor.process_audio(pcm)
 
                         # when in Realtime mode call the Realtime directly (non-blocking)
                         if _is_audio_llm(self.llm):
@@ -1194,7 +1191,7 @@ class Agent:
         """Get processors that can process audio.
 
         Returns:
-            List of processors that implement `process_audio(audio_bytes, user_id)`.
+            List of processors that implement `process_audio(pcm_data: PcmData)`.
         """
         return filter_processors(self.processors, ProcessorType.AUDIO)
 

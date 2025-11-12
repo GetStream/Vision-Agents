@@ -7,6 +7,7 @@ from enum import Enum
 
 import aiortc
 from PIL import Image
+from getstream.video.rtc import PcmData
 from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
 
 """
@@ -34,6 +35,7 @@ class ProcessorType(Enum):
 
 class Processor(Protocol):
     name: str
+
     def state(self) -> Any:
         pass
 
@@ -51,10 +53,13 @@ class IntervalProcessor(Processor):
 
 class AudioProcessorMixin(abc.ABC):
     @abc.abstractmethod
-    async def process_audio(
-        self, audio_data: bytes, participant: models_pb2.Participant
-    ) -> None:
-        """Process audio data. Override this method to implement audio processing."""
+    async def process_audio(self, audio_data: PcmData) -> None:
+        """Process audio data. Override this method to implement audio processing.
+
+        Args:
+            audio_data: PcmData containing audio samples and metadata.
+                       The participant is stored in audio_data.participant.
+        """
         pass
 
 
@@ -147,17 +152,17 @@ class AudioLogger(AudioVideoProcessor, AudioProcessorMixin):
         self.audio_count = 0
         self.last_audio_time = 0
 
-    async def process_audio(
-        self, audio_data: bytes, user_id: str, metadata: Optional[dict[Any, Any]] = None
-    ) -> None:
+    async def process_audio(self, audio_data: PcmData) -> None:
         """Log audio data information."""
         asyncio.get_event_loop().time()
 
         if self.should_process():
             self.audio_count += 1
+            user_id = getattr(audio_data.participant, "user_id", "unknown")
+            audio_bytes = audio_data.to_bytes()
 
             logger.info(
-                f"🎵 Audio #{self.audio_count} from {user_id}: {len(audio_data)} bytes"
+                f"🎵 Audio #{self.audio_count} from {user_id}: {len(audio_bytes)} bytes"
             )
 
 

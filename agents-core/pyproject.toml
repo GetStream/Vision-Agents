@@ -21,7 +21,7 @@ classifiers = [
 
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc,telemetry]>=2.5.14",
+    "getstream[webrtc,telemetry]>=2.5.15",
     "python-dotenv>=1.1.1",
     "pillow>=10.4.0",  # Compatible with moondream SDK (<11.0.0)
     "numpy>=1.24.0",
@@ -91,5 +91,5 @@ include = ["vision_agents"]
 #]
 # getstream = { git = "https://github.com/GetStream/stream-py.git", branch = "audio-more" }
 # for local development
-#getstream = { path = "../../stream-py/", editable = true }
+# getstream = { path = "../../stream-py/", editable = true }
 # aiortc = { path = "../stream-py/", editable = true }
