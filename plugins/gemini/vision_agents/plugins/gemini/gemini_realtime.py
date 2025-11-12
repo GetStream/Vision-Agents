@@ -39,7 +39,7 @@ from vision_agents.core.llm.events import (
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.llm.llm_types import ToolSchema
 from vision_agents.core.processors import Processor
-from vision_agents.core.utils.utils import frame_to_png_bytes
+from vision_agents.core.utils.video_utils import frame_to_png_bytes
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 logger = logging.getLogger(__name__)

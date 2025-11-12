@@ -1,6 +1,5 @@
 import asyncio
 import importlib.metadata
-import io
 import logging
 import os
 import re
@@ -8,7 +7,6 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 import httpx
-from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -130,31 +128,6 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
     return Instructions(
         input_text=text, markdown_contents=markdown_contents, base_dir=base_dir
     )
-
-
-def frame_to_png_bytes(frame) -> bytes:
-    """
-    Convert a video frame to PNG bytes.
-
-    Args:
-        frame: Video frame object that can be converted to an image
-
-    Returns:
-        PNG bytes of the frame, or empty bytes if conversion fails
-    """
-    try:
-        if hasattr(frame, "to_image"):
-            img = frame.to_image()
-        else:
-            arr = frame.to_ndarray(format="rgb24")
-            img = Image.fromarray(arr)
-
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-    except Exception as e:
-        logger.error(f"Error converting frame to PNG: {e}")
-        return b""
 
 
 def get_vision_agents_version() -> Optional[str]:

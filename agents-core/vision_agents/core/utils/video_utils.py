@@ -4,6 +4,7 @@ import io
 
 import av
 from PIL.Image import Resampling
+from PIL import Image
 
 
 def ensure_even_dimensions(frame: av.VideoFrame) -> av.VideoFrame:
@@ -60,4 +61,25 @@ def frame_to_jpeg_bytes(
     # Save as JPEG with quality control
     buf = io.BytesIO()
     resized.save(buf, "JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
+
+
+def frame_to_png_bytes(frame: av.VideoFrame) -> bytes:
+    """
+    Convert a video frame to PNG bytes.
+
+    Args:
+        frame: Video frame object that can be converted to an image
+
+    Returns:
+        PNG bytes of the frame, or empty bytes if conversion fails
+    """
+    if hasattr(frame, "to_image"):
+        img = frame.to_image()
+    else:
+        arr = frame.to_ndarray(format="rgb24")
+        img = Image.fromarray(arr)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
     return buf.getvalue()
