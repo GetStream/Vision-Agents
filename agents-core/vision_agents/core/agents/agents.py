@@ -255,12 +255,6 @@ class Agent:
         # listen to turn completed, started etc
         self.events.subscribe(self._on_turn_event)
 
-        if self.stt:
-
-            @self.stt.events.subscribe
-            async def on_turn_ended(event: TurnEndedEvent):
-                logger.info("Received TurnEndedEvent %s", event)
-
         @self.llm.events.subscribe
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
             # turns started outside of the agent (instructions from code)
@@ -1033,7 +1027,6 @@ class Agent:
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
-        logger.info("_on_turn_event")
         # Skip the turn event handling if the model doesn't require TTS or SST audio itself.
         if _is_audio_llm(self.llm):
             return
