@@ -5,8 +5,12 @@ from typing import Any, Optional, Callable, cast, Literal
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel, RTCRtpSender
 from openai import AsyncOpenAI
-from openai.types.beta.realtime import ConversationItemCreateEvent, ConversationItem, ConversationItemContent
 from openai.types.realtime import RealtimeSessionCreateRequestParam
+from openai.types.beta.realtime import (
+    ConversationItemCreateEvent,
+    ConversationItem, 
+    ConversationItemContent
+)
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
 import logging
@@ -31,9 +35,10 @@ class RTCManager:
     client: AsyncOpenAI
     pc: RTCPeerConnection
 
-    def __init__(self, realtime_session: RealtimeSessionCreateRequestParam, client: AsyncOpenAI):
+    def __init__(self, realtime_session: RealtimeSessionCreateRequestParam, client: AsyncOpenAI, send_video: bool):
         self.realtime_session = realtime_session
         self.client = client
+        self.send_video = send_video
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
 
@@ -68,8 +73,11 @@ class RTCManager:
                     audio_forwarder = AudioForwarder(track, self._audio_callback)
                     await audio_forwarder.start()
 
-        # TODO: bugfix for SDP renegotiation not working
-        # #self._video_sender = self.pc.addTrack(self._video_to_openai_track)
+        # TODO: this is not ideal.. but we can't renegotiate since you lose the session/memory
+        # see https://platform.openai.com/docs/api-reference/realtime/create-call
+        # setting video sender skips the renegotiate
+        if self.send_video:
+            self._video_sender = self.pc.addTrack(self._video_to_openai_track)
         await self.renegotiate()
 
     async def send_audio_pcm(self, pcm: PcmData) -> None:
