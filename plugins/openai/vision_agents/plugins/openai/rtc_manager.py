@@ -294,4 +294,5 @@ class RTCManager:
         self._audio_to_openai_track.stop()
         if self._video_to_openai_track is not None:
             self._video_to_openai_track.stop()
-        await self.pc.close()
+        close_coro = self.pc.close()
+        await asyncio.to_thread(lambda: asyncio.run(close_coro))

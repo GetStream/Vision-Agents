@@ -191,14 +191,17 @@ class Realtime(realtime.Realtime):
 
         # code here is weird because OpenAI does something strange
         # see issue: https://github.com/openai/openai-python/issues/2698
-        # as a workaround we copy the event and set type to response.output_audio_transcript.done so that
+        # as a workaround we copy the event and normalize the type to response.audio_transcript.done so that
         # ResponseAudioTranscriptDoneEvent.model_validate is happy
         if et in [
             "response.audio_transcript.done",
             "response.output_audio_transcript.done",
         ]:
+            # Create a copy and normalize the type field
+            event_copy = event.copy()
+            event_copy["type"] = "response.audio_transcript.done"
             transcript_event: ResponseAudioTranscriptDoneEvent = (
-                ResponseAudioTranscriptDoneEvent.model_validate(event)
+                ResponseAudioTranscriptDoneEvent.model_validate(event_copy)
             )
             self._emit_agent_speech_transcription(
                 text=transcript_event.transcript, original=event
