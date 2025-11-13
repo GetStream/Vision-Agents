@@ -6,7 +6,7 @@ from openai import AsyncOpenAI
 from openai.types.beta.realtime import RateLimitsUpdatedEvent
 from openai.types.realtime import RealtimeSessionCreateRequestParam, RealtimeAudioConfigParam, \
     RealtimeAudioConfigOutputParam, RealtimeAudioConfigInputParam, AudioTranscriptionParam
-from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
+from openai.types.realtime.realtime_transcription_session_audio_input_turn_detection_param import SemanticVad
 
 from getstream.video.rtc import AudioStreamTrack
 from openai.types.beta.realtime import (
@@ -31,16 +31,11 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-
 """
 TODO: Future improvements
 - send video should depend on if the RTC connection with stream is sending video. not always send (requires SDP renegotiation)
-- naming and cleanup
 - more testing with adding/removing video tracks
 """
-
-client = RealtimeSessionCreateRequestParam
-
 
 class Realtime(realtime.Realtime):
     """
@@ -112,10 +107,6 @@ class Realtime(realtime.Realtime):
         # Start the realtime connection manager
         self.rtc = RTCManager(realtime_session=self.realtime_session, client=self.client)
 
-    def _set_instructions(self, instructions: str):
-        super()._set_instructions(instructions)
-        self.realtime_session["instructions"] = self._build_enhanced_instructions()
-
     @property
     def output_audio_track(self) -> AudioStreamTrack:
         return self._output_audio_track
@@ -185,13 +176,6 @@ class Realtime(realtime.Realtime):
         # Track pending participant for the next conversation item
         self._pending_participant = participant
         await self.rtc.send_audio_pcm(audio)
-
-    async def request_session_info(self) -> None:
-        """Request session information from the OpenAI API.
-
-        Delegates to the RTC manager to query session metadata.
-        """
-        await self.rtc.request_session_info()
 
     async def close(self):
         await self.rtc.close()
@@ -451,6 +435,10 @@ class Realtime(realtime.Realtime):
 
         except Exception as e:
             logger.error(f"Failed to send tool response: {e}")
+
+    def _set_instructions(self, instructions: str):
+        super()._set_instructions(instructions)
+        self.realtime_session["instructions"] = self._build_enhanced_instructions()
 
     def _sanitize_tool_output(self, value: Any, max_chars: int = 60_000) -> str:
         """Sanitize tool output for OpenAI realtime.

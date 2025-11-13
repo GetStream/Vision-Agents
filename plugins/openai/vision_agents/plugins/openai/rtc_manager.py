@@ -103,17 +103,6 @@ class RTCManager:
     async def start_video_sender(
             self, stream_video_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None
     ) -> None:
-        """Replace dummy video track with the actual Stream Video forwarding track.
-
-        This creates a forwarding track that reads frames from the Stream Video track
-        and forwards them through the OpenAI WebRTC connection.
-
-        Args:
-            stream_video_track: Video track to forward to OpenAI.
-            fps: Target frames per second.
-            shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one.
-        """
-
         await self._set_video_track()
 
         # This method can be called twice with different forwarders
