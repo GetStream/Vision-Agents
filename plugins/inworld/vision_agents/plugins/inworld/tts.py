@@ -3,12 +3,12 @@ import io
 import json
 import logging
 import os
-from typing import AsyncIterator, Iterator, Optional
+from typing import AsyncIterator, Optional
 
 import av
 import httpx
 from vision_agents.core import tts
-from getstream.video.rtc.track_util import PcmData  # AudioFormat removed (unused)
+from getstream.video.rtc.track_util import PcmData
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class TTS(tts.TTS):
 
     async def stream_audio(
         self, text: str, *_, **__
-    ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
+    ) -> AsyncIterator[PcmData]:
         """
         Convert text to speech using Inworld AI API.
 
@@ -66,7 +66,7 @@ class TTS(tts.TTS):
             text: The text to convert to speech (max 2,000 characters).
 
         Returns:
-            An async iterator of audio chunks as PcmData.
+            An async iterator of audio chunks as PcmData objects.
         """
         url = f"{self.base_url}/tts/v1/voice:stream"
 
@@ -122,11 +122,11 @@ class TTS(tts.TTS):
                 if "result" in data and "audioContent" in data["result"]:
                     wav_bytes = base64.b64decode(data["result"]["audioContent"])
 
-                    # Decode WAV to PCM using PyAV
-                    with av.open(io.BytesIO(wav_bytes)) as container:
+                    container = av.open(io.BytesIO(wav_bytes))
+                    assert isinstance(container, av.container.InputContainer)
+                    with container:
                         audio_stream = container.streams.audio[0]
                         pcm: Optional[PcmData] = None
-
                         for frame in container.decode(audio_stream):
                             frame_pcm = PcmData.from_av_frame(frame)
                             if pcm is None:
@@ -164,4 +164,3 @@ class TTS(tts.TTS):
     async def close(self) -> None:
         if self.client:
             await self.client.aclose()
-
