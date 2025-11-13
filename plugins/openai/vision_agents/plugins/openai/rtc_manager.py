@@ -3,7 +3,7 @@ import json
 from typing import Any, Optional, Callable, cast
 
 import av
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel, RTCRtpSender
 from openai import AsyncOpenAI
 from openai.types.beta.realtime import ConversationItemCreateEvent, ConversationItem, ConversationItemContent
 from openai.types.realtime import RealtimeSessionCreateRequestParam
@@ -46,8 +46,8 @@ class RTCManager:
         self._audio_to_openai_track: QueuedAudioTrack = QueuedAudioTrack(
             sample_rate=48000
         )
-        self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack()
-        self._video_sender = None
+        self._video_to_openai_track: QueuedVideoTrack = QueuedVideoTrack()
+        self._video_sender : Optional[RTCRtpSender] = None
 
         # Set up connection event handlers
         self._setup_connection_logging()
