@@ -5,6 +5,7 @@ from typing import Any, Optional, Callable, cast
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
 from openai import AsyncOpenAI
+from openai.types.beta.realtime import ConversationItemCreateEvent, ConversationItem, ConversationItemContent
 from openai.types.realtime import RealtimeSessionCreateRequestParam
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
@@ -31,39 +32,101 @@ class RTCManager:
     Handles the low-level WebRTC peer connection, audio/video streaming,
     and data channel communication with OpenAI's servers.
     """
+    realtime_session: RealtimeSessionCreateRequestParam
+    client: AsyncOpenAI
+    pc: RTCPeerConnection
 
     def __init__(self, realtime_session: RealtimeSessionCreateRequestParam, client: AsyncOpenAI):
-        """Initialize the RTC manager.
-
-        Args:
-            client: Open AI aysync client
-            model: OpenAI model to use for the session (e.g., "gpt-realtime").
-            voice: Voice to use for audio responses (e.g., "marin", "alloy").
-            send_video: Whether to enable video track negotiation for potential video input.
-        """
-        self._video_sender = None
-        self.client = client
         self.realtime_session = realtime_session
-
+        self.client = client
         self.pc = RTCPeerConnection()
         self.data_channel: Optional[RTCDataChannel] = None
 
-        # Set up connection event handlers
-        self._setup_connection_logging()
-
-        # on this track we send audio to openAI
+        # tracks for sharing audio & video
         self._audio_to_openai_track: QueuedAudioTrack = QueuedAudioTrack(
             sample_rate=48000
         )
-        # video to openAI
         self._video_to_openai_track: Optional[QueuedVideoTrack] = QueuedVideoTrack()
+        self._video_sender = None
 
+        # Set up connection event handlers
+        self._setup_connection_logging()
         self._audio_callback: Optional[Callable[[PcmData], Any]] = None
         self._event_callback: Optional[Callable[[dict], Any]] = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
-
-        self.instructions: Optional[str] = None
         self._current_video_forwarder = None
+
+    async def connect(self) -> None:
+        """Establish WebRTC connection to OpenAI's Realtime API.
+
+        Sets up the peer connection, negotiates audio and video tracks,
+        and establishes the data channel for real-time communication.
+        """
+        await self._add_data_channel()
+        await self._set_audio_track()
+
+        @self.pc.on("track")
+        async def on_track(track):
+            if track.kind == "audio":
+                track = cast(AudioStreamTrack, track)
+                if self._audio_callback:
+                    audio_forwarder = AudioForwarder(track, self._audio_callback)
+                    await audio_forwarder.start()
+
+        self._video_sender = self.pc.addTrack(self._video_to_openai_track)
+        await self.renegotiate()
+
+    async def send_audio_pcm(self, pcm: PcmData) -> None:
+        await self._audio_to_openai_track.write(pcm)
+
+    async def send_text(self, text: str, role: str = "user"):
+        event_type = ConversationItemCreateEvent(
+            type="conversation.item.create",
+            item=ConversationItem(
+                type= "message",
+                role= role,
+                content=[ConversationItemContent(
+                    type="input_text",
+                    text=text,
+                )]
+            )
+        )
+        event = event_type.to_dict()
+        await self._send_event(event)
+        # Explicitly request audio response for this turn using top-level fields
+        await self._send_event(
+            {
+                "type": "response.create",
+            }
+        )
+
+    async def start_video_sender(
+            self, stream_video_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None
+    ) -> None:
+        """Replace dummy video track with the actual Stream Video forwarding track.
+
+        This creates a forwarding track that reads frames from the Stream Video track
+        and forwards them through the OpenAI WebRTC connection.
+
+        Args:
+            stream_video_track: Video track to forward to OpenAI.
+            fps: Target frames per second.
+            shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one.
+        """
+
+        await self._set_video_track()
+
+        # This method can be called twice with different forwarders
+        # Remove handler from old forwarder if it exists
+        if self._current_video_forwarder is not None:
+            await self._current_video_forwarder.remove_frame_handler(self._send_video_frame)
+            logger.debug("Removed old video frame handler from previous forwarder")
+
+        # Store reference to new forwarder and add handler
+        self._current_video_forwarder = shared_forwarder
+        shared_forwarder.add_frame_handler(
+            self._send_video_frame, fps=float(fps), name="openai"
+        )
 
     def _setup_connection_logging(self) -> None:
         """Set up event handlers for connection monitoring and error logging."""
@@ -71,7 +134,6 @@ class RTCManager:
         @self.pc.on("connectionstatechange")
         async def on_connectionstatechange():
             state = self.pc.connectionState
-            logger.info(f"🔗 RTC connection state changed: {state}")
             if state == "failed":
                 logger.error("❌ RTC connection failed")
             elif state == "disconnected":
@@ -84,7 +146,6 @@ class RTCManager:
         @self.pc.on("iceconnectionstatechange")
         async def on_iceconnectionstatechange():
             state = self.pc.iceConnectionState
-            logger.info(f"🧊 ICE connection state: {state}")
             if state == "failed":
                 logger.error("❌ ICE connection failed")
             elif state == "disconnected":
@@ -98,8 +159,6 @@ class RTCManager:
         async def on_icegatheringstatechange():
             state = self.pc.iceGatheringState
             logger.debug(f"🧊 ICE gathering state: {state}")
-            if state == "complete":
-                logger.info("✅ ICE gathering complete")
 
         @self.pc.on("signalingstatechange")
         async def on_signalingstatechange():
@@ -108,47 +167,8 @@ class RTCManager:
 
         @self.pc.on("datachannel")
         async def on_datachannel(channel):
-            logger.info(f"📨 Remote data channel created: {channel.label}")
+            logger.debug(f"📨 Remote data channel created: {channel.label}")
 
-    async def connect(self) -> None:
-        """Establish WebRTC connection to OpenAI's Realtime API.
-
-        Sets up the peer connection, negotiates audio and video tracks,
-        and establishes the data channel for real-time communication.
-        """
-        # For server-side WebRTC, we don't need client_secrets
-        # Just use the regular API key directly
-
-
-        await self._add_data_channel()
-
-        await self._set_audio_track()
-
-        @self.pc.on("track")
-        async def on_track(track):
-            if track.kind == "audio":
-                track = cast(AudioStreamTrack, track)
-                if self._audio_callback:
-                    audio_forwarder = AudioForwarder(track, self._audio_callback)
-                    await audio_forwarder.start()
-
-        self._video_sender = self.pc.addTrack(self._video_to_openai_track)
-
-
-        await self._renegotiate()
-
-    async def _renegotiate(self) -> None:
-        """Perform offer/answer exchange with OpenAI.
-        
-        Creates a new offer, exchanges SDP with OpenAI, and sets the remote description.
-        Can be called to renegotiate the connection when tracks change.
-        """
-        answer_sdp = await self._setup_sdp_exchange()
-
-        # Set the remote SDP we got from OpenAI
-        answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
-        await self.pc.setRemoteDescription(answer)
-        logger.info("Remote description set; WebRTC established")
     
     async def renegotiate(self) -> None:
         """Renegotiate the connection with OpenAI.
@@ -156,7 +176,11 @@ class RTCManager:
         Public method to repeat the offer/answer cycle, useful when tracks are added
         or modified after the initial connection.
         """
-        await self._renegotiate()
+        answer_sdp = await self._setup_sdp_exchange()
+
+        # Set the remote SDP we got from OpenAI
+        answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
+        await self.pc.setRemoteDescription(answer)
 
     async def _add_data_channel(self) -> None:
         # Add data channel
@@ -184,33 +208,8 @@ class RTCManager:
                 logger.info("_set_video_track enableing addTrack")
                 self._video_sender = self.pc.addTrack(self._video_to_openai_track)
                 # adding tracks requires renegotiation
-                await self._renegotiate()
+                await self.renegotiate()
 
-    async def send_audio_pcm(self, pcm: PcmData) -> None:
-        await self._audio_to_openai_track.write(pcm)
-
-    async def send_text(self, text: str, role: str = "user"):
-        """Send a text message to OpenAI.
-
-        Args:
-            text: The text message to send.
-            role: Message role. Defaults to "user".
-        """
-        event = {
-            "type": "conversation.item.create",
-            "item": {
-                "type": "message",
-                "role": role,
-                "content": [{"type": "input_text", "text": text}],
-            },
-        }
-        await self._send_event(event)
-        # Explicitly request audio response for this turn using top-level fields
-        await self._send_event(
-            {
-                "type": "response.create",
-            }
-        )
 
     async def _send_event(self, event: dict):
         """Send an event through the data channel."""
@@ -250,38 +249,6 @@ class RTCManager:
         if self._video_to_openai_track:
             await self._video_to_openai_track.add_frame(frame)
 
-    async def start_video_sender(
-        self, stream_video_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None
-    ) -> None:
-        """Replace dummy video track with the actual Stream Video forwarding track.
-
-        This creates a forwarding track that reads frames from the Stream Video track
-        and forwards them through the OpenAI WebRTC connection.
-
-        Args:
-            stream_video_track: Video track to forward to OpenAI.
-            fps: Target frames per second.
-            shared_forwarder: Optional shared VideoForwarder to use instead of creating a new one.
-        """
-
-        await self._set_video_track()
-
-        # This method can be called twice with different forwarders
-        # Remove handler from old forwarder if it exists
-        if self._current_video_forwarder is not None:
-            await self._current_video_forwarder.remove_frame_handler(self._send_video_frame)
-            logger.debug("Removed old video frame handler from previous forwarder")
-
-        # Store reference to new forwarder and add handler
-        self._current_video_forwarder = shared_forwarder
-        shared_forwarder.add_frame_handler(
-            self._send_video_frame, fps=float(fps), name="openai"
-        )
-
-        logger.info(
-            f"✅ Successfully replaced OpenAI track with Stream Video forwarding (fps={fps})"
-        )
-
     async def _setup_sdp_exchange(self) -> str:
         # Create local offer and exchange SDP
         offer = await self.pc.createOffer()
@@ -319,42 +286,23 @@ class RTCManager:
             body = e.response.text if e.response is not None else ""
             logger.error(f"SDP exchange failed: {e}; body={body}")
             raise
-        except Exception as e:
-            logger.error(f"SDP exchange failed: {e}")
-            raise
 
     async def _handle_event(self, event: dict) -> None:
-        """Minimal event handler for data channel messages."""
         cb = self._event_callback
         if cb is not None:
             await cb(event)
 
     def set_audio_callback(self, callback: Callable[[PcmData], Any]) -> None:
-        """Set callback for receiving audio data from OpenAI.
-
-        Args:
-            callback: Function that receives PcmData (16kHz, mono, int16) from OpenAI responses.
-        """
         self._audio_callback = callback
 
     def set_event_callback(self, callback: Callable[[dict], Any]) -> None:
-        """Set callback for receiving events from OpenAI.
-
-        Args:
-            callback: Function that receives event dicts from the OpenAI data channel.
-        """
         self._event_callback = callback
 
     async def close(self) -> None:
-        """Close the WebRTC connection and clean up resources."""
-        try:
-            if self.data_channel is not None:
-                self.data_channel.close()
-                self.data_channel = None
-            if self._audio_to_openai_track is not None:
-                self._audio_to_openai_track.stop()
-            if self._video_to_openai_track is not None:
-                self._video_to_openai_track.stop()
-            await self.pc.close()
-        except Exception as e:
-            logger.debug(f"RTCManager close error: {e}")
+        if self.data_channel is not None:
+            self.data_channel.close()
+            self.data_channel = None
+        self._audio_to_openai_track.stop()
+        if self._video_to_openai_track is not None:
+            self._video_to_openai_track.stop()
+        await asyncio.to_thread(self.pc.close)
