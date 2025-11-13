@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import Any, Optional, Callable, cast
+from typing import Any, Optional, Callable, cast, Literal
 
 import av
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel, RTCRtpSender
@@ -79,7 +79,7 @@ class RTCManager:
     async def send_audio_pcm(self, pcm: PcmData) -> None:
         await self._audio_to_openai_track.write(pcm)
 
-    async def send_text(self, text: str, role: str = "user"):
+    async def send_text(self, text: str, role: Literal["user", "assistant", "system"] = "user"):
         event_type = ConversationItemCreateEvent(
             type="conversation.item.create",
             item=ConversationItem(
@@ -294,4 +294,4 @@ class RTCManager:
         self._audio_to_openai_track.stop()
         if self._video_to_openai_track is not None:
             self._video_to_openai_track.stop()
-        await asyncio.to_thread(self.pc.close)
+        await self.pc.close()

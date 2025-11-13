@@ -255,14 +255,14 @@ class Realtime(realtime.Realtime):
         elif et == "response.created":
             pass
         elif et == "session.created":
-            e = SessionCreatedEvent(**event)
+            SessionCreatedEvent(**event)
         elif et == "rate_limits.updated":
-            e = RateLimitsUpdatedEvent(**event)
+            RateLimitsUpdatedEvent(**event)
         elif et == "response.done":
-            e = ResponseDoneEvent.model_validate(event)
+            response_done_event = ResponseDoneEvent.model_validate(event)
 
-            if e.response.status == "failed":
-                raise Exception("OpenAI realtime failure %s", e.response)
+            if response_done_event.response.status == "failed":
+                raise Exception("OpenAI realtime failure %s", response_done_event.response)
         elif et == "session.updated":
             pass
             # e = SessionUpdatedEvent(**event)
