@@ -23,7 +23,7 @@ def configure_sdk_logger(level: int) -> None:
     """
     colored_formatter = colorlog.ColoredFormatter(
         fmt="%(log_color)s%(asctime)s.%(msecs)03d | %(levelname)-8s | %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
         log_colors={
             "DEBUG": "white",
             "INFO": "light_white",
