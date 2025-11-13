@@ -51,6 +51,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         options: AgentOptions for model directory configuration. If not provided,
                  uses default_agent_options() which defaults to tempfile.gettempdir()
     """
+    name = "moondream_local"
 
     def __init__(
             self,
