@@ -1,0 +1,21 @@
+[project]
+name = "inworld-tts-example"
+version = "0.1.0"
+description = "Example using Inworld AI TTS with Vision Agents"
+requires-python = ">=3.10"
+dependencies = [
+    "vision-agents-plugins-inworld",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-smart-turn",
+    "vision-agents-plugins-gemini", 
+    "vision-agents-plugins-deepgram",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+vision-agents-plugins-inworld = { workspace = true }
+vision-agents-plugins-getstream = { workspace = true }
+vision-agents-plugins-smart-turn = { workspace = true }
+vision-agents-plugins-gemini = { workspace = true }
+vision-agents-plugins-deepgram = { workspace = true }
+
