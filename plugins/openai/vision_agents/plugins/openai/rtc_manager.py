@@ -294,5 +294,11 @@ class RTCManager:
         self._audio_to_openai_track.stop()
         if self._video_to_openai_track is not None:
             self._video_to_openai_track.stop()
-        close_coro = self.pc.close()
-        await asyncio.to_thread(lambda: asyncio.run(close_coro))
+        
+        async def _safe_close():
+            try:
+                await self.pc.close()
+            except Exception as e:
+                logger.error(f"Error closing peer connection: {e}")
+        
+        asyncio.create_task(_safe_close())
