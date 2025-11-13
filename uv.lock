@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -5675,6 +5675,7 @@ dev = [
 name = "vision-agents-plugins-inworld"
 source = { editable = "plugins/inworld" }
 dependencies = [
+    { name = "av" },
     { name = "httpx" },
     { name = "vision-agents" },
 ]
@@ -5687,6 +5688,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "av", specifier = ">=10.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]

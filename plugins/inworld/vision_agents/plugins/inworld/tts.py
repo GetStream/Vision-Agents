@@ -8,7 +8,7 @@ from typing import AsyncIterator, Iterator, Optional
 import av
 import httpx
 from vision_agents.core import tts
-from getstream.video.rtc.track_util import PcmData, AudioFormat
+from getstream.video.rtc.track_util import PcmData  # AudioFormat removed (unused)
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +43,11 @@ class TTS(tts.TTS):
         """
         super().__init__(provider_name="inworld")
 
+        api_key = api_key or os.getenv("INWORLD_API_KEY")
         if not api_key:
-            api_key = os.environ.get("INWORLD_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "INWORLD_API_KEY environment variable must be set or api_key must be provided"
-                )
+            raise ValueError(
+                "INWORLD_API_KEY environment variable must be set or api_key must be provided"
+            )
 
         self.api_key = api_key
         self.voice_id = voice_id
@@ -88,56 +87,68 @@ class TTS(tts.TTS):
 
         async def _stream_audio() -> AsyncIterator[PcmData]:
             try:
-                async with self.client.stream("POST", url, headers=headers, json=payload) as response:
+                async with self.client.stream(
+                    "POST", url, headers=headers, json=payload
+                ) as response:
                     response.raise_for_status()
-
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-
-                        try:
-                            data = json.loads(line)
-                            if "error" in data:
-                                error_msg = data["error"].get("message", "Unknown error")
-                                logger.error(f"Inworld AI API error: {error_msg}")
-                                continue
-
-                            if "result" in data and "audioContent" in data["result"]:
-                                wav_bytes = base64.b64decode(data["result"]["audioContent"])
-                                
-                                # Decode WAV to PCM using PyAV
-                                with av.open(io.BytesIO(wav_bytes)) as container:
-                                    audio_stream = container.streams.audio[0]
-                                    pcm = None
-                                    
-                                    for frame in container.decode(audio_stream):
-                                        frame_pcm = PcmData.from_av_frame(frame)
-                                        if pcm is None:
-                                            pcm = frame_pcm
-                                        else:
-                                            pcm.append(frame_pcm)
-                                    
-                                    if pcm:
-                                        pcm = pcm.resample(
-                                            target_sample_rate=pcm.sample_rate,
-                                            target_channels=1
-                                        ).to_int16()
-                                        yield pcm
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse JSON line: {e}")
-                            continue
-                        except Exception as e:
-                            logger.warning(f"Error processing audio chunk: {e}")
-                            continue
-
+                    async for pcm in self._process_response(response):
+                        yield pcm
             except httpx.HTTPStatusError as e:
-                logger.error(f"Inworld AI API HTTP error: {e.response.status_code} - {e.response.text}")
+                logger.error(
+                    "Inworld AI API HTTP error: %s - %s",
+                    e.response.status_code,
+                    e.response.text,
+                )
                 raise
             except Exception as e:
-                logger.error(f"Error streaming audio from Inworld AI: {e}")
+                logger.error("Error streaming audio from Inworld AI: %s", e)
                 raise
 
+        # Return the async generator
         return _stream_audio()
+
+    async def _process_response(self, response: httpx.Response) -> AsyncIterator[PcmData]:
+        async for line in response.aiter_lines():
+            if not line.strip():
+                continue
+
+            try:
+                data = json.loads(line)
+                if "error" in data:
+                    error_msg = data["error"].get("message", "Unknown error")
+                    logger.error("Inworld AI API error: %s", error_msg)
+                    continue
+
+                if "result" in data and "audioContent" in data["result"]:
+                    wav_bytes = base64.b64decode(data["result"]["audioContent"])
+
+                    # Decode WAV to PCM using PyAV
+                    with av.open(io.BytesIO(wav_bytes)) as container:
+                        audio_stream = container.streams.audio[0]
+                        pcm: Optional[PcmData] = None
+
+                        for frame in container.decode(audio_stream):
+                            frame_pcm = PcmData.from_av_frame(frame)
+                            if pcm is None:
+                                pcm = frame_pcm
+                            else:
+                                pcm.append(frame_pcm)
+
+                        if pcm:
+                            pcm = (
+                                pcm.resample(
+                                    target_sample_rate=pcm.sample_rate,
+                                    target_channels=1,
+                                )
+                                .to_int16()
+                            )
+                            yield pcm
+            except json.JSONDecodeError as e:
+                logger.warning("Failed to parse JSON line: %s", e)
+                continue
+            except Exception as e:
+                logger.warning("Error processing audio chunk: %s", e)
+                continue
 
     async def stop_audio(self) -> None:
         """
@@ -150,9 +161,7 @@ class TTS(tts.TTS):
         """
         logger.info("🎤 Inworld AI TTS stop requested (no-op)")
 
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit - close HTTP client if we created it."""
+    async def close(self) -> None:
         if self.client:
             await self.client.aclose()
 

@@ -35,8 +35,8 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Friendly AI", id="agent"),
-        instructions="You're a helpful voice AI assistant. Keep your responses concise and friendly.",
-        tts=inworld.TTS(),  
+        instructions="You're a helpful voice AI assistant.Read @inworld-audio-guide.md",
+        tts=inworld.TTS(voice_id="Ashley"),  
         stt=deepgram.STT(),
         llm=gemini.LLM("gemini-2.0-flash"),
         turn_detection=smart_turn.TurnDetection(),
@@ -59,7 +59,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("LLM ready")
         
         await asyncio.sleep(5)
-        await agent.llm.simple_response(text="Hello! How can I help you today?")
+        await agent.llm.simple_response(text="Tell me a story about a dragon.")
         
         await agent.finish()  # Run till the call ends
 
