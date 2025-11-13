@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from getstream.video.rtc.track_util import AudioFormat
 from vision_agents.core.edge.types import PcmData
-from vision_agents.core.utils.logging import configure_default_logging
+from vision_agents.core.utils.logging import configure_sdk_logger
 from vision_agents.core.utils.utils import Instructions, parse_instructions
 from vision_agents.core.utils.video_utils import (
     ensure_even_dimensions,
@@ -571,38 +571,35 @@ def make_logger():
 
 
 class TestLogging:
-    def test_configure_default_logging_configures(self, make_logger):
+    def test_configure_sdk_loggers_configures(self, make_logger):
         vision_agents_logger = make_logger("vision_agents")
-        getstream_logger = make_logger("getstream")
 
         some_level = 23
         assert vision_agents_logger.level != some_level
-        assert getstream_logger.level != some_level
-        configure_default_logging(level=some_level)
+        configure_sdk_logger(level=some_level)
         assert vision_agents_logger.level == some_level
-        assert getstream_logger.level == some_level
 
-    def test_configure_default_logging_handlers_already_configured(self, make_logger):
-        loggers = [make_logger("vision_agents"), make_logger("getstream")]
+    def test_configure_sdk_loggers_handlers_already_configured(self, make_logger):
+        loggers = [make_logger("vision_agents")]
         some_level = 23
         null_handler = logging.NullHandler()
 
         for logger in loggers:
             logger.addHandler(null_handler)
 
-        configure_default_logging(level=some_level)
+        configure_sdk_logger(level=some_level)
 
         for logger in loggers:
             assert logger.level == some_level
             assert logger.handlers == [null_handler]
 
-    def test_configure_default_logging_level_already_set(self, make_logger):
-        loggers = [make_logger("vision_agents"), make_logger("getstream")]
+    def test_configure_sdk_loggers_level_already_set(self, make_logger):
+        loggers = [make_logger("vision_agents")]
         for logger in loggers:
             logger.setLevel(logging.DEBUG)
             assert not logger.handlers
 
-        configure_default_logging(level=logging.INFO)
+        configure_sdk_logger(level=logging.INFO)
 
         for logger in loggers:
             assert logger.level == logging.DEBUG

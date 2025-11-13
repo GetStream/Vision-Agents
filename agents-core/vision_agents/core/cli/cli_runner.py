@@ -11,8 +11,15 @@ from uuid import uuid4
 
 import click
 
+from vision_agents.core.utils.logging import configure_sdk_logger
+
 if TYPE_CHECKING:
     from vision_agents.core.agents.agent_launcher import AgentLauncher
+
+
+asyncio_logger = logging.getLogger("asyncio")
+
+logger = logging.getLogger(__name__)
 
 
 def run_example(
@@ -73,7 +80,7 @@ def example_cli(
 
         if __name__ == "__main__":
             main()
-    
+
     Or with agent launcher:
         @example_cli(agent_launcher=launcher)
         async def main():
@@ -119,7 +126,7 @@ def cli(launcher: "AgentLauncher") -> None:
     Usage:
         if __name__ == "__main__":
             cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-    
+
     Args:
         launcher: AgentLauncher instance with create_agent and join_call functions
     """
@@ -160,29 +167,25 @@ def cli(launcher: "AgentLauncher") -> None:
         """Run the agent with the specified configuration."""
         # Configure logging
         numeric_level = getattr(logging, log_level.upper(), logging.INFO)
-        logging.basicConfig(
-            level=numeric_level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
+        configure_sdk_logger(level=numeric_level)
 
         # Generate call ID if not provided
         if call_id is None:
             call_id = str(uuid4())
-        
+
         async def _run():
-            logger = logging.getLogger(__name__)
             logger.info("🚀 Launching agent...")
-            
+
             try:
                 # Launch agent with warmup
                 agent = await launcher.launch(call_type=call_type, call_id=call_id)
                 logger.info("✅ Agent warmed up and ready")
-                
+
                 # Open demo UI by default
                 if not no_demo and hasattr(agent, 'edge') and hasattr(agent.edge, 'open_demo_for_agent'):
                     logger.info("🌐 Opening demo UI...")
                     await agent.edge.open_demo_for_agent(agent, call_type, call_id)
-                
+
                 # Join call if join_call function is provided
                 if launcher.join_call:
                     logger.info(f"📞 Joining call: {call_type}/{call_id}")
@@ -196,23 +199,21 @@ def cli(launcher: "AgentLauncher") -> None:
             except Exception as e:
                 logger.error(f"❌ Error running agent: {e}", exc_info=True)
                 raise
-        
+
+        asyncio_logger_level = asyncio_logger.level
+
         try:
-            # Temporarily suppress asyncio error logging during cleanup
-            asyncio_logger = logging.getLogger("asyncio")
-            original_level = asyncio_logger.level
-            
             asyncio.run(_run(), debug=debug)
         except KeyboardInterrupt:
+            # Temporarily suppress asyncio error logging during cleanup
+            asyncio_logger_level = asyncio_logger.level
             # Suppress KeyboardInterrupt and asyncio errors during cleanup
             asyncio_logger.setLevel(logging.CRITICAL)
-            logger = logging.getLogger(__name__)
             logger.info("👋 Agent shutdown complete")
         finally:
             # Restore original logging level
-            if 'asyncio_logger' in locals() and 'original_level' in locals():
-                asyncio_logger.setLevel(original_level)
-    
+            asyncio_logger.setLevel(asyncio_logger_level)
+
     # Invoke the click command
     run_agent()
 

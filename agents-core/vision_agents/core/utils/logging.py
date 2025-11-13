@@ -14,10 +14,9 @@ _CALL_ID_ENABLED = True
 
 
 MAIN_LOGGER = logging.getLogger("vision_agents")
-GETSTREAM_LOGGER = logging.getLogger("getstream")
 
 
-def configure_default_logging(level: int) -> None:
+def configure_sdk_logger(level: int) -> None:
     """
     Sets the default configuration for "vision_agents" and "getstream" loggers to have a nice formatting
     if it's not already configured.
@@ -37,7 +36,7 @@ def configure_default_logging(level: int) -> None:
     default_handler.setLevel(level)
     default_handler.setFormatter(colored_formatter)
 
-    for _logger in [MAIN_LOGGER, GETSTREAM_LOGGER]:
+    for _logger in [MAIN_LOGGER,]:
         # Set the default handler only if it's not already configured
         if not _logger.handlers:
             _logger.handlers = [default_handler]
