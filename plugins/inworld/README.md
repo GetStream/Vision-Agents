@@ -42,13 +42,12 @@ agent = Agent(
 - `voice_id`: The voice ID to use for synthesis (default: "Dennis")
 - `model_id`: The model ID to use for synthesis. Options: "inworld-tts-1", "inworld-tts-1-max" (default: "inworld-tts-1")
 - `temperature`: Determines the degree of randomness when sampling audio tokens. Accepts values between 0 and 2 (default: 1.1)
-- `base_url`: Optional custom API endpoint (default: "https://api.inworld.ai")
-- `client`: Optionally pass in your own instance of `httpx.AsyncClient`
 
 ## Requirements
 
 - Python 3.10+
 - httpx>=0.27.0
+  "av>=10.0.0",
 
 ## Getting Started
 
@@ -66,8 +65,3 @@ The plugin implements the standard Vision Agents TTS interface:
 - `stream_audio(text: str)`: Convert text to speech and return an async iterator of `PcmData` chunks
 - `stop_audio()`: Stop audio playback (no-op for this plugin)
 - `send(text: str)`: Send text to be converted to speech (inherited from base class)
-
-## Streaming
-
-This plugin only supports streaming mode. Audio chunks are returned as they are processed by the Inworld AI API, providing low-latency audio synthesis.
-
