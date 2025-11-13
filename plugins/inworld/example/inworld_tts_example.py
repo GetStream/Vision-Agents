@@ -5,12 +5,14 @@ This example demonstrates Inworld AI TTS integration with Vision Agents.
 
 This example creates an agent that uses:
 - Inworld AI for text-to-speech (TTS)
-- GetStream for edge/real-time communication
+- Stream for edge/real-time communication
+- Deepgram for speech-to-text (STT)
 - Smart Turn for turn detection
 
 Requirements:
 - INWORLD_API_KEY environment variable
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
+- DEEPGRAM_API_KEY environment variable
 """
 
 import asyncio
@@ -20,7 +22,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import inworld, getstream, smart_turn, gemini
+from vision_agents.plugins import inworld, getstream, smart_turn, gemini, deepgram
 
 
 logger = logging.getLogger(__name__)
@@ -34,9 +36,10 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Friendly AI", id="agent"),
         instructions="You're a helpful voice AI assistant. Keep your responses concise and friendly.",
-        tts=inworld.TTS(),  # Uses Inworld AI for text-to-speech
+        tts=inworld.TTS(),  
+        stt=deepgram.STT(),
         llm=gemini.LLM("gemini-2.0-flash"),
-        turn_detection=smart_turn.TurnDetection(buffer_in_seconds=2.0, confidence_threshold=0.5),
+        turn_detection=smart_turn.TurnDetection(),
     )
     return agent
 
