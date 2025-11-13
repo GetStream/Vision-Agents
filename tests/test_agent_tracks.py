@@ -127,7 +127,6 @@ class TestAgentTrackHandling:
             processors=processors,
             tts=tts,
             stt=stt,
-            log_level=None,  # Don't reconfigure logging
         )
         
         return agent

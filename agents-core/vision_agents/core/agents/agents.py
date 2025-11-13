@@ -47,7 +47,6 @@ from ..utils.logging import (
     CallContextToken,
     clear_call_context,
     set_call_context,
-    configure_default_logging,
 )
 from ..utils.video_forwarder import VideoForwarder
 from ..vad import VAD
@@ -123,8 +122,6 @@ class Agent:
         mcp_servers: Optional[List[MCPBaseServer]] = None,
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
-        # Configure the default logging for the sdk here. Pass None to leave the config intact.
-        log_level: Optional[int] = logging.INFO,
         profiler: Optional[Profiler] = None,
     ):
         self._pending_turn: Optional[LLMTurn] = None
@@ -132,8 +129,6 @@ class Agent:
         self.call = None
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
-        if log_level is not None:
-            configure_default_logging(level=log_level)
         if options is None:
             options = default_agent_options()
         else:
@@ -259,12 +254,6 @@ class Agent:
         """
         # listen to turn completed, started etc
         self.events.subscribe(self._on_turn_event)
-
-        if self.stt:
-
-            @self.stt.events.subscribe
-            async def on_turn_ended(event: TurnEndedEvent):
-                logger.info("Received TurnEndedEvent %s", event)
 
         @self.llm.events.subscribe
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
@@ -1038,7 +1027,6 @@ class Agent:
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
-        logger.info("_on_turn_event")
         # Skip the turn event handling if the model doesn't require TTS or SST audio itself.
         if _is_audio_llm(self.llm):
             return

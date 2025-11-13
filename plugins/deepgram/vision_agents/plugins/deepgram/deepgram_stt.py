@@ -253,7 +253,7 @@ class STT(stt.STT):
         """
         Event handler for connection close.
         """
-        logger.warning(f"Deepgram WebSocket connection closed: {error}")
+        logger.debug(f"Deepgram WebSocket connection closed: {error}")
         self._connection_ready.clear()
 
     async def close(self):

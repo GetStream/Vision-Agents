@@ -76,7 +76,6 @@ class TestAgentWaitForParticipant:
             agent_user=agent_user,
             instructions="Test instructions",
             stt=MockSTT(),
-            log_level=None,
         )
         
         # Set up call and participants state
