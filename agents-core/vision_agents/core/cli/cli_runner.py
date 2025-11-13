@@ -6,6 +6,7 @@ Provides a Click-based CLI with common options for debugging and logging.
 
 import asyncio
 import logging
+import warnings
 from typing import TYPE_CHECKING, Optional
 from uuid import uuid4
 
@@ -78,6 +79,12 @@ def cli(launcher: "AgentLauncher") -> None:
         numeric_level = getattr(logging, log_level.upper(), logging.INFO)
         configure_sdk_logger(level=numeric_level)
 
+        # Suppress dataclasses_json missing value RuntimeWarnings.
+        # They pollute the output and cannot be fixed by the users.
+        warnings.filterwarnings(
+            "ignore", category=RuntimeWarning, module="dataclasses_json.core"
+        )
+
         # Generate call ID if not provided
         if call_id is None:
             call_id = str(uuid4())
@@ -131,3 +138,4 @@ def cli(launcher: "AgentLauncher") -> None:
 
     # Invoke the click command
     run_agent()
+
