@@ -7,7 +7,6 @@ from typing import AsyncIterator, Iterator, Optional
 
 import av
 import httpx
-import numpy as np
 from vision_agents.core import tts
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 
@@ -97,58 +96,33 @@ class TTS(tts.TTS):
                             continue
 
                         try:
-                            # Parse JSON response
                             data = json.loads(line)
-                            
-                            # Check for errors
                             if "error" in data:
                                 error_msg = data["error"].get("message", "Unknown error")
                                 logger.error(f"Inworld AI API error: {error_msg}")
                                 continue
 
-                            # Extract audio content
                             if "result" in data and "audioContent" in data["result"]:
-                                audio_content_b64 = data["result"]["audioContent"]
-                                
-                                # Decode base64 to get WAV bytes
-                                wav_bytes = base64.b64decode(audio_content_b64)
+                                wav_bytes = base64.b64decode(data["result"]["audioContent"])
                                 
                                 # Decode WAV to PCM using PyAV
-                                # Inworld returns WAV format, so we need to extract PCM
-                                # Each chunk contains a complete WAV file with header
-                                container = av.open(io.BytesIO(wav_bytes))
-                                audio_stream = container.streams.audio[0]
-                                sample_rate = audio_stream.sample_rate
-                                
-                                # Read all frames and convert to PcmData
-                                # Each WAV chunk may contain multiple frames
-                                pcm_chunks = []
-                                for frame in container.decode(audio_stream):
-                                    # Use PcmData.from_av_frame for automatic format handling
-                                    pcm_chunk = PcmData.from_av_frame(frame)
-                                    pcm_chunks.append(pcm_chunk)
-                                
-                                container.close()
-                                
-                                if pcm_chunks:
-                                    # Concatenate frames from this WAV chunk
-                                    # Start with first chunk and append others
-                                    combined_pcm = pcm_chunks[0].copy()
-                                    for chunk in pcm_chunks[1:]:
-                                        combined_pcm.append(chunk)
+                                with av.open(io.BytesIO(wav_bytes)) as container:
+                                    audio_stream = container.streams.audio[0]
+                                    pcm = None
                                     
-                                    # Ensure mono and int16 format
-                                    if combined_pcm.stereo:
-                                        combined_pcm = combined_pcm.resample(
-                                            target_sample_rate=sample_rate,
+                                    for frame in container.decode(audio_stream):
+                                        frame_pcm = PcmData.from_av_frame(frame)
+                                        if pcm is None:
+                                            pcm = frame_pcm
+                                        else:
+                                            pcm.append(frame_pcm)
+                                    
+                                    if pcm:
+                                        pcm = pcm.resample(
+                                            target_sample_rate=pcm.sample_rate,
                                             target_channels=1
-                                        )
-                                    
-                                    # Ensure int16 format
-                                    if combined_pcm.format != AudioFormat.S16:
-                                        combined_pcm = combined_pcm.to_int16()
-                                    
-                                    yield combined_pcm
+                                        ).to_int16()
+                                        yield pcm
                         except json.JSONDecodeError as e:
                             logger.warning(f"Failed to parse JSON line: {e}")
                             continue
@@ -176,9 +150,6 @@ class TTS(tts.TTS):
         """
         logger.info("🎤 Inworld AI TTS stop requested (no-op)")
 
-    async def __aenter__(self):
-        """Async context manager entry."""
-        return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - close HTTP client if we created it."""
