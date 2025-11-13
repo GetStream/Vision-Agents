@@ -3,7 +3,7 @@ from typing import Any, Optional, List, Dict
 
 import aiortc
 from openai import AsyncOpenAI
-from openai.types.beta.realtime import RateLimitsUpdatedEvent
+from openai.types.beta.realtime import RateLimitsUpdatedEvent, SessionUpdateEvent, SessionUpdatedEvent
 from openai.types.realtime import RealtimeSessionCreateRequestParam, RealtimeAudioConfigParam, \
     RealtimeAudioConfigOutputParam, RealtimeAudioConfigInputParam, AudioTranscriptionParam
 from openai.types.realtime.realtime_transcription_session_audio_input_turn_detection_param import SemanticVad
@@ -13,7 +13,7 @@ from openai.types.beta.realtime import (
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
     ConversationItemInputAudioTranscriptionCompletedEvent,
-    ResponseDoneEvent, SessionCreatedEvent,
+    ResponseDoneEvent, SessionCreatedEvent, Session,
 )
 
 from vision_agents.core.llm import realtime
@@ -93,6 +93,10 @@ class Realtime(realtime.Realtime):
         # Map conversation item_id to participant to handle multi-user scenarios
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
+
+        # Store current session and rate limits
+        self.current_session: Optional[Session] = None
+        self.current_rate_limits: Optional[RateLimitsUpdatedEvent] = None
 
         # create the client
         if client is not None:
@@ -258,17 +262,21 @@ class Realtime(realtime.Realtime):
         elif et == "response.created":
             pass
         elif et == "session.created":
-            SessionCreatedEvent(**event)
+            session_event = SessionCreatedEvent(**event)
+            self.current_session = session_event.session
+            logger.info("Session created %s", event)
         elif et == "rate_limits.updated":
-            RateLimitsUpdatedEvent(**event)
+            self.current_rate_limits = RateLimitsUpdatedEvent(**event)
         elif et == "response.done":
             response_done_event = ResponseDoneEvent.model_validate(event)
 
             if response_done_event.response.status == "failed":
                 raise Exception("OpenAI realtime failure %s", response_done_event.response)
         elif et == "session.updated":
-            pass
-            # e = SessionUpdatedEvent(**event)
+            # Update session with new data - reusing SessionCreatedEvent as it has the same structure
+            session_event = SessionUpdatedEvent(**event)
+            self.current_session = session_event.session
+            logger.info("Session updated %s", event)
         elif et == "response.content_part.added":
             # Content part added to response - logged for debugging
             pass
@@ -277,6 +285,9 @@ class Realtime(realtime.Realtime):
             pass
         elif et == "output_audio_buffer.started":
             # Output audio buffer started - acknowledgment of audio playback start
+            pass
+        elif et == "output_audio_buffer.stopped":
+            # Output audio buffer stopped - acknowledgment of audio playback end
             pass
         elif et == "response.audio.done":
             # Audio generation complete for this response item

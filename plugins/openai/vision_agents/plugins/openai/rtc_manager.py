@@ -9,7 +9,6 @@ from openai.types.beta.realtime import ConversationItemCreateEvent, Conversation
 from openai.types.realtime import RealtimeSessionCreateRequestParam
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from httpx import AsyncClient, HTTPStatusError
 import logging
 from getstream.video.rtc.track_util import PcmData
 
@@ -20,10 +19,6 @@ from vision_agents.core.utils.audio_track import QueuedAudioTrack
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
-
-# OpenAI Realtime endpoints
-OPENAI_REALTIME_BASE = "https://api.openai.com/v1/realtime"
-OPENAI_SESSIONS_URL = f"{OPENAI_REALTIME_BASE}/sessions"
 
 
 class RTCManager:
@@ -73,7 +68,8 @@ class RTCManager:
                     audio_forwarder = AudioForwarder(track, self._audio_callback)
                     await audio_forwarder.start()
 
-        self._video_sender = self.pc.addTrack(self._video_to_openai_track)
+        # TODO: bugfix for SDP renegotiation not working
+        # #self._video_sender = self.pc.addTrack(self._video_to_openai_track)
         await self.renegotiate()
 
     async def send_audio_pcm(self, pcm: PcmData) -> None:
@@ -165,7 +161,12 @@ class RTCManager:
         Public method to repeat the offer/answer cycle, useful when tracks are added
         or modified after the initial connection.
         """
-        answer_sdp = await self._setup_sdp_exchange()
+        # Create local offer and exchange SDP
+        offer = await self.pc.createOffer()
+        await self.pc.setLocalDescription(offer)
+        answer_sdp = await self._exchange_sdp(offer.sdp)
+        if not answer_sdp:
+            raise RuntimeError("Failed to get remote SDP from OpenAI")
 
         # Set the remote SDP we got from OpenAI
         answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
@@ -238,43 +239,21 @@ class RTCManager:
         if self._video_to_openai_track:
             await self._video_to_openai_track.add_frame(frame)
 
-    async def _setup_sdp_exchange(self) -> str:
-        # Create local offer and exchange SDP
-        offer = await self.pc.createOffer()
-        await self.pc.setLocalDescription(offer)
-        answer_sdp = await self._exchange_sdp(offer.sdp)
-        if not answer_sdp:
-            raise RuntimeError("Failed to get remote SDP from OpenAI")
-        return answer_sdp
+
 
     async def _exchange_sdp(self, local_sdp: str) -> Optional[str]:
-        """Exchange SDP with OpenAI."""
-        # Use the regular API key for server-side WebRTC
-        api_key = self.client.api_key
-        if not api_key:
-            raise ValueError("missing API key, can't connect to OpenAI realtime")
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/sdp",
-            "OpenAI-Beta": "realtime=v1",
-        }
-        # POST SDP to /v1/realtime with model parameter
-        model = self.realtime_session.get("model", "gpt-realtime")
-        url = f"{OPENAI_REALTIME_BASE}?model={model}"
+        """Exchange SDP with OpenAI using the realtime calls API."""
+        logger.debug(f"Creating realtime call with SDP length: {len(local_sdp)} bytes")
 
-        try:
-            async with AsyncClient() as client:
-                logger.debug(f"POSTing SDP to {url}")
-                logger.debug(f"SDP length: {len(local_sdp)} bytes")
-                response = await client.post(
-                    url, headers=headers, content=local_sdp, timeout=20
-                )
-                response.raise_for_status()
-                return response.text if response.text else None
-        except HTTPStatusError as e:
-            body = e.response.text if e.response is not None else ""
-            logger.error(f"SDP exchange failed: {e}; body={body}")
-            raise
+        # Use the OpenAI client's realtime calls API
+        response = await self.client.realtime.calls.create(
+            session=self.realtime_session,
+            sdp=local_sdp
+        )
+
+        logger.info("SDP response from OpenAI")
+        return response.text
+
 
     async def _handle_event(self, event: dict) -> None:
         cb = self._event_callback
