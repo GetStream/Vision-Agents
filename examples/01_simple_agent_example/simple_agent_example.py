@@ -1,9 +1,11 @@
 import logging
+from typing import Dict, Any
 
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
+from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
 
 logger = logging.getLogger(__name__)
@@ -18,42 +20,44 @@ Eager turn taking STT, LLM, TTS workflow
 - eleven labs for TTS
 - gemini-2.5-flash-lite for fast responses
 - stream's edge network for video transport
+
+This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_example
 """
 
 async def create_agent(**kwargs) -> Agent:
     llm = gemini.LLM("gemini-2.5-flash-lite")
-    # create an agent to run with Stream's edge, openAI llm
+
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(
             name="My happy AI friend", id="agent"
-        ),  # the user object for the agent (name, image etc)
+        ),
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
-        # llm with tts & stt. if you use a realtime (sts capable) llm the tts, stt and vad aren't needed
         llm=llm,
         tts=elevenlabs.TTS(),
-        stt=deepgram.STT(eager_turn_detection=True), # lower latency (but increase LLM token usage)
-        # turn_detection=vogent.TurnDetection(), (not needed with deepgram, it has built-in turn detection)
-        # enable profiler by uncommenting the following line
-        # profiler=Profiler(),
-        # vad=silero.VAD(),
-        # realtime version (vad, tts and stt not needed)
+        stt=deepgram.STT(eager_turn_detection=True), # eager_turn_detection -> lower latency (but higher token usage)
+        # turn_detection=vogent.TurnDetection(), # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
+        # realtime openai and gemini are supported (tts and stt not needed in that case)
         # llm=openai.Realtime()
     )
+
+    # MCP and function calling are supported. see https://visionagents.ai/guides/mcp-tool-calling
+    @llm.register_function(description="Get current weather for a location")
+    async def get_weather(location: str)-> Dict[str, Any]:
+        return await get_weather_by_location(location)
+
     return agent
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-
-    # Create a call
     call = await agent.create_call(call_type, call_id)
 
     # Have the agent join the call/room
     with await agent.join(call):
-        # Example 1: standardized simple response
-        # await agent.llm.simple_response("chat with the user about the weather.")
-        # Example 2: use native openAI create response
+        # Use agent.simple response or...
+        await agent.simple_response("tell me something interesting in a short sentence")
+        # Alternatively: if you need more control, user the native openAI create_response
         # await llm.create_response(input=[
         #     {
         #         "role": "user",
@@ -64,42 +68,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         #     }
         # ],)
 
-        # await agent.say("Hello, how are you?")
-        # await asyncio.sleep(5)
-
-        # Open the demo UI
-        await agent.simple_response("tell me something interesting in a short sentence")
-
         # run till the call ends
         await agent.finish()
 
 
-def setup_telemetry():
-    import atexit
-    from opentelemetry import trace
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-
-    resource = Resource.create(
-        {
-            "service.name": "agents",
-        }
-    )
-    tp = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter(endpoint="localhost:4317", insecure=True)
-
-    tp.add_span_processor(BatchSpanProcessor(exporter))
-    trace.set_tracer_provider(tp)
-
-    def _flush_and_shutdown():
-        tp.force_flush()
-        tp.shutdown()
-
-    atexit.register(_flush_and_shutdown)
-
-
 if __name__ == "__main__":
-    # setup_telemetry()
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
