@@ -1,20 +1,27 @@
 import json
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, List, Dict, Union
 
 import aiortc
 from openai import AsyncOpenAI
-from openai.types.beta.realtime import RateLimitsUpdatedEvent
-from openai.types.realtime import RealtimeSessionCreateRequestParam, RealtimeAudioConfigParam, \
-    RealtimeAudioConfigOutputParam, RealtimeAudioConfigInputParam, AudioTranscriptionParam
-from openai.types.realtime.realtime_transcription_session_audio_input_turn_detection_param import SemanticVad
-
-from getstream.video.rtc import AudioStreamTrack
-from openai.types.beta.realtime import (
+from openai.types.realtime import (
+    RateLimitsUpdatedEvent, 
+    SessionUpdatedEvent,
+    RealtimeSessionCreateRequestParam, 
+    RealtimeAudioConfigParam,
+    RealtimeAudioConfigOutputParam, 
+    RealtimeAudioConfigInputParam, 
+    AudioTranscriptionParam,
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
     ConversationItemInputAudioTranscriptionCompletedEvent,
-    ResponseDoneEvent, SessionCreatedEvent,
+    ResponseDoneEvent, 
+    SessionCreatedEvent,
+    RealtimeSessionCreateRequest,
+    RealtimeTranscriptionSessionCreateRequest,
 )
+from openai.types.realtime.realtime_transcription_session_audio_input_turn_detection_param import SemanticVad
+
+from getstream.video.rtc import AudioStreamTrack
 
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.llm_types import ToolSchema
@@ -33,8 +40,7 @@ logger = logging.getLogger(__name__)
 
 """
 TODO: Future improvements
-- send video should depend on if the RTC connection with stream is sending video. not always send (requires SDP renegotiation)
-- more testing with adding/removing video tracks
+- Reconnection is currently not easy to do with OpenAI realtime. 
 """
 
 class Realtime(realtime.Realtime):
@@ -63,7 +69,8 @@ class Realtime(realtime.Realtime):
 
     def __init__(
         self, model: str = "gpt-realtime", api_key: Optional[str] = None, voice: str = "marin", client: Optional[AsyncOpenAI] = None, fps: int = 1,
-        realtime_session: Optional[RealtimeSessionCreateRequestParam] = None
+        realtime_session: Optional[RealtimeSessionCreateRequestParam] = None,
+        send_video: bool = True,
     ):
         super().__init__(fps)
         self.model = model
@@ -75,7 +82,6 @@ class Realtime(realtime.Realtime):
         self.realtime_session["model"] = self.model
         
         # Set audio and output if they are None
-        # TODO: handle more edge cases of updating the passed settings/ good defaults
         if self.realtime_session.get("audio") is None:
             self.realtime_session["audio"] = RealtimeAudioConfigParam(
                 input=RealtimeAudioConfigInputParam(
@@ -94,6 +100,10 @@ class Realtime(realtime.Realtime):
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
 
+        # Store current session and rate limits
+        self.current_session: Optional[Union[RealtimeSessionCreateRequest, RealtimeTranscriptionSessionCreateRequest]] = None
+        self.current_rate_limits: Optional[RateLimitsUpdatedEvent] = None
+
         # create the client
         if client is not None:
             self.client = client
@@ -103,7 +113,7 @@ class Realtime(realtime.Realtime):
             self.client = AsyncOpenAI() # will get it from the env vars
 
         # Start the realtime connection manager
-        self.rtc = RTCManager(realtime_session=self.realtime_session, client=self.client)
+        self.rtc = RTCManager(realtime_session=self.realtime_session, client=self.client, send_video=send_video)
 
     @property
     def output_audio_track(self) -> AudioStreamTrack:
@@ -191,7 +201,7 @@ class Realtime(realtime.Realtime):
 
         # code here is weird because OpenAI does something strange
         # see issue: https://github.com/openai/openai-python/issues/2698
-        # as a workaround we copy the event and normalize the type to response.audio_transcript.done so that
+        # as a workaround we copy the event and normalize the type to response.output_audio_transcript.done so that
         # ResponseAudioTranscriptDoneEvent.model_validate is happy
         if et in [
             "response.audio_transcript.done",
@@ -199,7 +209,7 @@ class Realtime(realtime.Realtime):
         ]:
             # Create a copy and normalize the type field
             event_copy = event.copy()
-            event_copy["type"] = "response.audio_transcript.done"
+            event_copy["type"] = "response.output_audio_transcript.done"
             transcript_event: ResponseAudioTranscriptDoneEvent = (
                 ResponseAudioTranscriptDoneEvent.model_validate(event_copy)
             )
@@ -222,6 +232,12 @@ class Realtime(realtime.Realtime):
                     logger.debug(
                         f"Mapped item {item_id} to participant {self._pending_participant.user_id if self._pending_participant else 'None'}"
                     )
+        elif et == "conversation.item.added":
+            # Conversation item was added to the conversation
+            pass
+        elif et == "conversation.item.done":
+            # Conversation item is complete
+            pass
         elif et == "conversation.item.input_audio_transcription.completed":
             # User input audio transcription completed
             user_transcript_event: ConversationItemInputAudioTranscriptionCompletedEvent = ConversationItemInputAudioTranscriptionCompletedEvent.model_validate(
@@ -258,28 +274,41 @@ class Realtime(realtime.Realtime):
         elif et == "response.created":
             pass
         elif et == "session.created":
-            SessionCreatedEvent(**event)
+            session_event = SessionCreatedEvent(**event)
+            self.current_session = session_event.session
+            logger.info("Session created %s", event)
         elif et == "rate_limits.updated":
-            RateLimitsUpdatedEvent(**event)
+            self.current_rate_limits = RateLimitsUpdatedEvent(**event)
         elif et == "response.done":
             response_done_event = ResponseDoneEvent.model_validate(event)
 
             if response_done_event.response.status == "failed":
                 raise Exception("OpenAI realtime failure %s", response_done_event.response)
         elif et == "session.updated":
-            pass
-            # e = SessionUpdatedEvent(**event)
+            # Update session with new data
+            session_updated_event = SessionUpdatedEvent(**event)
+            self.current_session = session_updated_event.session
+            logger.info("Session updated %s", event)
         elif et == "response.content_part.added":
             # Content part added to response - logged for debugging
             pass
         elif et == "response.audio_transcript.delta":
             # Streaming transcript delta - logged at debug level to avoid clutter
             pass
+        elif et == "response.output_audio_transcript.delta":
+            # Streaming output audio transcript delta - logged at debug level to avoid clutter
+            pass
         elif et == "output_audio_buffer.started":
             # Output audio buffer started - acknowledgment of audio playback start
             pass
+        elif et == "output_audio_buffer.stopped":
+            # Output audio buffer stopped - acknowledgment of audio playback end
+            pass
         elif et == "response.audio.done":
             # Audio generation complete for this response item
+            pass
+        elif et == "response.output_audio.done":
+            # Output audio generation complete for this response item
             pass
         elif et == "response.content_part.done":
             # Content part complete - contains full transcript
