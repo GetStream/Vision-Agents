@@ -45,7 +45,6 @@ getstream = ["vision-agents-plugins-getstream"]
 heygen = ["vision-agents-plugins-heygen"]
 inworld = ["vision-agents-plugins-inworld"]
 kokoro = ["vision-agents-plugins-kokoro"]
-krisp = ["vision-agents-plugins-krisp"]
 moonshine = ["vision-agents-plugins-moonshine"]
 openai = ["vision-agents-plugins-openai"]
 smart_turn = ["vision-agents-plugins-smart-turn"]
@@ -62,7 +61,6 @@ all-plugins = [
   "vision-agents-plugins-heygen",
   "vision-agents-plugins-inworld",
   "vision-agents-plugins-kokoro",
-  "vision-agents-plugins-krisp",
   "vision-agents-plugins-moonshine",
   "vision-agents-plugins-openai",
   "vision-agents-plugins-smart-turn",
@@ -85,12 +83,6 @@ packages = ["vision_agents"]
 include = ["vision_agents"]
 
 #[tool.uv.sources]
-#krisp-audio = [
-#    { path = "./vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-macosx_12_0_arm64.whl", marker = "sys_platform == 'darwin' and platform_machine == 'aarch64'" },
-#    { path = "./vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-#    { path = "./vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-#    { path = "./vision_agents/core/turn_detection/krisp/krisp_audio-1.4.0-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32'" }
-#]
 # getstream = { git = "https://github.com/GetStream/stream-py.git", branch = "audio-more" }
 # for local development
 # getstream = { path = "../../stream-py/", editable = true }
