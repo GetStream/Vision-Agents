@@ -88,6 +88,10 @@ async def create_agent(**kwargs) -> Agent:
                 fps=YOLO_CONFIG["fps"],
                 interval=YOLO_CONFIG["interval"],
                 on_squat_complete=on_squat_complete,
+                # Avatar overlay (optional) - uncomment and provide path to enable
+                avatar_path="avatar_transparent.png",  # Path to your avatar image (PNG with transparency recommended)
+                avatar_scale=3.5,  # Scale factor (bigger sunglasses)
+                hide_skeleton=True,  # Hide pose skeleton lines (still processes in background)
             )
         ],  # realtime pose detection with intelligent squat counting
     )

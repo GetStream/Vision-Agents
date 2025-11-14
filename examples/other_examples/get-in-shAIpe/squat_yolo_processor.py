@@ -35,6 +35,9 @@ class SquatYOLOProcessor(ultralytics.YOLOPoseProcessor):
         min_squat_angle: float = 100.0,
         max_standing_angle: float = 160.0,
         on_squat_complete: Optional[Union[Callable[[int, float, float], None], Callable[[int, float, float], Awaitable[None]]]] = None,
+        avatar_path: Optional[str] = None,
+        avatar_scale: float = 2.0,
+        hide_skeleton: bool = False,
         *args,
         **kwargs,
     ):
@@ -60,7 +63,119 @@ class SquatYOLOProcessor(ultralytics.YOLOPoseProcessor):
             on_squat_complete=on_squat_complete,
         )
         
+        # Load avatar image if provided
+        self.avatar_image = None
+        self.avatar_scale = avatar_scale
+        self.hide_skeleton = hide_skeleton
+        if avatar_path:
+            self.avatar_image = self._load_avatar(avatar_path)
+            if self.avatar_image is not None:
+                logger.info(f"🎭 Avatar loaded from {avatar_path}")
+        
         logger.info("💪 Squat YOLO Processor initialized with squat counting")
+    
+    def _load_avatar(self, avatar_path: str) -> Optional[np.ndarray]:
+        """Load avatar image with transparency support."""
+        try:
+            # Load image with alpha channel
+            avatar = cv2.imread(avatar_path, cv2.IMREAD_UNCHANGED)
+            if avatar is None:
+                logger.error(f"Failed to load avatar from {avatar_path}")
+                return None
+            
+            # Ensure it has an alpha channel
+            if avatar.shape[2] == 3:
+                # Add alpha channel if missing
+                avatar = cv2.cvtColor(avatar, cv2.COLOR_BGR2BGRA)
+                avatar[:, :, 3] = 255  # Fully opaque
+            
+            return avatar
+        except Exception as e:
+            logger.error(f"Error loading avatar: {e}")
+            return None
+    
+    def _overlay_avatar(self, frame: np.ndarray, pose_data: Dict[str, Any]) -> np.ndarray:
+        """Overlay avatar on detected face."""
+        if self.avatar_image is None or not pose_data.get("persons"):
+            return frame
+        
+        try:
+            # Get first person's keypoints
+            person = pose_data["persons"][0]
+            keypoints = person.get("keypoints", [])
+            
+            if len(keypoints) < 5:  # Need at least nose and eyes
+                return frame
+            
+            # YOLO keypoint indices (COCO format)
+            # 0: nose, 1: left_eye, 2: right_eye, 3: left_ear, 4: right_ear
+            nose = keypoints[0]
+            left_eye = keypoints[1]
+            right_eye = keypoints[2]
+            
+            # Check if face keypoints are detected with sufficient confidence
+            if nose[2] < 0.5 or left_eye[2] < 0.5 or right_eye[2] < 0.5:
+                return frame
+            
+            # Calculate face center and size
+            face_center_x = int((left_eye[0] + right_eye[0]) / 2)
+            face_center_y = int((left_eye[1] + right_eye[1]) / 2)
+            
+            # Calculate face width based on eye distance
+            eye_distance = np.sqrt((right_eye[0] - left_eye[0])**2 + (right_eye[1] - left_eye[1])**2)
+            avatar_width = int(eye_distance * self.avatar_scale)
+            
+            if avatar_width <= 0:
+                return frame
+            
+            # Resize avatar maintaining aspect ratio
+            avatar_height = int(avatar_width * self.avatar_image.shape[0] / self.avatar_image.shape[1])
+            resized_avatar = cv2.resize(self.avatar_image, (avatar_width, avatar_height))
+            
+            # Calculate position (center the avatar on the face)
+            x1 = face_center_x - avatar_width // 2
+            y1 = face_center_y - avatar_height // 2
+            x2 = x1 + avatar_width
+            y2 = y1 + avatar_height
+            
+            # Ensure avatar fits within frame bounds
+            if x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
+                # Clip to frame bounds
+                x1 = max(0, x1)
+                y1 = max(0, y1)
+                x2 = min(frame.shape[1], x2)
+                y2 = min(frame.shape[0], y2)
+                
+                # Adjust avatar size to match clipped region
+                avatar_width = x2 - x1
+                avatar_height = y2 - y1
+                if avatar_width <= 0 or avatar_height <= 0:
+                    return frame
+                resized_avatar = cv2.resize(self.avatar_image, (avatar_width, avatar_height))
+            
+            # Extract alpha channel for transparency
+            if resized_avatar.shape[2] == 4:
+                avatar_rgb = resized_avatar[:, :, :3]
+                avatar_alpha = resized_avatar[:, :, 3] / 255.0
+                
+                # Get the region of interest from the frame
+                roi = frame[y1:y2, x1:x2]
+                
+                # Blend avatar with frame using alpha channel
+                for c in range(3):
+                    roi[:, :, c] = (avatar_alpha * avatar_rgb[:, :, c] + 
+                                   (1 - avatar_alpha) * roi[:, :, c])
+                
+                frame[y1:y2, x1:x2] = roi
+            else:
+                # No alpha channel, just paste it
+                frame[y1:y2, x1:x2] = resized_avatar
+            
+            return frame
+            
+        except Exception as e:
+            logger.error(f"Error overlaying avatar: {e}")
+            return frame
     
     def _process_pose_sync(
         self, frame_array: np.ndarray
@@ -74,6 +189,14 @@ class SquatYOLOProcessor(ultralytics.YOLOPoseProcessor):
         
         # Call parent's pose processing
         annotated_frame, pose_data = super()._process_pose_sync(frame_array)
+        
+        # If hiding skeleton, use original frame instead of annotated
+        if self.hide_skeleton:
+            annotated_frame = frame_array.copy()
+        
+        # Overlay avatar on face if enabled
+        if self.avatar_image is not None:
+            annotated_frame = self._overlay_avatar(annotated_frame, pose_data)
         
         # Process squat counting
         squat_data = self.squat_counter.process_pose_data(pose_data)
