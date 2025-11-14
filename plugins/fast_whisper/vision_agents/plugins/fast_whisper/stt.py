@@ -100,7 +100,6 @@ class STT(stt.STT):
             return
         
         if self.whisper is None:
-            logger.error("Whisper model not loaded, call warmup() first")
             raise ValueError("Whisper model not loaded, call warmup() first")
         
         # Check for empty audio
