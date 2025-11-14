@@ -35,7 +35,7 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Friendly AI", id="agent"),
-        instructions="You're a helpful voice AI assistant.Read @inworld-audio-guide.md",
+        instructions="Read @inworld-audio-guide.md",
         tts=inworld.TTS(voice_id="Ashley"),  
         stt=deepgram.STT(),
         llm=gemini.LLM("gemini-2.0-flash"),
