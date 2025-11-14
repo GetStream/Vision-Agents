@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import datetime
+import inspect
 import logging
 import time
 import uuid
@@ -642,7 +643,11 @@ class Agent:
                 func = getattr(subclass, function_name)
                 if func is not None:
                     try:
-                        await func(*args, **kwargs)
+                        if inspect.iscoroutinefunction(func):
+                            await func(*args, **kwargs)
+                        else:
+                            func(*args, **kwargs)
+
                     except Exception as e:
                         self.logger.exception(
                             f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
