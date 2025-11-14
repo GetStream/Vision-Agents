@@ -5,7 +5,10 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import getstream, gemini
+from vision_agents.plugins import getstream, gemini, elevenlabs
+# Alternative TTS providers (uncomment if you prefer):
+# from vision_agents.plugins import cartesia  # Fast, low-latency TTS (requires CARTESIA_API_KEY)
+# from vision_agents.plugins import kokoro  # Fast TTS, no API key needed (requires espeak-ng)
 from squat_yolo_processor import SquatYOLOProcessor
 from squat_events import SquatCompletedEvent
 from config import SQUAT_CONFIG, YOLO_CONFIG, LLM_CONFIG
@@ -28,6 +31,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="AI squat coach"),
         instructions="Read @squat-coach.md",  # read the squat coach markdown instructions
         llm=gemini.Realtime(fps=LLM_CONFIG["fps"]),  # Careful with FPS can get expensive
+        tts=elevenlabs.TTS(),  # Fast TTS for voice responses (requires ELEVENLABS_API_KEY env var)
         processors=[
             SquatYOLOProcessor(
                 model_path=YOLO_CONFIG["model_path"],
@@ -73,18 +77,23 @@ async def create_agent(**kwargs) -> Agent:
                 )
                 logger.info(f"📨 Sent squat counter: {event.rep_count}")
             
-            # Send voice output via LLM (works with Gemini Realtime and other realtime LLMs)
-            if agent.llm is not None:
-                # Create a motivational message
-                if event.rep_count == 1:
-                    message = f"Great job! You've completed your first squat! Keep it up!"
-                elif event.rep_count % 5 == 0:
-                    message = f"Excellent work! You've completed {event.rep_count} squats! You're doing amazing!"
-                else:
-                    message = f"Nice! Rep {event.rep_count} complete! Keep going!"
-                
-                await agent.llm.simple_response(text=message)
-                logger.info(f"📢 Spoke message via voice: {message}")
+            # Send voice output - use agent.say() for fast TTS, or agent.llm.simple_response() for LLM voice
+            # Create a motivational message
+            if event.rep_count == 1:
+                message = f"Great job! You've completed your first squat! Keep it up!"
+            elif event.rep_count % 5 == 0:
+                message = f"Excellent work! You've completed {event.rep_count} squats! You're doing amazing!"
+            else:
+                message = f"Nice! Rep {event.rep_count} complete! Keep going!"
+            
+            # Option 1: Use agent.say() - FAST (uses TTS if available, falls back to LLM if not)
+            # This is much faster than simple_response because it uses dedicated TTS
+            await agent.say(message)
+            logger.info(f"📢 Spoke message via voice: {message}")
+            
+            # Option 2: Use agent.llm.simple_response() - SLOWER (goes through LLM for audio generation)
+            # Uncomment this if you want to use LLM voice instead of TTS
+            # await agent.llm.simple_response(text=message)
         except Exception as e:
             logger.error(f"Error handling squat completed event: {e}", exc_info=True)
     

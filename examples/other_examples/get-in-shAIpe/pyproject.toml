@@ -10,6 +10,7 @@ dependencies = [
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-ultralytics",
     "vision-agents-plugins-gemini",
+    "vision-agents-plugins-elevenlabs",
     "aiortc>=1.14.0",
 ]
 
@@ -18,4 +19,5 @@ vision-agents = { workspace = true }
 "vision-agents-plugins-ultralytics" = { workspace = true }
 "vision-agents-plugins-getstream" = { workspace = true }
 "vision-agents-plugins-gemini" = { workspace = true }
+"vision-agents-plugins-elevenlabs" = { workspace = true }
 
