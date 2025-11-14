@@ -7,6 +7,7 @@ from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, gemini
 from squat_yolo_processor import SquatYOLOProcessor
+from squat_events import SquatCompletedEvent
 from config import SQUAT_CONFIG, YOLO_CONFIG, LLM_CONFIG
 
 # Configure logging to show timestamps and detailed info
@@ -22,53 +23,6 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    # We'll create the callback after the agent is created so it can capture the agent reference
-    agent = None  # Placeholder for closure
-    
-    # Define callback as a closure that will capture the agent
-    # This allows the callback to access the agent instance
-    async def on_squat_complete(rep_count: int, knee_angle: float, timestamp: float) -> None:
-        """
-        Callback function invoked when a squat is completed.
-        This closure has access to the 'agent' variable from the outer scope.
-        
-        Args:
-            rep_count: The total number of squats completed
-            knee_angle: The knee angle at completion (in degrees)
-            timestamp: The timestamp when the squat was completed
-        """
-        nonlocal agent  # Reference the agent from outer scope
-        logger.info(f"🎉 Squat completion callback: Rep #{rep_count} completed at {timestamp:.3f} with knee angle {knee_angle:.1f}°")
-        
-        # Send both chat message and voice output when a squat is completed
-        if agent is not None:
-            try:
-                # Send chat message to conversation
-                if agent.conversation is not None:
-                    agent_user_id = agent.agent_user.id or "agent"
-                    await agent.conversation.send_message(
-                        role="assistant",
-                        user_id=agent_user_id,
-                        content=f"SQUAT COUNTER: {rep_count}"
-                    )
-                    logger.info(f"📨 Sent squat counter: {rep_count}")
-                
-                # Send voice output via LLM (works with Gemini Realtime and other realtime LLMs)
-                if agent.llm is not None:
-                    # Create a motivational message
-                    if rep_count == 1:
-                        message = f"Great job! You've completed your first squat! Keep it up!"
-                    elif rep_count % 5 == 0:
-                        message = f"Excellent work! You've completed {rep_count} squats! You're doing amazing!"
-                    else:
-                        message = f"Nice! Rep {rep_count} complete! Keep going!"
-                
-
-                    await agent.llm.simple_response(text=message)
-                    logger.info(f"📢 Spoke message via voice: {message}")
-            except Exception as e:
-                logger.error(f"Error sending chat message or speaking: {e}", exc_info=True)
-    
     agent = Agent(
         edge=getstream.Edge(),  # use stream for edge video transport
         agent_user=User(name="AI squat coach"),
@@ -87,10 +41,49 @@ async def create_agent(**kwargs) -> Agent:
                 max_workers=YOLO_CONFIG["max_workers"],
                 fps=YOLO_CONFIG["fps"],
                 interval=YOLO_CONFIG["interval"],
-                on_squat_complete=on_squat_complete,
             )
         ],  # realtime pose detection with intelligent squat counting
     )
+    
+    # Register the custom squat event
+    agent.events.register(SquatCompletedEvent)
+    
+    # Subscribe to squat completion events
+    # Following the pattern from https://visionagents.ai/guides/event-system
+    @agent.events.subscribe
+    async def handle_squat_completed(event: SquatCompletedEvent):
+        """
+        Handle squat completion events from the processor.
+        This runs in the main event loop context, so async operations work correctly.
+        """
+        logger.info(f"🎉 Squat completed: Rep #{event.rep_count} at {event.timestamp:.3f} with knee angle {event.knee_angle:.1f}°")
+        
+        try:
+            # Send chat message to conversation
+            if agent.conversation is not None:
+                agent_user_id = agent.agent_user.id or "agent"
+                await agent.conversation.send_message(
+                    role="assistant",
+                    user_id=agent_user_id,
+                    content=f"SQUAT COUNTER: {event.rep_count}"
+                )
+                logger.info(f"📨 Sent squat counter: {event.rep_count}")
+            
+            # Send voice output via LLM (works with Gemini Realtime and other realtime LLMs)
+            if agent.llm is not None:
+                # Create a motivational message
+                if event.rep_count == 1:
+                    message = f"Great job! You've completed your first squat! Keep it up!"
+                elif event.rep_count % 5 == 0:
+                    message = f"Excellent work! You've completed {event.rep_count} squats! You're doing amazing!"
+                else:
+                    message = f"Nice! Rep {event.rep_count} complete! Keep going!"
+                
+                await agent.llm.simple_response(text=message)
+                logger.info(f"📢 Spoke message via voice: {message}")
+        except Exception as e:
+            logger.error(f"Error handling squat completed event: {e}", exc_info=True)
+    
     return agent
 
 

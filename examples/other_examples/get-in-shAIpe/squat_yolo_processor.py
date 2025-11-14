@@ -1,12 +1,16 @@
 import logging
-from typing import Optional, Dict, Any, Callable, Union, Awaitable
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from PIL import Image
 import numpy as np
 import cv2
 
 from vision_agents.plugins import ultralytics
 from squat_counter_processor import SquatCounterProcessor
+from squat_events import SquatCompletedEvent
 from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
+
+if TYPE_CHECKING:
+    from vision_agents.core.agents import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +38,6 @@ class SquatYOLOProcessor(ultralytics.YOLOPoseProcessor):
         enable_wrist_highlights: bool = False,
         min_squat_angle: float = 100.0,
         max_standing_angle: float = 160.0,
-        on_squat_complete: Optional[Union[Callable[[int, float, float], None], Callable[[int, float, float], Awaitable[None]]]] = None,
         *args,
         **kwargs,
     ):
@@ -52,15 +55,24 @@ class SquatYOLOProcessor(ultralytics.YOLOPoseProcessor):
             **kwargs,
         )
         
-        # Initialize squat counter
+        # Store agent reference (set via _attach_agent)
+        self._agent: Optional["Agent"] = None
+        
+        # Initialize squat counter (no callback needed - we'll use events)
         self.squat_counter = SquatCounterProcessor(
             min_squat_angle=min_squat_angle,
             max_standing_angle=max_standing_angle,
             confidence_threshold=conf_threshold,
-            on_squat_complete=on_squat_complete,
         )
         
         logger.info("💪 Squat YOLO Processor initialized with squat counting")
+    
+    def _attach_agent(self, agent: "Agent") -> None:
+        """Attach agent reference to access event manager."""
+        self._agent = agent
+        # Register the squat event with the agent's event manager
+        if agent.events:
+            agent.events.register(SquatCompletedEvent)
     
     def _process_pose_sync(
         self, frame_array: np.ndarray
@@ -77,6 +89,17 @@ class SquatYOLOProcessor(ultralytics.YOLOPoseProcessor):
         
         # Process squat counting
         squat_data = self.squat_counter.process_pose_data(pose_data)
+        
+        # Emit event if squat was completed (message indicates completion)
+        if squat_data.get("message") and self._agent and self._agent.events:
+            event = SquatCompletedEvent(
+                plugin_name="squat_counter",
+                rep_count=squat_data["rep_count"],
+                knee_angle=squat_data.get("knee_angle", 0.0),
+                timestamp=squat_data.get("timestamp", 0.0),
+            )
+            self._agent.events.send(event)
+            logger.debug(f"📤 Emitted SquatCompletedEvent: Rep #{squat_data['rep_count']}")
         
         # Add squat info to frame
         annotated_frame = self._draw_squat_info(annotated_frame, squat_data)
