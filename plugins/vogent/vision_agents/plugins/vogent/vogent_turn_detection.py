@@ -110,7 +110,6 @@ class VogentTurnDetection(TurnDetector):
         self.whisper_stt = fast_whisper.STT(
             model_size=whisper_model_size,
             device="cpu",
-            compute_type="int8",
             language="en",
         )
         self.whisper = None  # Will be set after warmup
