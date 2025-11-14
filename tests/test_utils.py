@@ -1,13 +1,10 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from vision_agents.core.utils.examples import get_weather_by_location
 
-from vision_agents.core.utils.utils import get_weather_by_location
 from tests.base_test import BaseTest
 
 
 class TestWeatherUtils(BaseTest):
-
-
     @pytest.mark.integration
     async def test_get_weather_by_location_integration(self):
         """Integration test with real API call."""
