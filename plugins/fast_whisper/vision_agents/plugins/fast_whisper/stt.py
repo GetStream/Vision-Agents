@@ -126,7 +126,7 @@ class STT(stt.STT):
                 asyncio.create_task(self._process_buffer(participant))
                 
         except Exception as e:
-            logger.error("Error buffering audio for faster-whisper", exc_info=e)
+            logger.exception("Error buffering audio for faster-whisper")
             self._emit_error_event(e, context="buffering_audio", participant=participant)
 
     async def _process_buffer(self, participant: Optional[Participant] = None):
