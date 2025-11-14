@@ -23,7 +23,7 @@ def configure_sdk_logger(level: int) -> None:
     """
     colored_formatter = colorlog.ColoredFormatter(
         fmt="%(log_color)s%(asctime)s.%(msecs)03d | %(levelname)-8s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        datefmt="%H:%M:%S",
         log_colors={
             "DEBUG": "white",
             "INFO": "light_white",
@@ -36,7 +36,7 @@ def configure_sdk_logger(level: int) -> None:
     default_handler.setLevel(level)
     default_handler.setFormatter(colored_formatter)
 
-    for _logger in [MAIN_LOGGER,]:
+    for _logger in [MAIN_LOGGER]:
         # Set the default handler only if it's not already configured
         if not _logger.handlers:
             _logger.handlers = [default_handler]
@@ -75,9 +75,6 @@ def _contextual_record_factory(*args, **kwargs) -> logging.LogRecord:
 
     record.call_id = call_id or "-"
     return record
-
-
-logging.setLogRecordFactory(_contextual_record_factory)
 
 
 def set_call_context(call_id: str) -> CallContextToken:
