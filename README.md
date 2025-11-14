@@ -105,17 +105,23 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 
 ## Out-of-the-Box Integrations
 
-| **Plugin Name** | **Description**                                                                                             | **Docs Link**                                                |
-| --------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| **Cartesia**    | TTS plugin for realistic voice synthesis in real-time voice applications                                    | [View Docs](https://visionagents.ai/integrations/cartesia)   |
-| **Deepgram**    | STT plugin for fast, accurate real-time transcription with speaker diarization                              | [View Docs](https://visionagents.ai/integrations/deepgram)   |
-| **ElevenLabs**  | TTS plugin with highly realistic and expressive voices for conversational agents                            | [View Docs](https://visionagents.ai/integrations/elevenlabs) |
-| **Kokoro**      | Local TTS engine for offline voice synthesis with low latency                                               | [View Docs](https://visionagents.ai/integrations/kokoro)     |
-| **Moonshine**   | STT plugin optimized for fast, locally runnable transcription on constrained devices                        | [View Docs](https://visionagents.ai/integrations/moonshine)  |
-| **OpenAI**      | LLM plugin for real-time reasoning, conversation, and multimodal capabilities using OpenAI's Realtime API   | [View Docs](https://visionagents.ai/integrations/openai)     |
-| **Gemini**      | Multimodal plugin for real-time audio, video, and text understanding powered by Google's Gemini Live models | [View Docs](https://visionagents.ai/integrations/gemini)     |
-| **Silero**      | VAD plugin for voice activity detection and turn-taking in low-latency real-time conversations              | [View Docs](https://visionagents.ai/integrations/silero)     |
-| **Wizper**      | Real-time variant of OpenAI's Whisper v3 for Speech-to-Text and on-the-fly translation, hosted by Fal.ai    | [View Docs](https://visionagents.ai/integrations/wizper)     |
+| **Plugin Name** | **Description** | **Docs Link** |
+|-------------|-------------|-----------|
+| AWS Polly | TTS plugin using Amazon's cloud-based service with natural-sounding voices and neural engine support | [AWS Polly](https://visionagents.ai/integrations/aws-polly) |
+| Cartesia | TTS plugin for realistic voice synthesis in real-time voice applications | [Cartesia](https://visionagents.ai/integrations/cartesia) |
+| Deepgram | STT plugin for fast, accurate real-time transcription with speaker diarization | [Deepgram](https://visionagents.ai/integrations/deepgram) |
+| ElevenLabs | TTS plugin with highly realistic and expressive voices for conversational agents | [ElevenLabs](https://visionagents.ai/integrations/elevenlabs) |
+| Fish Audio | STT and TTS plugin with automatic language detection and voice cloning capabilities | [Fish Audio](https://visionagents.ai/integrations/fish) |
+| Gemini | Realtime API for building conversational agents with support for both voice and video | [Gemini](https://visionagents.ai/integrations/gemini) |
+| HeyGen | Realtime interactive avatars powered by [HeyGen](https://heygen.com/) | [Heygen](https://visionagents.ai/integrations/heygen) |
+| Inworld | TTS plugin with high-quality streaming voices for real-time conversational AI agents | [Inworld](https://visionagents.ai/integrations/inworld) |
+| Kokoro | Local TTS engine for offline voice synthesis with low latency | [Kokoro](https://visionagents.ai/integrations/kokoro) |
+| Moondream | Moondream provides realtime detection and VLM capabilities. Developers can choose from using the hosted API or running locally on their CUDA devices. Vision Agents supports Moondream's Detect, Caption and VQA skills out-of-the-box. | [Moondream](https://visionagents.ai/integrations/moondream) |
+| OpenAI | Realtime API for building conversational agents with out of the box support for real-time video directly over WebRTC, LLMs and Open AI TTS | [OpenAI](https://visionagents.ai/integrations/openai) |
+| Smart Turn | Advanced turn detection system combining Silero VAD, Whisper, and neural models for natural conversation flow | [Smart Turn](https://visionagents.ai/integrations/smart-turn) |
+| Vogent | Neural turn detection system for intelligent turn-taking in voice conversations | [Vogent](https://visionagents.ai/integrations/vogent) |
+| Wizper | STT plugin with real-time translation capabilities powered by Whisper v3 | [Wizper](https://visionagents.ai/integrations/wizper) |
+
 
 ## Processors
 
