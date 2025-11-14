@@ -12,8 +12,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import fast_whisper, getstream, aws, cartesia, smart_turn
-
+from vision_agents.plugins import fast_whisper, getstream, gemini, elevenlabs, vogent
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +25,13 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Fast Whisper AI", id="agent"),
         instructions="Be helpful and respond naturally to the user's speech.",
-        llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
-        tts=cartesia.TTS(),
+        llm=gemini.LLM("gemini-2.5-flash-lite"),
+        tts=elevenlabs.TTS(),
         stt=fast_whisper.STT(
             model_size="tiny",  # Use base for good balance of speed and accuracy
             device="cpu",       # Use "cuda" if you have GPU support
         ),
-        turn_detection=smart_turn.TurnDetection(
-            buffer_in_seconds=2.0,
-            confidence_threshold=0.5
-        ),
+        turn_detection=vogent.TurnDetection(),
     )
     return agent
 
