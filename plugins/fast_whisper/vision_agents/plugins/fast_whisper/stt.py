@@ -109,7 +109,7 @@ class STT(stt.STT):
         try:
             # Ensure audio is in the right format: 16kHz, float32
             audio_data = pcm_data.resample(RATE).to_float32()
-            self._audio_buffer = self._audio_buffer.append(audio_data)
+            self._audio_buffer.append(audio_data)
 
             current_time = time.time()
             buffer_duration_ms = self._audio_buffer.duration_ms
