@@ -16,8 +16,8 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),  # use stream for edge video transport
         agent_user=User(name="AI golf coach"),
         instructions="Read @golf_coach.md",  # read the golf coach markdown instructions
-        llm=gemini.Realtime(fps=3),  # Careful with FPS can get expensive
-        # llm=openai.Realtime(fps=10), use this to switch to openai
+        llm=gemini.Realtime(fps=3),  # Share video with gemini
+        # llm=openai.Realtime(fps=3), use this to switch to openai
         processors=[
             ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
         ],  # realtime pose detection with yolo
@@ -26,9 +26,6 @@ async def create_agent(**kwargs) -> Agent:
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    # ensure the agent user is created
-    await agent.create_user()
-    # Create a call
     call = await agent.create_call(call_type, call_id)
 
     # join the call and open a demo env

@@ -877,7 +877,6 @@ class Agent:
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from the queue."""
 
-        self.logger.info("AUDIO: Starting audio consumer")
         try:
             while self._is_running:
                 try:

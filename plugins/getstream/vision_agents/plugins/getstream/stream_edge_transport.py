@@ -44,7 +44,17 @@ class StreamConnection(Connection):
         return self._connection.participants_state
 
     async def close(self):
-        await self._connection.leave()
+        try:
+            await asyncio.wait_for(self._connection.leave(), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning("Connection leave timed out during close")
+        except RuntimeError as e:
+            if "asynchronous generator" in str(e):
+                logger.debug(f"Ignoring async generator error during shutdown: {e}")
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"Error during connection close: {e}")
 
 
 class StreamEdge(EdgeTransport):
@@ -120,9 +130,6 @@ class StreamEdge(EdgeTransport):
         if track_key in self._track_map:
             self._track_map[track_key]["published"] = True
             track_id = self._track_map[track_key]["track_id"]
-            logger.info(
-                f"Track re-published: {track_type_int} from {user_id}, track_id: {track_id}"
-            )
 
             # Emit TrackAddedEvent so agent can switch to this track
             self.events.send(
@@ -166,9 +173,6 @@ class StreamEdge(EdgeTransport):
         if track_id:
             # Store with correct type from SFU
             self._track_map[track_key] = {"track_id": track_id, "published": True}
-            logger.info(
-                f"Trackmap published: {track_type_int} from {user_id}, track_id: {track_id} (waited {elapsed:.2f}s)"
-            )
 
             # Only emit TrackAddedEvent for remote participants, not for agent's own tracks
             if not is_agent_track:
@@ -286,9 +290,6 @@ class StreamEdge(EdgeTransport):
         async def on_track(track_id, track_type, user):
             # Store track in pending map - wait for SFU to confirm type before spawning TrackAddedEvent
             self._pending_tracks[track_id] = (user.user_id, user.session_id, track_type)
-            logger.info(
-                f"Track received from WebRTC (pending SFU confirmation): {track_id}, type: {track_type}, user: {user.user_id}"
-            )
 
         self.events.silent(events.AudioReceivedEvent)
 
