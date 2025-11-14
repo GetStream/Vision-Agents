@@ -36,7 +36,7 @@ class STT(stt.STT):
 
     def __init__(
         self,
-        model_size: str = "tiny",
+        model_size: Literal ["tiny", "base", "small", "medium", "large"]= "tiny",
         language: Optional[str] = "en",
         device: Literal["cpu", "cuda"] = "cpu",
         client: Optional[WhisperModel] = None,
