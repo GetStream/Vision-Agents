@@ -1,0 +1,21 @@
+[project]
+name = "elevenlabs-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents-plugins-elevenlabs",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-smart-turn",
+  "vision-agents-plugins-gemini",
+  "vision-agents",
+]
+
+[tool.uv.sources]
+"vision-agents-plugins-elevenlabs" = {path = "..", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
+"vision-agents-plugins-smart-turn" = {path = "../../smart_turn", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../gemini", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}
+

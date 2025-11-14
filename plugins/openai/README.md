@@ -1,104 +1,132 @@
-# OpenAI Plugin for GetStream
+# OpenAI Plugin for Vision Agents
 
-This package provides OpenAI integration for the GetStream plugin ecosystem.
+OpenAI LLM integration for Vision Agents framework with support for both standard and realtime interactions.
 
 It enables features such as:
 - Real-time transcription and language processing using OpenAI models
-- Easy integration with other GetStream plugins and services
+- Easy integration with other Vision Agents plugins and services
 - Function calling capabilities for dynamic interactions
 
 ## Installation
 
 ```bash
-pip install getstream-plugins-openai
+pip install vision-agents[openai]
 ```
 
 ## Usage
 
+### Standard LLM
+
+This example shows how to use "gpt-4.1" model with TTS and STT services for audio communication via `openai.LLM()` API.
+
+The `openai.LLM()` class uses OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) under the hood. 
+
+To work with models via legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat), see the [Chat Completions models](#chat-completions-models) section. 
+
 ```python
-from getstream.plugins.openai import OpenAIRealtime
+from vision_agents.core import User, Agent
+from vision_agents.core.agents import AgentLauncher
+from vision_agents.plugins import deepgram, getstream, cartesia, smart_turn, openai
 
-# Initialize with API key
-sts = OpenAIRealtime(api_key="your_openai_api_key", voice="alloy")
-
-# Connect to a call
-async with await sts.connect(call, agent_user_id="assistant") as connection:
-    # Send user message
-    await sts.send_user_message("Hello, how can you help me?")
-
-    # Request assistant response
-    await sts.request_assistant_response()
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=User(name="Friendly AI"),
+    instructions="Be nice to the user",
+    llm=openai.LLM("gpt-4.1"),
+    tts=cartesia.TTS(),
+    stt=deepgram.STT(),
+    turn_detection=smart_turn.TurnDetection(),
+)
 ```
+
+### Realtime LLM
+
+Realtime audio and video communication is also supported via `Realtime` class.
+In this mode, the model handles audio and video processing directly without the need for TTS and STT services.
+
+```python
+from vision_agents.core import User, Agent
+from vision_agents.plugins import getstream, openai
+
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=User(name="Friendly AI"),
+    instructions="Be nice to the user",
+    llm=openai.Realtime(),
+)
+```
+
+### Chat Completions models
+The `openai.ChatCompletionsLLM` and `openai.ChatCompletionsVLM` classes provide APIs for text and vision models that use the [Chat Completions API](https://platform.openai.com/docs/api-reference/chat).  
+
+They are compatible with popular inference backends such as vLLM, TGI, and Ollama. 
+
+For example, you can use them to interact with Qwen 3 VL visual model hosted on [Baseten](https://www.baseten.co/):
+
+```python
+from vision_agents.core import User, Agent
+from vision_agents.plugins import deepgram, getstream, elevenlabs, vogent, openai
+
+# Instantiate the visual model wrapper
+llm = openai.ChatCompletionsVLM(model="qwen3vl")
+    
+# Create an agent with video understanding capabilities
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=User(name="Video Assistant", id="agent"),
+    instructions="You're a helpful video AI assistant. Analyze the video frames and respond to user questions about what you see.",
+    llm=llm,
+    stt=deepgram.STT(),
+    tts=elevenlabs.TTS(),
+    turn_detection=vogent.TurnDetection(),
+    processors=[],
+)
+```
+
+For full code, see [examples/qwen_vl_example](examples/qwen_vl_example/README.md).
+
 
 ## Function Calling
 
-The OpenAI Realtime API supports function calling, allowing the assistant to invoke custom functions you define. This enables dynamic interactions like:
+The `LLM` and `Realtime` APIs support function calling, allowing the assistant to invoke custom functions you define.   
+
+This enables dynamic interactions like:
 
 - Database queries
 - API calls to external services
 - File operations
 - Custom business logic
 
-### Example with Function Calling
-
 ```python
-from getstream.plugins.openai import OpenAIRealtime
+from vision_agents.plugins import openai
 
-# Define your functions
-def get_weather(location: str) -> str:
-    """Get current weather for a location"""
-    # Your weather API logic here
-    return f"Weather in {location}: Sunny, 72°F"
+llm = openai.LLM("gpt-4.1")
+# Or use openai.Realtime() for realtime model
 
-def send_email(to: str, subject: str, body: str) -> str:
-    """Send an email"""
-    # Your email sending logic here
-    return f"Email sent to {to} with subject: {subject}"
 
-# Initialize with functions
-sts = OpenAIRealtime(
-    api_key="your_openai_api_key",
-    voice="alloy",
-    functions=[
-        {
-            "name": "get_weather",
-            "description": "Get current weather information",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "City name"}
-                },
-                "required": ["location"]
-            }
-        },
-        {
-            "name": "send_email",
-            "description": "Send an email to someone",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "to": {"type": "string", "description": "Recipient email"},
-                    "subject": {"type": "string", "description": "Email subject"},
-                    "body": {"type": "string", "description": "Email body"}
-                },
-                "required": ["to", "subject", "body"]
-            }
-        }
-    ]
+
+@llm.register_function(
+    name="get_weather",
+    description="Get the current weather for a given city"
 )
-
-async with await sts.connect(call, agent_user_id="assistant") as connection:
-    await sts.send_user_message("What's the weather like in San Francisco?")
-    await sts.request_assistant_response()
-
-    # The assistant can now call your functions and you can respond with results
-    # await sts.send_function_call_output("call_id", "function_result")
+def get_weather(city: str) -> dict:
+    """Get weather information for a city."""
+    return {
+        "city": city,
+        "temperature": 72,
+        "condition": "Sunny"
+    }
+# The function will be automatically called when the model decides to use it
 ```
 
 ## Requirements
 - Python 3.10+
-- openai[realtime] api
-- GetStream SDK
+- GetStream account for video calls
+- Open AI API key
+
+## Links
+- [Documentation](https://visionagents.ai/)
+- [GitHub](https://github.com/GetStream/Vision-Agents)
 
 ## License
 MIT

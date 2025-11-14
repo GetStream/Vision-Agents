@@ -5,26 +5,26 @@ from dotenv import load_dotenv
 from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
 from vision_agents.plugins.gemini import Realtime
 from vision_agents.core.llm.events import RealtimeAudioOutputEvent
-from vision_agents.core.utils.utils import frame_to_png_bytes
 from getstream.video.rtc import PcmData, AudioFormat
 
 # Load environment variables
 load_dotenv()
 
 
-class TestGeminiRealtime:
-    """Integration tests for Realtime2 connect flow"""
+@pytest.fixture
+async def realtime():
+    """Create and manage Realtime connection lifecycle"""
+    realtime = Realtime(
+        model="gemini-2.0-flash-exp",
+    )
+    try:
+        yield realtime
+    finally:
+        await realtime.close()
 
-    @pytest.fixture
-    async def realtime(self):
-        """Create and manage Realtime connection lifecycle"""
-        realtime = Realtime(
-            model="gemini-2.0-flash-exp",
-        )
-        try:
-            yield realtime
-        finally:
-            await realtime.close()
+
+class TestGeminiRealtime:
+    """Integration tests for Gemini Realtime connect flow"""
 
     @pytest.mark.integration
     async def test_simple_response_flow(self, realtime):
@@ -93,20 +93,3 @@ class TestGeminiRealtime:
         # Stop video sender
         await realtime._stop_watching_video_track()
         assert len(events) > 0
-
-    async def test_frame_to_png_bytes_with_bunny_video(self, bunny_video_track):
-        """Test that frame_to_png_bytes works with real bunny video frames"""
-        # Get a frame from the bunny video track
-        frame = await bunny_video_track.recv()
-        png_bytes = frame_to_png_bytes(frame)
-
-        # Verify we got PNG data
-        assert isinstance(png_bytes, bytes)
-        assert len(png_bytes) > 0
-
-        # Verify it's actually PNG data (PNG files start with specific bytes)
-        assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
-
-        print(
-            f"Successfully converted bunny video frame to PNG: {len(png_bytes)} bytes"
-        )

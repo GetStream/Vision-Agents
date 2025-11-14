@@ -1,13 +1,14 @@
 import asyncio
-import io
-import logging
-import re
-import os
 import importlib.metadata
+import logging
+import os
+import re
 from dataclasses import dataclass
 from typing import Dict, Optional
-from PIL import Image
+
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 # Type alias for markdown file contents: maps filename to file content
@@ -52,7 +53,9 @@ def _read_markdown_file_sync(file_path: str) -> str:
         return ""
 
 
-async def parse_instructions_async(text: str, base_dir: Optional[str] = None) -> Instructions:
+async def parse_instructions_async(
+    text: str, base_dir: Optional[str] = None
+) -> Instructions:
     """
     Async version: Parse instructions from a string, extracting @ mentioned markdown files and their contents.
 
@@ -127,32 +130,6 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
     )
 
 
-def frame_to_png_bytes(frame) -> bytes:
-    """
-    Convert a video frame to PNG bytes.
-
-    Args:
-        frame: Video frame object that can be converted to an image
-
-    Returns:
-        PNG bytes of the frame, or empty bytes if conversion fails
-    """
-    logger = logging.getLogger(__name__)
-    try:
-        if hasattr(frame, "to_image"):
-            img = frame.to_image()
-        else:
-            arr = frame.to_ndarray(format="rgb24")
-            img = Image.fromarray(arr)
-
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-    except Exception as e:
-        logger.error(f"Error converting frame to PNG: {e}")
-        return b""
-
-
 def get_vision_agents_version() -> Optional[str]:
     """
     Get the installed vision-agents package version.
@@ -166,43 +143,44 @@ def get_vision_agents_version() -> Optional[str]:
 async def ensure_model(path: str, url: str) -> str:
     """
     Download a model file asynchronously if it doesn't exist.
-    
+
     Args:
         path: Local path where the model should be saved
         url: URL to download the model from
-        
+
     Returns:
         The path to the model file
     """
 
-    logger = logging.getLogger(__name__)
     if not os.path.exists(path):
         model_name = os.path.basename(path)
         logger.info(f"Downloading {model_name}...")
-        
+
         try:
-            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=300.0, follow_redirects=True
+            ) as client:
                 async with client.stream("GET", url) as response:
                     response.raise_for_status()
-                    
+
                     # Write file in chunks to avoid loading entire file in memory
                     chunks = []
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         chunks.append(chunk)
-                    
+
                     # Write all chunks to file in thread to avoid blocking event loop
                     def write_file():
                         with open(path, "wb") as f:
                             for chunk in chunks:
                                 f.write(chunk)
-                    
+
                     await asyncio.to_thread(write_file)
-            
+
             logger.info(f"{model_name} downloaded.")
         except httpx.HTTPError as e:
             # Clean up partial download on error
             if os.path.exists(path):
                 os.remove(path)
             raise RuntimeError(f"Failed to download {model_name}: {e}")
-    
+
     return path

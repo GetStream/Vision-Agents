@@ -1,20 +1,21 @@
 import asyncio
 import contextlib
+import datetime
+import inspect
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
-import aiortc
 
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
 
+from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
-from .agent_options import AgentOptions, default_agent_options
+from .agent_types import AgentOptions, default_agent_options, LLMTurn, TrackInfo
 
 from ..edge import sfu_events
 from ..edge.events import (
@@ -23,7 +24,6 @@ from ..edge.events import (
     TrackRemovedEvent,
     CallEndedEvent,
 )
-from ..edge.sfu_events import ParticipantJoinedEvent
 from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
 from ..events.manager import EventManager
 from ..llm import events as llm_events
@@ -32,6 +32,7 @@ from ..llm.events import (
     LLMResponseCompletedEvent,
     RealtimeUserSpeechTranscriptionEvent,
     RealtimeAgentSpeechTranscriptionEvent,
+    RealtimeAudioOutputEvent,
 )
 from ..llm.llm import AudioLLM, LLM, VideoLLM
 from ..llm.realtime import Realtime
@@ -47,7 +48,6 @@ from ..utils.logging import (
     CallContextToken,
     clear_call_context,
     set_call_context,
-    configure_default_logging,
 )
 from ..utils.video_forwarder import VideoForwarder
 from ..vad import VAD
@@ -70,25 +70,6 @@ logger = logging.getLogger(__name__)
 
 tracer: Tracer = trace.get_tracer("agents")
 
-
-@dataclass
-class TrackInfo:
-    id: str
-    type: int
-    processor: str
-    priority: int # higher goes first
-    participant: Optional[Participant]
-    track: aiortc.mediastreams.VideoStreamTrack
-    forwarder: VideoForwarder
-
-
-"""
-TODO:
-- fix pcm_data.participant
-- fix image processors
-- verify processed tracks are setup correctly
-- cleanup events more
-"""
 
 class Agent:
     """
@@ -142,21 +123,21 @@ class Agent:
         mcp_servers: Optional[List[MCPBaseServer]] = None,
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
-        # Configure the default logging for the sdk here. Pass None to leave the config intact.
-        log_level: Optional[int] = logging.INFO,
         profiler: Optional[Profiler] = None,
     ):
+        self._pending_turn: Optional[LLMTurn] = None
+        self.participants: Optional[ParticipantsState] = None
         self.call = None
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
-        if log_level is not None:
-            configure_default_logging(level=log_level)
         if options is None:
             options = default_agent_options()
         else:
             options = default_agent_options().update(options)
         self.options = options
-        self._audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
+
+        # audio incoming is enqueued to self._incoming_audio_queue (eg. human audio)
+        self._incoming_audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
 
         self.instructions = instructions
         self.edge = edge
@@ -211,7 +192,7 @@ class Agent:
 
         # Attach processors that need agent reference
         for processor in self.processors:
-            if hasattr(processor, '_attach_agent'):
+            if hasattr(processor, "_attach_agent"):
                 processor._attach_agent(self)
 
         self.events.subscribe(self._on_vad_audio)
@@ -227,8 +208,13 @@ class Agent:
         self._video_forwarders: List[VideoForwarder] = []
         self._current_video_track_id: Optional[str] = None
         self._connection: Optional[Connection] = None
+
+        # the outgoing audio track
         self._audio_track: Optional[OutputAudioTrack] = None
+
+        # the outgoing video track
         self._video_track: Optional[VideoStreamTrack] = None
+
         self._realtime_connection = None
         self._pc_track_handler_attached: bool = False
         self._audio_consumer_task: Optional[asyncio.Task] = None
@@ -242,11 +228,47 @@ class Agent:
 
         self.events.send(events.AgentInitEvent())
 
+    async def _finish_llm_turn(self):
+        if self._pending_turn is None or self._pending_turn.response is None:
+            raise ValueError(
+                "Finish LLM turn should only be called after self._pending_turn is set"
+            )
+        turn = self._pending_turn
+        self._pending_turn = None
+        event = turn.response
+        if self.tts and event and event.text and event.text.strip():
+            await self.tts.send(event.text)
+
     def setup_event_handling(self):
-        logger.info("AUDIO: SUB TO EVENTS")
+        """
+        Agent event handling:
+
+        - STT: AudioReceivedEvent -> STTTranscriptEvent -> TurnCompleted -> LLMResponseCompletedEvent -> TTSAudioEvent
+        - Eager: AudioReceivedEvent -> STTTranscriptEvent -> EagerTurnCompleted -> LLMResponseCompletedEvent
+            - > if TurnCompleted -> TTSAudioEvent
+        - Realtime: Transcriptions
+
+        Other events
+        - Tracks for video added/removed
+        - Error events
+
+        """
         # listen to turn completed, started etc
-        # TODO: here we should handle eager turn taking
         self.events.subscribe(self._on_turn_event)
+
+        @self.llm.events.subscribe
+        async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
+            # turns started outside of the agent (instructions from code)
+            if self._pending_turn is None:
+                if self.tts and event.text and event.text.strip():
+                    await self.tts.send(event.text)
+            else:
+                self._pending_turn.response = event
+                if self._pending_turn.turn_finished:
+                    await self._finish_llm_turn()
+                else:
+                    # we are in eager turn completion mode. wait for confirmation
+                    self._pending_turn.response = event
 
         # write tts pcm to output track (this is the AI talking to us)
         @self.events.subscribe
@@ -254,34 +276,27 @@ class Agent:
             if self._audio_track is not None:
                 await self._audio_track.write(event.data)
 
-        @self.llm.events.subscribe
-        async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
-            # Trigger TTS directly instead of through event system
-            if self.tts and event.text and event.text.strip():
-                await self.tts.send(event.text)
-            # TODO: here we should handle eager turn taking
-
         # listen to video tracks added/removed
         @self.edge.events.subscribe
         async def on_video_track_added(event: TrackAddedEvent | TrackRemovedEvent):
             if event.track_id is None or event.track_type is None or event.user is None:
                 return
             if isinstance(event, TrackRemovedEvent):
-                asyncio.create_task(self._on_track_removed(event.track_id, event.track_type, event.user))
+                asyncio.create_task(
+                    self._on_track_removed(event.track_id, event.track_type, event.user)
+                )
             else:
-                asyncio.create_task(self._on_track_added(event.track_id, event.track_type, event.user))
+                asyncio.create_task(
+                    self._on_track_added(event.track_id, event.track_type, event.user)
+                )
 
         # audio event for the user talking to the AI
         @self.edge.events.subscribe
         async def on_audio_received(event: AudioReceivedEvent):
-            if event.participant is not None:
-                await self._reply_to_audio(event.pcm_data, event.participant)
+            if event.pcm_data is None:
+                return
 
-        @self.edge.events.subscribe
-        async def on_participant_joined(event: ParticipantJoinedEvent):
-            if event.participant is not None:
-                self.logger.info(f"Participant {event.participant.user_id} joined")
-                self.participants[event.participant.session_id] = event.participant
+            await self._incoming_audio_queue.put(event.pcm_data)
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
@@ -294,24 +309,28 @@ class Agent:
                 raise ValueError("user id is none, this indicates a bug in the code")
 
             # Determine how to handle LLM triggering based on turn detection
-            if self.turn_detection is not None:
-                # With turn detection: accumulate transcripts and wait for TurnEndedEvent
-                # Store/append the transcript for this user
-                if user_id not in self._pending_user_transcripts:
-                    self._pending_user_transcripts[user_id] = event.text
-                else:
-                    # Append to existing transcript (user might be speaking in chunks)
-                    self._pending_user_transcripts[user_id] += " " + event.text
-
-                self.logger.debug(
-                    f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
-                    f"{self._pending_user_transcripts[user_id][:100]}..."
-                )
+            # With turn detection: accumulate transcripts and wait for TurnEndedEvent
+            # Store/append the transcript for this user
+            if user_id not in self._pending_user_transcripts:
+                self._pending_user_transcripts[user_id] = event.text
             else:
-                # Without turn detection: trigger LLM immediately on transcript completion
-                # This is the traditional STT -> LLM flow
-                with self.span("agent.on_stt_transcript_event_create_response"):
-                    await self.simple_response(event.text, event.participant)
+                # Append to existing transcript (user might be speaking in chunks)
+                self._pending_user_transcripts[user_id] += " " + event.text
+
+            self.logger.debug(
+                f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
+                f"{self._pending_user_transcripts[user_id][:100]}..."
+            )
+
+            # if turn detection is disabled, treat the transcript event as an end of turn
+            if not self.turn_detection_enabled:
+                self.events.send(
+                    TurnEndedEvent(
+                        participant=event.participant,
+                    )
+                )
+
+        # TODO: chat event handling needs work
 
         # Error handling
         @self.events.subscribe
@@ -342,27 +361,32 @@ class Agent:
 
         @self.events.subscribe
         async def on_realtime_user_speech_transcription(
-                event: RealtimeUserSpeechTranscriptionEvent,
+            event: RealtimeUserSpeechTranscriptionEvent,
         ):
             self.logger.info(f"🎤 [User transcript]: {event.text}")
 
             if self.conversation is None or not event.text:
                 return
 
-            with self.span("agent.on_realtime_user_speech_transcription"):
-                await self.conversation.upsert_message(
-                    message_id=str(uuid.uuid4()),
-                    role="user",
-                    user_id=event.user_id() or "",
-                    content=event.text,
-                    completed=True,
-                    replace=True,
-                    original=event,
+            if user_id := event.user_id():
+                with self.span("agent.on_realtime_user_speech_transcription"):
+                    await self.conversation.upsert_message(
+                        message_id=str(uuid.uuid4()),
+                        role="user",
+                        user_id=user_id,
+                        content=event.text,
+                        completed=True,
+                        replace=True,
+                        original=event,
+                    )
+            else:
+                self.logger.info(
+                    "RealtimeUserSpeechTranscriptionEvent event does not contain a user, skip sync to chat"
                 )
 
         @self.events.subscribe
         async def on_realtime_agent_speech_transcription(
-                event: RealtimeAgentSpeechTranscriptionEvent,
+            event: RealtimeAgentSpeechTranscriptionEvent,
         ):
             self.logger.info(f"🎤 [Agent transcript]: {event.text}")
 
@@ -379,9 +403,6 @@ class Agent:
                     replace=True,
                     original=event,
                 )
-
-
-
 
         @self.llm.events.subscribe
         async def on_llm_response_sync_conversation(event: LLMResponseCompletedEvent):
@@ -422,9 +443,6 @@ class Agent:
                     completed=False,  # Still streaming
                 )
 
-        logger.info("AUDIO: SUB TO EVENTS DONE")
-
-
     async def simple_response(
         self, text: str, participant: Optional[Participant] = None
     ) -> None:
@@ -433,15 +451,13 @@ class Agent:
         """
         self.logger.info('🤖 Asking LLM to reply to "%s"', text)
         with self.tracer.start_as_current_span("simple_response") as span:
-            response = await self.llm.simple_response(
+            await self.llm.simple_response(
                 text=text, processors=self.processors, participant=participant
             )
             span.set_attribute("text", text)
-            span.set_attribute("response.text", response.text)
-            span.set_attribute("response.original", response.original)
 
     async def simple_audio_response(
-            self, pcm: PcmData, participant: Optional[Participant] = None
+        self, pcm: PcmData, participant: Optional[Participant] = None
     ) -> None:
         """
         Makes it easy to subclass how the agent calls the LLM for processing audio
@@ -463,7 +479,9 @@ class Agent:
         """
         return self.events.subscribe(function)
 
-    async def join(self, call: Call, wait_for_participant=True) -> "AgentSessionContextManager":
+    async def join(
+        self, call: Call, wait_for_participant=True
+    ) -> "AgentSessionContextManager":
         # TODO: validation. join can only be called once
         self.logger.info("joining call")
         # run start on all subclasses
@@ -504,14 +522,15 @@ class Agent:
 
             with self.span("edge.join"):
                 connection = await self.edge.join(self, call)
-                self.participants = connection._connection.participants_state._participant_by_prefix
+                self.participants = connection.participants
+
         except Exception:
             self.clear_call_logging_context()
             raise
 
         self._connection = connection
         self._is_running = True
-        self._audio_consumer_task = asyncio.create_task(self._reply_to_audio_consumer())
+        self._audio_consumer_task = asyncio.create_task(self._consume_incoming_audio())
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
 
@@ -537,6 +556,8 @@ class Agent:
 
         # wait for conversation creation coro at the very end of the join flow
         self.conversation = await create_conversation_coro
+        # Provide conversation to the LLM so it can access the chat history.
+        self.llm.set_conversation(self.conversation)
 
         if wait_for_participant:
             self.logger.info("Agent is ready, waiting for participant to join")
@@ -546,30 +567,23 @@ class Agent:
 
     async def wait_for_participant(self):
         """wait for a participant other than the AI agent to join"""
-        # Check if a non-agent participant is already present
-        if self.call and self.participants:
-            for p in self.participants.values():
-                if p.user_id != self.agent_user.id:
-                    self.logger.info(f"Participant {p.user_id} already in call")
-                    return
 
-        # If not, wait for one to join
+        if self.participants is None:
+            return
+
         participant_joined = asyncio.Event()
 
-        @self.edge.events.subscribe
-        async def on_participant_joined(event: ParticipantJoinedEvent):
-            if event.participant is not None:
-                is_agent = event.participant.user_id == self.agent_user.id
-
-                self.logger.info(f"Participant {event.participant.user_id} joined is_agent {is_agent}")
-                if not is_agent:
+        def on_participants(participants):
+            for p in participants:
+                if p.user_id != self.agent_user.id:
                     participant_joined.set()
 
-        # Wait for the event to be set
-        await participant_joined.wait()
-        
-        # Clean up the subscription
-        self.edge.events.unsubscribe(on_participant_joined)
+        subscription = self.participants.map(on_participants)
+
+        try:
+            await participant_joined.wait()
+        finally:
+            subscription.unsubscribe()
 
     async def finish(self):
         """Wait for the call to end gracefully.
@@ -622,10 +636,22 @@ class Agent:
         subclasses = [self.llm, self.stt, self.tts, self.turn_detection, self.edge]
         subclasses.extend(self.processors)
         for subclass in subclasses:
-            if subclass is not None and getattr(subclass, function_name, None) is not None:
+            if (
+                subclass is not None
+                and getattr(subclass, function_name, None) is not None
+            ):
                 func = getattr(subclass, function_name)
                 if func is not None:
-                    await func(*args, **kwargs)
+                    try:
+                        if inspect.iscoroutinefunction(func):
+                            await func(*args, **kwargs)
+                        else:
+                            func(*args, **kwargs)
+
+                    except Exception as e:
+                        self.logger.exception(
+                            f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
+                        )
 
     def _end_tracing(self):
         if self._root_span is not None:
@@ -639,13 +665,6 @@ class Agent:
 
     def __aexit__(self, exc_type, exc_val, exc_tb):
         self._end_tracing()
-
-
-
-
-
-
-
 
     async def close(self):
         """Clean up all connections and resources.
@@ -755,7 +774,7 @@ class Agent:
 
         return call
 
-    def _on_vad_audio(self, event: VADAudioEvent):
+    async def _on_vad_audio(self, event: VADAudioEvent):
         self.logger.debug(f"Vad audio event {self._truncate_for_logging(event)}")
 
     def _on_rtc_reconnect(self):
@@ -851,23 +870,17 @@ class Agent:
                 completed=True,
             )
 
-    async def _reply_to_audio(
-        self, pcm_data: PcmData, participant: Participant
-    ) -> None:
-        """Put audio data into the queue for processing by the consumer."""
-        # TODO: bit of a hack..
-        pcm_data.participant = participant
-        await self._audio_queue.put(pcm_data)
-
-    async def _reply_to_audio_consumer(self) -> None:
+    async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from the queue."""
+
         self.logger.info("AUDIO: Starting audio consumer")
         try:
             while self._is_running:
                 try:
                     # Get audio data from queue with timeout to allow checking _is_running
                     pcm = await asyncio.wait_for(
-                        self._audio_queue.get_duration(duration_ms=20), timeout=1.0
+                        self._incoming_audio_queue.get_duration(duration_ms=20),
+                        timeout=1.0,
                     )
 
                     participant = pcm.participant
@@ -876,17 +889,16 @@ class Agent:
                         await self.turn_detection.process_audio(
                             pcm, participant, conversation=self.conversation
                         )
-                    
-                    if participant and getattr(participant, "user_id", None) != self.agent_user.id:
-                        # first forward to processors
-                        # Extract audio bytes for processors using the proper PCM data structure
-                        # PCM data has: format, sample_rate, samples, pts, dts, time_base
-                        audio_bytes = pcm.samples.tobytes()
 
+                    if (
+                        participant
+                        and getattr(participant, "user_id", None) != self.agent_user.id
+                    ):
+                        # first forward to processors
                         for processor in self.audio_processors:
                             if processor is None:
                                 continue
-                            await processor.process_audio(audio_bytes, participant.user_id)
+                            await processor.process_audio(pcm)
 
                         # when in Realtime mode call the Realtime directly (non-blocking)
                         if _is_audio_llm(self.llm):
@@ -895,13 +907,13 @@ class Agent:
                         # Process audio through STT
                         elif self.stt:
                             await self.stt.process_audio(pcm, participant)
-                            
+
                 except (asyncio.TimeoutError, asyncio.QueueEmpty):
                     await asyncio.sleep(0.02)
 
                     # No audio data available, continue loop to check _is_running
                     continue
-                    
+
         except asyncio.CancelledError:
             self.logger.info("🎵 Audio consumer task cancelled")
             raise
@@ -931,52 +943,68 @@ class Agent:
         track_info = self._active_video_tracks.get(track_id)
         if not track_info:
             return
-            
+
         for processor in self.image_processors:
             try:
                 pass
-                #TODO: run this better
-                #await processor.process_image(
+                # TODO: run this better
+                # await processor.process_image(
                 #    img, track_info.participant.user_id, track_id=track_id, track_type=track_type
-                #)
+                # )
             except Exception as e:
                 self.logger.error(
                     f"Error in image processor {type(processor).__name__}: {e}"
                 )
 
-    async def _on_track_removed(self, track_id: str, track_type: int, participant: Participant):
-        self._active_video_tracks.pop(track_id)
-        await self._on_track_change(track_id)
+    async def _on_track_removed(
+        self, track_id: str, track_type: int, participant: Participant
+    ):
+        track = self._active_video_tracks.pop(track_id, None)
+        if track is not None:
+            await self._on_track_change(track_id)
 
     async def _on_track_change(self, track_id: str):
         # shared logic between track remove and added
         # Select a track. Prioritize screenshare over regular
         # This is the track without processing
-        non_processed_tracks = [t for t in self._active_video_tracks.values() if not t.processor]
-        source_track = sorted(non_processed_tracks, key=lambda t: t.priority, reverse=True)[0]
+        non_processed_tracks = [
+            t for t in self._active_video_tracks.values() if not t.processor
+        ]
+        if not non_processed_tracks:
+            return
+        source_track = sorted(
+            non_processed_tracks, key=lambda t: t.priority, reverse=True
+        )[0]
         # assign the tracks that we last used so we can notify of changes...
         self._active_source_track_id = source_track.id
 
         await self._track_to_video_processors(source_track)
 
-        processed_track = sorted([t for t in self._active_video_tracks.values()], key=lambda t: t.priority, reverse=True)[0]
+        processed_track = sorted(
+            [t for t in self._active_video_tracks.values()],
+            key=lambda t: t.priority,
+            reverse=True,
+        )[0]
         self._active_processed_track_id = processed_track.id
 
         # See if we have a processed track. If so forward that to LLM
         # TODO: this should run in a loop and handle multiple forwarders
-        #self._image_to_video_processors()
+        # self._image_to_video_processors()
 
         # If Realtime provider supports video, switch to this new track
         if _is_video_llm(self.llm):
+            logger.info("watch video called with track %s", processed_track)
             await self.llm.watch_video_track(
                 processed_track.track, shared_forwarder=processed_track.forwarder
             )
 
-    async def _on_track_added(self, track_id: str, track_type: int, participant: Participant):
+    async def _on_track_added(
+        self, track_id: str, track_type: int, participant: Participant
+    ):
         # We only process video tracks (camera video or screenshare)
         if track_type not in (
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_SCREEN_SHARE,
+            TrackType.TRACK_TYPE_VIDEO,
+            TrackType.TRACK_TYPE_SCREEN_SHARE,
         ):
             return
 
@@ -999,13 +1027,11 @@ class Agent:
             processor="",
             track=track,
             participant=participant,
-            priority = 1 if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE else 0,
-            forwarder = forwarder
+            priority=1 if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE else 0,
+            forwarder=forwarder,
         )
 
         await self._on_track_change(track_id)
-
-
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""
@@ -1020,10 +1046,7 @@ class Agent:
                     self.logger.info(
                         f"👉 Turn started - interrupting TTS for participant {event.participant.user_id}"
                     )
-                    try:
-                        await self.tts.stop_audio()
-                    except Exception as e:
-                        self.logger.error(f"Error stopping TTS: {e}")
+                    await self.tts.stop_audio()
                 else:
                     participant_id = (
                         event.participant.user_id if event.participant else "unknown"
@@ -1031,6 +1054,8 @@ class Agent:
                     self.logger.info(
                         f"👉 Turn started - participant speaking {participant_id} : {event.confidence}"
                     )
+                if self._audio_track is not None:
+                    await self._audio_track.flush()
             else:
                 # Agent itself started speaking - this is normal
                 participant_id = (
@@ -1059,17 +1084,60 @@ class Agent:
                 )
 
                 # Create participant object if we have metadata
-                participant = None
-                if hasattr(event, "custom") and event.custom:
-                    # Try to extract participant info from custom metadata
-                    participant = event.custom.get("participant")
-
-                # Trigger LLM response with the complete transcript
-                await self.simple_response(transcript, participant)
+                participant = event.participant
 
                 # Clear the pending transcript for this speaker
-                self._pending_user_transcripts[event.participant.user_id] = ""
+                self._pending_user_transcripts[participant.user_id] = ""
+                # cancel the old task if the text changed in the meantime
 
+                if (
+                    self._pending_turn is not None
+                    and self._pending_turn.input != transcript
+                ):
+                    logger.debug(
+                        "Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
+                        self._pending_turn.input,
+                        transcript,
+                    )
+                    if self._pending_turn.task:
+                        self._pending_turn.task.cancel()
+
+                # create a new LLM turn
+                if self._pending_turn is None or self._pending_turn.input != transcript:
+                    # Without turn detection: trigger LLM immediately on transcript completion
+                    # This is the traditional STT -> LLM flow
+                    llm_turn = LLMTurn(
+                        input=transcript,
+                        participant=event.participant,
+                        started_at=datetime.datetime.now(),
+                        turn_finished=not event.eager_end_of_turn,
+                    )
+                    self._pending_turn = llm_turn
+                    task = asyncio.create_task(
+                        self.simple_response(transcript, event.participant)
+                    )
+                    llm_turn.task = task
+                elif self._pending_turn.input == transcript:
+                    # same text as pending turn
+                    is_finished = not event.eager_end_of_turn
+                    now = datetime.datetime.now()
+                    elapsed = now - self._pending_turn.started_at
+                    logger.debug(
+                        "Marking eager turn as completed. Eager turn detection saved %.2f",
+                        elapsed.total_seconds() * 1000,
+                    )
+
+                    if is_finished:
+                        self._pending_turn.turn_finished = True
+                        if self._pending_turn.response is not None:
+                            await self._finish_llm_turn()
+
+    @property
+    def turn_detection_enabled(self):
+        # return true if either turn detection or stt provide turn detection capabilities
+        return self.turn_detection is not None or (
+            self.stt is not None and self.stt.turn_detection
+        )
 
     @property
     def publish_audio(self) -> bool:
@@ -1124,7 +1192,7 @@ class Agent:
         """Get processors that can process audio.
 
         Returns:
-            List of processors that implement `process_audio(audio_bytes, user_id)`.
+            List of processors that implement `process_audio(pcm_data: PcmData)`.
         """
         return filter_processors(self.processors, ProcessorType.AUDIO)
 
@@ -1201,30 +1269,17 @@ class Agent:
     def _prepare_rtc(self):
         # Variables are now initialized in __init__
 
-        # Set up audio track if TTS is available
         if self.publish_audio:
-            if _is_audio_llm(self.llm):
-                self._audio_track = self.llm.output_audio_track
-                self.logger.info("🎵 Using Realtime provider output track for audio")
-            elif self.audio_publishers:
-                # Get the first audio publisher to create the track
-                audio_publisher = self.audio_publishers[0]
-                self._audio_track = audio_publisher.publish_audio_track()
-                self.logger.info("🎵 Audio track initialized from audio publisher")
-            else:
-                # Default to WebRTC-friendly format unless configured differently
-                framerate = 48000
-                stereo = True
-                self._audio_track = self.edge.create_audio_track(
-                    framerate=framerate, stereo=stereo
-                )
-                # Inform TTS of desired output format so it can resample accordingly
-                if self.tts:
-                    channels = 2 if stereo else 1
-                    self.tts.set_output_format(
-                        sample_rate=framerate,
-                        channels=channels,
-                    )
+            framerate = 48000
+            stereo = True
+            self._audio_track = self.edge.create_audio_track(
+                framerate=framerate, stereo=stereo
+            )
+
+            @self.events.subscribe
+            async def forward_audio(event: RealtimeAudioOutputEvent):
+                if self._audio_track is not None:
+                    await self._audio_track.write(event.data)
 
         # Set up video track if video publishers are available
         if self.publish_video:
@@ -1245,7 +1300,7 @@ class Agent:
                 track=self._video_track,
                 participant=None,
                 priority=2,
-                forwarder=forwarder
+                forwarder=forwarder,
             )
 
             self.logger.info("🎥 Video track initialized from video publisher")

@@ -22,6 +22,7 @@ vision-agents-plugins-krisp = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
 vision-agents-plugins-heygen = { workspace = true }
+vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
 vision-agents-plugins-fast-whisper = { workspace = true }
@@ -53,6 +54,7 @@ members = [
     "plugins/smart_turn",
     "plugins/wizper",
     "plugins/heygen",
+    "plugins/inworld",
     "plugins/vogent",
     "plugins/moondream",
     "plugins/fast_whisper"

@@ -9,12 +9,12 @@ from urllib.parse import urlencode
 import aiortc
 from getstream import AsyncStream
 from getstream.chat.async_client import ChatClient
-from getstream.models import ChannelInput, ChannelMember
+from getstream.models import ChannelInput, ChannelMember, ChannelMemberRequest
 from getstream.video import rtc
 from getstream.video.async_call import Call
 from getstream.video.rtc import ConnectionManager, audio_track
+from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
-    Participant,
     TrackType,
 )
 from getstream.video.rtc.track_util import PcmData
@@ -38,6 +38,10 @@ class StreamConnection(Connection):
         super().__init__()
         # store the native connection object
         self._connection = connection
+
+    @property
+    def participants(self) -> ParticipantsState:
+        return self._connection.participants_state
 
     async def close(self):
         await self._connection.leave()
@@ -289,12 +293,12 @@ class StreamEdge(EdgeTransport):
         self.events.silent(events.AudioReceivedEvent)
 
         @connection.on("audio")
-        async def on_audio_received(pcm: PcmData | None, participant: Participant):
+        async def on_audio_received(pcm: PcmData):
             self.events.send(
                 events.AudioReceivedEvent(
                     plugin_name="getstream",
                     pcm_data=pcm,
-                    participant=participant,
+                    participant=pcm.participant,
                 )
             )
 
@@ -342,12 +346,14 @@ class StreamEdge(EdgeTransport):
             ]
         )
 
-    def close(self):
+    async def close(self):
         # Note: Not calling super().close() as it's an abstract method with trivial body
         pass
 
     @tracer.start_as_current_span("stream_edge.open_demo")
-    async def open_demo_for_agent(self, agent: "Agent", call_type: str, call_id: str) -> str:
+    async def open_demo_for_agent(
+        self, agent: "Agent", call_type: str, call_id: str
+    ) -> str:
         await agent.create_user()
         call = await agent.create_call(call_type, call_id)
 
@@ -356,8 +362,6 @@ class StreamEdge(EdgeTransport):
     @tracer.start_as_current_span("stream_edge.open_demo")
     async def open_demo(self, call: Call) -> str:
         client = call.client.stream
-
-
 
         # Create a human user for testing
         human_id = "user-demo-agent"
@@ -372,16 +376,8 @@ class StreamEdge(EdgeTransport):
             data=ChannelInput(
                 created_by_id=self.agent_user_id,
                 members=[
-                    ChannelMember(
+                    ChannelMemberRequest(
                         user_id=human_id,
-                        # TODO: get rid of this when codegen for stream-py is fixed, these fields are meaningless
-                        banned=False,
-                        channel_role="",
-                        created_at=datetime.datetime.now(datetime.UTC),
-                        notifications_muted=False,
-                        shadow_banned=False,
-                        updated_at=datetime.datetime.now(datetime.UTC),
-                        custom={},
                     )
                 ],
             )

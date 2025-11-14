@@ -9,6 +9,7 @@ tests use pytest.
 never adjust sys.path.
 
 never write: except Exception as e
+avoid using getattr, hasattr, delattr and setattr; prefer normal attribute access.
 
 docs should be short.
 docstrings should follow the google style guides for docstrings.

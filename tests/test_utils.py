@@ -2,15 +2,17 @@ import logging
 import os
 import tempfile
 
-import numpy as np
 import av
+import numpy as np
 import pytest
-
-from vision_agents.core.utils.utils import parse_instructions, Instructions
 from getstream.video.rtc.track_util import AudioFormat
-from vision_agents.core.utils.video_utils import ensure_even_dimensions
 from vision_agents.core.edge.types import PcmData
-from vision_agents.core.utils.logging import configure_default_logging
+from vision_agents.core.utils.logging import configure_sdk_logger
+from vision_agents.core.utils.utils import Instructions, parse_instructions
+from vision_agents.core.utils.video_utils import (
+    ensure_even_dimensions,
+    frame_to_png_bytes,
+)
 
 
 class TestParseInstructions:
@@ -316,7 +318,9 @@ class TestParseInstructionsFileReading:
 
             # This test verifies that when base_dir is provided explicitly, it uses that directory
             text = "Read @readme.md for information."
-            result = parse_instructions(text, base_dir=temp_dir)  # Use temp_dir as base_dir
+            result = parse_instructions(
+                text, base_dir=temp_dir
+            )  # Use temp_dir as base_dir
 
             assert result.input_text == text
             # Content will not be empty since readme.md exists in the temp directory
@@ -508,31 +512,31 @@ class TestPcmDataMethods:
 
 class TestEnsureEvenDimensions:
     """Test suite for ensure_even_dimensions function."""
-    
+
     def test_even_dimensions_unchanged(self):
         """Test that frames with even dimensions pass through unchanged."""
         # Create a frame with even dimensions (1920x1080)
         frame = av.VideoFrame(width=1920, height=1080, format="yuv420p")
-        
+
         result = ensure_even_dimensions(frame)
-        
+
         assert result.width == 1920
         assert result.height == 1080
-    
+
     def test_both_dimensions_odd_cropped(self):
         """Test that frames with both odd dimensions are cropped."""
         # Create a frame with both odd dimensions (1921x1081)
         frame = av.VideoFrame(width=1921, height=1081, format="yuv420p")
-        
+
         result = ensure_even_dimensions(frame)
-        
+
         assert result.width == 1920  # Cropped from 1921
         assert result.height == 1080  # Cropped from 1081
-    
+
     def test_timing_information_preserved(self):
         """Test that pts and time_base are preserved after cropping."""
         from fractions import Fraction
-        
+
         # Create a frame with timing information
         frame = av.VideoFrame(width=1921, height=1081, format="yuv420p")
         frame.pts = 12345
@@ -567,39 +571,50 @@ def make_logger():
 
 
 class TestLogging:
-    def test_configure_default_logging_configures(self, make_logger):
+    def test_configure_sdk_loggers_configures(self, make_logger):
         vision_agents_logger = make_logger("vision_agents")
-        getstream_logger = make_logger("getstream")
 
         some_level = 23
         assert vision_agents_logger.level != some_level
-        assert getstream_logger.level != some_level
-        configure_default_logging(level=some_level)
+        configure_sdk_logger(level=some_level)
         assert vision_agents_logger.level == some_level
-        assert getstream_logger.level == some_level
 
-    def test_configure_default_logging_handlers_already_configured(self, make_logger):
-        loggers = [make_logger("vision_agents"), make_logger("getstream")]
+    def test_configure_sdk_loggers_handlers_already_configured(self, make_logger):
+        loggers = [make_logger("vision_agents")]
         some_level = 23
         null_handler = logging.NullHandler()
 
         for logger in loggers:
             logger.addHandler(null_handler)
 
-        configure_default_logging(level=some_level)
+        configure_sdk_logger(level=some_level)
 
         for logger in loggers:
             assert logger.level == some_level
             assert logger.handlers == [null_handler]
 
-    def test_configure_default_logging_level_already_set(self, make_logger):
-        loggers = [make_logger("vision_agents"), make_logger("getstream")]
+    def test_configure_sdk_loggers_level_already_set(self, make_logger):
+        loggers = [make_logger("vision_agents")]
         for logger in loggers:
             logger.setLevel(logging.DEBUG)
             assert not logger.handlers
 
-        configure_default_logging(level=logging.INFO)
+        configure_sdk_logger(level=logging.INFO)
 
         for logger in loggers:
             assert logger.level == logging.DEBUG
             assert logger.handlers
+
+
+async def test_frame_to_png_bytes_with_bunny_video(bunny_video_track):
+    """Test that frame_to_png_bytes works with real bunny video frames"""
+    # Get a frame from the bunny video track
+    frame = await bunny_video_track.recv()
+    png_bytes = frame_to_png_bytes(frame)
+
+    # Verify we got PNG data
+    assert isinstance(png_bytes, bytes)
+    assert len(png_bytes) > 0
+
+    # Verify it's actually PNG data (PNG files start with specific bytes)
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")

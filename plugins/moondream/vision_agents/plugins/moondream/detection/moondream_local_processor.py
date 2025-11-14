@@ -12,7 +12,7 @@ import torch
 from PIL import Image
 from transformers import AutoModelForCausalLM
 
-from vision_agents.core.agents.agents import AgentOptions, default_agent_options
+from vision_agents.core.agents.agent_types import AgentOptions, default_agent_options
 from vision_agents.core.processors.base_processor import (
     VideoProcessorMixin,
     VideoPublisherMixin,
@@ -51,6 +51,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         options: AgentOptions for model directory configuration. If not provided,
                  uses default_agent_options() which defaults to tempfile.gettempdir()
     """
+    name = "moondream_local"
 
     def __init__(
             self,

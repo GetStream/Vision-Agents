@@ -45,6 +45,7 @@ class CloudDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         interval: Processing interval in seconds (default: 0)
         max_workers: Number of worker threads for CPU-intensive operations (default: 10)
     """
+    name = "moondream_cloud"
     
     def __init__(
         self,

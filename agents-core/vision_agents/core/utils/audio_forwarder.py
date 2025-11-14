@@ -33,7 +33,6 @@ class AudioForwarder:
             logger.warning("AudioForwarder already started")
             return
         self._task = asyncio.create_task(self._reader())
-        logger.info("AudioForwarder started")
 
     async def stop(self) -> None:
         """Stop forwarding audio frames."""

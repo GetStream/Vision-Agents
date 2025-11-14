@@ -12,4 +12,4 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-getstream-plugins-cartesia = { path = "../../../plugins/cartesia", editable = true }
+getstream-plugins-cartesia = { path = "../../../../plugins/cartesia", editable = true }

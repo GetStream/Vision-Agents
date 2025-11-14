@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Conversation
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from getstream.video.rtc import AudioStreamTrack, PcmData
+from getstream.video.rtc import PcmData
 from vision_agents.core.processors import Processor
-from vision_agents.core.utils.utils import parse_instructions
+from vision_agents.core.utils.utils import Instructions, parse_instructions
 from vision_agents.core.events.manager import EventManager
 from .function_registry import FunctionRegistry
 from .llm_types import ToolSchema, NormalizedToolCallItem
@@ -50,7 +50,6 @@ class LLM(abc.ABC):
     before_response_listener: BeforeCb
     after_response_listener: AfterCb
     agent: Optional["Agent"]
-    _conversation: Optional["Conversation"]
     function_registry: FunctionRegistry
 
     def __init__(self):
@@ -59,6 +58,9 @@ class LLM(abc.ABC):
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
+        self.instructions: Optional[str] = None
+        self.parsed_instructions: Optional[Instructions] = None
+        self._conversation: Optional[Conversation] = None
 
     async def warmup(self) -> None:
         """
@@ -187,8 +189,19 @@ class LLM(abc.ABC):
         Attach agent to the llm
         """
         self.agent = agent
-        self._conversation = agent.conversation
         self._set_instructions(agent.instructions)
+
+    def set_conversation(self, conversation: Conversation):
+        """
+        Provide the Conversation object to the LLM to access the chat history.
+        To be called by the Agent after it joins the call.
+
+        Args:
+            conversation: a Conversation object
+
+        Returns:
+        """
+        self._conversation = conversation
 
     def _set_instructions(self, instructions: str):
         self.instructions = instructions
@@ -424,13 +437,6 @@ class AudioLLM(LLM, metaclass=abc.ABCMeta):
         Args:
             pcm: PCM audio frame to forward upstream.
             participant: Optional participant information for the audio source.
-        """
-
-    @property
-    @abc.abstractmethod
-    def output_audio_track(self) -> AudioStreamTrack:
-        """
-        An output audio track from the LLM.
         """
 
 
