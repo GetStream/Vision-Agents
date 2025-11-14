@@ -618,7 +618,7 @@ class Agent:
 
         self.events.send(events.AgentFinishEvent())
 
-        await asyncio.shield(self.close())
+        await self.close()
 
     @contextlib.contextmanager
     def span(self, name):
@@ -626,8 +626,7 @@ class Agent:
             yield span
 
     def _start_tracing(self):
-        self._root_span = tracer.start_span("join")
-        self._root_span.__enter__()
+        self._root_span = tracer.start_span("join").__enter__()
         self._root_ctx = set_span_in_context(self._root_span)
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
@@ -658,8 +657,9 @@ class Agent:
             self._root_span.__exit__(None, None, None)
             self._root_span = None
             self._root_ctx = None
+
         # Detach the context token if it was set
-        if hasattr(self, "_context_token") and self._context_token is not None:
+        if self._context_token is not None:
             otel_context.detach(self._context_token)
             self._context_token = None
 
@@ -679,7 +679,11 @@ class Agent:
         self._end_tracing()
         self._is_running = False
         self.clear_call_logging_context()
+        # Run the async cleanup code in a separate shielded coroutine.
+        # asyncio.shield changes the context, failing self._end_tracing()
+        await asyncio.shield(self._stop())
 
+    async def _stop(self):
         # Stop audio consumer task
         if self._audio_consumer_task:
             self._audio_consumer_task.cancel()
