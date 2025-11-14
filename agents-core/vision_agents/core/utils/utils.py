@@ -4,7 +4,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 import httpx
 
@@ -184,5 +184,3 @@ async def ensure_model(path: str, url: str) -> str:
             raise RuntimeError(f"Failed to download {model_name}: {e}")
 
     return path
-
-
