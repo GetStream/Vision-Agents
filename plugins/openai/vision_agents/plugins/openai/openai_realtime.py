@@ -5,7 +5,6 @@ import aiortc
 from openai import AsyncOpenAI
 from openai.types.realtime import (
     RateLimitsUpdatedEvent, 
-    SessionUpdateEvent, 
     SessionUpdatedEvent,
     RealtimeSessionCreateRequestParam, 
     RealtimeAudioConfigParam,
@@ -286,9 +285,9 @@ class Realtime(realtime.Realtime):
             if response_done_event.response.status == "failed":
                 raise Exception("OpenAI realtime failure %s", response_done_event.response)
         elif et == "session.updated":
-            # Update session with new data - reusing SessionCreatedEvent as it has the same structure
-            session_event = SessionUpdatedEvent(**event)
-            self.current_session = session_event.session
+            # Update session with new data
+            session_updated_event = SessionUpdatedEvent(**event)
+            self.current_session = session_updated_event.session
             logger.info("Session updated %s", event)
         elif et == "response.content_part.added":
             # Content part added to response - logged for debugging
