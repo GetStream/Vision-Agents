@@ -43,26 +43,27 @@ async def create_agent(**kwargs) -> Agent:
         # Send both chat message and voice output when a squat is completed
         if agent is not None:
             try:
-                # Create a motivational message
-                if rep_count == 1:
-                    message = f"Great job! You've completed your first squat! Keep it up!"
-                elif rep_count % 5 == 0:
-                    message = f"Excellent work! You've completed {rep_count} squats! You're doing amazing!"
-                else:
-                    message = f"Nice! Rep {rep_count} complete! Keep going!"
-                
                 # Send chat message to conversation
                 if agent.conversation is not None:
                     agent_user_id = agent.agent_user.id or "agent"
                     await agent.conversation.send_message(
                         role="assistant",
                         user_id=agent_user_id,
-                        content=message
+                        content=f"SQUAT COUNTER: {rep_count}"
                     )
-                    logger.info(f"📨 Sent chat message: {message}")
+                    logger.info(f"📨 Sent squat counter: {rep_count}")
                 
                 # Send voice output via LLM (works with Gemini Realtime and other realtime LLMs)
                 if agent.llm is not None:
+                    # Create a motivational message
+                    if rep_count == 1:
+                        message = f"Great job! You've completed your first squat! Keep it up!"
+                    elif rep_count % 5 == 0:
+                        message = f"Excellent work! You've completed {rep_count} squats! You're doing amazing!"
+                    else:
+                        message = f"Nice! Rep {rep_count} complete! Keep going!"
+                
+
                     await agent.llm.simple_response(text=message)
                     logger.info(f"📢 Spoke message via voice: {message}")
             except Exception as e:
