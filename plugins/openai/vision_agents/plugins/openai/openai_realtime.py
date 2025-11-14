@@ -329,7 +329,7 @@ class Realtime(realtime.Realtime):
             # Output item complete - logged for debugging
             pass
         else:
-            logger.info(f"Unrecognized OpenAI Realtime event: {et} {event}")
+            logger.debug(f"Unrecognized OpenAI Realtime event: {et} {event}")
 
     async def _handle_audio_output(self, pcm: PcmData) -> None:
         """Process audio output received from the OpenAI API.
