@@ -200,10 +200,9 @@ class RTCManager:
         self.pc.addTrack(self._audio_to_openai_track)
 
     async def _set_video_track(self) -> None:
-        logger.info("_set_video_track")
         if self._video_to_openai_track:
             if self._video_sender is None:
-                logger.info("_set_video_track enableing addTrack")
+                logger.debug("_set_video_track enableing addTrack")
                 self._video_sender = self.pc.addTrack(self._video_to_openai_track)
                 # adding tracks requires renegotiation
                 await self.renegotiate()
@@ -243,7 +242,7 @@ class RTCManager:
         """
         Send a video frame to Gemini using send_realtime_input
         """
-        logger.info(f"Sending video frame: {frame}")
+        logger.debug(f"Sending video frame: {frame}")
         if self._video_to_openai_track:
             await self._video_to_openai_track.add_frame(frame)
 
@@ -259,7 +258,7 @@ class RTCManager:
             sdp=local_sdp
         )
 
-        logger.info("SDP response from OpenAI")
+        logger.debug("SDP response from OpenAI")
         return response.text
 
 
