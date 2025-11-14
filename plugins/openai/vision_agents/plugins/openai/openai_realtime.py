@@ -4,24 +4,25 @@ from typing import Any, Optional, List, Dict, Union
 import aiortc
 from openai import AsyncOpenAI
 from openai.types.realtime import (
-    RateLimitsUpdatedEvent, 
+    RateLimitsUpdatedEvent,
     SessionUpdatedEvent,
-    RealtimeSessionCreateRequestParam, 
+    RealtimeSessionCreateRequestParam,
     RealtimeAudioConfigParam,
-    RealtimeAudioConfigOutputParam, 
-    RealtimeAudioConfigInputParam, 
+    RealtimeAudioConfigOutputParam,
+    RealtimeAudioConfigInputParam,
     AudioTranscriptionParam,
     ResponseAudioTranscriptDoneEvent,
     InputAudioBufferSpeechStartedEvent,
     ConversationItemInputAudioTranscriptionCompletedEvent,
-    ResponseDoneEvent, 
+    ResponseDoneEvent,
     SessionCreatedEvent,
     RealtimeSessionCreateRequest,
     RealtimeTranscriptionSessionCreateRequest,
 )
-from openai.types.realtime.realtime_transcription_session_audio_input_turn_detection_param import SemanticVad
+from openai.types.realtime.realtime_transcription_session_audio_input_turn_detection_param import (
+    SemanticVad,
+)
 
-from getstream.video.rtc import AudioStreamTrack
 
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.llm_types import ToolSchema
@@ -40,8 +41,9 @@ logger = logging.getLogger(__name__)
 
 """
 TODO: Future improvements
-- Reconnection is currently not easy to do with OpenAI realtime. 
+- Reconnection is currently not easy to do with OpenAI realtime.
 """
+
 
 class Realtime(realtime.Realtime):
     """
@@ -68,7 +70,12 @@ class Realtime(realtime.Realtime):
     """
 
     def __init__(
-        self, model: str = "gpt-realtime", api_key: Optional[str] = None, voice: str = "marin", client: Optional[AsyncOpenAI] = None, fps: int = 1,
+        self,
+        model: str = "gpt-realtime",
+        api_key: Optional[str] = None,
+        voice: str = "marin",
+        client: Optional[AsyncOpenAI] = None,
+        fps: int = 1,
         realtime_session: Optional[RealtimeSessionCreateRequestParam] = None,
         send_video: bool = True,
     ):
@@ -76,32 +83,35 @@ class Realtime(realtime.Realtime):
         self.model = model
         self.voice = voice
 
-        self.realtime_session: RealtimeSessionCreateRequestParam = realtime_session or RealtimeSessionCreateRequestParam(
-            type="realtime"
+        self.realtime_session: RealtimeSessionCreateRequestParam = (
+            realtime_session or RealtimeSessionCreateRequestParam(type="realtime")
         )
         self.realtime_session["model"] = self.model
-        
+
         # Set audio and output if they are None
         if self.realtime_session.get("audio") is None:
             self.realtime_session["audio"] = RealtimeAudioConfigParam(
                 input=RealtimeAudioConfigInputParam(
-                    transcription=AudioTranscriptionParam(model="gpt-4o-mini-transcribe"),
-                    turn_detection=SemanticVad(type="semantic_vad")
-
-            ))
+                    transcription=AudioTranscriptionParam(
+                        model="gpt-4o-mini-transcribe"
+                    ),
+                    turn_detection=SemanticVad(type="semantic_vad"),
+                )
+            )
         if self.realtime_session["audio"].get("output") is None:
             self.realtime_session["audio"]["output"] = RealtimeAudioConfigOutputParam()
         self.realtime_session["audio"]["output"]["voice"] = self.voice
 
-        self._output_audio_track = AudioStreamTrack(
-            sample_rate=48000, channels=2, format="s16"
-        )
         # Map conversation item_id to participant to handle multi-user scenarios
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
 
         # Store current session and rate limits
-        self.current_session: Optional[Union[RealtimeSessionCreateRequest, RealtimeTranscriptionSessionCreateRequest]] = None
+        self.current_session: Optional[
+            Union[
+                RealtimeSessionCreateRequest, RealtimeTranscriptionSessionCreateRequest
+            ]
+        ] = None
         self.current_rate_limits: Optional[RateLimitsUpdatedEvent] = None
 
         # create the client
@@ -110,14 +120,14 @@ class Realtime(realtime.Realtime):
         elif api_key is not None and api_key != "":
             self.client = AsyncOpenAI(api_key=api_key)
         else:
-            self.client = AsyncOpenAI() # will get it from the env vars
+            self.client = AsyncOpenAI()  # will get it from the env vars
 
         # Start the realtime connection manager
-        self.rtc = RTCManager(realtime_session=self.realtime_session, client=self.client, send_video=send_video)
-
-    @property
-    def output_audio_track(self) -> AudioStreamTrack:
-        return self._output_audio_track
+        self.rtc = RTCManager(
+            realtime_session=self.realtime_session,
+            client=self.client,
+            send_video=send_video,
+        )
 
     async def connect(self):
         """Establish the WebRTC connection to OpenAI's Realtime API.
@@ -283,7 +293,9 @@ class Realtime(realtime.Realtime):
             response_done_event = ResponseDoneEvent.model_validate(event)
 
             if response_done_event.response.status == "failed":
-                raise Exception("OpenAI realtime failure %s", response_done_event.response)
+                raise Exception(
+                    "OpenAI realtime failure %s", response_done_event.response
+                )
         elif et == "session.updated":
             # Update session with new data
             session_updated_event = SessionUpdatedEvent(**event)
@@ -329,9 +341,6 @@ class Realtime(realtime.Realtime):
         self._emit_audio_output_event(
             audio_data=pcm,
         )
-
-        # Forward audio to output track for playback
-        await self._output_audio_track.write(pcm)
 
     async def watch_video_track(
         self,
@@ -460,7 +469,9 @@ class Realtime(realtime.Realtime):
 
     def _set_instructions(self, instructions: str):
         super()._set_instructions(instructions)
-        self.realtime_session["instructions"] = self._build_enhanced_instructions() or ""
+        self.realtime_session["instructions"] = (
+            self._build_enhanced_instructions() or ""
+        )
 
     def _sanitize_tool_output(self, value: Any, max_chars: int = 60_000) -> str:
         """Sanitize tool output for OpenAI realtime.
