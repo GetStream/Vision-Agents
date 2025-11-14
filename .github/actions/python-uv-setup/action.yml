@@ -17,22 +17,33 @@ runs:
   using: composite
   steps:
     - name: Install the latest version of uv
+      id: setup_uv
       uses: astral-sh/setup-uv@v7
       with:
-        python-version: "3.13"
+        python-version: ${{ inputs.python-version }}
         version: "latest"
         enable-cache: true
         cache-dependency-glob: |
           **/pyproject.toml
           **/uv.lock
+
+    - name: Cache .venv directory
+      id: cache_venv
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: uv-venv-v1-${{ runner.os }}-py${{ inputs.python-version }}-${{ hashFiles('**/uv.lock') }}
+        restore-keys: |
+          uv-venv-v1-${{ runner.os }}-py${{ inputs.python-version }}-
+          uv-venv-v1-${{ runner.os }}-
+
     - name: Log cache status
       shell: bash
-      env:
-        UV_CACHE_HIT: "${{ steps.setup_uv.outputs['cache-hit'] }}"
       run: |
-        echo "setup-uv cache hit: ${UV_CACHE_HIT}"
+        echo "uv download cache hit: ${{ steps.setup_uv.outputs['cache-hit'] }}"
+        echo ".venv cache hit: ${{ steps.cache_venv.outputs.cache-hit }}"
 
     - name: Install the project
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: uv sync --all-extras --dev
+      run: uv sync ${{ inputs.sync-flags }}
