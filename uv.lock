@@ -10,6 +10,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "get-in-shaipe",
     "vision-agents",
     "vision-agents-plugins-anthropic",
     "vision-agents-plugins-aws",
@@ -1405,6 +1406,29 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/24/7f/2747c0d332b9acfa75dc84447a066fdf812b5a6b8d30472b74d309bfe8cb/fsspec-2025.10.0.tar.gz", hash = "sha256:b6789427626f068f9a83ca4e8a3cc050850b6c0f71f99ddb4f542b8266a26a59", size = 309285, upload-time = "2025-10-30T14:58:44.036Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/02/a6b21098b1d5d6249b7c5ab69dde30108a71e4e819d4a9778f1de1d5b70d/fsspec-2025.10.0-py3-none-any.whl", hash = "sha256:7c7712353ae7d875407f97715f0e1ffcc21e33d5b24556cb1e090ae9409ec61d", size = 200966, upload-time = "2025-10-30T14:58:42.53Z" },
+]
+
+[[package]]
+name = "get-in-shaipe"
+version = "0.1.0"
+source = { virtual = "examples/other_examples/get-in-shAIpe" }
+dependencies = [
+    { name = "aiortc" },
+    { name = "python-dotenv" },
+    { name = "vision-agents" },
+    { name = "vision-agents-plugins-gemini" },
+    { name = "vision-agents-plugins-getstream" },
+    { name = "vision-agents-plugins-ultralytics" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiortc", specifier = ">=1.14.0" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents-plugins-gemini", editable = "plugins/gemini" },
+    { name = "vision-agents-plugins-getstream", editable = "plugins/getstream" },
+    { name = "vision-agents-plugins-ultralytics", editable = "plugins/ultralytics" },
 ]
 
 [[package]]

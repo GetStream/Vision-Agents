@@ -1,0 +1,46 @@
+import logging
+
+from dotenv import load_dotenv
+
+from vision_agents.core import User, Agent, cli
+from vision_agents.core.agents import AgentLauncher
+from vision_agents.plugins import getstream, ultralytics, gemini
+
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+
+async def create_agent(**kwargs) -> Agent:
+    agent = Agent(
+        edge=getstream.Edge(),  # use stream for edge video transport
+        agent_user=User(name="AI squat coach"),
+        instructions="Read @squat-coach.md",  # read the golf coach markdown instructions
+        llm=gemini.Realtime(fps=3),  # Careful with FPS can get expensive
+        # llm=openai.Realtime(fps=10), use this to switch to openai
+        processors=[
+            ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
+        ],  # realtime pose detection with yolo
+    )
+    return agent
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    # ensure the agent user is created
+    await agent.create_user()
+    # Create a call
+    call = await agent.create_call(call_type, call_id)
+
+    # join the call and open a demo env
+    with await agent.join(call):
+        # all LLMs support a simple_response method and a more advanced native method (so you can always use the latest LLM features)
+        await agent.llm.simple_response(
+            text="Say hi. After that count the number of squats the user does and always count out loud."
+        )
+        # Gemini's native API is available here
+        # agent.llm.send_realtime_input(text="Hello world")
+        await agent.finish()  # run till the call ends
+
+
+if __name__ == "__main__":
+    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))

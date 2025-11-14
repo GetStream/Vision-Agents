@@ -1,0 +1,21 @@
+[project]
+name = "get-in-shaipe"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "python-dotenv>=1.0",
+    "vision-agents",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-ultralytics",
+    "vision-agents-plugins-gemini",
+    "aiortc>=1.14.0",
+]
+
+[tool.uv.sources]
+vision-agents = { workspace = true }
+"vision-agents-plugins-ultralytics" = { workspace = true }
+"vision-agents-plugins-getstream" = { workspace = true }
+"vision-agents-plugins-gemini" = { workspace = true }
+

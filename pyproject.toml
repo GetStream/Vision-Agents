@@ -55,7 +55,8 @@ members = [
     "plugins/heygen",
     "plugins/inworld",
     "plugins/vogent",
-    "plugins/moondream"
+    "plugins/moondream",
+    "examples/other_examples/get-in-shAIpe",
 ]
 exclude = [
 "**/__pycache__",
