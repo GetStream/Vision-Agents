@@ -16,6 +16,7 @@ members = [
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-deepgram",
     "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-fast-whisper",
     "vision-agents-plugins-fish",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
@@ -5544,6 +5545,32 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "elevenlabs", specifier = ">=2.22.1" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-fast-whisper"
+source = { editable = "plugins/fast_whisper" }
+dependencies = [
+    { name = "faster-whisper" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "faster-whisper", specifier = ">=1.0.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

@@ -1,0 +1,23 @@
+[project]
+name = "fast-whisper-example"
+version = "0.1.0"
+description = "Fast Whisper STT example"
+requires-python = ">=3.10"
+dependencies = [
+    "vision-agents",
+    "vision-agents-plugins-fast-whisper",
+    "vision-agents-plugins-aws",
+    "vision-agents-plugins-cartesia",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-smart-turn",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+vision-agents = { editable = true }
+vision-agents-plugins-fast-whisper = { editable = true }
+vision-agents-plugins-aws = { editable = true }
+vision-agents-plugins-cartesia = { editable = true }
+vision-agents-plugins-getstream = { editable = true }
+vision-agents-plugins-smart-turn = { editable = true }
+
