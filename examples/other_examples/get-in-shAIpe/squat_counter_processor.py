@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import math
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable, Union, Awaitable
 from enum import Enum
 import numpy as np
 from PIL import Image
@@ -58,6 +59,7 @@ class SquatCounterProcessor(AudioVideoProcessor, ImageProcessorMixin):
         max_standing_angle: float = 160.0,
         confidence_threshold: float = 0.5,
         min_frames_in_phase: int = 3,
+        on_squat_complete: Optional[Union[Callable[[int, float, float], None], Callable[[int, float, float], Awaitable[None]]]] = None,
     ):
         super().__init__(interval=interval, receive_audio=False, receive_video=False)
         
@@ -65,6 +67,7 @@ class SquatCounterProcessor(AudioVideoProcessor, ImageProcessorMixin):
         self.max_standing_angle = max_standing_angle
         self.confidence_threshold = confidence_threshold
         self.min_frames_in_phase = min_frames_in_phase
+        self.on_squat_complete = on_squat_complete
         
         # State tracking
         self.current_phase = SquatPhase.STANDING
@@ -249,6 +252,33 @@ class SquatCounterProcessor(AudioVideoProcessor, ImageProcessorMixin):
                 message = f"Rep {self.rep_count} complete! 🎉"
                 logger.info(f"🎯 REP COUNTED! #{self.rep_count} | Timestamp: {timestamp:.3f} | Knee angle: {knee_angle:.1f}°")
                 logger.info(f"✅ Total reps: {self.rep_count}")
+                
+                # Invoke callback if provided
+                if self.on_squat_complete:
+                    try:
+                        result = self.on_squat_complete(self.rep_count, knee_angle, timestamp)
+                        # If callback is async, schedule it
+                        if asyncio.iscoroutine(result):
+                            # Try to get the current event loop
+                            try:
+                                loop = asyncio.get_running_loop()
+                                # If loop is running, create a task (fire and forget)
+                                asyncio.create_task(result)
+                            except RuntimeError:
+                                # No running loop, try to get existing loop
+                                try:
+                                    loop = asyncio.get_event_loop()
+                                    if loop.is_running():
+                                        asyncio.create_task(result)
+                                    else:
+                                        # Loop exists but not running - schedule it
+                                        loop.run_until_complete(result)
+                                except RuntimeError:
+                                    # No event loop at all, create a new one
+                                    # This is a fallback but should rarely happen
+                                    asyncio.run(result)
+                    except Exception as e:
+                        logger.error(f"Error in squat completion callback: {e}", exc_info=True)
         else:
             self.phase_frame_count += 1
         

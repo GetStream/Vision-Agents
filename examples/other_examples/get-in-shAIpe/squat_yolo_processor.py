@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable, Union, Awaitable
 from PIL import Image
 import numpy as np
 import cv2
@@ -34,6 +34,7 @@ class SquatYOLOProcessor(ultralytics.YOLOPoseProcessor):
         enable_wrist_highlights: bool = False,
         min_squat_angle: float = 100.0,
         max_standing_angle: float = 160.0,
+        on_squat_complete: Optional[Union[Callable[[int, float, float], None], Callable[[int, float, float], Awaitable[None]]]] = None,
         *args,
         **kwargs,
     ):
@@ -56,6 +57,7 @@ class SquatYOLOProcessor(ultralytics.YOLOPoseProcessor):
             min_squat_angle=min_squat_angle,
             max_standing_angle=max_standing_angle,
             confidence_threshold=conf_threshold,
+            on_squat_complete=on_squat_complete,
         )
         
         logger.info("💪 Squat YOLO Processor initialized with squat counting")
