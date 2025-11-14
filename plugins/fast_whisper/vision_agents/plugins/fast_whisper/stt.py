@@ -220,8 +220,13 @@ class STT(stt.STT):
     async def _transcribe(
         self, audio_array: NDArray
     ) -> tuple[list[Segment], TranscriptionInfo]:
+        if self.whisper is None:
+            raise ValueError("Whisper model not loaded, call warmup() first")
+
+        whisper = self.whisper  # Type narrowing for closure
+
         def _worker():
-            segments, info = self.whisper.transcribe(
+            segments, info = whisper.transcribe(
                 audio_array,
                 language=self.language,
                 beam_size=1,
