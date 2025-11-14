@@ -184,25 +184,26 @@ Our favorite people & projects to follow for vision AI
 
 ## Roadmap
 
-### 0.1 – First Release
+### 0.1 – First Release - Oct
 
-- Support for 10+ out-of-the-box integrations
-- Video processors
-- Native Stream Chat integration for memory
-- MCP & function calling for Gemini and OpenAI
-- Realtime WebRTC video and voice with GPT Realtime
+- Working TTS, Gemini & OpenAI
 
-### Coming Soon
+### 0.2 - Simplification - Nov
 
-[ ] Improved Python WebRTC library  
-[ ] Hosting & production deploy example  
-[ ] More built-in YOLO processors (object & person detection)  
-[ ] Roboflow support  
-[ ] Computer use support  
-[ ] AI avatar integrations (e.g., Tavus)  
-[ ] QWen3 vision support  
+- Simplify the library & improved code quality
+- Deepgram Nova 3, Elevenlabs Scribe 2, Fish, Moondream, QWen3, Smart turn, Vogent, Inworld, Heygen, AWS and more
+- Improved openAI & Gemini realtime performance
+- Audio & Video utilities
+
+### 0.3 - Demos - Nov/Dec
+
+### 0.4 - Deploys
+
+- Tips on deploying agents at scale, monitoring them etc.
+
+### Later
+
 [ ] Buffered video capture (for "catch the moment" scenarios)  
-[ ] Moondream vision
 
 ## Star History
 
