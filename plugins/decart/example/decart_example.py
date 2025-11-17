@@ -12,24 +12,23 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import aws, getstream, cartesia, deepgram, smart_turn
-
+from vision_agents.plugins import decart, getstream, gemini
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-
+processor = decart.RestylingProcessor(initial_prompt="Studio Ghibli animation style", model="mirage_v2")
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with your plugin configuration."""
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Friendly AI", id="agent"),
         instructions="Be nice to the user",
-        llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
-        tts=cartesia.TTS(),
-        stt=deepgram.STT(),
-        turn_detection=smart_turn.TurnDetection(buffer_in_seconds=2.0, confidence_threshold=0.5),
+        llm=gemini.LLM(model="gemini-2.5-flash-lite"),
+        # tts=elevenlabs.TTS(),
+        # stt=elevenlabs.STT(),
+        processors=[processor]
     )
     return agent
 
@@ -47,10 +46,10 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-        
-        await asyncio.sleep(5)
-        await agent.llm.simple_response(text="Say hi")
-        
+
+        await asyncio.sleep(8)
+        await processor.set_prompt("Arcane animation style")
+
         await agent.finish()  # Run till the call ends
 
 

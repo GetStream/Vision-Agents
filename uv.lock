@@ -14,6 +14,7 @@ members = [
     "vision-agents-plugins-anthropic",
     "vision-agents-plugins-aws",
     "vision-agents-plugins-cartesia",
+    "vision-agents-plugins-decart",
     "vision-agents-plugins-deepgram",
     "vision-agents-plugins-elevenlabs",
     "vision-agents-plugins-fast-whisper",
@@ -1015,6 +1016,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/64/a4/f71d9cf3a5ac257c993b5ca3f93df5f7fb395c725e7f1e6479d2514173c3/dataclasses_json-0.6.7.tar.gz", hash = "sha256:b6b3e528266ea45b9535223bc53ca645f5208833c29229e847b3f26a1cc55fc0", size = 32227, upload-time = "2024-06-09T16:20:19.103Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/be/d0d44e092656fe7a06b55e6103cbce807cdbdee17884a5367c68c9860853/dataclasses_json-0.6.7-py3-none-any.whl", hash = "sha256:0dbf33f26c8d5305befd61b39d2b3414e8a407bedc2834dea9b8d642666fb40a", size = 28686, upload-time = "2024-06-09T16:20:16.715Z" },
+]
+
+[[package]]
+name = "decart"
+version = "0.0.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "aiohttp" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pydantic" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/86/75e55da0dc56528b232e31186c02bf409ba9bce888e5520507a9737cdc36/decart-0.0.8.tar.gz", hash = "sha256:95ea6fc0af5896198ce76abf7d2ecf39feec77e3ebf7c5fa55e2f239879d5545", size = 198620, upload-time = "2025-11-12T17:02:42.627Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/e2/e128f098aaf0981849da4684a30d53b9a84be84fc372709de14557d135e9/decart-0.0.8-py3-none-any.whl", hash = "sha256:3f1ab43ced32edcd5a494673bc8f899a559f6a5c59796da88d71c5f48b8422dc", size = 20263, upload-time = "2025-11-12T17:02:40.913Z" },
 ]
 
 [[package]]
@@ -5486,6 +5504,32 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cartesia", specifier = ">=2.0.15" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-decart"
+source = { editable = "plugins/decart" }
+dependencies = [
+    { name = "decart" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "decart" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
