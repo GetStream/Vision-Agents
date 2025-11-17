@@ -15,10 +15,10 @@ DEFAULT_HEIGHT = 480
 
 class MoondreamVideoTrack(VideoStreamTrack):
     """Video track for publishing Moondream-processed frames.
-    
+
     Uses a LatestNQueue to buffer processed frames and publishes them
     at the configured frame rate.
-    
+
     Args:
         width: Frame width in pixels (default: 640)
         height: Frame height in pixels (default: 480)
@@ -27,7 +27,9 @@ class MoondreamVideoTrack(VideoStreamTrack):
     def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT):
         super().__init__()
         logger.info("MoondreamVideoTrack: initializing")
-        self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=10)
+        self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(
+            maxlen=10
+        )
 
         # Set video quality parameters
         self.width = width

@@ -31,6 +31,7 @@ class STT(stt.STT):
 
     Note: This model does NOT support turn detection.
     """
+
     turn_detection: bool = False  # Scribe v2 does not support turn detection
 
     def __init__(
@@ -65,7 +66,7 @@ class STT(stt.STT):
             api_key = os.environ.get("ELEVENLABS_API_KEY")
 
         self.client = client if client is not None else AsyncElevenLabs(api_key=api_key)
-        
+
         self.model_id = model_id
         self.language_code = language_code
         self.vad_silence_threshold_secs = vad_silence_threshold_secs
@@ -73,7 +74,7 @@ class STT(stt.STT):
         self.min_speech_duration_ms = min_speech_duration_ms
         self.min_silence_duration_ms = min_silence_duration_ms
         self.audio_chunk_duration_ms = audio_chunk_duration_ms
-        
+
         self._current_participant: Optional[Participant] = None
         self.connection: Optional[Any] = None
         self._connection_ready = asyncio.Event()
@@ -145,14 +146,17 @@ class STT(stt.STT):
 
         # Connect to ElevenLabs realtime speech-to-text
         self.connection = await asyncio.wait_for(
-            self.client.speech_to_text.realtime.connect(audio_options),
-            timeout=10.0
+            self.client.speech_to_text.realtime.connect(audio_options), timeout=10.0
         )
 
         # Register event handlers
         if self.connection is not None:
-            self.connection.on(RealtimeEvents.PARTIAL_TRANSCRIPT, self._on_partial_transcript)
-            self.connection.on(RealtimeEvents.COMMITTED_TRANSCRIPT, self._on_committed_transcript)
+            self.connection.on(
+                RealtimeEvents.PARTIAL_TRANSCRIPT, self._on_partial_transcript
+            )
+            self.connection.on(
+                RealtimeEvents.COMMITTED_TRANSCRIPT, self._on_committed_transcript
+            )
             self.connection.on(RealtimeEvents.ERROR, self._on_error)
             self.connection.on(RealtimeEvents.CLOSE, self._on_close)
 
@@ -163,8 +167,6 @@ class STT(stt.STT):
 
         # Mark connection as ready
         self._connection_ready.set()
-
-
 
     async def _send_audio_loop(self):
         """
@@ -179,18 +181,20 @@ class STT(stt.STT):
                         pcm_chunk = await self._audio_queue.get_duration(
                             self.audio_chunk_duration_ms
                         )
-                        
+
                         # Convert int16 samples to bytes
                         audio_bytes = pcm_chunk.samples.tobytes()
-                        
+
                         # Encode to base64
-                        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-                        
+                        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
                         # Send to ElevenLabs
-                        await self.connection.send({
-                            "audio_base_64": audio_base64,
-                            "sample_rate": 16000,
-                        })
+                        await self.connection.send(
+                            {
+                                "audio_base_64": audio_base64,
+                                "sample_rate": 16000,
+                            }
+                        )
 
                 except asyncio.QueueEmpty:
                     # No audio available, wait a bit
@@ -233,7 +237,9 @@ class STT(stt.STT):
         participant = self._current_participant
 
         if participant is None:
-            raise ValueError("No participant set - audio must be processed with a participant")
+            raise ValueError(
+                "No participant set - audio must be processed with a participant"
+            )
 
         # Emit partial transcript
         self._emit_partial_transcript_event(
@@ -269,12 +275,12 @@ class STT(stt.STT):
         participant = self._current_participant
 
         if participant is None:
-            raise ValueError("No participant set - audio must be processed with a participant")
+            raise ValueError(
+                "No participant set - audio must be processed with a participant"
+            )
 
         # Emit final transcript
-        self._emit_transcript_event(
-            transcript_text, participant, response_metadata
-        )
+        self._emit_transcript_event(transcript_text, participant, response_metadata)
 
     def _on_error(self, error: Any):
         """
@@ -303,22 +309,22 @@ class STT(stt.STT):
             return
 
         logger.info("Attempting to reconnect to ElevenLabs...")
-        
+
         for attempt in range(3):
             try:
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                
+                await asyncio.sleep(2**attempt)  # Exponential backoff
+
                 # Clear the old connection
                 self.connection = None
                 self._connection_ready.clear()
-                
+
                 # Attempt to reconnect
                 await self.start()
-                
+
                 logger.info(f"Reconnection successful on attempt {attempt + 1}")
                 self._should_reconnect["value"] = False
                 return
-                
+
             except Exception as e:
                 logger.error(f"Reconnection attempt {attempt + 1} failed: {e}")
 
@@ -350,4 +356,3 @@ class STT(stt.STT):
             finally:
                 self.connection = None
                 self._connection_ready.clear()
-

@@ -33,7 +33,6 @@ def default_agent_options():
     return AgentOptions(model_dir=_DEFAULT_MODEL_DIR)
 
 
-
 @dataclass
 class TrackInfo:
     id: str
@@ -43,6 +42,7 @@ class TrackInfo:
     participant: Optional[Participant]
     track: aiortc.mediastreams.VideoStreamTrack
     forwarder: VideoForwarder
+
 
 @dataclass
 class LLMTurn:

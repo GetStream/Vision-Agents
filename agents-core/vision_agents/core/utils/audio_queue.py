@@ -19,6 +19,7 @@ class AudioQueue:
     When using queue.get allow specifying either the number of samples or the duration
 
     """
+
     def __init__(self, buffer_limit_ms: int):
         """
         Initialize AudioQueue.
@@ -131,7 +132,7 @@ class AudioQueue:
                     if not self._buffer:
                         self._not_empty.clear()
                     return item
-            
+
             # Wait for items to be added
             await self._not_empty.wait()
 
@@ -144,7 +145,7 @@ class AudioQueue:
         """
         if not self._buffer:
             raise asyncio.QueueEmpty("Queue is empty")
-        
+
         item = self._buffer.popleft()
         self._total_samples -= len(item.samples)
         if not self._buffer:
@@ -182,20 +183,20 @@ class AudioQueue:
                     if collected_samples:
                         break
                     raise asyncio.QueueEmpty("Queue is empty")
-            
+
             async with self._lock:
                 if not self._buffer:
                     continue
-                
+
                 item = self._buffer.popleft()
                 self._total_samples -= len(item.samples)
                 last_participant = item.participant
-                
+
                 last_item_format = item.format
                 last_item_channels = item.channels
-                
+
                 samples_needed = num_samples - collected_count
-                
+
                 if len(item.samples) <= samples_needed:
                     # Use the entire item
                     collected_samples.append(item.samples)
@@ -204,18 +205,18 @@ class AudioQueue:
                     # Split the item - take what we need, put rest back
                     collected_samples.append(item.samples[:samples_needed])
                     collected_count += samples_needed
-                    
+
                     # Put the remainder back at the front
                     remainder = PcmData(
                         samples=item.samples[samples_needed:],
                         sample_rate=item.sample_rate,
                         format=item.format,
-                        channels=item.channels
+                        channels=item.channels,
                     )
                     self._buffer.appendleft(remainder)
                     self._total_samples += len(remainder.samples)
                     break
-                
+
                 # Clear event if buffer is now empty
                 if not self._buffer:
                     self._not_empty.clear()
@@ -225,13 +226,13 @@ class AudioQueue:
 
         # Concatenate all collected samples
         all_samples = np.concatenate(collected_samples)
-        
+
         # Use properties from the last item we got
         pcm = PcmData(
             samples=all_samples,
             sample_rate=self._sample_rate,
             format=last_item_format,
-            channels=last_item_channels
+            channels=last_item_channels,
         )
         pcm.participant = last_participant
         return pcm
@@ -249,7 +250,7 @@ class AudioQueue:
         # Wait for first item if needed to determine sample rate
         if self._sample_rate is None:
             await self._not_empty.wait()
-        
+
         if self._sample_rate is None:
             raise asyncio.QueueEmpty("Queue is empty")
 
@@ -270,5 +271,5 @@ class AudioQueue:
             "total_samples": self._total_samples,
             "sample_rate": self._sample_rate,
             "num_chunks": len(self._buffer),
-            "queue_size": self.qsize()
+            "queue_size": self.qsize(),
         }

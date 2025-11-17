@@ -27,8 +27,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="Weather Bot", id="agent"),
         instructions="You are a helpful weather bot. Use the provided tools to answer questions.",
         llm=aws.LLM(
-            model="anthropic.claude-3-sonnet-20240229-v1:0",
-            region_name="us-east-1"
+            model="anthropic.claude-3-sonnet-20240229-v1:0", region_name="us-east-1"
         ),
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
@@ -36,8 +35,7 @@ async def create_agent(**kwargs) -> Agent:
 
     # Register custom functions
     @agent.llm.register_function(
-        name="get_weather",
-        description="Get the current weather for a given city"
+        name="get_weather", description="Get the current weather for a given city"
     )
     def get_weather(city: str) -> dict:
         """Get weather information for a city."""
@@ -47,14 +45,15 @@ async def create_agent(**kwargs) -> Agent:
         return {"city": city, "temperature": "unknown", "condition": "unknown"}
 
     @agent.llm.register_function(
-        name="calculate",
-        description="Performs a mathematical calculation"
+        name="calculate", description="Performs a mathematical calculation"
     )
     def calculate(expression: str) -> dict:
         """Performs a mathematical calculation."""
         logger.info(f"Tool: calculate called with expression: {expression}")
         try:
-            result = eval(expression)  # DANGER: In a real app, use a safer math evaluator!
+            result = eval(
+                expression
+            )  # DANGER: In a real app, use a safer math evaluator!
             return {"expression": expression, "result": result}
         except Exception as e:
             return {"expression": expression, "error": str(e)}
@@ -75,26 +74,26 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-        
+
         # Give the agent a moment to connect
         await asyncio.sleep(5)
-        
+
         # Test function calling with weather
         logger.info("Testing weather function...")
         await agent.llm.simple_response(
             text="What's the weather like in Boulder? Please use the get_weather function."
         )
-        
+
         await asyncio.sleep(5)
-        
+
         # Test function calling with calculation
         logger.info("Testing calculation function...")
         await agent.llm.simple_response(
             text="Can you calculate 25 multiplied by 4 using the calculate function?"
         )
-        
+
         await asyncio.sleep(5)
-        
+
         # Wait a bit before finishing
         await asyncio.sleep(5)
         await agent.finish()  # Run till the call ends
@@ -102,4 +101,3 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-

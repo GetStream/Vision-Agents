@@ -335,10 +335,10 @@ class TestGeminiFunctionCalling:
             )
         ]
         mock_response.text = ""  # No text, just function call
-        
+
         async def mock_iterator():
             yield mock_response
-        
+
         # send_message_stream is called and should return an async iterator
         mock_chat.send_message_stream = Mock(return_value=mock_iterator())
 
@@ -391,10 +391,10 @@ class TestGeminiFunctionCalling:
             )
         ]
         mock_response.text = ""  # No text, just function call
-        
+
         async def mock_iterator():
             yield mock_response
-        
+
         # send_message_stream is called and should return an async iterator
         mock_chat.send_message_stream = Mock(return_value=mock_iterator())
 

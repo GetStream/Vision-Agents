@@ -19,24 +19,32 @@ from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
 )
 from vision_agents.core.utils.video_forwarder import VideoForwarder
-from vision_agents.plugins.moondream.moondream_utils import parse_detection_bbox, annotate_detections, handle_device
-from vision_agents.plugins.moondream.detection.moondream_video_track import MoondreamVideoTrack
+from vision_agents.plugins.moondream.moondream_utils import (
+    parse_detection_bbox,
+    annotate_detections,
+    handle_device,
+)
+from vision_agents.plugins.moondream.detection.moondream_video_track import (
+    MoondreamVideoTrack,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
+class LocalDetectionProcessor(
+    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
+):
     """Performs real-time object detection on video streams using local Moondream 3 model.
-    
+
     This processor downloads and runs the moondream3-preview model locally from Hugging Face,
     providing the same functionality as the cloud API version without requiring an API key.
-    
+
     Note: The moondream3-preview model is gated and requires authentication:
     - Request access at https://huggingface.co/moondream/moondream3-preview
     - Once approved, authenticate using one of:
       - Set HF_TOKEN environment variable: export HF_TOKEN=your_token_here
       - Run: huggingface-cli login
-    
+
     Args:
         conf_threshold: Confidence threshold for detections (default: 0.3)
         detect_objects: Object(s) to detect. Moondream uses zero-shot detection,
@@ -51,18 +59,19 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         options: AgentOptions for model directory configuration. If not provided,
                  uses default_agent_options() which defaults to tempfile.gettempdir()
     """
+
     name = "moondream_local"
 
     def __init__(
-            self,
-            conf_threshold: float = 0.3,
-            detect_objects: Union[str, List[str]] = "person",
-            fps: int = 30,
-            interval: int = 0,
-            max_workers: int = 10,
-            force_cpu: bool = False,
-            model_name: str = "moondream/moondream3-preview",
-            options: Optional[AgentOptions] = None,
+        self,
+        conf_threshold: float = 0.3,
+        detect_objects: Union[str, List[str]] = "person",
+        fps: int = 30,
+        interval: int = 0,
+        max_workers: int = 10,
+        force_cpu: bool = False,
+        model_name: str = "moondream/moondream3-preview",
+        options: Optional[AgentOptions] = None,
     ):
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
 
@@ -93,7 +102,11 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
         self._text_color = (0, 0, 0)
 
         # Normalize detect_objects to list
-        self.detect_objects = [detect_objects] if isinstance(detect_objects, str) else list(detect_objects)
+        self.detect_objects = (
+            [detect_objects]
+            if isinstance(detect_objects, str)
+            else list(detect_objects)
+        )
 
         # Thread pool for CPU-intensive inference
         self.executor = ThreadPoolExecutor(
@@ -169,12 +182,18 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 model.compile()
             except Exception as compile_error:
                 # If compilation fails, log and continue without compilation
-                logger.warning(f"⚠️ Model compilation failed, continuing without compilation: {compile_error}")
+                logger.warning(
+                    f"⚠️ Model compilation failed, continuing without compilation: {compile_error}"
+                )
 
             return model
         except Exception as e:
             error_msg = str(e)
-            if "gated repo" in error_msg.lower() or "403" in error_msg or "authorized" in error_msg.lower():
+            if (
+                "gated repo" in error_msg.lower()
+                or "403" in error_msg
+                or "authorized" in error_msg.lower()
+            ):
                 logger.exception(
                     "❌ Failed to load Moondream model: Model requires authentication.\n"
                     "This model is gated and requires access approval:\n"
@@ -189,14 +208,14 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
             raise
 
     async def process_video(
-            self,
-            incoming_track: aiortc.mediastreams.MediaStreamTrack,
-            participant: Any,
-            shared_forwarder=None,
+        self,
+        incoming_track: aiortc.mediastreams.MediaStreamTrack,
+        participant: Any,
+        shared_forwarder=None,
     ):
         """
         Process incoming video track.
-        
+
         This method sets up the video processing pipeline:
         1. Uses shared VideoForwarder if provided, otherwise creates own
         2. Starts event consumer that calls _process_and_add_frame for each frame
@@ -214,9 +233,7 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 f"🎥 Moondream subscribing to shared VideoForwarder at {self.fps} FPS"
             )
             self._video_forwarder.add_frame_handler(
-                self._process_and_add_frame,
-                fps=float(self.fps),
-                name="moondream_local"
+                self._process_and_add_frame, fps=float(self.fps), name="moondream_local"
             )
         else:
             self._video_forwarder = VideoForwarder(
@@ -270,7 +287,9 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 # Model returns: {"objects": [{"x_min": ..., "y_min": ..., "x_max": ..., "y_max": ...}, ...]}
                 if "objects" in result:
                     for obj in result["objects"]:
-                        detection = parse_detection_bbox(obj, object_type, self.conf_threshold)
+                        detection = parse_detection_bbox(
+                            obj, object_type, self.conf_threshold
+                        )
                         if detection:
                             all_detections.append(detection)
 
@@ -278,7 +297,9 @@ class LocalDetectionProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPub
                 logger.warning(f"⚠️ Failed to detect '{object_type}': {e}")
                 continue
 
-        logger.debug(f"🔍 Model returned {len(all_detections)} objects across {len(self.detect_objects)} types")
+        logger.debug(
+            f"🔍 Model returned {len(all_detections)} objects across {len(self.detect_objects)} types"
+        )
         return all_detections
 
     async def _process_and_add_frame(self, frame: av.VideoFrame):

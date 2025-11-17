@@ -1,4 +1,5 @@
 """OpenRouter LLM implementation using OpenAI-compatible API."""
+
 import os
 from typing import Any
 
@@ -24,7 +25,7 @@ class OpenRouterLLM(OpenAILLM):
         **kwargs: Any,
     ) -> None:
         """Initialize OpenRouter LLM.
-        
+
         Args:
             api_key: OpenRouter API key. If not provided, uses OPENROUTER_API_KEY env var.
             base_url: OpenRouter API base URL.
@@ -51,11 +52,10 @@ class OpenRouterLLM(OpenAILLM):
         new_messages = kwargs["input"]
         if not isinstance(new_messages, list):
             new_messages = [dict(content=new_messages, role="user", type="message")]
-        if hasattr(self, '_conversation') and self._conversation:
+        if hasattr(self, "_conversation") and self._conversation:
             old_messages = [m.original for m in self._conversation.messages]
             kwargs["input"] = old_messages + new_messages
             # Add messages to conversation
             normalized_messages = self._normalize_message(new_messages)
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
-

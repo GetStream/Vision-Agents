@@ -27,13 +27,14 @@ from vision_agents.core.mcp import MCPBaseServer
 
 logger = logging.getLogger(__name__)
 
+
 # Example MCP server for demonstration
 class ExampleMCPServer(MCPBaseServer):
     """Example MCP server that provides weather information."""
-    
+
     def __init__(self):
         super().__init__("example-server")
-    
+
     async def get_tools(self):
         """Return available tools."""
         return [
@@ -45,17 +46,18 @@ class ExampleMCPServer(MCPBaseServer):
                     "properties": {
                         "location": {"type": "string", "description": "City name"}
                     },
-                    "required": ["location"]
-                }
+                    "required": ["location"],
+                },
             }
         ]
-    
+
     async def call_tool(self, name: str, arguments: dict):
         """Execute a tool call."""
         if name == "get_weather":
             location = arguments.get("location", "Unknown")
             return f"The weather in {location} is sunny and 72°F"
         return "Tool not found"
+
 
 load_dotenv()
 
@@ -82,7 +84,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Join call and start MCP-enabled conversation
     with await agent.join(call):
-        await agent.say("Hello! I have access to MCP tools including weather information. How can I help you?")
+        await agent.say(
+            "Hello! I have access to MCP tools including weather information. How can I help you?"
+        )
         await agent.finish()
 
 

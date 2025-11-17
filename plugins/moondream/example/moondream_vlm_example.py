@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+
 async def create_agent(**kwargs) -> Agent:
     llm = moondream.CloudVLM(
         api_key=os.getenv("MOONDREAM_API_KEY"),
@@ -19,9 +20,7 @@ async def create_agent(**kwargs) -> Agent:
     # create an agent to run with Stream's edge, openAI llm
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-        agent_user=User(
-            name="My happy AI friend", id="agent"
-        ),
+        agent_user=User(name="My happy AI friend", id="agent"),
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),

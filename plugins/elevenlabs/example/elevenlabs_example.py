@@ -56,13 +56,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-        
+
         await asyncio.sleep(5)
         await agent.llm.simple_response(text="Hello! How can I help you today?")
-        
+
         await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-

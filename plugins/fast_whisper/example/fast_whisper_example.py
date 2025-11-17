@@ -29,7 +29,7 @@ async def create_agent(**kwargs) -> Agent:
         tts=elevenlabs.TTS(),
         stt=fast_whisper.STT(
             model_size="tiny",  # Use base for good balance of speed and accuracy
-            device="cpu",       # Use "cuda" if you have GPU support
+            device="cpu",  # Use "cuda" if you have GPU support
         ),
         turn_detection=vogent.TurnDetection(),
     )
@@ -49,13 +49,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("Fast Whisper STT ready")
-        
+
         await asyncio.sleep(5)
         await agent.llm.simple_response(text="Say hi")
-        
+
         await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-

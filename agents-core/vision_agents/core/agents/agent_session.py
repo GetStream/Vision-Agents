@@ -26,6 +26,7 @@ class AgentSessionContextManager:
         connection_cm: Optional provider-specific connection context manager
             returned by the edge transport (kept open during the context).
     """
+
     def __init__(self, agent: Agent, connection_cm=None):
         self.agent = agent
         self._connection_cm = connection_cm

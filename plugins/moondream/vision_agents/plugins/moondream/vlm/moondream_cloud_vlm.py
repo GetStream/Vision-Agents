@@ -26,12 +26,12 @@ logger = logging.getLogger(__name__)
 
 class CloudVLM(llm.VideoLLM):
     """Cloud-hosted VLM using Moondream model for captioning or visual queries.
-    
+
     This VLM sends frames to the hosted Moondream model to perform either captioning
     or visual question answering. The instructions are taken from the STT service and
     sent to the model along with the frame. Once the model has an output, the results
     are then vocalized with the supplied TTS service.
-    
+
     Args:
         api_key: API key for Moondream Cloud API. If not provided, will attempt to read
                 from MOONDREAM_API_KEY environment variable.
@@ -40,10 +40,10 @@ class CloudVLM(llm.VideoLLM):
     """
 
     def __init__(
-            self,
-            api_key: Optional[str] = None,
-            mode: Literal["vqa", "caption"] = "vqa",  # Default to VQA
-            max_workers: int = 10,
+        self,
+        api_key: Optional[str] = None,
+        mode: Literal["vqa", "caption"] = "vqa",  # Default to VQA
+        max_workers: int = 10,
     ):
         super().__init__()
 
@@ -52,7 +52,9 @@ class CloudVLM(llm.VideoLLM):
         self.mode = mode
 
         # Frame buffer using VideoLatestNQueue (maintains last 10 frames)
-        self._frame_buffer: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=10)
+        self._frame_buffer: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(
+            maxlen=10
+        )
         # Keep latest frame reference for fast synchronous access
         self._latest_frame: Optional[av.VideoFrame] = None
         self._video_forwarder: Optional[VideoForwarder] = None
@@ -64,9 +66,9 @@ class CloudVLM(llm.VideoLLM):
         self._load_model()
 
     async def watch_video_track(
-            self,
-            track: aiortc.mediastreams.MediaStreamTrack,
-            shared_forwarder: Optional[VideoForwarder] = None
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
         """Setup video forwarding and STT subscription."""
         if self._video_forwarder is not None and shared_forwarder is None:
@@ -80,7 +82,7 @@ class CloudVLM(llm.VideoLLM):
             self._video_forwarder.add_frame_handler(
                 self._on_frame_received,
                 fps=1.0,  # Low FPS for VLM
-                name="moondream_vlm"
+                name="moondream_vlm",
             )
         else:
             # Create our own VideoForwarder
@@ -129,7 +131,9 @@ class CloudVLM(llm.VideoLLM):
         logger.debug(f"Moondream stream result: {result}")
         return result
 
-    async def _process_frame(self, text: Optional[str] = None) -> Optional[LLMResponseEvent]:
+    async def _process_frame(
+        self, text: Optional[str] = None
+    ) -> Optional[LLMResponseEvent]:
         if self._latest_frame is None:
             logger.warning("No frames available, skipping Moondream processing")
             return None
@@ -195,10 +199,10 @@ class CloudVLM(llm.VideoLLM):
         await self._process_frame(text=event.text)
 
     async def simple_response(
-            self,
-            text: str,
-            processors: Optional[List[Processor]] = None,
-            participant: Optional[Participant] = None,
+        self,
+        text: str,
+        processors: Optional[List[Processor]] = None,
+        participant: Optional[Participant] = None,
     ) -> LLMResponseEvent:
         """
         simple_response is a standardized way to create a response.
@@ -213,8 +217,11 @@ class CloudVLM(llm.VideoLLM):
         """
         result = await self._process_frame(text=text if self.mode == "vqa" else None)
         if result is None:
-            return LLMResponseEvent(original=None, text="",
-                                    exception=ValueError("No frame available or processing failed"))
+            return LLMResponseEvent(
+                original=None,
+                text="",
+                exception=ValueError("No frame available or processing failed"),
+            )
         return result
 
     async def _stop_watching_video_track(self) -> None:

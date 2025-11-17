@@ -49,6 +49,7 @@ class YOLOPoseVideoTrack(QueuedVideoTrack):
 
     pass
 
+
 class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """
     Yolo pose detection processor.
@@ -57,6 +58,7 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
     - Converts it to an ND array
 
     """
+
     name = "yolo_pose"
 
     def __init__(
@@ -120,9 +122,7 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
     ):
         # Use the shared forwarder
         self._video_forwarder = shared_forwarder
-        logger.info(
-            f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS"
-        )
+        logger.info(f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS")
         self._video_forwarder.add_frame_handler(
             self._add_pose_and_add_frame, fps=float(self.fps), name="yolo"
         )

@@ -90,7 +90,7 @@ async def create_agent(**kwargs) -> Agent:
         if event.participant:
             user = event.participant
             user_info = user.name if user.name else str(user)
-        
+
         print(f"[{timestamp}] {user_info}: {event.text}")
         if event.confidence:
             print(f"    └─ confidence: {event.confidence:.2%}")
@@ -98,9 +98,7 @@ async def create_agent(**kwargs) -> Agent:
             print(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
 
         # Moderation check (executed in a background thread to avoid blocking)
-        moderation = await asyncio.to_thread(
-            moderate, client, event.text, user_info
-        )
+        moderation = await asyncio.to_thread(moderate, client, event.text, user_info)
         print(
             f"    └─ moderation recommended action: {moderation.recommended_action} for transcript: {event.text}"
         )
@@ -156,7 +154,7 @@ if __name__ == "__main__":
     print("=" * 55)
 
     args = parse_args()
-    
+
     if args.setup:
         setup_moderation_config(client)
     else:

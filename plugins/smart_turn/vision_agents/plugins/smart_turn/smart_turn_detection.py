@@ -108,7 +108,9 @@ class SmartTurnDetection(TurnDetector):
         self._audio_queue: asyncio.Queue[Any] = asyncio.Queue()
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown_event = asyncio.Event()
-        self._processing_active = asyncio.Event()  # Tracks if background task is processing
+        self._processing_active = (
+            asyncio.Event()
+        )  # Tracks if background task is processing
 
         if options is None:
             self.options = default_agent_options()
@@ -176,7 +178,7 @@ class SmartTurnDetection(TurnDetector):
 
                 # Signal that we're actively processing
                 self._processing_active.set()
-                
+
                 try:
                     # Process the audio packet
                     await self._process_audio_packet(audio_data, participant)
@@ -251,7 +253,11 @@ class SmartTurnDetection(TurnDetector):
                 # TODO: make this testable
 
                 trailing_silence_ms = (
-                    self._silence.trailing_silence_chunks * 512 / 16000 * 1000 * 5 #DTX correction
+                    self._silence.trailing_silence_chunks
+                    * 512
+                    / 16000
+                    * 1000
+                    * 5  # DTX correction
                 )
                 long_silence = trailing_silence_ms > self._trailing_silence_ms
                 max_duration_reached = (
@@ -301,19 +307,19 @@ class SmartTurnDetection(TurnDetector):
     async def wait_for_processing_complete(self, timeout: float = 5.0) -> None:
         """Wait for all queued audio to be processed. Useful for testing."""
         start_time = time.time()
-        
+
         # Wait for queue to be empty AND no active processing
         while (time.time() - start_time) < timeout:
             queue_empty = self._audio_queue.qsize() == 0
             not_processing = not self._processing_active.is_set()
-            
+
             if queue_empty and not_processing:
                 # Give a small final buffer to ensure events are emitted
                 await asyncio.sleep(0.05)
                 return
-            
+
             await asyncio.sleep(0.01)
-        
+
         # Timeout reached
         logger.warning(f"wait_for_processing_complete timed out after {timeout}s")
 
@@ -377,16 +383,16 @@ class SmartTurnDetection(TurnDetector):
 
     def _build_smart_turn_session(self):
         path = os.path.join(self.options.model_dir, SMART_TURN_ONNX_FILENAME)
-        
+
         # Load model into memory to avoid multi-worker file access issues
         with open(path, "rb") as f:
             model_bytes = f.read()
-        
+
         so = ort.SessionOptions()
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         so.inter_op_num_threads = 1
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        
+
         # Load from memory instead of file path
         return ort.InferenceSession(model_bytes, sess_options=so)
 
@@ -394,7 +400,12 @@ class SmartTurnDetection(TurnDetector):
 class SileroVAD:
     """Minimal Silero VAD ONNX wrapper for 16 kHz, mono, chunk=512."""
 
-    def __init__(self, model_path: str, model_bytes: Optional[bytes] = None, reset_interval_seconds: float = 5.0):
+    def __init__(
+        self,
+        model_path: str,
+        model_bytes: Optional[bytes] = None,
+        reset_interval_seconds: float = 5.0,
+    ):
         """
         Initialize Silero VAD.
 
@@ -407,10 +418,10 @@ class SileroVAD:
         if model_bytes is None:
             with open(model_path, "rb") as f:
                 model_bytes = f.read()
-        
+
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = 1
-        
+
         # Load from memory instead of file path
         self.session = ort.InferenceSession(model_bytes, sess_options=opts)
         self.context_size = 64  # Silero uses 64-sample context at 16 kHz

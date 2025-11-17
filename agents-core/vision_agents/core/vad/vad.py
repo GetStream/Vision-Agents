@@ -79,10 +79,10 @@ class VAD(abc.ABC):
         super().__init__()
 
         # Model input spec
-        self.sample_rate = int(sample_rate)           # model sample rate (Hz)
-        self.channels = int(channels)                 # model channels (1=mono)
-        self.audio_format = audio_format              # model PCM format
-        self.frame_size = int(window_samples)         # window size at model rate
+        self.sample_rate = int(sample_rate)  # model sample rate (Hz)
+        self.channels = int(channels)  # model channels (1=mono)
+        self.audio_format = audio_format  # model PCM format
+        self.frame_size = int(window_samples)  # window size at model rate
         # Keep silence_threshold for backward compatibility
         self.silence_threshold = silence_threshold
         self.activation_th = activation_th
@@ -161,7 +161,9 @@ class VAD(abc.ABC):
             raise TypeError(
                 f"Unsupported samples type: {type(pcm_data.samples)}; expected bytes or numpy.ndarray"
             )
-        incoming = PcmData(samples=samples, sample_rate=pcm_data.sample_rate, format="s16")
+        incoming = PcmData(
+            samples=samples, sample_rate=pcm_data.sample_rate, format="s16"
+        )
         # Resample to model spec
         normalized = incoming.resample(self.sample_rate, self.channels)
         # Append to rolling buffer
@@ -304,9 +306,15 @@ class VAD(abc.ABC):
             )
 
             # Initialize the PcmData buffer with this frame
-            self.speech_buffer = PcmData(samples=frame.samples, sample_rate=frame.sample_rate, format=frame.format)
+            self.speech_buffer = PcmData(
+                samples=frame.samples,
+                sample_rate=frame.sample_rate,
+                format=frame.format,
+            )
 
-    async def _flush_speech_buffer(self, user: Optional[Union[Dict[str, Any], Participant]] = None) -> None:
+    async def _flush_speech_buffer(
+        self, user: Optional[Union[Dict[str, Any], Participant]] = None
+    ) -> None:
         """
         Flush the accumulated speech buffer if it meets minimum length requirements.
 
@@ -408,8 +416,14 @@ class VAD(abc.ABC):
                 frame_data_available=(
                     self.speech_buffer is not None
                     and (
-                        (isinstance(self.speech_buffer.samples, np.ndarray) and len(self.speech_buffer.samples) > 0)
-                        or (isinstance(self.speech_buffer.samples, (bytes, bytearray)) and len(self.speech_buffer.samples) > 0)
+                        (
+                            isinstance(self.speech_buffer.samples, np.ndarray)
+                            and len(self.speech_buffer.samples) > 0
+                        )
+                        or (
+                            isinstance(self.speech_buffer.samples, (bytes, bytearray))
+                            and len(self.speech_buffer.samples) > 0
+                        )
                     )
                 ),
             )
