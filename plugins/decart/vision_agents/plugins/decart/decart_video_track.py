@@ -45,46 +45,36 @@ class DecartVideoTrack(VideoStreamTrack):
         if self._stopped:
             return
 
-        try:
-            if frame.width != self.width or frame.height != self.height:
-                frame = self._resize_frame(frame)
-            self.frame_queue.put_latest_nowait(frame)
+        if frame.width != self.width or frame.height != self.height:
+            frame = self._resize_frame(frame)
+        self.frame_queue.put_latest_nowait(frame)
 
-            logger.debug(
-                f"Received frame from Decart: {frame.width}x{frame.height}"
-            )
-        except Exception as e:
-            logger.warning(f"Error adding frame to queue: {e}")
-
+    # TODO: move this to a utils file
     def _resize_frame(self, frame: av.VideoFrame) -> av.VideoFrame:
-        try:
-            img = frame.to_image()
+        logger.debug(f"Resizing frame from {frame.width}x{frame.height} to {self.width}x{self.height}")
+        img = frame.to_image()
 
-            # Calculate scaling to maintain aspect ratio
-            src_width, src_height = img.size
-            target_width, target_height = self.width, self.height
+        # Calculate scaling to maintain aspect ratio
+        src_width, src_height = img.size
+        target_width, target_height = self.width, self.height
 
-            # Calculate scale factor (fit within target dimensions)
-            scale = min(target_width / src_width, target_height / src_height)
-            new_width = int(src_width * scale)
-            new_height = int(src_height * scale)
+        # Calculate scale factor (fit within target dimensions)
+        scale = min(target_width / src_width, target_height / src_height)
+        new_width = int(src_width * scale)
+        new_height = int(src_height * scale)
 
-            # Resize with aspect ratio maintained
-            resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        # Resize with aspect ratio maintained
+        resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-            # Create black background at target resolution
-            result = Image.new('RGB', (target_width, target_height), (0, 0, 0))
+        # Create black background at target resolution
+        result = Image.new('RGB', (target_width, target_height), (0, 0, 0))
 
-            # Paste resized image centered
-            x_offset = (target_width - new_width) // 2
-            y_offset = (target_height - new_height) // 2
-            result.paste(resized, (x_offset, y_offset))
+        # Paste resized image centered
+        x_offset = (target_width - new_width) // 2
+        y_offset = (target_height - new_height) // 2
+        result.paste(resized, (x_offset, y_offset))
 
-            return av.VideoFrame.from_image(result)
-
-        except Exception as e:
-            logger.error(f"Error resizing frame: {e}")
-            return frame
+        return av.VideoFrame.from_image(result)
 
     async def recv(self) -> av.VideoFrame:
         if self._stopped:
@@ -97,12 +87,8 @@ class DecartVideoTrack(VideoStreamTrack):
             )
             if frame:
                 self.last_frame = frame
-
         except asyncio.TimeoutError:
             pass
-
-        except Exception as e:
-            logger.warning(f"Error getting frame from queue: {e}")
 
         pts, time_base = await self.next_timestamp()
 
@@ -115,4 +101,3 @@ class DecartVideoTrack(VideoStreamTrack):
     def stop(self) -> None:
         self._stopped = True
         super().stop()
-        logger.info("DecartVideoTrack stopped")
