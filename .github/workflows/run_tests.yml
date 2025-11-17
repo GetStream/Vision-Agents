@@ -80,6 +80,6 @@ jobs:
       - name: Verify presence
         run: uv run python -c "import os; v=os.getenv('AWS_BEARER_TOKEN_BEDROCK'); print('exists', v is not None, 'len', 0 if v is None else len(v))"
       - name: Run core tests
-        run: uv run pytest -n auto -m "${{ inputs.marker }}"
+        run: uv run pytest -n auto -m "${{ inputs.marker }}" tests/
       - name: Run plugin tests
-        run: uv run pytest plugins/*/tests/*.py -n auto -m "${{ inputs.marker }}"
+        run: uv run pytest -n auto -m "${{ inputs.marker }}" plugins/*/tests/*.py
