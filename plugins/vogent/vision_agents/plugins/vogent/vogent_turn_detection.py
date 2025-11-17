@@ -138,7 +138,7 @@ class VogentTurnDetection(TurnDetector):
         await ensure_model(path, SILERO_ONNX_URL)
         # Initialize VAD in thread pool to avoid blocking event loop
         self.vad = await asyncio.to_thread(  # type: ignore[func-returns-value]
-            lambda: SileroVAD( # type: ignore[arg-type]
+            lambda: SileroVAD(  # type: ignore[arg-type]
                 path, reset_interval_seconds=self.vad_reset_interval_seconds
             )
         )
