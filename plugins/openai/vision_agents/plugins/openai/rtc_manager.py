@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+from datetime import datetime
 from typing import Any, Optional, Callable, cast, Literal
 
 import av
@@ -115,10 +117,12 @@ class RTCManager:
             await self._current_video_forwarder.remove_frame_handler(self._send_video_frame)
             logger.debug("Removed old video frame handler from previous forwarder")
 
-        # Store reference to new forwarder and add handler
+        # Store reference to new forwarder and add handler without resizing
         self._current_video_forwarder = shared_forwarder
         shared_forwarder.add_frame_handler(
-            self._send_video_frame, fps=float(fps), name="openai"
+            self._send_video_frame, 
+            fps=float(fps), 
+            name="openai"
         )
 
     def _setup_connection_logging(self) -> None:
@@ -240,10 +244,27 @@ class RTCManager:
 
     async def _send_video_frame(self, frame: av.VideoFrame) -> None:
         """
-        Send a video frame to Gemini using send_realtime_input
+        Send a video frame to OpenAI and save debug copy to disk.
+        Frame arrives pre-resized from the forwarder.
         """
-        logger.debug(f"Sending video frame: {frame}")
+        logger.info(f"Sending video frame: {frame.height}x{frame.width}")
+        
         if self._video_to_openai_track:
+            # Debug: Save frame to disk (what's actually sent to OpenAI)
+            debug_dir = "debug_frames"
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            debug_path = os.path.join(debug_dir, f"frame_{timestamp}_{frame.width}x{frame.height}.jpg")
+            
+            def save_frame():
+                pil_image = frame.to_image()
+                pil_image.save(debug_path)
+                logger.debug(f"Saved debug frame to {debug_path}")
+            
+            await asyncio.to_thread(save_frame)
+            
             await self._video_to_openai_track.add_frame(frame)
 
 
@@ -251,6 +272,7 @@ class RTCManager:
     async def _exchange_sdp(self, local_sdp: str) -> Optional[str]:
         """Exchange SDP with OpenAI using the realtime calls API."""
         logger.debug(f"Creating realtime call with SDP length: {len(local_sdp)} bytes")
+        logger.info(f"instructions set to {self.realtime_session['instructions']}")
 
         # Use the OpenAI client's realtime calls API
         response = await self.client.realtime.calls.create(

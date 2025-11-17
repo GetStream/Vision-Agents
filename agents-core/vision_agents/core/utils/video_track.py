@@ -29,16 +29,9 @@ class QueuedVideoTrack(VideoStreamTrack):
         self._stopped = False
 
     async def add_frame(self, frame: av.VideoFrame):
-        # Resize the image and stick it on the queue
+        # Add frame to queue (no resizing - expects pre-sized frames)
         if self._stopped:
             return
-
-        # TODO: where do we resize? do we need to resize?...
-        # Ensure the image is the correct size
-        # if image.size != (self.width, self.height):
-        #    image = image.resize(
-        #        (self.width, self.height), Image.Resampling.BILINEAR
-        #    )
 
         self.frame_queue.put_latest_nowait(frame)
 

@@ -7,6 +7,7 @@ vision-agents = { workspace = true }
 vision-agents-plugins-anthropic = { workspace = true }
 vision-agents-plugins-aws = { workspace = true }
 vision-agents-plugins-cartesia = { workspace = true }
+vision-agents-plugins-deepface = { workspace = true }
 vision-agents-plugins-deepgram = { workspace = true }
 vision-agents-plugins-elevenlabs = { workspace = true }
 vision-agents-plugins-fal = { workspace = true }
@@ -39,6 +40,7 @@ members = [
     "plugins/anthropic",
     "plugins/aws",
     "plugins/cartesia",
+    "plugins/deepface",
     "plugins/deepgram",
     "plugins/elevenlabs",
     "plugins/fish",

@@ -3,6 +3,7 @@ import importlib.metadata
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -61,7 +62,7 @@ async def parse_instructions_async(
 
     Args:
         text: Input text that may contain @ mentions of markdown files
-        base_dir: Base directory to search for markdown files. If None, uses cached working directory.
+        base_dir: Base directory to search for markdown files. If None, searches both script directory and working directory.
 
     Returns:
         Instructions object containing the input text and file contents
@@ -73,19 +74,44 @@ async def parse_instructions_async(
     # Create a dictionary mapping filename to file content
     markdown_contents = {}
 
-    # Set base directory for file search
-    if base_dir is None:
-        base_dir = _INITIAL_CWD
+    # Determine search directories
+    search_dirs = []
+    if base_dir is not None:
+        # If base_dir is explicitly provided, use it
+        search_dirs.append(base_dir)
+    else:
+        # Otherwise, check both script directory and working directory
+        # Get the directory of the main script being executed
+        if sys.argv[0]:
+            script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            if script_dir and script_dir != _INITIAL_CWD:
+                search_dirs.append(script_dir)
+        # Always check the working directory
+        search_dirs.append(_INITIAL_CWD)
 
     for match in matches:
-        # Try to read the markdown file content
-        file_path = os.path.join(base_dir, match)
-        # Run blocking I/O in thread pool
-        content = await asyncio.to_thread(_read_markdown_file_sync, file_path)
+        content = ""
+        searched_paths = []
+        
+        # Try each search directory
+        for search_dir in search_dirs:
+            file_path = os.path.join(search_dir, match)
+            searched_paths.append(file_path)
+            # Run blocking I/O in thread pool
+            content = await asyncio.to_thread(_read_markdown_file_sync, file_path)
+            if content:
+                break
+        
+        # Raise error if file not found in any location
+        if not content:
+            raise FileNotFoundError(
+                f"Markdown file '{match}' not found in any of: {', '.join(searched_paths)}"
+            )
+        
         markdown_contents[match] = content
 
     return Instructions(
-        input_text=text, markdown_contents=markdown_contents, base_dir=base_dir
+        input_text=text, markdown_contents=markdown_contents, base_dir=search_dirs[0] if search_dirs else _INITIAL_CWD
     )
 
 
@@ -95,7 +121,7 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
 
     Args:
         text: Input text that may contain @ mentions of markdown files
-        base_dir: Base directory to search for markdown files. If None, uses cached working directory.
+        base_dir: Base directory to search for markdown files. If None, searches both script directory and working directory.
 
     Returns:
         Instructions object containing the input text and file contents
@@ -116,17 +142,43 @@ def parse_instructions(text: str, base_dir: Optional[str] = None) -> Instruction
     # Create a dictionary mapping filename to file content
     markdown_contents = {}
 
-    # Set base directory for file search
-    if base_dir is None:
-        base_dir = _INITIAL_CWD
+    # Determine search directories
+    search_dirs = []
+    if base_dir is not None:
+        # If base_dir is explicitly provided, use it
+        search_dirs.append(base_dir)
+    else:
+        # Otherwise, check both script directory and working directory
+        # Get the directory of the main script being executed
+        if sys.argv[0]:
+            script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            if script_dir and script_dir != _INITIAL_CWD:
+                search_dirs.append(script_dir)
+        # Always check the working directory
+        search_dirs.append(_INITIAL_CWD)
 
     for match in matches:
-        # Try to read the markdown file content
-        file_path = os.path.join(base_dir, match)
-        markdown_contents[match] = _read_markdown_file_sync(file_path)
+        content = ""
+        searched_paths = []
+        
+        # Try each search directory
+        for search_dir in search_dirs:
+            file_path = os.path.join(search_dir, match)
+            searched_paths.append(file_path)
+            content = _read_markdown_file_sync(file_path)
+            if content:
+                break
+        
+        # Raise error if file not found in any location
+        if not content:
+            raise FileNotFoundError(
+                f"Markdown file '{match}' not found in any of: {', '.join(searched_paths)}"
+            )
+        
+        markdown_contents[match] = content
 
     return Instructions(
-        input_text=text, markdown_contents=markdown_contents, base_dir=base_dir
+        input_text=text, markdown_contents=markdown_contents, base_dir=search_dirs[0] if search_dirs else _INITIAL_CWD
     )
 
 

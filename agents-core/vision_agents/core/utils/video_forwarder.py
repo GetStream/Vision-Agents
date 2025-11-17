@@ -2,15 +2,18 @@ import asyncio
 import datetime
 import logging
 from dataclasses import dataclass
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Literal
 
 import av
 from aiortc import VideoStreamTrack
 from av.frame import Frame
+from PIL import Image
 
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
 
 logger = logging.getLogger(__name__)
+
+ResamplingMethod = Literal["NEAREST", "BILINEAR", "BICUBIC", "LANCZOS"]
 
 
 @dataclass
@@ -20,18 +23,48 @@ class FrameHandler:
     fps: Optional[float]
     name: str
     last_ts: float = 0.0
+    width: Optional[int] = None  # None = no resizing
+    height: Optional[int] = None  # None = no resizing
+    resampling: ResamplingMethod = "LANCZOS"
 
 class VideoForwarder:
     """
-    VideoForwarder handles forwarding a video track to 1 or multiple targets
+    VideoForwarder handles forwarding a video track to 1 or multiple targets.
+    
+    Each handler can specify its own frame rate, dimensions, and resizing quality.
+    This allows sending different sized frames to different targets efficiently.
+    
+    By default, no resizing is performed - frames are passed through as-is.
+    Specify width and/or height to enable resizing for a handler.
 
     Example:
 
         forwarder = VideoForwarder(input_track=track, fps=5)
-        forwarder.add_frame_handler( lamba x: print("received frame"), fps =1 )
-        forwarder.stop()
-
-        # start's automatically when attaching handlers
+        
+        # Add handler without resizing (passes original frames)
+        forwarder.add_frame_handler(process_frame, fps=1)
+        
+        # Add handler with custom resizing for OpenAI (720p, high quality)
+        forwarder.add_frame_handler(
+            send_to_openai, 
+            fps=1, 
+            width=1280, 
+            height=720,
+            resampling="LANCZOS"
+        )
+        
+        # Add handler with different size for thumbnails (low res, fast)
+        forwarder.add_frame_handler(
+            save_thumbnail, 
+            fps=0.5, 
+            width=320, 
+            height=180,
+            resampling="BILINEAR"
+        )
+        
+        # Starts automatically when attaching handlers
+        # Stop when done:
+        await forwarder.stop()
 
     """
     def __init__(self, input_track: VideoStreamTrack, *, max_buffer: int = 10, fps: Optional[float] = 30, name: str = "video-forwarder"):
@@ -51,6 +84,9 @@ class VideoForwarder:
             *,
             fps: Optional[float] = None,
             name: Optional[str] = None,
+            width: Optional[int] = None,
+            height: Optional[int] = None,
+            resampling: ResamplingMethod = "LANCZOS",
     ) -> None:
         """
         Register a callback to be called for each frame.
@@ -59,6 +95,9 @@ class VideoForwarder:
             on_frame: Callback function (sync or async) to receive frames
             fps: Frame rate for this handler (overrides default). None = unlimited.
             name: Optional name for this handler (for logging)
+            width: Optional target width for resizing. If None, no resizing on width.
+            height: Optional target height for resizing. If None, no resizing on height.
+            resampling: Resampling method for resize: "NEAREST", "BILINEAR", "BICUBIC", or "LANCZOS" (only used if resizing)
         """
         handler_name = name or f"handler-{len(self._frame_handlers)}"
         handler_fps = fps if fps is not None else self.fps
@@ -69,6 +108,9 @@ class VideoForwarder:
             callback=on_frame,
             fps=handler_fps,
             name=handler_name,
+            width=width,
+            height=height,
+            resampling=resampling,
         )
         self._frame_handlers.append(handler)
         self.start()
@@ -138,11 +180,47 @@ class VideoForwarder:
                     if min_interval == 0.0 or (now - handler.last_ts) >= min_interval:
                         handler.last_ts = now
                         
+                        # Resize frame if dimensions are specified
+                        processed_frame = frame
+                        if handler.width is not None or handler.height is not None:
+                            target_width = handler.width or frame.width
+                            target_height = handler.height or frame.height
+                            
+                            if frame.width != target_width or frame.height != target_height:
+                                processed_frame = await self._resize_frame(
+                                    frame, target_width, target_height, 
+                                    handler.resampling
+                                )
+                        
                         # Call handler (sync or async)
                         if asyncio.iscoroutinefunction(handler.callback):
-                            await handler.callback(frame)
+                            await handler.callback(processed_frame)
                         else:
-                            handler.callback(frame)
+                            handler.callback(processed_frame)
         except asyncio.CancelledError:
             raise
+    
+    async def _resize_frame(
+        self, 
+        frame: av.VideoFrame, 
+        width: int, 
+        height: int, 
+        resampling: ResamplingMethod
+    ) -> av.VideoFrame:
+        """Resize a frame using the specified resampling method."""
+        def _do_resize():
+            # Map string to PIL constant
+            resampling_map = {
+                "NEAREST": Image.Resampling.NEAREST,
+                "BILINEAR": Image.Resampling.BILINEAR,
+                "BICUBIC": Image.Resampling.BICUBIC,
+                "LANCZOS": Image.Resampling.LANCZOS,
+            }
+            
+            pil_image = frame.to_image()
+            resized = pil_image.resize((width, height), resampling_map[resampling])
+            
+            return av.VideoFrame.from_image(resized)
+        
+        return await asyncio.to_thread(_do_resize)
 
