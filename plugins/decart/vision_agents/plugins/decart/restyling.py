@@ -23,22 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 def _should_reconnect(exc: Exception) -> bool:
-    """
-    Determine if a websocket error should trigger a reconnect.
-    
-    Args:
-        exc: The exception that occurred.
-        
-    Returns:
-        True if reconnection should be attempted, False otherwise.
-    """
     if isinstance(exc, websockets.ConnectionClosedError):
         return True
 
-    # Check for Decart SDK errors that indicate connection issues
     if isinstance(exc, DecartSDKError):
         error_msg = str(exc).lower()
-        if "connection" in error_msg or "disconnect" in error_msg or "timeout" in error_msg:
+        if (
+            "connection" in error_msg
+            or "disconnect" in error_msg
+            or "timeout" in error_msg
+        ):
             return True
 
     return False
@@ -46,11 +40,11 @@ def _should_reconnect(exc: Exception) -> bool:
 
 class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """Decart Realtime restyling processor for transforming user video tracks.
-    
+
     This processor accepts the user's local video track, sends it to Decart's
     Realtime API via websocket, receives transformed frames, and publishes them
     as a new video track.
-    
+
     Example:
         agent = Agent(
             edge=getstream.Edge(),
@@ -65,22 +59,22 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             ]
         )
     """
-    
+
     name = "decart_restyling"
 
     def __init__(
-            self,
-            api_key: Optional[str] = None,
-            model: str = "mirage_v2",
-            initial_prompt: str = "Cyberpunk city",
-            enrich: bool = True,
-            mirror: bool = True,
-            width: int = 1280,  # Model preferred
-            height: int = 720,
-            **kwargs,
+        self,
+        api_key: Optional[str] = None,
+        model: str = "mirage_v2",
+        initial_prompt: str = "Cyberpunk city",
+        enrich: bool = True,
+        mirror: bool = True,
+        width: int = 1280,  # Model preferred
+        height: int = 720,
+        **kwargs,
     ):
         """Initialize the Decart restyling processor.
-        
+
         Args:
             api_key: Decart API key. Uses DECART_API_KEY env var if not provided.
             model: Decart model name (default: "mirage_v2").
@@ -130,13 +124,13 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         )
 
     async def process_video(
-            self,
-            incoming_track: aiortc.mediastreams.MediaStreamTrack,
-            participant: Any,
-            shared_forwarder=None,
+        self,
+        incoming_track: aiortc.mediastreams.MediaStreamTrack,
+        participant: Any,
+        shared_forwarder=None,
     ):
         """Process incoming video track by connecting to Decart Realtime API.
-        
+
         This method is called by the agent when a user video track is added.
         It connects to Decart with the user's track and starts receiving
         transformed frames.
@@ -147,20 +141,9 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             await self._connect_to_decart(incoming_track)
 
     def publish_video_track(self) -> VideoStreamTrack:
-        """Return the transformed video track for publishing.
-        
-        Returns:
-            DecartVideoTrack that publishes transformed frames.
-        """
         return self._video_track
 
     async def set_prompt(self, prompt_text: str, enrich: Optional[bool] = None) -> None:
-        """Change the style prompt for restyling.
-        
-        Args:
-            prompt_text: New style prompt text.
-            enrich: Whether to enrich the prompt. Uses instance default if None.
-        """
         if not self._realtime_client:
             logger.debug("Cannot set prompt: not connected to Decart")
             return
@@ -171,11 +154,6 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         logger.info(f"Updated Decart prompt: {prompt_text[:50]}...")
 
     async def set_mirror(self, enabled: bool) -> None:
-        """Toggle mirror mode.
-        
-        Args:
-            enabled: Whether to enable mirror mode.
-        """
         if not self._realtime_client:
             logger.debug("Cannot set mirror: not connected to Decart")
             return
@@ -185,11 +163,6 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         logger.debug(f"Updated Decart mirror mode: {enabled}")
 
     async def _connect_to_decart(self, local_track: MediaStreamTrack) -> None:
-        """Establish connection to Decart Realtime API.
-        
-        Args:
-            local_track: The user's local MediaStream to send to Decart.
-        """
         if self._connecting:
             logger.debug("Already connecting to Decart, skipping")
             return
@@ -245,7 +218,9 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         )
         logger.debug("Started receiving frames from Decart transformed stream")
 
-    async def _receive_frames_from_decart(self, transformed_stream: MediaStreamTrack) -> None:
+    async def _receive_frames_from_decart(
+        self, transformed_stream: MediaStreamTrack
+    ) -> None:
         try:
             while not self._video_track._stopped:
                 frame = await transformed_stream.recv()
