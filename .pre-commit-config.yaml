@@ -1,7 +1,7 @@
 repos:
 - repo: https://github.com/astral-sh/ruff-pre-commit
   # Ruff version.
-  rev: v0.12.8
+  rev: v0.14.5
   hooks:
     # Run the linter.
     - id: ruff-check
@@ -22,13 +22,13 @@ repos:
   hooks:
     - id: mypy-main
       name: mypy (vision_agents)
-      entry: uv run mypy --install-types --non-interactive -p vision_agents
+      entry: uv run --frozen mypy --install-types --non-interactive agents-core/vision_agents
       language: system
       pass_filenames: false
       types_or: [python]
     - id: mypy-plugins
       name: mypy (plugins)
-      entry: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
+      entry: uv run --frozen mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
       language: system
       pass_filenames: false
       types_or: [python]

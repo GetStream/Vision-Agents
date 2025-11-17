@@ -10,9 +10,14 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # If set, uv will run without updating the uv.lock file. Equivalent to the `uv run --frozen`.
+  UV_FROZEN: "1"
+
 jobs:
-  lint:
-    name: Ruff & mypy
+  ruff:
+    name: Ruff
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,14 +25,23 @@ jobs:
       - uses: ./.github/actions/python-uv-setup
       - name: Run Ruff
         run: uv run ruff check .
-      - name: Mypy core
+      - name: Show environment name
+        run: |
+          echo "Environment: ${{ job.environment }}"
+  mypy:
+    name: Mypy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - uses: ./.github/actions/python-uv-setup
+      - name: Run mypy core
         run: uv run mypy --install-types --non-interactive agents-core/vision_agents
-      - name: Mypy plugins
+      - name: Run mypy for plugins
         run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
       - name: Show environment name
         run: |
           echo "Environment: ${{ job.environment }}"
-
   test:
     name: Test "${{ inputs.marker }}"
     runs-on: ubuntu-latest
