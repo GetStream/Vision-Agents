@@ -26,24 +26,32 @@ jobs:
         uses: ./.github/actions/python-uv-setup
       - name: Run Ruff
         run: uv run ruff check .
-      - name: Show environment name
-        run: |
-          echo "Environment: ${{ job.environment }}"
-  mypy:
-    name: Mypy
+
+  mypy-core:
+    name: Run Mypy for core
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
+      # Restore mypy cache to speed up the run
+      - name: Restore mypy cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .mypy_cache
+          key: mypy-cache-${{ hashFiles('pyproject.toml', 'mypy.ini') }}
       - name: Run mypy core
         run: uv run mypy --install-types --non-interactive agents-core/vision_agents
       - name: Run mypy for plugins
         run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
-      - name: Show environment name
-        run: |
-          echo "Environment: ${{ job.environment }}"
+      # Save the updated cache
+      - name: Save mypy cache
+        uses: actions/cache/save@v4
+        with:
+          path: .mypy_cache
+          key: mypy-cache-${{ hashFiles('pyproject.toml', 'mypy.ini') }}
+
   test:
     name: Test "${{ inputs.marker }}"
     runs-on: ubuntu-latest

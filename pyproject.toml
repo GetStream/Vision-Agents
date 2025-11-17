@@ -73,7 +73,7 @@ exclude = [
 [dependency-groups]
 dev = [
     "ruff",
-    "mypy",
+    "mypy[mypyc,faster-cache]",
     "pip>=25.2",
     "pytest",
     "pytest-xdist",
