@@ -8,7 +8,7 @@ inputs:
   sync-flags:
     description: Extra flags for uv sync (e.g., --all-extras --dev)
     required: false
-    default: "--all-extras --dev"
+    default: "--all-extras --dev --frozen --link-mode=copy"
   working-directory:
     description: Directory to run in
     required: false
@@ -46,4 +46,4 @@ runs:
     - name: Install the project
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: uv sync --frozen ${{ inputs.sync-flags }}
+      run: uv sync ${{ inputs.sync-flags }}
