@@ -8,7 +8,6 @@ from tests.base_test import BaseTest
 
 
 class TestAudioForwarder(BaseTest):
-
     async def test_audio_forwarder_basic(self, audio_track_48khz):
         """Test that AudioForwarder receives and forwards audio."""
         received_audio = []
@@ -73,9 +72,13 @@ class TestAudioForwarder(BaseTest):
         await asyncio.sleep(0.2)
 
         # Count should not have increased significantly (maybe 1-2 frames due to timing)
-        assert len(received_audio) <= initial_count + 2, "Should not receive audio after stopping"
+        assert len(received_audio) <= initial_count + 2, (
+            "Should not receive audio after stopping"
+        )
 
-    async def test_audio_forwarder_callback_receives_valid_data(self, audio_track_48khz):
+    async def test_audio_forwarder_callback_receives_valid_data(
+        self, audio_track_48khz
+    ):
         """Test that callback receives valid PcmData with actual audio samples."""
         received_audio = []
 
@@ -96,4 +99,3 @@ class TestAudioForwarder(BaseTest):
             assert len(pcm.samples) > 0, "PcmData should contain samples"
             assert isinstance(pcm.samples, np.ndarray), "Samples should be numpy array"
             assert pcm.samples.dtype == np.int16, "Samples should be int16"
-

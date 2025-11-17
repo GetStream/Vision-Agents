@@ -20,8 +20,7 @@ async def get_weather_by_location(location: str) -> Dict[str, Any]:
     async with httpx.AsyncClient(timeout=10.0) as client:
         # Get geocoding data for the location
         geo_response = await client.get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": location}
+            "https://geocoding-api.open-meteo.com/v1/search", params={"name": location}
         )
         geo_response.raise_for_status()
         geo_data = geo_response.json()
@@ -35,11 +34,7 @@ async def get_weather_by_location(location: str) -> Dict[str, Any]:
 
         weather_response = await client.get(
             "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "current_weather": True
-            }
+            params={"latitude": lat, "longitude": lon, "current_weather": True},
         )
         weather_response.raise_for_status()
         weather_data = weather_response.json()

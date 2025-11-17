@@ -1,6 +1,7 @@
 """
 Basic tests for Vogent turn detection.
 """
+
 import asyncio
 
 import pytest
@@ -14,8 +15,8 @@ from vision_agents.plugins.vogent.vogent_turn_detection import VogentTurnDetecti
 
 logger = logging.getLogger(__name__)
 
-class TestVogentTurn:
 
+class TestVogentTurn:
     @pytest.fixture
     async def td(self):
         td = VogentTurnDetection()
@@ -50,6 +51,9 @@ class TestVogentTurn:
         await asyncio.sleep(5)
 
         # Verify that turn detection is working - we should get at least some turn events
-        assert event_order == ["start", "stop"] or event_order == ["start", "stop", "start", "stop"]
-
-
+        assert event_order == ["start", "stop"] or event_order == [
+            "start",
+            "stop",
+            "start",
+            "stop",
+        ]

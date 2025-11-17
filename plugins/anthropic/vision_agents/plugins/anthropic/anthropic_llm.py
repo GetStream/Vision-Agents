@@ -14,7 +14,10 @@ from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
-from vision_agents.core.llm.events import LLMResponseChunkEvent, LLMResponseCompletedEvent
+from vision_agents.core.llm.events import (
+    LLMResponseChunkEvent,
+    LLMResponseCompletedEvent,
+)
 from vision_agents.core.processors import Processor
 from . import events
 
@@ -59,7 +62,9 @@ class ClaudeLLM(LLM):
         super().__init__()
         self.events.register_events_from_module(events)
         self.model = model
-        self._pending_tool_uses_by_index: Dict[int, Dict[str, Any]] = {}  # index -> {id, name, parts: []}
+        self._pending_tool_uses_by_index: Dict[
+            int, Dict[str, Any]
+        ] = {}  # index -> {id, name, parts: []}
 
         if client is not None:
             self.client = client
@@ -107,7 +112,7 @@ class ClaudeLLM(LLM):
 
         # ensure the AI remembers the past conversation
         new_messages = kwargs["messages"]
-        if hasattr(self, '_conversation') and self._conversation:
+        if hasattr(self, "_conversation") and self._conversation:
             old_messages = [m.original for m in self._conversation.messages]
             kwargs["messages"] = old_messages + new_messages
             # Add messages to conversation
@@ -122,7 +127,7 @@ class ClaudeLLM(LLM):
             # Extract text from Claude's response format - safely handle all text blocks
             text = self._concat_text_blocks(original.content)
             llm_response = LLMResponseEvent(original, text)
-            
+
             # Multi-hop tool calling loop for non-streaming
             function_calls = self._extract_tool_calls_from_response(original)
             if function_calls:
@@ -131,39 +136,50 @@ class ClaudeLLM(LLM):
                 rounds = 0
                 seen: set[tuple[str, str, str]] = set()
                 current_calls = function_calls
-                
+
                 while current_calls and rounds < MAX_ROUNDS:
                     # Execute calls concurrently with dedup
-                    triples, seen = await self._dedup_and_execute(current_calls, seen=seen, max_concurrency=8, timeout_s=30)  # type: ignore[arg-type]
-                    
+                    triples, seen = await self._dedup_and_execute(
+                        current_calls, seen=seen, max_concurrency=8, timeout_s=30
+                    )  # type: ignore[arg-type]
+
                     if not triples:
                         break
-                    
+
                     # Build tool_result user message
                     assistant_content = []
                     tool_result_blocks = []
                     for tc, res, err in triples:
-                        assistant_content.append({
-                            "type": "tool_use",
-                            "id": tc["id"],
-                            "name": tc["name"],
-                            "input": tc["arguments_json"],
-                        })
-                        
+                        assistant_content.append(
+                            {
+                                "type": "tool_use",
+                                "id": tc["id"],
+                                "name": tc["name"],
+                                "input": tc["arguments_json"],
+                            }
+                        )
+
                         payload = self._sanitize_tool_output(res)
-                        tool_result_blocks.append({
-                            "type": "tool_result",
-                            "tool_use_id": tc["id"],
-                            "content": payload,
-                        })
+                        tool_result_blocks.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tc["id"],
+                                "content": payload,
+                            }
+                        )
 
                     assistant_msg = {"role": "assistant", "content": assistant_content}
-                    user_tool_results_msg = {"role": "user", "content": tool_result_blocks}
+                    user_tool_results_msg = {
+                        "role": "user",
+                        "content": tool_result_blocks,
+                    }
                     messages = messages + [assistant_msg, user_tool_results_msg]
 
                     # Ask again WITH tools so Claude can do another hop
                     tools_cfg = {
-                        "tools": self._convert_tools_to_provider_format(self.get_available_functions()),
+                        "tools": self._convert_tools_to_provider_format(
+                            self.get_available_functions()
+                        ),
                         "tool_choice": {"type": "auto"},
                         "stream": False,
                         "model": self.model,
@@ -172,22 +188,29 @@ class ClaudeLLM(LLM):
                     }
 
                     follow_up_response = await self.client.messages.create(**tools_cfg)
-                    
+
                     # Extract new tool calls from follow-up response
-                    current_calls = self._extract_tool_calls_from_response(follow_up_response)
-                    llm_response = LLMResponseEvent(follow_up_response, self._concat_text_blocks(follow_up_response.content))
+                    current_calls = self._extract_tool_calls_from_response(
+                        follow_up_response
+                    )
+                    llm_response = LLMResponseEvent(
+                        follow_up_response,
+                        self._concat_text_blocks(follow_up_response.content),
+                    )
                     rounds += 1
-                
+
                 # Finalization pass: no tools so Claude must answer in text
                 if current_calls or rounds > 0:  # Only if we had tool calls
                     final_response = await self.client.messages.create(
                         model=self.model,
-                        messages=messages,   # includes assistant tool_use + user tool_result blocks
+                        messages=messages,  # includes assistant tool_use + user tool_result blocks
                         stream=False,
-                        max_tokens=1000
+                        max_tokens=1000,
                     )
-                    llm_response = LLMResponseEvent(final_response, self._concat_text_blocks(final_response.content))
-                            
+                    llm_response = LLMResponseEvent(
+                        final_response, self._concat_text_blocks(final_response.content)
+                    )
+
         elif isinstance(original, AsyncStream):
             stream: AsyncStream[RawMessageStreamEvent] = original
             text_parts: List[str] = []
@@ -195,7 +218,9 @@ class ClaudeLLM(LLM):
 
             # 1) First round: read stream, gather initial tool_use calls
             async for event in stream:
-                llm_response_optional = self._standardize_and_emit_event(event, text_parts)
+                llm_response_optional = self._standardize_and_emit_event(
+                    event, text_parts
+                )
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
                 # Collect tool_use calls as they complete (your helper already reconstructs args)
@@ -213,7 +238,9 @@ class ClaudeLLM(LLM):
             last_followup_stream = None
             while accumulated_calls and rounds < MAX_ROUNDS:
                 # Execute calls concurrently with dedup
-                triples, seen = await self._dedup_and_execute(accumulated_calls, seen=seen, max_concurrency=8, timeout_s=30)  # type: ignore[arg-type]
+                triples, seen = await self._dedup_and_execute(
+                    accumulated_calls, seen=seen, max_concurrency=8, timeout_s=30
+                )  # type: ignore[arg-type]
 
                 # Build tool_result user message
                 # Also reconstruct the assistant tool_use message that triggered these calls
@@ -221,22 +248,26 @@ class ClaudeLLM(LLM):
                 executed_calls: List[NormalizedToolCallItem] = []
                 for tc, res, err in triples:
                     executed_calls.append(tc)
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": tc["id"],
-                        "name": tc["name"],
-                        "input": tc["arguments_json"],
-                    })
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": tc["name"],
+                            "input": tc["arguments_json"],
+                        }
+                    )
 
                 # tool_result blocks (sanitize to keep payloads safe)
                 tool_result_blocks = []
                 for tc, res, err in triples:
                     payload = self._sanitize_tool_output(res)
-                    tool_result_blocks.append({
-                        "type": "tool_result",
-                        "tool_use_id": tc["id"],
-                        "content": payload,
-                    })
+                    tool_result_blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tc["id"],
+                            "content": payload,
+                        }
+                    )
 
                 assistant_msg = {"role": "assistant", "content": assistant_content}
                 user_tool_results_msg = {"role": "user", "content": tool_result_blocks}
@@ -244,7 +275,9 @@ class ClaudeLLM(LLM):
 
                 # Ask again WITH tools so Claude can do another hop
                 tools_cfg = {
-                    "tools": self._convert_tools_to_provider_format(self.get_available_functions()),
+                    "tools": self._convert_tools_to_provider_format(
+                        self.get_available_functions()
+                    ),
                     "tool_choice": {"type": "auto"},
                     "stream": True,
                     "model": self.model,
@@ -259,7 +292,9 @@ class ClaudeLLM(LLM):
                 accumulated_calls = []  # reset; we'll refill with new calls
                 async for ev in follow_up_stream:
                     last_followup_stream = ev
-                    llm_response_optional = self._standardize_and_emit_event(ev, follow_up_text_parts)
+                    llm_response_optional = self._standardize_and_emit_event(
+                        ev, follow_up_text_parts
+                    )
                     if llm_response_optional is not None:
                         llm_response = llm_response_optional
                     new_calls, _ = self._extract_tool_calls_from_stream_chunk(ev, None)
@@ -276,14 +311,16 @@ class ClaudeLLM(LLM):
             if accumulated_calls or rounds > 0:  # Only if we had tool calls
                 final_stream = await self.client.messages.create(
                     model=self.model,
-                    messages=messages,   # includes assistant tool_use + user tool_result blocks
+                    messages=messages,  # includes assistant tool_use + user tool_result blocks
                     stream=True,
-                    max_tokens=1000
+                    max_tokens=1000,
                 )
                 final_text_parts: List[str] = []
                 async for ev in final_stream:
                     last_followup_stream = ev
-                    llm_response_optional = self._standardize_and_emit_event(ev, final_text_parts)
+                    llm_response_optional = self._standardize_and_emit_event(
+                        ev, final_text_parts
+                    )
                     if llm_response_optional is not None:
                         llm_response = llm_response_optional
                 if final_text_parts:
@@ -291,8 +328,16 @@ class ClaudeLLM(LLM):
 
             # 4) Done -> return all collected text
             total_text = "".join(text_parts)
-            llm_response = LLMResponseEvent(last_followup_stream or original, total_text) # type: ignore
-            self.events.send(LLMResponseCompletedEvent(original=last_followup_stream or original, text=total_text, plugin_name="anthropic"))
+            llm_response = LLMResponseEvent(
+                last_followup_stream or original, total_text
+            )  # type: ignore
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    original=last_followup_stream or original,
+                    text=total_text,
+                    plugin_name="anthropic",
+                )
+            )
 
         return llm_response
 
@@ -303,10 +348,9 @@ class ClaudeLLM(LLM):
         Forwards the events and also send out a standardized version (the agent class hooks into that)
         """
         # forward the native event
-        self.events.send(events.ClaudeStreamEvent(
-            plugin_name="anthropic",
-            event_data=event
-        ))
+        self.events.send(
+            events.ClaudeStreamEvent(plugin_name="anthropic", event_data=event)
+        )
 
         # send a standardized version for delta and response
         if event.type == "content_block_delta":
@@ -314,14 +358,16 @@ class ClaudeLLM(LLM):
             if hasattr(delta_event.delta, "text") and delta_event.delta.text:
                 text_parts.append(delta_event.delta.text)
 
-                self.events.send(LLMResponseChunkEvent(
-                    plugin_name="antrhopic",
-                    content_index=delta_event.index,
-                    item_id="",
-                    output_index=0,
-                    sequence_number=0,
-                    delta=delta_event.delta.text,
-                ))
+                self.events.send(
+                    LLMResponseChunkEvent(
+                        plugin_name="antrhopic",
+                        content_index=delta_event.index,
+                        item_id="",
+                        output_index=0,
+                        sequence_number=0,
+                        delta=delta_event.delta.text,
+                    )
+                )
         elif event.type == "message_stop":
             stop_event: RawMessageStopEvent = event
             total_text = "".join(text_parts)
@@ -354,13 +400,15 @@ class ClaudeLLM(LLM):
 
         return messages
 
-    def _convert_tools_to_provider_format(self, tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+    def _convert_tools_to_provider_format(
+        self, tools: List[ToolSchema]
+    ) -> List[Dict[str, Any]]:
         """
         Convert ToolSchema objects to Anthropic format.
-        
+
         Args:
             tools: List of ToolSchema objects
-            
+
         Returns:
             List of tools in Anthropic format
         """
@@ -369,37 +417,42 @@ class ClaudeLLM(LLM):
             anthropic_tool = {
                 "name": tool["name"],
                 "description": tool.get("description", ""),
-                "input_schema": tool["parameters_schema"]
+                "input_schema": tool["parameters_schema"],
             }
             anthropic_tools.append(anthropic_tool)
         return anthropic_tools
 
-    def _extract_tool_calls_from_response(self, response: Any) -> List[NormalizedToolCallItem]:
+    def _extract_tool_calls_from_response(
+        self, response: Any
+    ) -> List[NormalizedToolCallItem]:
         """
         Extract tool calls from Anthropic response.
-        
+
         Args:
             response: Anthropic response object
-            
+
         Returns:
             List of normalized tool call items
         """
         tool_calls = []
-        
-        if hasattr(response, 'content') and response.content:
+
+        if hasattr(response, "content") and response.content:
             for content_block in response.content:
-                if hasattr(content_block, 'type') and content_block.type == "tool_use":
+                if hasattr(content_block, "type") and content_block.type == "tool_use":
                     tool_call: NormalizedToolCallItem = {
                         "type": "tool_call",
                         "id": content_block.id,  # Critical: capture the id for tool_result
                         "name": content_block.name,
-                        "arguments_json": content_block.input or {}  # normalize to arguments_json
+                        "arguments_json": content_block.input
+                        or {},  # normalize to arguments_json
                     }
                     tool_calls.append(tool_call)
-        
+
         return tool_calls
 
-    def _extract_tool_calls_from_stream_chunk(self, chunk: Any, current_tool_call: Optional[NormalizedToolCallItem] = None) -> tuple[List[NormalizedToolCallItem], Optional[NormalizedToolCallItem]]:  # type: ignore[override]
+    def _extract_tool_calls_from_stream_chunk(
+        self, chunk: Any, current_tool_call: Optional[NormalizedToolCallItem] = None
+    ) -> tuple[List[NormalizedToolCallItem], Optional[NormalizedToolCallItem]]:  # type: ignore[override]
         """
         Extract tool calls from Anthropic streaming chunk using index-keyed accumulation.
         Args:
@@ -409,22 +462,22 @@ class ClaudeLLM(LLM):
             Tuple of (completed tool calls, current tool call being accumulated)
         """
         tool_calls = []
-        t = getattr(chunk, 'type', None)
+        t = getattr(chunk, "type", None)
 
         if t == "content_block_start":
-            cb = getattr(chunk, 'content_block', None)
-            if getattr(cb, 'type', None) == "tool_use":
+            cb = getattr(chunk, "content_block", None)
+            if getattr(cb, "type", None) == "tool_use":
                 if cb is not None:
                     self._pending_tool_uses_by_index[chunk.index] = {
                         "id": cb.id,
                         "name": cb.name,
-                        "parts": []
+                        "parts": [],
                     }
 
         elif t == "content_block_delta":
-            d = getattr(chunk, 'delta', None)
-            if getattr(d, 'type', None) == "input_json_delta":
-                pj = getattr(d, 'partial_json', None)
+            d = getattr(chunk, "delta", None)
+            if getattr(d, "type", None) == "input_json_delta":
+                pj = getattr(d, "partial_json", None)
                 if pj is not None and chunk.index in self._pending_tool_uses_by_index:
                     self._pending_tool_uses_by_index[chunk.index]["parts"].append(pj)
 
@@ -440,12 +493,14 @@ class ClaudeLLM(LLM):
                     "type": "tool_call",
                     "id": pending["id"],
                     "name": pending["name"],
-                    "arguments_json": args
+                    "arguments_json": args,
                 }
                 tool_calls.append(tool_call_item)
         return tool_calls, None
 
-    def _create_tool_result_message(self, tool_calls: List[NormalizedToolCallItem], results: List[Any]) -> List[Dict[str, Any]]:
+    def _create_tool_result_message(
+        self, tool_calls: List[NormalizedToolCallItem], results: List[Any]
+    ) -> List[Dict[str, Any]]:
         """
         Create tool result messages for Anthropic.
             tool_calls: List of tool calls that were executed
@@ -461,17 +516,19 @@ class ClaudeLLM(LLM):
                 payload = str(result)
             else:
                 payload = json.dumps(result)
-            blocks.append({
-                "type": "tool_result",
-                "tool_use_id": tool_call["id"],  # Critical: must match tool_use.id
-                "content": payload
-            })
+            blocks.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_call["id"],  # Critical: must match tool_use.id
+                    "content": payload,
+                }
+            )
         return [{"role": "user", "content": blocks}]
 
     def _concat_text_blocks(self, content):
         """Safely extract text from all text blocks in content."""
         out = []
         for b in content or []:
-            if getattr(b, 'type', None) == "text" and getattr(b, 'text', None):
+            if getattr(b, "type", None) == "text" and getattr(b, "text", None):
                 out.append(b.text)
         return "".join(out)

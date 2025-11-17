@@ -23,11 +23,11 @@ class TTS(tts.TTS):
     """
 
     def __init__(
-            self,
-            api_key: Optional[str] = None,
-            voice_id: str = "Dennis",
-            model_id: Literal["inworld-tts-1", "inworld-tts-1-max"] = "inworld-tts-1",
-            temperature: float = 1.1,
+        self,
+        api_key: Optional[str] = None,
+        voice_id: str = "Dennis",
+        model_id: Literal["inworld-tts-1", "inworld-tts-1-max"] = "inworld-tts-1",
+        temperature: float = 1.1,
     ):
         """
         Initialize the Inworld AI TTS service.
@@ -55,9 +55,7 @@ class TTS(tts.TTS):
         self.base_url = INWORLD_API_BASE
         self.client = httpx.AsyncClient(timeout=60.0)
 
-    async def stream_audio(
-            self, text: str, *_, **__
-    ) -> AsyncIterator[PcmData]:
+    async def stream_audio(self, text: str, *_, **__) -> AsyncIterator[PcmData]:
         """
         Convert text to speech using Inworld AI API.
         Args:
@@ -85,7 +83,7 @@ class TTS(tts.TTS):
         async def _stream_audio() -> AsyncIterator[PcmData]:
             try:
                 async with self.client.stream(
-                        "POST", url, headers=headers, json=payload
+                    "POST", url, headers=headers, json=payload
                 ) as response:
                     async for pcm in self._process_response(response):
                         yield pcm
@@ -103,7 +101,9 @@ class TTS(tts.TTS):
         # Return the async generator
         return _stream_audio()
 
-    async def _process_response(self, response: httpx.Response) -> AsyncIterator[PcmData]:
+    async def _process_response(
+        self, response: httpx.Response
+    ) -> AsyncIterator[PcmData]:
         # Check status before processing streaming response
         if response.status_code >= 400:
             error_text = await response.aread()
@@ -146,13 +146,10 @@ class TTS(tts.TTS):
                                 pcm.append(frame_pcm)
 
                         if pcm:
-                            pcm = (
-                                pcm.resample(
-                                    target_sample_rate=pcm.sample_rate,
-                                    target_channels=1,
-                                )
-                                .to_int16()
-                            )
+                            pcm = pcm.resample(
+                                target_sample_rate=pcm.sample_rate,
+                                target_channels=1,
+                            ).to_int16()
                             yield pcm
             except json.JSONDecodeError as e:
                 logger.warning("Failed to parse JSON line: %s", e)

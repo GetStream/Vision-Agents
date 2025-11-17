@@ -114,7 +114,9 @@ async def create_agent(**kwargs) -> Agent:
         if event.participant:
             user = event.participant
             user_info = user.name if user.name else str(user)
-        print(f"{time.time()} Speech detected from user: {user_info} duration {event.duration_ms:.2f}ms")
+        print(
+            f"{time.time()} Speech detected from user: {user_info} duration {event.duration_ms:.2f}ms"
+        )
 
     # Subscribe to transcript events
     @agent.subscribe
@@ -124,7 +126,7 @@ async def create_agent(**kwargs) -> Agent:
         if event.participant:
             user = event.participant
             user_info = user.name if user.name else str(user)
-        
+
         print(f"[{timestamp}] {user_info}: {event.text}")
         if event.confidence:
             print(f"    └─ confidence: {event.confidence:.2%}")
@@ -175,6 +177,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         client.delete_users([user_id])

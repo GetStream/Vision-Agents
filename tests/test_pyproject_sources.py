@@ -76,11 +76,12 @@ def test_uv_source_paths_exist(
             f"{message}, resolved path {resolved_path} is outside the repository",
         ) from error
 
-    assert resolved_path.exists(), f"{message}, resolved path {resolved_path} is missing"
+    assert resolved_path.exists(), (
+        f"{message}, resolved path {resolved_path} is missing"
+    )
     assert resolved_path.is_dir(), (
         f"{message}, resolved path {resolved_path} is not a directory"
     )
-    assert (
-        resolved_path / "pyproject.toml"
-    ).exists(), f"{message}, pyproject.toml not found at {resolved_path}"
-
+    assert (resolved_path / "pyproject.toml").exists(), (
+        f"{message}, pyproject.toml not found at {resolved_path}"
+    )

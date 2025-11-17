@@ -31,9 +31,7 @@ async def create_agent(**kwargs) -> Agent:
             "Keep responses conversational and natural. "
             "Be friendly and engaging."
         ),
-        llm=gemini.Realtime(
-            model="gemini-2.5-flash-native-audio-preview-09-2025"
-        ),
+        llm=gemini.Realtime(model="gemini-2.5-flash-native-audio-preview-09-2025"),
         processors=[
             heygen.AvatarPublisher(
                 avatar_id="default",
@@ -57,7 +55,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-        
+
         # Start the conversation
         await agent.llm.simple_response(
             text="Hello! I'm your AI assistant. How can I help you today?"
@@ -69,4 +67,3 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-

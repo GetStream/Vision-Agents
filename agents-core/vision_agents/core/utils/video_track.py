@@ -9,6 +9,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class QueuedVideoTrack(VideoStreamTrack):
     """
     QueuedVideoTrack is an implementation of VideoStreamTrack that allows you write video frames to it
@@ -17,7 +18,9 @@ class QueuedVideoTrack(VideoStreamTrack):
 
     def __init__(self, width: int = 1280, height: int = 720, fps: int = 1):
         super().__init__()
-        self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=10)
+        self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(
+            maxlen=10
+        )
 
         # Set video quality parameters
         self.width = width
@@ -49,7 +52,7 @@ class QueuedVideoTrack(VideoStreamTrack):
 
         try:
             # Try to get a frame from queue with fps interval
-            frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1/self.fps)
+            frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1 / self.fps)
             if frame:
                 self.last_frame = frame
                 logger.debug(f"📥 Got new frame from queue: {frame}")

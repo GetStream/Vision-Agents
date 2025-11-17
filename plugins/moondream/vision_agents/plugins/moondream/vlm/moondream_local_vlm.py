@@ -30,10 +30,10 @@ logger = logging.getLogger(__name__)
 
 class LocalVLM(llm.VideoLLM):
     """Local VLM using Moondream model for captioning or visual queries.
-    
+
     This VLM downloads and runs the moondream3-preview model locally from Hugging Face,
     providing captioning and visual question answering capabilities without requiring an API key.
-    
+
     Note: The moondream3-preview model is gated and requires authentication:
     - Request access at https://huggingface.co/moondream/moondream3-preview
     - Once approved, authenticate using one of:
@@ -52,12 +52,12 @@ class LocalVLM(llm.VideoLLM):
     """
 
     def __init__(
-            self,
-            mode: Literal["vqa", "caption"] = "vqa",
-            max_workers: int = 10,
-            force_cpu: bool = False,
-            model_name: str = "moondream/moondream3-preview",
-            options: Optional[AgentOptions] = None,
+        self,
+        mode: Literal["vqa", "caption"] = "vqa",
+        max_workers: int = 10,
+        force_cpu: bool = False,
+        model_name: str = "moondream/moondream3-preview",
+        options: Optional[AgentOptions] = None,
     ):
         super().__init__()
 
@@ -73,14 +73,18 @@ class LocalVLM(llm.VideoLLM):
 
         if torch.backends.mps.is_available():
             self.force_cpu = True
-            logger.warning("⚠️ MPS detected but using CPU (moondream model has CUDA dependencies incompatible with MPS)")
+            logger.warning(
+                "⚠️ MPS detected but using CPU (moondream model has CUDA dependencies incompatible with MPS)"
+            )
 
         if self.force_cpu:
             self.device, self._dtype = torch.device("cpu"), torch.float32
         else:
             self.device, self._dtype = handle_device()
 
-        self._frame_buffer: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(maxlen=10)
+        self._frame_buffer: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(
+            maxlen=10
+        )
         self._latest_frame: Optional[av.VideoFrame] = None
         self._video_forwarder: Optional[VideoForwarder] = None
         self._stt_subscription_setup = False
@@ -146,12 +150,18 @@ class LocalVLM(llm.VideoLLM):
                 model.compile()
             except Exception as compile_error:
                 # If compilation fails, log and continue without compilation
-                logger.warning(f"⚠️ Model compilation failed, continuing without compilation: {compile_error}")
+                logger.warning(
+                    f"⚠️ Model compilation failed, continuing without compilation: {compile_error}"
+                )
 
             return model
         except Exception as e:
             error_msg = str(e)
-            if "gated repo" in error_msg.lower() or "403" in error_msg or "authorized" in error_msg.lower():
+            if (
+                "gated repo" in error_msg.lower()
+                or "403" in error_msg
+                or "authorized" in error_msg.lower()
+            ):
                 logger.exception(
                     "❌ Failed to load Moondream model: Model requires authentication.\n"
                     "This model is gated and requires access approval:\n"
@@ -166,9 +176,9 @@ class LocalVLM(llm.VideoLLM):
             raise
 
     async def watch_video_track(
-            self,
-            track: aiortc.mediastreams.MediaStreamTrack,
-            shared_forwarder: Optional[VideoForwarder] = None
+        self,
+        track: aiortc.mediastreams.MediaStreamTrack,
+        shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
         """Setup video forwarding and STT subscription."""
         if self._video_forwarder is not None and shared_forwarder is None:
@@ -182,9 +192,7 @@ class LocalVLM(llm.VideoLLM):
             self._video_forwarder = shared_forwarder
             logger.info("🎥 Moondream Local VLM subscribing to shared VideoForwarder")
             self._video_forwarder.add_frame_handler(
-                self._on_frame_received,
-                fps=1.0,
-                name="moondream_local_vlm"
+                self._on_frame_received, fps=1.0, name="moondream_local_vlm"
             )
         else:
             self._video_forwarder = VideoForwarder(
@@ -229,7 +237,9 @@ class LocalVLM(llm.VideoLLM):
         result = "".join(chunks)
         return result
 
-    async def _process_frame(self, text: Optional[str] = None) -> Optional[LLMResponseEvent]:
+    async def _process_frame(
+        self, text: Optional[str] = None
+    ) -> Optional[LLMResponseEvent]:
         if self._latest_frame is None:
             logger.warning("No frames available, skipping Moondream processing")
             return None
@@ -259,7 +269,9 @@ class LocalVLM(llm.VideoLLM):
                     logger.warning("VQA mode requires text/question")
                     return None
 
-                result = await asyncio.to_thread(self.model.query, image, text, stream=True)
+                result = await asyncio.to_thread(
+                    self.model.query, image, text, stream=True
+                )
 
                 if isinstance(result, dict) and "answer" in result:
                     stream = result["answer"]
@@ -278,7 +290,9 @@ class LocalVLM(llm.VideoLLM):
                 return LLMResponseEvent(original=answer, text=answer)
 
             else:
-                result = await asyncio.to_thread(self.model.caption, image, length="normal", stream=True)
+                result = await asyncio.to_thread(
+                    self.model.caption, image, length="normal", stream=True
+                )
 
                 if isinstance(result, dict) and "caption" in result:
                     stream = result["caption"]
@@ -311,10 +325,10 @@ class LocalVLM(llm.VideoLLM):
         await self._process_frame(text=event.text)
 
     async def simple_response(
-            self,
-            text: str,
-            processors: Optional[List[Processor]] = None,
-            participant: Optional[Participant] = None,
+        self,
+        text: str,
+        processors: Optional[List[Processor]] = None,
+        participant: Optional[Participant] = None,
     ) -> LLMResponseEvent:
         """
         simple_response is a standardized way to create a response.
@@ -329,8 +343,11 @@ class LocalVLM(llm.VideoLLM):
         """
         result = await self._process_frame(text=text if self.mode == "vqa" else None)
         if result is None:
-            return LLMResponseEvent(original=None, text="",
-                                    exception=ValueError("No frame available or processing failed"))
+            return LLMResponseEvent(
+                original=None,
+                text="",
+                exception=ValueError("No frame available or processing failed"),
+            )
         return result
 
     async def _stop_watching_video_track(self) -> None:

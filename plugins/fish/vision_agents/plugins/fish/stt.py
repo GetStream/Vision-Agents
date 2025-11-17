@@ -128,7 +128,7 @@ class STT(stt.STT):
             # Create a default participant if none provided
             if participant is None:
                 participant = Participant(original=None, user_id="test-user")
-            
+
             self._emit_transcript_event(transcript_text, participant, response_metadata)
 
         except Exception as e:

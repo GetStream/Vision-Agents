@@ -10,6 +10,7 @@ To run only unit tests (no model loading):
 
     uv run pytest plugins/moondream/tests/test_moondream_local.py -m "not integration" -v
 """
+
 import asyncio
 import os
 from pathlib import Path
@@ -52,7 +53,9 @@ class TestMoondreamLocalProcessor:
         not os.getenv("HF_TOKEN"),
         reason="HF_TOKEN environment variable not set (required for model access)",
     )
-    async def test_model_loads_correctly(self, moondream_processor: LocalDetectionProcessor):
+    async def test_model_loads_correctly(
+        self, moondream_processor: LocalDetectionProcessor
+    ):
         """Test that start() successfully loads the model."""
         # Model should be None initially
         assert moondream_processor.model is None
@@ -179,7 +182,7 @@ class TestMoondreamLocalProcessor:
         """Test CUDA auto-detection."""
         # Mock CUDA available, MPS not available
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-        
+
         # Ensure torch.backends.mps exists for the test
         if not hasattr(torch.backends, "mps"):
             # Create a mock mps module
@@ -187,7 +190,7 @@ class TestMoondreamLocalProcessor:
                 @staticmethod
                 def is_available():
                     return False
-            
+
             monkeypatch.setattr(torch.backends, "mps", MockMPS())
         else:
             monkeypatch.setattr(
@@ -207,7 +210,7 @@ class TestMoondreamLocalProcessor:
         """Test CPU fallback when CUDA and MPS are unavailable."""
         # Mock both CUDA and MPS as unavailable
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-        
+
         # Ensure torch.backends.mps exists for the test
         if not hasattr(torch.backends, "mps"):
             # Create a mock mps module
@@ -215,7 +218,7 @@ class TestMoondreamLocalProcessor:
                 @staticmethod
                 def is_available():
                     return False
-            
+
             monkeypatch.setattr(torch.backends, "mps", MockMPS())
         else:
             monkeypatch.setattr(
@@ -235,7 +238,7 @@ class TestMoondreamLocalProcessor:
         """Test MPS override to CPU (moondream doesn't work with MPS)."""
         # Mock CUDA not available
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-        
+
         # Ensure torch.backends.mps exists and mock it as available
         if not hasattr(torch.backends, "mps"):
             # Create a mock mps module with is_available returning True
@@ -243,7 +246,7 @@ class TestMoondreamLocalProcessor:
                 @staticmethod
                 def is_available():
                     return True
-            
+
             monkeypatch.setattr(torch.backends, "mps", MockMPS())
         else:
             monkeypatch.setattr(
@@ -287,4 +290,3 @@ class TestMoondreamLocalProcessor:
             assert processor.device == "cuda"
         finally:
             processor.close()
-

@@ -49,7 +49,7 @@ async def create_agent(**kwargs) -> Agent:
         if event.participant:
             user = event.participant
             user_info = user.name if user.name else str(user)
-        
+
         print(f"[{event.timestamp}] {user_info}: {event.text}")
         if event.confidence:
             print(f"    └─ confidence: {event.confidence:.2%}")
@@ -74,7 +74,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.simple_response("Hello! I can transcribe your speech and respond to you.")
+        await agent.simple_response(
+            "Hello! I can transcribe your speech and respond to you."
+        )
         await agent.finish()
 
 

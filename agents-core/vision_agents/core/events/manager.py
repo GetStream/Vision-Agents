@@ -334,7 +334,9 @@ class EventManager:
         annotations = typing.get_type_hints(function)
 
         if not asyncio.iscoroutinefunction(function):
-            raise RuntimeError("Handlers must be coroutines. Use async def handler(event: EventType):")
+            raise RuntimeError(
+                "Handlers must be coroutines. Use async def handler(event: EventType):"
+            )
 
         for name, event_class in annotations.items():
             origin = get_origin(event_class)
@@ -548,9 +550,11 @@ class EventManager:
     async def _process_single_event(self, event):
         """Process a single event."""
         for handler in self._handlers.get(event.type, []):
-            module_name = getattr(handler, '__module__', 'unknown')
+            module_name = getattr(handler, "__module__", "unknown")
             if event.type not in self._silent_events:
-                logger.debug(f"Called handler {handler.__name__} from {module_name} for event {event.type}")
+                logger.debug(
+                    f"Called handler {handler.__name__} from {module_name} for event {event.type}"
+                )
 
             loop = asyncio.get_running_loop()
             handler_task = loop.create_task(self._run_handler(handler, event))

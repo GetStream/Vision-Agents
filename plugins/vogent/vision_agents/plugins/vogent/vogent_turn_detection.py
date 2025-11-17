@@ -39,15 +39,15 @@ class Silence:
 class VogentTurnDetection(TurnDetector):
     """
     Vogent Turn Detection combines audio intonation and text context for accurate turn detection.
-    
+
     This implementation:
     1. Uses Silero VAD to detect when speech starts/stops
     2. Uses faster-whisper to transcribe audio in real-time
     3. Uses Vogent Turn model (multimodal) to detect turn completion
-    
+
     Vogent operates on both audio features AND text context, making it more accurate
     than audio-only approaches, especially for handling incomplete thoughts.
-    
+
     Reference: https://github.com/vogent/vogent-turn
     Blogpost: https://blog.vogent.ai/posts/voturn-80m-state-of-the-art-turn-detection-for-voice-agents
     """
@@ -65,7 +65,7 @@ class VogentTurnDetection(TurnDetector):
     ):
         """
         Initialize Vogent Turn Detection.
-        
+
         Args:
             whisper_model_size: Faster-whisper model size (tiny, base, small, medium, large)
             vad_reset_interval_seconds: Reset VAD internal state every N seconds to prevent drift
@@ -77,7 +77,7 @@ class VogentTurnDetection(TurnDetector):
             model_dir: Directory to store model files
         """
         super().__init__()
-        
+
         # Configuration parameters
         self.whisper_model_size = whisper_model_size
         self.vad_reset_interval_seconds = vad_reset_interval_seconds
@@ -87,7 +87,7 @@ class VogentTurnDetection(TurnDetector):
         self.max_segment_duration_seconds = max_segment_duration_seconds
         self.vogent_threshold = vogent_threshold
         self.model_dir = model_dir
-        
+
         # Audio buffering for processing
         self._audio_buffer = PcmData(
             sample_rate=RATE, channels=1, format=AudioFormat.F32
@@ -98,12 +98,12 @@ class VogentTurnDetection(TurnDetector):
         )
         self._active_segment: Optional[PcmData] = None
         self._trailing_silence_ms = self.silence_duration_ms
-        
+
         # Producer-consumer pattern: audio packets go into buffer, background task processes them
         self._audio_queue: asyncio.Queue[Any] = asyncio.Queue()
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown_event = asyncio.Event()
-        
+
         # Model instances (initialized in start())
         self.vad = None
         self.whisper_stt = fast_whisper.STT(
@@ -118,17 +118,17 @@ class VogentTurnDetection(TurnDetector):
         """Initialize models and prepare for turn detection."""
         # Ensure model directory exists
         os.makedirs(self.model_dir, exist_ok=True)
-        
+
         # Prepare models in parallel
         await asyncio.gather(
             self._prepare_silero_vad(),
             self._prepare_whisper(),
             self._prepare_vogent(),
         )
-        
+
         # Start background processing task
         self._processing_task = asyncio.create_task(self._process_audio_loop())
-        
+
         # Call parent start method
         await super().start()
 
@@ -138,7 +138,9 @@ class VogentTurnDetection(TurnDetector):
         await ensure_model(path, SILERO_ONNX_URL)
         # Initialize VAD in thread pool to avoid blocking event loop
         self.vad = await asyncio.to_thread(
-            lambda: SileroVAD(path, reset_interval_seconds=self.vad_reset_interval_seconds)  # type: ignore
+            lambda: SileroVAD(
+                path, reset_interval_seconds=self.vad_reset_interval_seconds
+            )  # type: ignore
         )
 
     async def _prepare_whisper(self) -> None:
@@ -208,7 +210,7 @@ class VogentTurnDetection(TurnDetector):
     ) -> None:
         """
         Process audio packet through VAD -> Whisper -> Vogent pipeline.
-        
+
         This method:
         1. Buffers audio and processes in 512-sample chunks
         2. Uses VAD to detect speech
@@ -216,7 +218,7 @@ class VogentTurnDetection(TurnDetector):
         4. When reaching silence or max duration:
            - Transcribes segment with Whisper
            - Checks turn completion with Vogent (audio + text)
-        
+
         Args:
             audio_data: PcmData object containing audio samples
             participant: Participant that's speaking
@@ -243,7 +245,7 @@ class VogentTurnDetection(TurnDetector):
             # Predict if this segment has speech
             if self.vad is None:
                 continue
-                
+
             speech_probability = self.vad.predict_speech(chunk.samples)
             is_speech = speech_probability > self.speech_probability_threshold
 
@@ -260,7 +262,11 @@ class VogentTurnDetection(TurnDetector):
                     self._silence.trailing_silence_chunks += 1
 
                 trailing_silence_ms = (
-                    self._silence.trailing_silence_chunks * CHUNK / RATE * 1000 * 5  # DTX correction
+                    self._silence.trailing_silence_chunks
+                    * CHUNK
+                    / RATE
+                    * 1000
+                    * 5  # DTX correction
                 )
                 long_silence = trailing_silence_ms > self._trailing_silence_ms
                 max_duration_reached = (
@@ -276,20 +282,20 @@ class VogentTurnDetection(TurnDetector):
                     merged.append(self._pre_speech_buffer)
                     merged.append(self._active_segment)
                     merged = merged.tail(8, True, "start")
-                    
+
                     # Transcribe the segment with Whisper
                     transcription = await self._transcribe_segment(merged)
-                    
+
                     # Get previous line from conversation for context
                     prev_line = self._get_previous_line(conversation)
-                    
+
                     # Check if turn is complete using Vogent (multimodal: audio + text)
                     is_complete = await self._predict_turn_completed(
                         merged,
                         prev_line=prev_line,
                         curr_line=transcription,
                     )
-                    
+
                     if is_complete:
                         self._emit_end_turn_event(
                             participant=participant,
@@ -305,7 +311,7 @@ class VogentTurnDetection(TurnDetector):
                         )
                         self._pre_speech_buffer.append(merged)
                         self._pre_speech_buffer = self._pre_speech_buffer.tail(8)
-                        
+
             elif is_speech and self._active_segment is None:
                 self._emit_start_turn_event(TurnStartedEvent(participant=participant))
                 # Create a new segment
@@ -346,20 +352,20 @@ class VogentTurnDetection(TurnDetector):
     async def _transcribe_segment(self, pcm: PcmData) -> str:
         """
         Transcribe audio segment using faster-whisper.
-        
+
         Args:
             pcm: PcmData containing audio samples
-            
+
         Returns:
             Transcribed text
         """
         # Ensure it's 16khz and f32 format
         pcm = pcm.resample(16000).to_float32()
         audio_array = pcm.samples
-        
+
         if self.whisper is None:
             return ""
-        
+
         # Run transcription in thread pool to avoid blocking
         segments, info = await asyncio.to_thread(
             self.whisper.transcribe,
@@ -368,29 +374,29 @@ class VogentTurnDetection(TurnDetector):
             beam_size=1,
             vad_filter=False,  # We already did VAD
         )
-        
+
         # Collect all text segments
         text_parts = []
         for segment in segments:
             text_parts.append(segment.text.strip())
-        
+
         transcription = " ".join(text_parts).strip()
         return transcription
 
     async def _predict_turn_completed(
-        self, 
-        pcm: PcmData, 
+        self,
+        pcm: PcmData,
         prev_line: str,
         curr_line: str,
     ) -> bool:
         """
         Predict whether the current turn is complete using Vogent.
-        
+
         Args:
             pcm: PcmData containing audio samples
             prev_line: Previous speaker's text (for context)
             curr_line: Current speaker's text
-            
+
         Returns:
             True if turn is complete, False otherwise
         """
@@ -399,10 +405,10 @@ class VogentTurnDetection(TurnDetector):
 
         # Truncate to 8 seconds
         audio_array = pcm.tail(8, False).samples
-        
+
         if self.vogent is None:
             return False
-        
+
         # Run vogent prediction in thread pool
         result = await asyncio.to_thread(
             self.vogent.predict,
@@ -412,37 +418,37 @@ class VogentTurnDetection(TurnDetector):
             sample_rate=16000,
             return_probs=True,
         )
-        
+
         # Check if probability exceeds threshold
-        is_complete = result['prob_endpoint'] > self.vogent_threshold
+        is_complete = result["prob_endpoint"] > self.vogent_threshold
         logger.debug(
             f"Vogent probability: {result['prob_endpoint']:.3f}, "
             f"threshold: {self.vogent_threshold}, is_complete: {is_complete}"
         )
-        
+
         return is_complete
 
     def _get_previous_line(self, conversation: Optional[Conversation]) -> str:
         """
         Extract the previous speaker's line from conversation history.
-        
+
         Args:
             conversation: Conversation object with message history
-            
+
         Returns:
             Previous line text, or empty string if not available
         """
         if conversation is None or not conversation.messages:
             return ""
-        
+
         # Get the last message that's not from the current speaker
         # Typically this would be the assistant or another user
         for message in reversed(conversation.messages):
             if message.content and message.content.strip():
                 # Remove terminal punctuation for better vogent performance
-                text = message.content.strip().rstrip('.!?')
+                text = message.content.strip().rstrip(".!?")
                 return text
-        
+
         return ""
 
 
@@ -450,20 +456,20 @@ class VogentTurnDetection(TurnDetector):
 class SileroVAD:
     """
     Minimal Silero VAD ONNX wrapper for 16 kHz, mono, chunk=512.
-    
+
     Reused from smart_turn implementation.
     """
 
     def __init__(self, model_path: str, reset_interval_seconds: float = 5.0):
         """
         Initialize Silero VAD.
-        
+
         Args:
             model_path: Path to the ONNX model file
             reset_interval_seconds: Reset internal state every N seconds to prevent drift
         """
         import onnxruntime as ort
-        
+
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = 1
         self.session = ort.InferenceSession(model_path, sess_options=opts)
@@ -511,5 +517,3 @@ class SileroVAD:
 
         # out shape is (1, 1) -> return scalar
         return float(out[0][0])
-
-

@@ -188,7 +188,6 @@ class Realtime(realtime.Realtime):
         # No video support for now.
         return None
 
-
     async def connect(self):
         """To connect we need to do a few things
 

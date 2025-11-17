@@ -1499,7 +1499,7 @@ class ParticipantJoinedEvent(BaseEvent):
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
-    
+
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
@@ -1548,7 +1548,7 @@ class ParticipantLeftEvent(BaseEvent):
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
-    
+
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
@@ -1628,7 +1628,7 @@ class ParticipantUpdatedEvent(BaseEvent):
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
-    
+
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
@@ -2103,7 +2103,7 @@ class TrackPublishedEvent(BaseEvent):
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
-    
+
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
@@ -2159,7 +2159,7 @@ class TrackUnpublishedEvent(BaseEvent):
             return None
         proto_val = getattr(self.payload, "participant", None)
         return Participant.from_proto(proto_val) if proto_val is not None else None
-    
+
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""

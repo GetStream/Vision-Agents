@@ -10,7 +10,10 @@ def handle_device():
     else:
         return torch.device("cpu"), torch.float32
 
-def parse_detection_bbox(obj: Dict, object_type: str, conf_threshold: float) -> Optional[Dict]:
+
+def parse_detection_bbox(
+    obj: Dict, object_type: str, conf_threshold: float
+) -> Optional[Dict]:
     confidence = obj.get("confidence", 1.0)
 
     # Filter by confidence threshold
@@ -21,14 +24,11 @@ def parse_detection_bbox(obj: Dict, object_type: str, conf_threshold: float) -> 
         obj.get("x_min", 0),
         obj.get("y_min", 0),
         obj.get("x_max", 0),
-        obj.get("y_max", 0)
+        obj.get("y_max", 0),
     ]
 
-    return {
-        "label": object_type,
-        "bbox": bbox,
-        "confidence": confidence
-    }
+    return {"label": object_type, "bbox": bbox, "confidence": confidence}
+
 
 def normalize_bbox_coordinates(bbox: List[float], width: int, height: int) -> tuple:
     if len(bbox) != 4:
@@ -94,7 +94,7 @@ def annotate_detections(
             (x1, y1 - text_height - baseline - 5),
             (x1 + text_width, y1),
             bbox_color,
-            -1
+            -1,
         )
 
         # Draw label text using cached parameters
@@ -105,7 +105,7 @@ def annotate_detections(
             font,
             font_scale,
             text_color,
-            font_thickness
+            font_thickness,
         )
 
     return annotated
