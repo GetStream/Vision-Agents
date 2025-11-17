@@ -1,4 +1,4 @@
-<img width="1280" height="360" alt="Readme" src="https://github.com/user-attachments/assets/80c437dc-a80a-45da-bd18-0545740a3358" />
+<img width="1280" height="360" alt="Readme" src="assets/repo_image.png" />
 
 # Open Vision Agents by Stream
 
