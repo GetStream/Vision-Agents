@@ -23,20 +23,11 @@ runs:
         python-version: ${{ inputs.python-version }}
         version: "latest"
         enable-cache: true
+        prune-cache: false
         cache-suffix: ${{ inputs.python-version }}
         cache-dependency-glob: |
           **/pyproject.toml
           **/uv.lock
-
-#    - name: Cache .venv directory
-#      id: cache_venv
-#      uses: actions/cache@v4
-#      with:
-#        path: .venv
-#        key: uv-venv-v1-${{ runner.os }}-py${{ inputs.python-version }}-${{ hashFiles('**/uv.lock') }}
-#        restore-keys: |
-#          uv-venv-v1-${{ runner.os }}-py${{ inputs.python-version }}-
-#          uv-venv-v1-${{ runner.os }}-
 
     - name: Log cache status
       shell: bash
