@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import decart, getstream, openai, elevenlabs
+from vision_agents.plugins import decart, getstream, openai, elevenlabs, deepgram
 
 logger = logging.getLogger(__name__)
 
@@ -22,22 +22,22 @@ async def create_agent(**kwargs) -> Agent:
     """Create the agent with your plugin configuration."""
 
     processor = decart.RestylingProcessor(
-        initial_prompt="Cyberpunk city", model="mirage_v2"
+        initial_prompt="A cute animated movie with vibrant colours", model="mirage_v2"
     )
     llm = openai.LLM(model="gpt-4o-mini")
 
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Friendly AI", id="agent"),
-        instructions="Be nice to the user",
+        agent_user=User(name="Story teller", id="agent"),
+        instructions="You are a story teller. You will tell a short story to the user. You will use the Decart processor to change the style of the video and user's background. You can embed audio tags in your responses for added effect Emotional tone: [EXCITED], [NERVOUS], [FRUSTRATED], [TIRED] Reactions: [GASP], [SIGH], [LAUGHS], [GULPS] Volume & energy: [WHISPERING], [SHOUTING], [QUIETLY], [LOUDLY] Pacing & rhythm: [PAUSES], [STAMMERS], [RUSHED]",
         llm=llm,
-        tts=elevenlabs.TTS(),
-        stt=elevenlabs.STT(),
+        tts=elevenlabs.TTS(voice_id="N2lVS1w4EtoT3dr4eOWO"),
+        stt=deepgram.STT(),
         processors=[processor],
     )
 
     @llm.register_function(
-        description="Dynamically change the prompt of the Decart processor"
+        description="This function changes the prompt of the Decart processor which in turn changes the style of the video and user's background"
     )
     async def change_prompt(prompt: str) -> str:
         logger.info("------Changing prompt------")
