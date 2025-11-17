@@ -10,23 +10,47 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # If set, uv will run without updating the uv.lock file. Equivalent to the `uv run --frozen`.
+  UV_FROZEN: "1"
+
 jobs:
-  lint:
-    name: Ruff & mypy
+  ruff:
+    name: Ruff
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - uses: ./.github/actions/python-uv-setup
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
       - name: Run Ruff
         run: uv run ruff check .
-      - name: Mypy core
+
+  mypy:
+    name: Mypy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
+      # Restore mypy cache to speed up the run
+      - name: Restore mypy cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .mypy_cache
+          key: mypy-cache-${{ hashFiles('pyproject.toml') }}
+      - name: Run mypy for core
         run: uv run mypy --install-types --non-interactive agents-core/vision_agents
-      - name: Mypy plugins
+      - name: Run mypy for plugins
         run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
-      - name: Show environment name
-        run: |
-          echo "Environment: ${{ job.environment }}"
+      # Save the updated mypy cache
+      - name: Save mypy cache
+        uses: actions/cache/save@v4
+        with:
+          path: .mypy_cache
+          key: mypy-cache-${{ hashFiles('pyproject.toml') }}
 
   test:
     name: Test "${{ inputs.marker }}"
@@ -50,7 +74,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - uses: ./.github/actions/python-uv-setup
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
       - name: Export AWS_BEARER_TOKEN_BEDROCK (heredoc)
         shell: bash
         run: |
@@ -62,7 +87,7 @@ jobs:
 
       - name: Verify presence
         run: uv run python -c "import os; v=os.getenv('AWS_BEARER_TOKEN_BEDROCK'); print('exists', v is not None, 'len', 0 if v is None else len(v))"
-      - name: Run test
-        run: uv run pytest -n auto -m "${{ inputs.marker }}"
-      - name: Run plugin test
-        run: uv run pytest plugins/*/tests/*.py -n auto -m "${{ inputs.marker }}"
+      - name: Run core tests
+        run: uv run pytest -n auto -m "${{ inputs.marker }}" tests/
+      - name: Run plugin tests
+        run: uv run pytest -n auto -m "${{ inputs.marker }}" plugins/*/tests/*.py
