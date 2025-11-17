@@ -27,8 +27,8 @@ jobs:
       - name: Run Ruff
         run: uv run ruff check .
 
-  mypy-core:
-    name: Run Mypy for core
+  mypy:
+    name: Mypy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -41,7 +41,7 @@ jobs:
         with:
           path: .mypy_cache
           key: mypy-cache-${{ hashFiles('pyproject.toml', 'mypy.ini') }}
-      - name: Run mypy core
+      - name: Run mypy for core
         run: uv run mypy --install-types --non-interactive agents-core/vision_agents
       - name: Run mypy for plugins
         run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
