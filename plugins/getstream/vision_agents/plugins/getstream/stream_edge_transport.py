@@ -86,6 +86,7 @@ class StreamEdge(EdgeTransport):
         # Register event handlers
         self.events.subscribe(self._on_track_published)
         self.events.subscribe(self._on_track_removed)
+        self.events.subscribe(self._on_call_ended)
 
     def _get_webrtc_kind(self, track_type_int: int) -> str:
         """Get the expected WebRTC kind (audio/video) for a SFU track type."""
@@ -247,6 +248,13 @@ class StreamEdge(EdgeTransport):
                 self._track_map[track_key]["published"] = False
             else:
                 logger.warning(f"Track not found in map: {track_key}")
+
+    async def _on_call_ended(self, event: sfu_events.CallEndedEvent):
+        self.events.send(
+            events.CallEndedEvent(
+                plugin_name="getstream",
+            )
+        )
 
     async def create_conversation(self, call: Call, user, instructions):
         chat_client: ChatClient = call.client.stream.chat
