@@ -40,17 +40,17 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .mypy_cache
-          key: mypy-cache-${{ hashFiles('pyproject.toml', 'mypy.ini') }}
+          key: mypy-cache-${{ hashFiles('pyproject.toml') }}
       - name: Run mypy for core
         run: uv run mypy --install-types --non-interactive agents-core/vision_agents
       - name: Run mypy for plugins
         run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
-      # Save the updated cache
+      # Save the updated mypy cache
       - name: Save mypy cache
         uses: actions/cache/save@v4
         with:
           path: .mypy_cache
-          key: mypy-cache-${{ hashFiles('pyproject.toml', 'mypy.ini') }}
+          key: mypy-cache-${{ hashFiles('pyproject.toml') }}
 
   test:
     name: Test "${{ inputs.marker }}"
