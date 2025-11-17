@@ -329,8 +329,9 @@ class ClaudeLLM(LLM):
             # 4) Done -> return all collected text
             total_text = "".join(text_parts)
             llm_response = LLMResponseEvent(
-                last_followup_stream or original, total_text
-            )  # type: ignore
+                last_followup_stream or original,  # type: ignore
+                total_text,
+            )
             self.events.send(
                 LLMResponseCompletedEvent(
                     original=last_followup_stream or original,
@@ -450,9 +451,11 @@ class ClaudeLLM(LLM):
 
         return tool_calls
 
-    def _extract_tool_calls_from_stream_chunk(
-        self, chunk: Any, current_tool_call: Optional[NormalizedToolCallItem] = None
-    ) -> tuple[List[NormalizedToolCallItem], Optional[NormalizedToolCallItem]]:  # type: ignore[override]
+    def _extract_tool_calls_from_stream_chunk(  # type: ignore[override]
+        self,
+        chunk: Any,
+        current_tool_call: Optional[NormalizedToolCallItem] = None,
+    ) -> tuple[List[NormalizedToolCallItem], Optional[NormalizedToolCallItem]]:
         """
         Extract tool calls from Anthropic streaming chunk using index-keyed accumulation.
         Args:
