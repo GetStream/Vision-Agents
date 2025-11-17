@@ -22,7 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - uses: ./.github/actions/python-uv-setup
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
       - name: Run Ruff
         run: uv run ruff check .
       - name: Show environment name
@@ -34,7 +35,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - uses: ./.github/actions/python-uv-setup
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
       - name: Run mypy core
         run: uv run mypy --install-types --non-interactive agents-core/vision_agents
       - name: Run mypy for plugins
@@ -64,7 +66,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - uses: ./.github/actions/python-uv-setup
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
       - name: Export AWS_BEARER_TOKEN_BEDROCK (heredoc)
         shell: bash
         run: |
@@ -76,7 +79,7 @@ jobs:
 
       - name: Verify presence
         run: uv run python -c "import os; v=os.getenv('AWS_BEARER_TOKEN_BEDROCK'); print('exists', v is not None, 'len', 0 if v is None else len(v))"
-      - name: Run test
+      - name: Run core tests
         run: uv run pytest -n auto -m "${{ inputs.marker }}"
-      - name: Run plugin test
+      - name: Run plugin tests
         run: uv run pytest plugins/*/tests/*.py -n auto -m "${{ inputs.marker }}"
