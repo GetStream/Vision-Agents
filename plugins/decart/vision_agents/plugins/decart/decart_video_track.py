@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class DecartVideoTrack(VideoStreamTrack):
     """Video track that forwards Decart restyled video frames.
-    
+
     Receives video frames from Decart's Realtime API and provides
     them through the standard VideoStreamTrack interface for publishing
     to the call.
@@ -21,7 +21,7 @@ class DecartVideoTrack(VideoStreamTrack):
 
     def __init__(self, width: int = 1280, height: int = 720):
         """Initialize the Decart video track.
-        
+
         Args:
             width: Video frame width.
             height: Video frame height.
@@ -44,14 +44,15 @@ class DecartVideoTrack(VideoStreamTrack):
     async def add_frame(self, frame: av.VideoFrame) -> None:
         if self._stopped:
             return
-
-        if frame.width != self.width or frame.height != self.height:
-            frame = self._resize_frame(frame)
+        # if frame.width != self.width or frame.height != self.height:
+        #     frame = await asyncio.to_thread(self._resize_frame, frame)
         self.frame_queue.put_latest_nowait(frame)
 
     # TODO: move this to a utils file
     def _resize_frame(self, frame: av.VideoFrame) -> av.VideoFrame:
-        logger.debug(f"Resizing frame from {frame.width}x{frame.height} to {self.width}x{self.height}")
+        logger.debug(
+            f"Resizing frame from {frame.width}x{frame.height} to {self.width}x{self.height}"
+        )
         img = frame.to_image()
 
         # Calculate scaling to maintain aspect ratio
@@ -67,7 +68,7 @@ class DecartVideoTrack(VideoStreamTrack):
         resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
         # Create black background at target resolution
-        result = Image.new('RGB', (target_width, target_height), (0, 0, 0))
+        result = Image.new("RGB", (target_width, target_height), (0, 0, 0))
 
         # Paste resized image centered
         x_offset = (target_width - new_width) // 2
@@ -83,7 +84,7 @@ class DecartVideoTrack(VideoStreamTrack):
         try:
             frame = await asyncio.wait_for(
                 self.frame_queue.get(),
-                timeout=0.033  # ~30 FPS
+                timeout=0.033,  # ~30 FPS
             )
             if frame:
                 self.last_frame = frame

@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
   "vision-agents",
   "python-dotenv",
-  "vision-agents-plugins-gemini",
+  "vision-agents-plugins-openai",
   "vision-agents-plugins-decart",
   "vision-agents-plugins-elvenlabs",
   "vision-agents-plugins-getstream",
@@ -17,7 +17,6 @@ dependencies = [
 [tool.uv.sources]
 vision-agents = { workspace = true }
 vision-agents-plugins-getstream = { editable=true }
-vision-agents-plugins-gemini = { editable=true }
+vision-agents-plugins-openai = { editable=true }
 vision-agents-plugins-elevenlabs = { editable=true }
 vision-agents-plugins-decart = { editable=true }
-
