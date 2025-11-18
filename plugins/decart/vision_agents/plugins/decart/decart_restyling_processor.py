@@ -140,7 +140,26 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     def publish_video_track(self) -> VideoStreamTrack:
         return self._video_track
 
-    async def set_prompt(self, prompt_text: str, enrich: Optional[bool] = None) -> None:
+    async def update_prompt(self, prompt_text: str, enrich: Optional[bool] = None) -> None:
+        """
+        Updates the prompt used for the Decart real-time client. This method allows
+        changing the current prompt and optionally specifies whether to enrich the
+        prompt content. The operation is performed asynchronously and requires an
+        active connection to the Decart client.
+
+        If the `enrich` parameter is not provided, the method uses the default
+        `self.enrich` value.
+
+        Parameters:
+            prompt_text: str
+                The text of the new prompt to be applied.
+            enrich: Optional[bool]
+                Specifies whether to enrich the prompt content. If not provided,
+                defaults to the object's `enrich` attribute.
+
+        Returns:
+            None
+        """
         if not self._realtime_client:
             logger.debug("Cannot set prompt: not connected to Decart")
             return

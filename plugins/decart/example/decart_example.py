@@ -31,7 +31,7 @@ async def create_agent(**kwargs) -> Agent:
         description="This function changes the prompt of the Decart processor which in turn changes the style of the video and user's background"
     )
     async def change_prompt(prompt: str) -> str:
-        await processor.set_prompt(prompt)
+        await processor.update_prompt(prompt)
         return f"Prompt changed to {prompt}"
 
     return agent
