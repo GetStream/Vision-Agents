@@ -4,6 +4,7 @@ import asyncio
 import pytest
 from dotenv import load_dotenv
 
+from vision_agents.core.instructions import Instructions
 from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
 from vision_agents.plugins.aws import Realtime
 from vision_agents.core.llm.events import RealtimeAudioOutputEvent
@@ -24,8 +25,8 @@ class TestBedrockRealtime:
             model="amazon.nova-sonic-v1:0",
             region_name="us-east-1",
         )
-        realtime._set_instructions(
-            "you're a kind assistant, always be friendly please."
+        realtime.set_instructions(
+            Instructions("you're a kind assistant, always be friendly please.")
         )
         try:
             yield realtime
@@ -36,8 +37,8 @@ class TestBedrockRealtime:
     async def test_simple_response_flow(self, realtime):
         # unlike other realtime LLMs, AWS doesn't reply if you only send text
         events = []
-        realtime._set_instructions(
-            "whenever you reply mention a fun fact about The Netherlands"
+        realtime.set_instructions(
+            Instructions("whenever you reply mention a fun fact about The Netherlands")
         )
 
         @realtime.events.subscribe

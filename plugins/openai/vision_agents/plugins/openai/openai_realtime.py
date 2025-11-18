@@ -34,6 +34,7 @@ from .rtc_manager import RTCManager
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.instructions import Instructions
 
 load_dotenv()
 
@@ -467,11 +468,9 @@ class Realtime(realtime.Realtime):
         except Exception as e:
             logger.error(f"Failed to send tool response: {e}")
 
-    def _set_instructions(self, instructions: str):
-        super()._set_instructions(instructions)
-        self.realtime_session["instructions"] = (
-            self._build_enhanced_instructions() or ""
-        )
+    def set_instructions(self, instructions: Instructions):
+        super().set_instructions(instructions)
+        self.realtime_session["instructions"] = self._instructions
 
     def _sanitize_tool_output(self, value: Any, max_chars: int = 60_000) -> str:
         """Sanitize tool output for OpenAI realtime.

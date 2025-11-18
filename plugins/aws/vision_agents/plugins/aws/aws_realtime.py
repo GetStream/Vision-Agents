@@ -229,12 +229,11 @@ class Realtime(realtime.Realtime):
             await asyncio.sleep(0.1)
 
             # next send system instructions
-            system_instructions = self._build_enhanced_instructions()
-            if not system_instructions:
+            if not self._instructions:
                 raise Exception(
                     "AWS Bedrock requires system instructions before sending regular user input"
                 )
-            await self.content_input(system_instructions, "SYSTEM")
+            await self.content_input(self._instructions, "SYSTEM")
 
             logger.info("AWS Bedrock connection established")
 

@@ -167,8 +167,8 @@ class ChatCompletionsLLM(LLM):
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
         # Add Agent's instructions as system prompt.
-        if self.instructions:
-            messages.append({"role": "system", "content": self.instructions})
+        if self._instructions:
+            messages.append({"role": "system", "content": self._instructions})
 
         # Add all messages from the conversation to the prompt
         if self._conversation is not None:
