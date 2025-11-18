@@ -2,6 +2,7 @@ import asyncio
 import pytest
 from dotenv import load_dotenv
 
+from vision_agents.core.instructions import Instructions
 from vision_agents.plugins.openai import Realtime
 from vision_agents.core.llm.events import (
     RealtimeAudioOutputEvent,
@@ -23,7 +24,7 @@ class TestOpenAIRealtime:
             model="gpt-realtime",
             voice="alloy",
         )
-        realtime.set_instructions("be friendly")
+        realtime.set_instructions(Instructions("be friendly"))
         try:
             yield realtime
         finally:
