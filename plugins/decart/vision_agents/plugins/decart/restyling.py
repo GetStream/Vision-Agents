@@ -2,8 +2,9 @@ import asyncio
 import logging
 import os
 from asyncio import CancelledError
-from typing import Any, Optional
+from typing import Any, Literal, Optional, cast
 
+import av
 import aiortc
 import websockets
 from aiortc import MediaStreamTrack, VideoStreamTrack
@@ -106,7 +107,9 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         self.width = width
         self.height = height
 
-        self.model = models.realtime(self.model_name)
+        self.model = models.realtime(
+            cast(Literal["mirage", "mirage_v2", "lucy_v2v_720p_rt"], self.model_name)
+        )
 
         self._decart_client = DecartClient(api_key=self.api_key)
         self._video_track = DecartVideoTrack(width=width, height=height)
@@ -224,7 +227,8 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         try:
             while not self._video_track._stopped:
                 frame = await transformed_stream.recv()
-                await self._video_track.add_frame(frame)
+                if frame and isinstance(frame, av.VideoFrame):
+                    await self._video_track.add_frame(frame)
         except asyncio.CancelledError:
             logger.debug("Frame receiving from Decart cancelled")
 

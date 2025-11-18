@@ -1,10 +1,3 @@
-"""
-Decart Plugin Example
-
-This is a sample example demonstrating how to structure a plugin example.
-You can customize this to showcase your plugin's functionality.
-"""
-
 import logging
 
 from dotenv import load_dotenv
@@ -19,8 +12,6 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create the agent with your plugin configuration."""
-
     processor = decart.RestylingProcessor(
         initial_prompt="A cute animated movie with vibrant colours", model="mirage_v2"
     )
@@ -40,7 +31,6 @@ async def create_agent(**kwargs) -> Agent:
         description="This function changes the prompt of the Decart processor which in turn changes the style of the video and user's background"
     )
     async def change_prompt(prompt: str) -> str:
-        logger.info("------Changing prompt------")
         await processor.set_prompt(prompt)
         return f"Prompt changed to {prompt}"
 
