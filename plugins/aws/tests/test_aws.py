@@ -146,7 +146,7 @@ class TestBedrockLLM:
             model="qwen.qwen3-32b-v1:0",
             region_name="us-east-1",
         )
-        llm._set_instructions("only reply in 2 letter country shortcuts")
+        llm.set_instructions("only reply in 2 letter country shortcuts")
 
         response = await llm.simple_response(
             text="Which country is rainy, protected from water with dikes and below sea level?",

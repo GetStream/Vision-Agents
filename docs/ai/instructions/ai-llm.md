@@ -22,9 +22,8 @@ class MyLLM(LLM):
         
         # some details to get right here...
         # ensure conversation history is maintained. typically by passing it ie:
-        enhanced_instructions = self._build_enhanced_instructions()
-        if enhanced_instructions:
-            kwargs["system"] = [{"text": enhanced_instructions}]
+        if self._instructions:
+            kwargs["system"] = [{"text": self._instructions}]
             
         response_iterator = await self.client.mynativemethod(self, *args, **kwargs)
         

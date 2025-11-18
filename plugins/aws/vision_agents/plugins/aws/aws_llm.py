@@ -127,9 +127,8 @@ class BedrockLLM(LLM):
             kwargs["toolConfig"] = {"tools": converted_tools}
 
         # Combine original instructions with markdown file contents
-        enhanced_instructions = self._build_enhanced_instructions()
-        if enhanced_instructions:
-            kwargs["system"] = [{"text": enhanced_instructions}]
+        if self._instructions:
+            kwargs["system"] = [{"text": self._instructions}]
 
         # Ensure the AI remembers the past conversation
         new_messages = kwargs.get("messages", [])
@@ -354,10 +353,8 @@ class BedrockLLM(LLM):
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
 
-        # Combine original instructions with markdown file contents
-        enhanced_instructions = self._build_enhanced_instructions()
-        if enhanced_instructions:
-            kwargs["system"] = [{"text": enhanced_instructions}]
+        if self._instructions:
+            kwargs["system"] = [{"text": self._instructions}]
 
         try:
             system_param = kwargs.get("system")

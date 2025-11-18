@@ -84,7 +84,7 @@ class TestGeminiLLM:
         llm = GeminiLLM(model="gemini-2.0-flash-exp")
         llm.set_conversation(InMemoryConversation("be friendly", []))
 
-        llm._set_instructions("only reply in 2 letter country shortcuts")
+        llm.set_instructions("only reply in 2 letter country shortcuts")
 
         response = await llm.simple_response(
             text="Which country is rainy, protected from water with dikes and below sea level?",

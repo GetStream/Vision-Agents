@@ -26,6 +26,7 @@ from ..edge.events import (
 )
 from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
 from ..events.manager import EventManager
+from ..instructions import Instructions
 from ..llm import events as llm_events
 from ..llm.events import (
     LLMResponseChunkEvent,
@@ -139,7 +140,7 @@ class Agent:
         # audio incoming is enqueued to self._incoming_audio_queue (eg. human audio)
         self._incoming_audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
 
-        self.instructions = instructions
+        self.instructions = Instructions(input_text=instructions)
         self.edge = edge
         self.agent_user = agent_user
         self._agent_user_initialized = False
@@ -506,7 +507,7 @@ class Agent:
 
         # Setup chat and connect it to transcript events (we'll wait at the end)
         create_conversation_coro = self.edge.create_conversation(
-            call, self.agent_user, self.instructions
+            call, self.agent_user, self.instructions.full_reference
         )
 
         try:

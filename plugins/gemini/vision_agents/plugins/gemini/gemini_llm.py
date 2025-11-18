@@ -162,8 +162,7 @@ class GeminiLLM(LLM):
 
         # initialize chat if needed
         if self.chat is None:
-            enhanced_instructions = self._build_enhanced_instructions()
-            config = self._build_config(system_instruction=enhanced_instructions)
+            config = self._build_config(system_instruction=self._instructions)
             self.chat = self.client.chats.create(model=self.model, config=config)
 
         # Add tools if available - Gemini uses GenerateContentConfig

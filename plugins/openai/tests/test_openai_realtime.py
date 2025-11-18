@@ -23,7 +23,7 @@ class TestOpenAIRealtime:
             model="gpt-realtime",
             voice="alloy",
         )
-        realtime._set_instructions("be friendly")
+        realtime.set_instructions("be friendly")
         try:
             yield realtime
         finally:

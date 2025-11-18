@@ -24,7 +24,7 @@ class TestBedrockRealtime:
             model="amazon.nova-sonic-v1:0",
             region_name="us-east-1",
         )
-        realtime._set_instructions(
+        realtime.set_instructions(
             "you're a kind assistant, always be friendly please."
         )
         try:
@@ -36,7 +36,7 @@ class TestBedrockRealtime:
     async def test_simple_response_flow(self, realtime):
         # unlike other realtime LLMs, AWS doesn't reply if you only send text
         events = []
-        realtime._set_instructions(
+        realtime.set_instructions(
             "whenever you reply mention a fun fact about The Netherlands"
         )
 

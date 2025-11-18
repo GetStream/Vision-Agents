@@ -143,7 +143,7 @@ class TestOpenRouterLLM:
 
         pytest.skip("instruction following doesnt always work")
         llm = LLM(model="anthropic/claude-haiku-4.5")
-        llm._set_instructions("Only reply in 2 letter country shortcuts")
+        llm.set_instructions("Only reply in 2 letter country shortcuts")
 
         response = await llm.simple_response(
             text="Which country is rainy, protected from water with dikes and below sea level?",

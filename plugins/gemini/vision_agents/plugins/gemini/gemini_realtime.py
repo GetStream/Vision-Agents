@@ -320,7 +320,7 @@ class GeminiRealtime(realtime.Realtime):
             config["session_resumption"] = {"handle": self._session_resumption_id}
 
         # set the instructions
-        config["system_instruction"] = self._build_enhanced_instructions()
+        config["system_instruction"] = self._instructions
 
         # Add tools if available - Gemini Live uses similar format to regular Gemini
         tools_spec = self.get_available_functions()

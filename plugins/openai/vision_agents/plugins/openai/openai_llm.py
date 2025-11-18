@@ -1,25 +1,25 @@
-from typing import Optional, List, ParamSpec, TypeVar, TYPE_CHECKING, Any, Dict
 import json
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, ParamSpec, TypeVar
 
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from openai import AsyncOpenAI
 from openai.lib.streaming.responses import ResponseStreamEvent
 from openai.types.responses import (
-    ResponseCompletedEvent,
-    ResponseTextDeltaEvent,
     Response as OpenAIResponse,
 )
-
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
+from openai.types.responses import (
+    ResponseCompletedEvent,
+    ResponseTextDeltaEvent,
+)
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
-from . import events
-
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.processors import Processor
+
+from . import events
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
@@ -95,16 +95,10 @@ class OpenAILLM(LLM):
 
             llm.simple_response("say hi to the user, be mean")
         """
-        # Use enhanced instructions if available (includes markdown file contents)
-        instructions = None
-        if hasattr(self, "parsed_instructions") and self.parsed_instructions:
-            instructions = self._build_enhanced_instructions()
-        elif self.conversation is not None:
-            instructions = self.conversation.instructions
 
         return await self.create_response(
             input=text,
-            instructions=instructions,
+            instructions=self._instructions,
         )
 
     async def create_conversation(self):
@@ -136,12 +130,9 @@ class OpenAILLM(LLM):
         if tools_spec:
             kwargs["tools"] = self._convert_tools_to_provider_format(tools_spec)  # type: ignore[arg-type]
 
-        # Use parsed instructions if available (includes markdown file contents)
-        if hasattr(self, "parsed_instructions") and self.parsed_instructions:
-            # Combine original instructions with markdown file contents
-            enhanced_instructions = self._build_enhanced_instructions()
-            if enhanced_instructions:
-                kwargs["instructions"] = enhanced_instructions
+        # Provide instructions
+        if self._instructions:
+            kwargs["instructions"] = self._instructions
 
         # Set up input parameter for OpenAI Responses API
         if "input" not in kwargs:
