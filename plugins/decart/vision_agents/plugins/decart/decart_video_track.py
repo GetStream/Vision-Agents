@@ -7,6 +7,7 @@ from PIL import Image
 from aiortc import MediaStreamTrack, VideoStreamTrack
 
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
+from vision_agents.core.utils.video_utils import resize_frame
 
 logger = logging.getLogger(__name__)
 
@@ -44,38 +45,9 @@ class DecartVideoTrack(VideoStreamTrack):
     async def add_frame(self, frame: av.VideoFrame) -> None:
         if self._stopped:
             return
-        # if frame.width != self.width or frame.height != self.height:
-        #     frame = await asyncio.to_thread(self._resize_frame, frame)
+        if frame.width != self.width or frame.height != self.height:
+            frame = await asyncio.to_thread(resize_frame, self, frame)
         self.frame_queue.put_latest_nowait(frame)
-
-    # TODO: move this to a utils file
-    def _resize_frame(self, frame: av.VideoFrame) -> av.VideoFrame:
-        logger.debug(
-            f"Resizing frame from {frame.width}x{frame.height} to {self.width}x{self.height}"
-        )
-        img = frame.to_image()
-
-        # Calculate scaling to maintain aspect ratio
-        src_width, src_height = img.size
-        target_width, target_height = self.width, self.height
-
-        # Calculate scale factor (fit within target dimensions)
-        scale = min(target_width / src_width, target_height / src_height)
-        new_width = int(src_width * scale)
-        new_height = int(src_height * scale)
-
-        # Resize with aspect ratio maintained
-        resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-        # Create black background at target resolution
-        result = Image.new("RGB", (target_width, target_height), (0, 0, 0))
-
-        # Paste resized image centered
-        x_offset = (target_width - new_width) // 2
-        y_offset = (target_height - new_height) // 2
-        result.paste(resized, (x_offset, y_offset))
-
-        return av.VideoFrame.from_image(result)
 
     async def recv(self) -> av.VideoFrame:
         if self._stopped:
@@ -84,7 +56,7 @@ class DecartVideoTrack(VideoStreamTrack):
         try:
             frame = await asyncio.wait_for(
                 self.frame_queue.get(),
-                timeout=0.033,  # ~30 FPS
+                timeout=0.033,
             )
             if frame:
                 self.last_frame = frame
