@@ -1,4 +1,5 @@
 """Tests for RestylingProcessor."""
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +24,7 @@ def mock_video_track():
 def sample_frame():
     """Test av.VideoFrame fixture."""
     from PIL import Image
+
     image = Image.new("RGB", (1280, 720), color="blue")
     return av.VideoFrame.from_image(image)
 
@@ -30,7 +32,9 @@ def sample_frame():
 @pytest.fixture
 def mock_decart_client():
     """Mock DecartClient with async close method."""
-    with patch("vision_agents.plugins.decart.decart_restyling_processor.DecartClient") as mock_client:
+    with patch(
+        "vision_agents.plugins.decart.decart_restyling_processor.DecartClient"
+    ) as mock_client:
         mock_instance = MagicMock()
         mock_instance.close = AsyncMock()
         mock_instance.base_url = "https://api.decart.ai"
@@ -50,9 +54,13 @@ class TestRestylingProcessor:
         processor.close()
 
     @pytest.mark.asyncio
-    async def test_process_video_triggers_connection(self, mock_video_track, mock_decart_client):
+    async def test_process_video_triggers_connection(
+        self, mock_video_track, mock_decart_client
+    ):
         """Test that process_video triggers connection to Decart."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient") as mock_realtime:
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ) as mock_realtime:
             mock_client_instance = AsyncMock()
             mock_client_instance.connect = AsyncMock(return_value=mock_client_instance)
             mock_realtime.connect = AsyncMock(return_value=mock_client_instance)
@@ -65,9 +73,13 @@ class TestRestylingProcessor:
             processor.close()
 
     @pytest.mark.asyncio
-    async def test_process_video_prevents_duplicate_connections(self, mock_video_track, mock_decart_client):
+    async def test_process_video_prevents_duplicate_connections(
+        self, mock_video_track, mock_decart_client
+    ):
         """Test that process_video prevents duplicate connections."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient") as mock_realtime:
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ) as mock_realtime:
             mock_client_instance = AsyncMock()
             mock_client_instance.connect = AsyncMock(return_value=mock_client_instance)
             mock_realtime.connect = AsyncMock(return_value=mock_client_instance)
@@ -83,7 +95,9 @@ class TestRestylingProcessor:
     @pytest.mark.asyncio
     async def test_update_prompt_when_connected(self, mock_decart_client):
         """Test update_prompt updates prompt when connected."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key")
             mock_client = AsyncMock()
             processor._realtime_client = mock_client
@@ -98,8 +112,12 @@ class TestRestylingProcessor:
     @pytest.mark.asyncio
     async def test_update_prompt_noop_when_disconnected(self, mock_decart_client):
         """Test update_prompt is no-op when disconnected."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
-            processor = RestylingProcessor(api_key="test_key", initial_prompt="original")
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
+            processor = RestylingProcessor(
+                api_key="test_key", initial_prompt="original"
+            )
             processor._realtime_client = None
 
             await processor.update_prompt("new style")
@@ -110,7 +128,9 @@ class TestRestylingProcessor:
     @pytest.mark.asyncio
     async def test_update_prompt_uses_default_enrich(self, mock_decart_client):
         """Test update_prompt uses default enrich value when not specified."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key", enrich=True)
             mock_client = AsyncMock()
             processor._realtime_client = mock_client
@@ -123,7 +143,9 @@ class TestRestylingProcessor:
     @pytest.mark.asyncio
     async def test_set_mirror_when_connected(self, mock_decart_client):
         """Test set_mirror updates mirror mode when connected."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key", mirror=True)
             mock_client = AsyncMock()
             processor._realtime_client = mock_client
@@ -137,7 +159,9 @@ class TestRestylingProcessor:
     @pytest.mark.asyncio
     async def test_set_mirror_noop_when_disconnected(self, mock_decart_client):
         """Test set_mirror is no-op when disconnected."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key", mirror=True)
             processor._realtime_client = None
 
@@ -153,7 +177,9 @@ class TestConnectionManagement:
     @pytest.mark.asyncio
     async def test_connection_lifecycle(self, mock_video_track, mock_decart_client):
         """Test connection lifecycle (connecting -> connected)."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient") as mock_realtime:
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ) as mock_realtime:
             mock_client_instance = AsyncMock()
             mock_client_instance.connect = AsyncMock(return_value=mock_client_instance)
             mock_realtime.connect = AsyncMock(return_value=mock_client_instance)
@@ -170,9 +196,13 @@ class TestConnectionManagement:
             processor.close()
 
     @pytest.mark.asyncio
-    async def test_reconnection_on_connection_error(self, mock_video_track, mock_decart_client):
+    async def test_reconnection_on_connection_error(
+        self, mock_video_track, mock_decart_client
+    ):
         """Test reconnection on connection errors."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient") as mock_realtime:
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ) as mock_realtime:
             mock_client_instance = AsyncMock()
             mock_client_instance.connect = AsyncMock(return_value=mock_client_instance)
             mock_realtime.connect = AsyncMock(return_value=mock_client_instance)
@@ -188,9 +218,13 @@ class TestConnectionManagement:
             processor.close()
 
     @pytest.mark.asyncio
-    async def test_reconnection_on_websocket_error(self, mock_video_track, mock_decart_client):
+    async def test_reconnection_on_websocket_error(
+        self, mock_video_track, mock_decart_client
+    ):
         """Test reconnection on websocket connection errors."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient") as mock_realtime:
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ) as mock_realtime:
             mock_client_instance = AsyncMock()
             mock_client_instance.connect = AsyncMock(return_value=mock_client_instance)
             mock_realtime.connect = AsyncMock(return_value=mock_client_instance)
@@ -206,9 +240,13 @@ class TestConnectionManagement:
             processor.close()
 
     @pytest.mark.asyncio
-    async def test_no_reconnection_on_non_connection_error(self, mock_video_track, mock_decart_client):
+    async def test_no_reconnection_on_non_connection_error(
+        self, mock_video_track, mock_decart_client
+    ):
         """Test no reconnection on non-connection errors."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key")
             processor._current_track = mock_video_track
 
@@ -222,7 +260,9 @@ class TestConnectionManagement:
     @pytest.mark.asyncio
     async def test_connection_change_updates_state(self, mock_decart_client):
         """Test that connection change events update state."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key")
 
             processor._on_connection_change("connecting")
@@ -241,7 +281,9 @@ class TestConnectionManagement:
     @pytest.mark.asyncio
     async def test_disconnect_cleans_up(self, mock_video_track, mock_decart_client):
         """Test that disconnect cleans up properly."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient") as mock_realtime:
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ) as mock_realtime:
             mock_client_instance = AsyncMock()
             mock_client_instance.disconnect = AsyncMock()
             mock_realtime.connect = AsyncMock(return_value=mock_client_instance)
@@ -258,9 +300,13 @@ class TestConnectionManagement:
             processor.close()
 
     @pytest.mark.asyncio
-    async def test_processing_loop_reconnects(self, mock_video_track, mock_decart_client):
+    async def test_processing_loop_reconnects(
+        self, mock_video_track, mock_decart_client
+    ):
         """Test that processing loop reconnects when connection is lost."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient") as mock_realtime:
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ) as mock_realtime:
             mock_client_instance = AsyncMock()
             mock_client_instance.connect = AsyncMock(return_value=mock_client_instance)
             mock_realtime.connect = AsyncMock(return_value=mock_client_instance)
@@ -287,12 +333,17 @@ class TestFrameHandling:
     """Tests for frame handling."""
 
     @pytest.mark.asyncio
-    async def test_frames_received_from_decart_forwarded_to_track(self, sample_frame, mock_decart_client):
+    async def test_frames_received_from_decart_forwarded_to_track(
+        self, sample_frame, mock_decart_client
+    ):
         """Test that frames received from Decart are forwarded to video track."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key")
 
             call_count = 0
+
             async def mock_recv():
                 nonlocal call_count
                 call_count += 1
@@ -303,10 +354,12 @@ class TestFrameHandling:
             mock_transformed_stream = AsyncMock()
             mock_transformed_stream.recv = mock_recv
 
-            task = asyncio.create_task(processor._receive_frames_from_decart(mock_transformed_stream))
+            task = asyncio.create_task(
+                processor._receive_frames_from_decart(mock_transformed_stream)
+            )
             await asyncio.sleep(0.1)
             processor._video_track.stop()
-            
+
             try:
                 await task
             except asyncio.CancelledError:
@@ -316,15 +369,21 @@ class TestFrameHandling:
             processor.close()
 
     @pytest.mark.asyncio
-    async def test_frame_receiving_task_cancelled_on_close(self, sample_frame, mock_decart_client):
+    async def test_frame_receiving_task_cancelled_on_close(
+        self, sample_frame, mock_decart_client
+    ):
         """Test that frame receiving task is cancelled on close."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key")
 
             mock_transformed_stream = AsyncMock()
             mock_transformed_stream.recv = AsyncMock(return_value=sample_frame)
 
-            task = asyncio.create_task(processor._receive_frames_from_decart(mock_transformed_stream))
+            task = asyncio.create_task(
+                processor._receive_frames_from_decart(mock_transformed_stream)
+            )
             await asyncio.sleep(0.05)
 
             processor.close()
@@ -334,9 +393,13 @@ class TestFrameHandling:
             processor.close()
 
     @pytest.mark.asyncio
-    async def test_on_remote_stream_starts_frame_receiving(self, sample_frame, mock_decart_client):
+    async def test_on_remote_stream_starts_frame_receiving(
+        self, sample_frame, mock_decart_client
+    ):
         """Test that on_remote_stream starts frame receiving task."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key")
 
             mock_transformed_stream = AsyncMock()
@@ -354,9 +417,13 @@ class TestFrameHandling:
             processor.close()
 
     @pytest.mark.asyncio
-    async def test_on_remote_stream_cancels_previous_task(self, sample_frame, mock_decart_client):
+    async def test_on_remote_stream_cancels_previous_task(
+        self, sample_frame, mock_decart_client
+    ):
         """Test that on_remote_stream cancels previous frame receiving task."""
-        with patch("vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"):
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
             processor = RestylingProcessor(api_key="test_key")
 
             mock_stream1 = AsyncMock()
