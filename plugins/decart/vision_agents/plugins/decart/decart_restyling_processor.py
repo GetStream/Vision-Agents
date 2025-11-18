@@ -140,7 +140,9 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     def publish_video_track(self) -> VideoStreamTrack:
         return self._video_track
 
-    async def update_prompt(self, prompt_text: str, enrich: Optional[bool] = None) -> None:
+    async def update_prompt(
+        self, prompt_text: str, enrich: Optional[bool] = None
+    ) -> None:
         """
         Updates the prompt used for the Decart real-time client. This method allows
         changing the current prompt and optionally specifies whether to enrich the
@@ -300,7 +302,6 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         else:
             if self._realtime_client or self._decart_client:
                 loop.run_until_complete(self._async_close())
-
 
     async def _async_close(self) -> None:
         if self._realtime_client:
