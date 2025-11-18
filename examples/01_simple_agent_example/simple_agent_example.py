@@ -26,7 +26,7 @@ This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_ex
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-2.5-flash-lite")
+    llm = gemini.LLM()
 
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
