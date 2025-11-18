@@ -5,13 +5,13 @@ Google Gemini Live Speech-to-Speech (STS) plugin for GetStream. It connects a re
 ### Installation
 
 ```bash
-pip install getstream-plugins-gemini
+uv add vision-agents[gemini]
 ```
 
 ### Requirements
 
 - **Python**: 3.10+
-- **Dependencies**: `getstream[webrtc"]`, `getstream-plugins-common`, `google-genai`
+- **Dependencies**: `getstream[webrtc"]`, `getstream-plugins-common`, `google-genai>=1.51.0`
 - **API key**: `GOOGLE_API_KEY` or `GEMINI_API_KEY` set in your environment
 
 ### Quick Start
@@ -106,6 +106,15 @@ For a full runnable example, see `examples/gemini_live/main.py`.
 
 ### Troubleshooting
 
-- **No audio playback**: Ensure you publish `output_track` to your call and the call is subscribed to the assistant’s audio.
+- **No audio playback**: Ensure you publish `output_track` to your call and the call is subscribed to the assistant's audio.
 - **No responses**: Verify `GOOGLE_API_KEY`/`GEMINI_API_KEY` is set and has access to the chosen model. Try a different model via `model=`.
 - **Sample-rate issues**: Use `send_audio_pcm(..., target_rate=48000)` to normalize input frames.
+
+### Migration from Gemini 2.5
+
+When migrating to Gemini 3:
+
+- **Thinking**: If you were using complex prompt engineering (like Chain-of-thought) with Gemini 2.5, try Gemini 3 with `thinking_level="high"` and simplified prompts.
+- **Temperature**: If your code explicitly sets temperature to low values, consider removing it and using the Gemini 3 default (1.0) to avoid potential looping issues.
+- **PDF & Document Understanding**: Default OCR resolution for PDFs has changed. Test with `media_resolution="high"` if you need dense document parsing.
+- **Token Consumption**: Gemini 3 defaults may increase token usage for PDFs but decrease for video. If requests exceed context limits, explicitly reduce `media_resolution`.

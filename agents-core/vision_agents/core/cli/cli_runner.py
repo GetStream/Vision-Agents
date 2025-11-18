@@ -138,4 +138,3 @@ def cli(launcher: "AgentLauncher") -> None:
 
     # Invoke the click command
     run_agent()
-

@@ -17,14 +17,11 @@ class TurnEvent(Enum):
     TURN_ENDED = "turn_ended"
 
 
-
 class TurnDetector(ABC):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(
-        self, 
-        confidence_threshold: float = 0.5,
-        provider_name: Optional[str] = None
+        self, confidence_threshold: float = 0.5, provider_name: Optional[str] = None
     ) -> None:
         self._confidence_threshold = confidence_threshold
         self.is_active = False
@@ -36,16 +33,14 @@ class TurnDetector(ABC):
     async def warmup(self) -> None:
         """
         Warm up the turn detection service.
-        
+
         This method can be overridden by implementations to perform
         model loading, connection establishment, or other initialization
         that should happen before the first audio processing.
         """
         pass
 
-    def _emit_start_turn_event(
-        self, event: TurnStartedEvent
-    ) -> None:
+    def _emit_start_turn_event(self, event: TurnStartedEvent) -> None:
         event.session_id = self.session_id
         event.plugin_name = self.provider_name
         self.events.send(event)

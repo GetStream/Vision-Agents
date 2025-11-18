@@ -16,7 +16,11 @@ from dotenv import load_dotenv
 from torchvision.io.video import av
 
 from getstream.video.rtc.track_util import PcmData, AudioFormat
-from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
+from vision_agents.core.stt.events import (
+    STTTranscriptEvent,
+    STTErrorEvent,
+    STTPartialTranscriptEvent,
+)
 from vision_agents.core.edge.types import Participant
 
 load_dotenv()
@@ -24,16 +28,16 @@ load_dotenv()
 
 def skip_blockbuster(func_or_class):
     """Decorator to skip blockbuster checks for a test function or class.
-    
+
     Use this decorator when testing code that makes unavoidable blocking calls
     (e.g., third-party SDKs like boto3, fish-audio-sdk).
-    
+
     Examples:
         @skip_blockbuster
         async def test_aws_function():
             # boto3 makes blocking calls we can't fix
             pass
-        
+
         @skip_blockbuster
         class TestAWSIntegration:
             # All tests in this class skip blockbuster
@@ -45,7 +49,7 @@ def skip_blockbuster(func_or_class):
 @pytest.fixture(autouse=True)
 def blockbuster(request) -> Iterator[BlockBuster | None]:
     """Blockbuster fixture that detects blocking calls in async code.
-    
+
     Can be disabled for specific tests using the @skip_blockbuster decorator.
     """
     # Check if test is marked to skip blockbuster
@@ -225,16 +229,16 @@ def silence_2s_48khz():
     """Generate 2 seconds of silence at 48kHz PCM data."""
     sample_rate = 48000
     duration_seconds = 2.0
-    
+
     # Calculate number of samples for 2 seconds
     num_samples = int(sample_rate * duration_seconds)
-    
+
     # Create silence (zeros) as int16
     samples = np.zeros(num_samples, dtype=np.int16)
-    
+
     # Create PCM data
     pcm = PcmData(samples=samples, sample_rate=sample_rate, format=AudioFormat.S16)
-    
+
     return pcm
 
 

@@ -95,6 +95,7 @@ def mypy_plugins():
         "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
     )
 
+
 @cli.command()
 def check():
     """Run full check: ruff, mypy, and unit tests."""

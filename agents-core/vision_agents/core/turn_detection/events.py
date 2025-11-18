@@ -11,14 +11,14 @@ from vision_agents.core.events.base import PluginBaseEvent
 class TurnStartedEvent(PluginBaseEvent):
     """
     Event emitted when a speaker starts their turn.
-    
+
     Attributes:
         speaker_id: ID of the speaker who started speaking
         confidence: Confidence level of the turn detection (0.0-1.0)
         duration: Duration of audio processed (seconds)
         custom: Additional metadata specific to the turn detection implementation
     """
-    
+
     type: str = field(default="plugin.turn_started", init=False)
     participant: Optional[Participant] = None
     confidence: Optional[float] = None
@@ -29,14 +29,14 @@ class TurnStartedEvent(PluginBaseEvent):
 class TurnEndedEvent(PluginBaseEvent):
     """
     Event emitted when a speaker completes their turn.
-    
+
     Attributes:
         speaker_id: ID of the speaker who finished speaking
         confidence: Confidence level of the turn completion detection (0.0-1.0)
         duration: Duration of the turn (seconds)
         custom: Additional metadata specific to the turn detection implementation
     """
-    
+
     type: str = field(default="plugin.turn_ended", init=False)
     participant: Optional[Participant] = None
     confidence: Optional[float] = None
@@ -46,6 +46,4 @@ class TurnEndedEvent(PluginBaseEvent):
     eager_end_of_turn: bool = False
 
 
-
 __all__ = ["TurnStartedEvent", "TurnEndedEvent"]
-

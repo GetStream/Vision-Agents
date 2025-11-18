@@ -24,9 +24,10 @@ class STT(abc.ABC):
 
     process_audio is currently called every 20ms. The integration with turn keeping could be improved
     """
+
     closed: bool = False
     started: bool = False
-    turn_detection: bool = False # if the STT supports turn detection
+    turn_detection: bool = False  # if the STT supports turn detection
 
     def __init__(
         self,
@@ -42,7 +43,7 @@ class STT(abc.ABC):
     async def warmup(self) -> None:
         """
         Warm up the STT service.
-        
+
         This method can be overridden by implementations to perform
         model loading, connection establishment, or other initialization
         that should happen before the first transcription request.
@@ -63,25 +64,29 @@ class STT(abc.ABC):
             participant: Participant metadata.
             response: Transcription response metadata.
         """
-        self.events.send(events.STTTranscriptEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            text=text,
-            participant=participant,
-            response=response,
-        ))
+        self.events.send(
+            events.STTTranscriptEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                text=text,
+                participant=participant,
+                response=response,
+            )
+        )
 
     def _emit_turn_ended_event(
         self,
         participant: Participant,
         eager_end_of_turn: bool = False,
     ):
-        self.events.send(TurnEndedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            participant = participant,
-            eager_end_of_turn=eager_end_of_turn
-        ))
+        self.events.send(
+            TurnEndedEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                participant=participant,
+                eager_end_of_turn=eager_end_of_turn,
+            )
+        )
 
     def _emit_partial_transcript_event(
         self,
@@ -97,13 +102,15 @@ class STT(abc.ABC):
             participant: Participant metadata.
             response: Transcription response metadata.
         """
-        self.events.send(events.STTPartialTranscriptEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            text=text,
-            participant=participant,
-            response=response,
-        ))
+        self.events.send(
+            events.STTPartialTranscriptEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                text=text,
+                participant=participant,
+                response=response,
+            )
+        )
 
     def _emit_error_event(
         self,
@@ -115,19 +122,23 @@ class STT(abc.ABC):
         Emit an error event. Note this should only be emitted for temporary errors.
         Permanent errors due to config etc should be directly raised
         """
-        self.events.send(events.STTErrorEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            error=error,
-            context=context,
-            participant=participant,
-            error_code=getattr(error, "error_code", None),
-            is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt)),
-        ))
+        self.events.send(
+            events.STTErrorEvent(
+                session_id=self.session_id,
+                plugin_name=self.provider_name,
+                error=error,
+                context=context,
+                participant=participant,
+                error_code=getattr(error, "error_code", None),
+                is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt)),
+            )
+        )
 
     @abc.abstractmethod
     async def process_audio(
-        self, pcm_data: PcmData, participant: Optional[Participant] = None,
+        self,
+        pcm_data: PcmData,
+        participant: Optional[Participant] = None,
     ):
         pass
 

@@ -3,13 +3,18 @@ import json
 from typing import Any, Optional, Callable, cast, Literal
 
 import av
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel, RTCRtpSender
+from aiortc import (
+    RTCPeerConnection,
+    RTCSessionDescription,
+    RTCDataChannel,
+    RTCRtpSender,
+)
 from openai import AsyncOpenAI
 from openai.types.realtime import RealtimeSessionCreateRequestParam
 from openai.types.beta.realtime import (
     ConversationItemCreateEvent,
-    ConversationItem, 
-    ConversationItemContent
+    ConversationItem,
+    ConversationItemContent,
 )
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
@@ -31,11 +36,17 @@ class RTCManager:
     Handles the low-level WebRTC peer connection, audio/video streaming,
     and data channel communication with OpenAI's servers.
     """
+
     realtime_session: RealtimeSessionCreateRequestParam
     client: AsyncOpenAI
     pc: RTCPeerConnection
 
-    def __init__(self, realtime_session: RealtimeSessionCreateRequestParam, client: AsyncOpenAI, send_video: bool):
+    def __init__(
+        self,
+        realtime_session: RealtimeSessionCreateRequestParam,
+        client: AsyncOpenAI,
+        send_video: bool,
+    ):
         self.realtime_session = realtime_session
         self.client = client
         self.send_video = send_video
@@ -47,7 +58,7 @@ class RTCManager:
             sample_rate=48000
         )
         self._video_to_openai_track: QueuedVideoTrack = QueuedVideoTrack()
-        self._video_sender : Optional[RTCRtpSender] = None
+        self._video_sender: Optional[RTCRtpSender] = None
 
         # Set up connection event handlers
         self._setup_connection_logging()
@@ -83,17 +94,21 @@ class RTCManager:
     async def send_audio_pcm(self, pcm: PcmData) -> None:
         await self._audio_to_openai_track.write(pcm)
 
-    async def send_text(self, text: str, role: Literal["user", "assistant", "system"] = "user"):
+    async def send_text(
+        self, text: str, role: Literal["user", "assistant", "system"] = "user"
+    ):
         event_type = ConversationItemCreateEvent(
             type="conversation.item.create",
             item=ConversationItem(
-                type= "message",
-                role= role,
-                content=[ConversationItemContent(
-                    type="input_text",
-                    text=text,
-                )]
-            )
+                type="message",
+                role=role,
+                content=[
+                    ConversationItemContent(
+                        type="input_text",
+                        text=text,
+                    )
+                ],
+            ),
         )
         event = event_type.to_dict()
         await self._send_event(event)
@@ -105,14 +120,16 @@ class RTCManager:
         )
 
     async def start_video_sender(
-            self, stream_video_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None
+        self, stream_video_track: MediaStreamTrack, fps: int = 1, shared_forwarder=None
     ) -> None:
         await self._set_video_track()
 
         # This method can be called twice with different forwarders
         # Remove handler from old forwarder if it exists
         if self._current_video_forwarder is not None:
-            await self._current_video_forwarder.remove_frame_handler(self._send_video_frame)
+            await self._current_video_forwarder.remove_frame_handler(
+                self._send_video_frame
+            )
             logger.debug("Removed old video frame handler from previous forwarder")
 
         # Store reference to new forwarder and add handler
@@ -162,10 +179,9 @@ class RTCManager:
         async def on_datachannel(channel):
             logger.debug(f"📨 Remote data channel created: {channel.label}")
 
-    
     async def renegotiate(self) -> None:
         """Renegotiate the connection with OpenAI.
-        
+
         Public method to repeat the offer/answer cycle, useful when tracks are added
         or modified after the initial connection.
         """
@@ -207,7 +223,6 @@ class RTCManager:
                 # adding tracks requires renegotiation
                 await self.renegotiate()
 
-
     async def _send_event(self, event: dict):
         """Send an event through the data channel."""
         if not self.data_channel:
@@ -246,21 +261,17 @@ class RTCManager:
         if self._video_to_openai_track:
             await self._video_to_openai_track.add_frame(frame)
 
-
-
     async def _exchange_sdp(self, local_sdp: str) -> Optional[str]:
         """Exchange SDP with OpenAI using the realtime calls API."""
         logger.debug(f"Creating realtime call with SDP length: {len(local_sdp)} bytes")
 
         # Use the OpenAI client's realtime calls API
         response = await self.client.realtime.calls.create(
-            session=self.realtime_session,
-            sdp=local_sdp
+            session=self.realtime_session, sdp=local_sdp
         )
 
         logger.debug("SDP response from OpenAI")
         return response.text
-
 
     async def _handle_event(self, event: dict) -> None:
         cb = self._event_callback
@@ -280,11 +291,11 @@ class RTCManager:
         self._audio_to_openai_track.stop()
         if self._video_to_openai_track is not None:
             self._video_to_openai_track.stop()
-        
+
         async def _safe_close():
             try:
                 await self.pc.close()
             except Exception as e:
                 logger.error(f"Error closing peer connection: {e}")
-        
+
         asyncio.create_task(_safe_close())

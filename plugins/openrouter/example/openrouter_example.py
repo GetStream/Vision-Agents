@@ -14,7 +14,13 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import openrouter, getstream, elevenlabs, deepgram, smart_turn
+from vision_agents.plugins import (
+    openrouter,
+    getstream,
+    elevenlabs,
+    deepgram,
+    smart_turn,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -35,7 +41,7 @@ async def create_agent(**kwargs) -> Agent:
         stt=deepgram.STT(),
         turn_detection=smart_turn.TurnDetection(
             buffer_in_seconds=2.0, confidence_threshold=0.5
-        )
+        ),
     )
     return agent
 
@@ -53,13 +59,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-        
+
         await asyncio.sleep(5)
         await agent.llm.simple_response(text="Hello! I'm powered by OpenRouter.")
-        
+
         await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-

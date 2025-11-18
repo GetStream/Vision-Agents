@@ -15,7 +15,9 @@ class TestInworldTTS:
         return inworld.TTS()
 
     @pytest.mark.integration
-    async def test_inworld_tts_convert_text_to_audio_manual_test(self, tts: inworld.TTS):
+    async def test_inworld_tts_convert_text_to_audio_manual_test(
+        self, tts: inworld.TTS
+    ):
         await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
 
     @pytest.mark.integration
@@ -29,4 +31,3 @@ class TestInworldTTS:
 
         assert not session.errors
         assert len(session.speeches) > 0
-

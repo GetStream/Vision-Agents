@@ -38,7 +38,9 @@ async def create_agent(**kwargs) -> Agent:
         tts=fish.TTS(),  # Uses Fish Audio for text-to-speech
         stt=fish.STT(),  # Uses Fish Audio for speech-to-text
         llm=gemini.LLM("gemini-2.0-flash"),
-        turn_detection=smart_turn.TurnDetection(buffer_in_seconds=2.0, confidence_threshold=0.5),
+        turn_detection=smart_turn.TurnDetection(
+            buffer_in_seconds=2.0, confidence_threshold=0.5
+        ),
     )
     return agent
 
@@ -56,13 +58,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-        
+
         await asyncio.sleep(5)
         await agent.llm.simple_response(text="Whats next for space?")
-        
+
         await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-

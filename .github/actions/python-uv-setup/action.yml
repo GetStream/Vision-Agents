@@ -4,11 +4,11 @@ inputs:
   python-version:
     description: Python version to install
     required: false
-    default: "3.13"
+    default: "3.13.9"
   sync-flags:
     description: Extra flags for uv sync (e.g., --all-extras --dev)
     required: false
-    default: "--all-extras --dev"
+    default: "--all-extras --dev --frozen"
   working-directory:
     description: Directory to run in
     required: false
@@ -23,19 +23,11 @@ runs:
         python-version: ${{ inputs.python-version }}
         version: "latest"
         enable-cache: true
+        prune-cache: false
+        cache-suffix: ${{ inputs.python-version }}
         cache-dependency-glob: |
           **/pyproject.toml
           **/uv.lock
-
-    - name: Cache .venv directory
-      id: cache_venv
-      uses: actions/cache@v4
-      with:
-        path: .venv
-        key: uv-venv-v1-${{ runner.os }}-py${{ inputs.python-version }}-${{ hashFiles('**/uv.lock') }}
-        restore-keys: |
-          uv-venv-v1-${{ runner.os }}-py${{ inputs.python-version }}-
-          uv-venv-v1-${{ runner.os }}-
 
     - name: Log cache status
       shell: bash
@@ -43,7 +35,7 @@ runs:
         echo "uv download cache hit: ${{ steps.setup_uv.outputs['cache-hit'] }}"
         echo ".venv cache hit: ${{ steps.cache_venv.outputs.cache-hit }}"
 
-    - name: Install the project
+    - name: Install the project dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: uv sync ${{ inputs.sync-flags }}

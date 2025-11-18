@@ -28,22 +28,16 @@ async def create_agent(**kwargs) -> Agent:
     """Create agent with HeyGen avatar and streaming LLM."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(
-            name="AI Assistant with Avatar",
-            id="agent"
-        ),
+        agent_user=User(name="AI Assistant with Avatar", id="agent"),
         instructions=(
             "You're a friendly and helpful AI assistant. "
             "Keep your responses conversational and engaging. "
             "Don't use special characters or formatting."
         ),
-        
         # Use regular streaming LLM (not Realtime) for lower latency
         llm=gemini.LLM("gemini-2.0-flash-exp"),
-        
         # Add STT for speech input
         stt=deepgram.STT(),
-        
         # Add HeyGen avatar as a video publisher
         # Note: mute_llm_audio is not needed since streaming LLM doesn't produce audio
         processors=[
@@ -53,7 +47,7 @@ async def create_agent(**kwargs) -> Agent:
                 resolution=(1920, 1080),  # Output resolution
                 mute_llm_audio=False,  # Not needed for streaming LLM
             )
-        ]
+        ],
     )
     return agent
 
@@ -71,10 +65,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("Demo opened")
-        
+
         await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-

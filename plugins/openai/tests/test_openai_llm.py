@@ -172,11 +172,11 @@ class TestOpenAILLM:
             )
             chunk_item_ids.add(chunk_event.item_id)
             total_delta_text += chunk_event.delta
-            
+
             # Validate content_index: should be sequential (0, 1, 2, ...) or None
             if chunk_event.content_index is not None:
                 content_indices.append(chunk_event.content_index)
-        
+
         # Verify content_index sequencing if any are provided
         if content_indices:
             # Should be sequential starting from 0

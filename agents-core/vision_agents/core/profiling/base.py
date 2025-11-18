@@ -21,7 +21,7 @@ class Profiler:
         )
     """
 
-    def __init__(self, output_path='./profile.html'):
+    def __init__(self, output_path="./profile.html"):
         """Initialize the profiler.
 
         Args:
@@ -45,5 +45,5 @@ class Profiler:
         """
         self.profiler.stop()
         logger.info(f"Profiler stopped. Time file saved at: {self.output_path}")
-        with open(self.output_path, 'w') as f:
+        with open(self.output_path, "w") as f:
             f.write(self.profiler.output_html())

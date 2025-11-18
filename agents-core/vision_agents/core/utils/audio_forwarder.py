@@ -49,7 +49,6 @@ class AudioForwarder:
         """Read audio frames from track and forward to callback."""
         while True:
             try:
-
                 received = await asyncio.wait_for(self.track.recv(), timeout=1.0)
                 frame = cast(av.AudioFrame, received)
 

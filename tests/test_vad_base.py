@@ -112,7 +112,9 @@ def _decode_mia_to_pcm16k() -> PcmData:
         samples_list.append(arr)
     container.close()
     if not samples_list:
-        return PcmData(samples=np.zeros(0, dtype=np.int16), sample_rate=target_rate, format="s16")
+        return PcmData(
+            samples=np.zeros(0, dtype=np.int16), sample_rate=target_rate, format="s16"
+        )
     samples = np.concatenate(samples_list).astype(np.int16)
     return PcmData(samples=samples, sample_rate=target_rate, format="s16")
 
@@ -186,4 +188,3 @@ async def test_base_vad_white_noise_triggers_speech():
     await asyncio.sleep(0.05)
 
     assert len(audio_events) > 0, "Expected at least one speech event on white noise"
-

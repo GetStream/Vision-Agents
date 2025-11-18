@@ -33,18 +33,17 @@ async def create_agent(**kwargs) -> Agent:
             region_name="us-east-1",
         ),
     )
-    
+
     # Register custom functions that the LLM can call
     @agent.llm.register_function(
-        name="get_weather",
-        description="Get the current weather for a given city"
+        name="get_weather", description="Get the current weather for a given city"
     )
     def get_weather(city: str) -> dict:
         """Get weather information for a city.
-        
+
         Args:
             city: The name of the city
-            
+
         Returns:
             Weather information including temperature and conditions
         """
@@ -54,28 +53,29 @@ async def create_agent(**kwargs) -> Agent:
             "Seattle": {"temp": 58, "condition": "Rainy", "humidity": 85},
             "Miami": {"temp": 85, "condition": "Partly Cloudy", "humidity": 70},
         }
-        
-        city_weather = weather_data.get(city, {"temp": 70, "condition": "Unknown", "humidity": 50})
+
+        city_weather = weather_data.get(
+            city, {"temp": 70, "condition": "Unknown", "humidity": 50}
+        )
         return {
             "city": city,
             "temperature": city_weather["temp"],
             "condition": city_weather["condition"],
             "humidity": city_weather["humidity"],
-            "unit": "Fahrenheit"
+            "unit": "Fahrenheit",
         }
-    
+
     @agent.llm.register_function(
-        name="calculate",
-        description="Perform a mathematical calculation"
+        name="calculate", description="Perform a mathematical calculation"
     )
     def calculate(operation: str, a: float, b: float) -> dict:
         """Perform a calculation.
-        
+
         Args:
             operation: The operation to perform (add, subtract, multiply, divide)
             a: First number
             b: Second number
-            
+
         Returns:
             Result of the calculation
         """
@@ -85,21 +85,16 @@ async def create_agent(**kwargs) -> Agent:
             "multiply": lambda x, y: x * y,
             "divide": lambda x, y: x / y if y != 0 else None,
         }
-        
+
         if operation not in operations:
             return {"error": f"Unknown operation: {operation}"}
-        
+
         result = operations[operation](a, b)
         if result is None:
             return {"error": "Cannot divide by zero"}
-        
-        return {
-            "operation": operation,
-            "a": a,
-            "b": b,
-            "result": result
-        }
-    
+
+        return {"operation": operation, "a": a, "b": b, "result": result}
+
     return agent
 
 
@@ -116,20 +111,19 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-        
+
         # Give the agent a moment to connect
         await asyncio.sleep(5)
-        
+
         await agent.llm.simple_response(
             text="What's the weather like in Boulder? Please use the get_weather function."
         )
-        
+
         # Wait for AWS Nova to process the request and call the function
         await asyncio.sleep(15)
-        
+
         await agent.finish()  # Run till the call ends
 
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-

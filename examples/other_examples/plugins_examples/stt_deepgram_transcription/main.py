@@ -57,8 +57,10 @@ async def create_agent(**kwargs) -> Agent:
         if event.confidence:
             agent.logger.info(f"    └─ confidence: {event.confidence:.2%}")
         if event.processing_time_ms:
-            agent.logger.info(f"    └─ processing time: {event.processing_time_ms:.1f}ms")
-        
+            agent.logger.info(
+                f"    └─ processing time: {event.processing_time_ms:.1f}ms"
+            )
+
         # Generate a response to the transcribed text
         await agent.simple_response(event.text)
 
@@ -88,7 +90,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.say("Hello! I'm your transcription bot. I'll listen to what you say, transcribe it, and respond to you. Try saying something!")
+        await agent.say(
+            "Hello! I'm your transcription bot. I'll listen to what you say, transcribe it, and respond to you. Try saying something!"
+        )
         await agent.finish()
 
 

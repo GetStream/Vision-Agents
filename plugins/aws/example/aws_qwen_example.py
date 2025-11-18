@@ -28,7 +28,9 @@ async def create_agent(**kwargs) -> Agent:
         llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
-        turn_detection=smart_turn.TurnDetection(buffer_in_seconds=2.0, confidence_threshold=0.5),
+        turn_detection=smart_turn.TurnDetection(
+            buffer_in_seconds=2.0, confidence_threshold=0.5
+        ),
     )
     return agent
 
@@ -46,10 +48,10 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-        
+
         await asyncio.sleep(5)
         await agent.llm.simple_response(text="Say hi")
-        
+
         await agent.finish()  # Run till the call ends
 
 

@@ -46,8 +46,10 @@ async def create_agent(**kwargs) -> Agent:
         if event.participant:
             user = event.participant
             user_info = user.name if user.name else str(user)
-        
-        print(f"Speech detected from user: {user_info} - duration: {event.duration_ms:.2f}ms")
+
+        print(
+            f"Speech detected from user: {user_info} - duration: {event.duration_ms:.2f}ms"
+        )
 
     # Subscribe to VAD error events
     @agent.subscribe
@@ -67,7 +69,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Join call and start conversation
     with await agent.join(call):
-        await agent.simple_response("Hello! I can detect when you speak and respond to you.")
+        await agent.simple_response(
+            "Hello! I can detect when you speak and respond to you."
+        )
         await agent.finish()
 
 

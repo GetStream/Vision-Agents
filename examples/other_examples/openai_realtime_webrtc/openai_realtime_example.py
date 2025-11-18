@@ -37,7 +37,6 @@ async def create_agent(**kwargs) -> Agent:
     return agent
 
 
-
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     # ensure the agent user is created
     await agent.create_user()
