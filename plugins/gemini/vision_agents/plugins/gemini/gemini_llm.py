@@ -3,7 +3,12 @@ from typing import Optional, List, TYPE_CHECKING, Any, Dict, AsyncIterator
 
 from google.genai.client import AsyncClient, Client
 from google.genai import types
-from google.genai.types import GenerateContentResponse, GenerateContentConfig
+from google.genai.types import (
+    GenerateContentResponse,
+    GenerateContentConfig,
+    ThinkingLevel,
+    MediaResolution,
+)
 
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
@@ -19,6 +24,9 @@ from vision_agents.core.processors import Processor
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
+
+
+DEFAULT_MODEL = "gemini-3-pro-preview"
 
 
 class GeminiLLM(LLM):
@@ -43,27 +51,86 @@ class GeminiLLM(LLM):
 
     def __init__(
         self,
-        model: str,
+        model: str = DEFAULT_MODEL,
         api_key: Optional[str] = None,
         client: Optional[AsyncClient] = None,
+        thinking_level: Optional[ThinkingLevel] = None,
+        media_resolution: Optional[MediaResolution] = None,
+        config: Optional[GenerateContentConfig] = None,
+        **kwargs,
     ):
         """
         Initialize the GeminiLLM class.
 
         Args:
-            model (str): The model to use.
+            model (str): The model to use. Defaults to models/gemini-3-pro-preview.
             api_key: optional API key. by default loads from GOOGLE_API_KEY
-            client: optional Anthropic client. by default creates a new client object.
+            client: optional Gemini client. by default creates a new client object.
+            thinking_level: Optional thinking level for Gemini 3. Use ThinkingLevel.LOW or
+                ThinkingLevel.HIGH. Defaults to "high" for Gemini 3 Pro if not specified.
+                Cannot be used with legacy thinking_budget parameter.
+            media_resolution: Optional media resolution for multimodal processing. Use
+                MediaResolution.MEDIA_RESOLUTION_LOW, MEDIA_RESOLUTION_MEDIUM, or
+                MEDIA_RESOLUTION_HIGH. Recommended: "high" for images, "medium" for PDFs,
+                "low"/"medium" for general video, "high" for text-heavy video.
+            config: Optional[GenerateContentConfig] to use as base. Any kwargs will be passed
+                to GenerateContentConfig constructor if config is not provided.
+            **kwargs: Additional arguments passed to GenerateContentConfig constructor.
         """
         super().__init__()
         self.events.register_events_from_module(events)
         self.model = model
+        self.thinking_level = thinking_level
+        self.media_resolution = media_resolution
+
+        if config is not None:
+            self._base_config: Optional[GenerateContentConfig] = config
+        elif kwargs:
+            self._base_config = GenerateContentConfig(**kwargs)
+        else:
+            self._base_config = None
+
         self.chat: Optional[Any] = None
 
         if client is not None:
             self.client = client
         else:
             self.client = Client(api_key=api_key).aio
+
+    def _build_config(
+        self,
+        system_instruction: Optional[str] = None,
+        base_config: Optional[GenerateContentConfig] = None,
+    ) -> GenerateContentConfig:
+        """
+        Build GenerateContentConfig with Gemini 3 features.
+
+        Args:
+            system_instruction: Optional system instruction to include
+            base_config: Optional base config to extend (takes precedence over self._base_config)
+
+        Returns:
+            GenerateContentConfig with thinking_level and media_resolution if set
+        """
+        if base_config is not None:
+            config = base_config
+        elif self._base_config is not None:
+            config = self._base_config
+        else:
+            config = GenerateContentConfig()
+
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        if self.thinking_level:
+            from google.genai.types import ThinkingConfig
+
+            config.thinking_config = ThinkingConfig(thinking_level=self.thinking_level)
+
+        if self.media_resolution:
+            config.media_resolution = self.media_resolution
+
+        return config
 
     async def simple_response(
         self,
@@ -96,20 +163,28 @@ class GeminiLLM(LLM):
         # initialize chat if needed
         if self.chat is None:
             enhanced_instructions = self._build_enhanced_instructions()
-            config = GenerateContentConfig(system_instruction=enhanced_instructions)
+            config = self._build_config(system_instruction=enhanced_instructions)
             self.chat = self.client.chats.create(model=self.model, config=config)
 
         # Add tools if available - Gemini uses GenerateContentConfig
         tools_spec = self.get_available_functions()
         if tools_spec:
-            from google.genai import types
-
             conv_tools = self._convert_tools_to_provider_format(tools_spec)
             cfg = kwargs.get("config")
-            if not isinstance(cfg, types.GenerateContentConfig):
-                cfg = types.GenerateContentConfig()
+            if not isinstance(cfg, GenerateContentConfig):
+                cfg = self._build_config()
+            else:
+                cfg = self._build_config(base_config=cfg)
             cfg.tools = conv_tools  # type: ignore[assignment]
             kwargs["config"] = cfg
+        else:
+            cfg = kwargs.get("config")
+            if cfg is None or not isinstance(cfg, GenerateContentConfig):
+                cfg = self._build_config()
+                kwargs["config"] = cfg
+            elif self.thinking_level or self.media_resolution:
+                cfg = self._build_config(base_config=cfg)
+                kwargs["config"] = cfg
 
         # Generate content using the client
         iterator: AsyncIterator[
