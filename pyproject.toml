@@ -24,11 +24,8 @@ vision-agents-plugins-heygen = { workspace = true }
 vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
-<<<<<<< HEAD
 vision-agents-plugins-fast-whisper = { workspace = true }
-=======
 vision-agents-plugins-roboflow = { workspace = true }
->>>>>>> 6c12b80 (initial draft)
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -59,11 +56,8 @@ members = [
     "plugins/inworld",
     "plugins/vogent",
     "plugins/moondream",
-<<<<<<< HEAD
-    "plugins/fast_whisper"
-=======
+    "plugins/fast_whisper",
     "plugins/roboflow"
->>>>>>> 6c12b80 (initial draft)
 ]
 exclude = [
 "**/__pycache__",
