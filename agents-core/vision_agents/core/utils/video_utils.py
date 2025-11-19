@@ -1,10 +1,13 @@
 """Video frame utilities."""
 
 import io
+import logging
 
 import av
-from PIL.Image import Resampling
 from PIL import Image
+from PIL.Image import Resampling
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_even_dimensions(frame: av.VideoFrame) -> av.VideoFrame:
@@ -83,3 +86,42 @@ def frame_to_png_bytes(frame: av.VideoFrame) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def resize_frame(self, frame: av.VideoFrame) -> av.VideoFrame:
+    """
+    Resizes a video frame to target dimensions while maintaining the aspect ratio. The method centers the resized
+    image on a black background if the target dimensions do not match the original aspect ratio.
+
+    Parameters:
+        frame (av.VideoFrame): The input video frame to be resized.
+
+    Returns:
+        av.VideoFrame: The output video frame after resizing, maintaining the original aspect ratio.
+
+    Raises:
+        None
+    """
+    img = frame.to_image()
+
+    # Calculate scaling to maintain aspect ratio
+    src_width, src_height = img.size
+    target_width, target_height = self.width, self.height
+
+    # Calculate scale factor (fit within target dimensions)
+    scale = min(target_width / src_width, target_height / src_height)
+    new_width = int(src_width * scale)
+    new_height = int(src_height * scale)
+
+    # Resize with aspect ratio maintained
+    resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+    # Create black background at target resolution
+    result = Image.new("RGB", (target_width, target_height), (0, 0, 0))
+
+    # Paste resized image centered
+    x_offset = (target_width - new_width) // 2
+    y_offset = (target_height - new_height) // 2
+    result.paste(resized, (x_offset, y_offset))
+
+    return av.VideoFrame.from_image(result)
