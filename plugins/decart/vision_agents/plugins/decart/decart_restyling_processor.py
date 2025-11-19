@@ -131,7 +131,7 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         participant: Any,
         shared_forwarder=None,
     ):
-        logger.debug("Processing video track, connecting to Decart")
+        logger.info("Processing video track, connecting to Decart")
         self._current_track = incoming_track
         if not self._connected and not self._connecting:
             await self._connect_to_decart(incoming_track)
@@ -246,7 +246,7 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             logger.debug("Frame receiving from Decart cancelled")
 
     def _on_connection_change(self, state: str) -> None:
-        logger.debug(f"Decart connection state changed: {state}")
+        logger.info(f"Decart connection state changed: {state}")
         if state in ("connected", "connecting"):
             self._connected = True
         elif state in ("disconnected", "error"):
@@ -254,13 +254,13 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             if state == "disconnected":
                 logger.info("Disconnected from Decart Realtime API")
             elif state == "error":
-                logger.warning("Decart connection error occurred")
+                logger.error("Decart connection error occurred")
 
         if self._on_connection_change_callback:
             self._on_connection_change_callback(state)
 
     def _on_error(self, error: DecartSDKError) -> None:
-        logger.warning(f"Decart error: {error}")
+        logger.error(f"Decart error: {error}")
         if _should_reconnect(error) and self._current_track:
             logger.info("Attempting to reconnect to Decart...")
             asyncio.create_task(self._connect_to_decart(self._current_track))
