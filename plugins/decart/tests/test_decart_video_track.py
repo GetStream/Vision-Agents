@@ -42,7 +42,7 @@ class TestDecartVideoTrack:
         track = DecartVideoTrack(width=1920, height=1080)
         assert track.width == 1920
         assert track.height == 1080
-        assert not track._stopped
+        assert not track.is_stopped
         track.stop()
 
     @pytest.mark.asyncio
