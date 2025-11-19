@@ -53,7 +53,7 @@ class DecartVideoTrack(VideoStreamTrack):
 
     async def recv(self) -> av.VideoFrame:
         if self._stopped:
-            raise Exception("Track stopped")
+            raise ValueError("Track stopped")
 
         try:
             frame = await asyncio.wait_for(
