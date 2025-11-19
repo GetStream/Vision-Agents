@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional, Dict, List
 
@@ -30,29 +31,49 @@ class RoboflowDetectionProcessor(
     AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
 ):
     """
-    Real-time object detection using Roboflow's hosted inference API.
+    Real-time object detection using Roboflow Universe public models.
     
-    This processor uses Roboflow's cloud-hosted models for object detection.
-    It processes video frames, runs inference via the Roboflow API, and annotates
-    frames with bounding boxes and labels.
+    Loads models from Roboflow Universe. If version is not specified, uses latest.
+    
+    Model ID Format:
+        workspace/project or workspace/project/version
+    
+    Find models at: https://universe.roboflow.com
+    From URL like: universe.roboflow.com/workspace/project
+    Use model_id: "workspace/project"
     
     Args:
-        api_key: Roboflow API key. If not provided, reads from ROBOFLOW_API_KEY env var
-        workspace_id: Your Roboflow workspace ID
-        project_id: Your Roboflow project ID  
-        model_version: Model version number (e.g., 1, 2, 3)
+        model_id: Universe model in format "workspace/project" or "workspace/project/version"
+        version: Model version (optional, defaults to latest)
+        api_key: Roboflow API key (required, get from app.roboflow.com)
         conf_threshold: Confidence threshold for detections (0-100)
         fps: Frame processing rate (default: 5 to be API-friendly)
         interval: Processing interval in seconds (0 = process every frame)
         max_workers: Number of worker threads for async processing
+    
+    Examples:
+        # Latest version
+        processor = RoboflowDetectionProcessor(
+            model_id="roboflow-100/aerial-spheres"
+        )
+        
+        # Specific version in model_id
+        processor = RoboflowDetectionProcessor(
+            model_id="roboflow-100/aerial-spheres/2"
+        )
+        
+        # Specific version as parameter
+        processor = RoboflowDetectionProcessor(
+            model_id="roboflow-100/aerial-spheres",
+            version=2
+        )
     """
 
     def __init__(
         self,
+        model_id: str,
+        version: Optional[int] = None,
         api_key: Optional[str] = None,
-        workspace_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        model_version: int = 1,
         conf_threshold: int = 40,
         fps: int = 5,
         interval: int = 0,
@@ -62,18 +83,12 @@ class RoboflowDetectionProcessor(
     ):
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
 
-        if not workspace_id or not project_id:
-            raise ValueError("workspace_id and project_id are required")
+        if not model_id:
+            raise ValueError("model_id is required")
 
         self.api_key = api_key or os.getenv("ROBOFLOW_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "API key required. Set ROBOFLOW_API_KEY env var or pass api_key param"
-            )
-
-        self.workspace_id = workspace_id
-        self.project_id = project_id
-        self.model_version = model_version
+        self.model_id = model_id
+        self.version = version
         self.conf_threshold = conf_threshold
         self.fps = fps
         self.max_workers = max_workers
@@ -92,26 +107,65 @@ class RoboflowDetectionProcessor(
         self._load_model()
 
         logger.info("🔍 Roboflow Processor initialized")
-        logger.info(
-            f"📦 Using project: {workspace_id}/{project_id} v{model_version}"
-        )
+        logger.info(f"📦 Using model: {model_id}" + (f" v{version}" if version else ""))
 
     def _load_model(self):
-        """Initialize Roboflow model."""
+        """
+        Load a public model from Roboflow Universe.
+        
+        Format: workspace/project or workspace/project/version
+        """
         try:
             from roboflow import Roboflow
 
-            rf = Roboflow(api_key=self.api_key)
-            workspace = rf.workspace(self.workspace_id)
-            project = workspace.project(self.project_id)
-            self.model = project.version(self.model_version).model
+            if not self.api_key:
+                raise ValueError(
+                    "ROBOFLOW_API_KEY required. Get it from https://app.roboflow.com → Settings → API"
+                )
 
-            logger.info(
-                f"✅ Roboflow model loaded: {self.workspace_id}/{self.project_id} v{self.model_version}"
-            )
+            parts = self.model_id.split("/")
+            
+            if len(parts) == 2:
+                # Format: workspace/project
+                workspace_id, project_id = parts
+                version_num = self.version
+                
+            elif len(parts) == 3:
+                # Format: workspace/project/version
+                workspace_id, project_id, version_str = parts
+                version_num = int(version_str)
+                if self.version and self.version != version_num:
+                    logger.warning(f"⚠️ Using version from model_id: {version_num}")
+                    
+            else:
+                raise ValueError(
+                    f"Invalid model_id: '{self.model_id}'\n"
+                    f"Expected format: 'workspace/project' or 'workspace/project/version'\n"
+                    f"Example: 'roboflow-100/aerial-spheres' or 'roboflow-100/aerial-spheres/2'\n"
+                    f"Find models at: https://universe.roboflow.com"
+                )
+            
+            # Load model
+            rf = Roboflow(api_key=self.api_key)
+            workspace = rf.workspace(workspace_id)
+            project = workspace.project(project_id)
+            
+            # Get version
+            if version_num is None:
+                versions = project.versions()
+                if not versions:
+                    raise ValueError(f"No versions found for {self.model_id}")
+                version_num = versions[-1].version
+                logger.info(f"📌 Using latest version: {version_num}")
+            
+            self.version = version_num
+            self.model = project.version(version_num).model
+            
+            logger.info(f"✅ Loaded model: {workspace_id}/{project_id} v{version_num}")
+                
         except Exception as e:
-            logger.exception(f"❌ Failed to initialize Roboflow: {e}")
-            logger.error("Check: API key, workspace_id, project_id are correct")
+            logger.error(f"❌ Failed to load model '{self.model_id}': {e}")
+            logger.error("Check: https://universe.roboflow.com to find the correct model_id")
             raise
 
     async def process_video(
@@ -200,9 +254,15 @@ class RoboflowDetectionProcessor(
         if self._shutdown:
             return {"predictions": []}
 
+        temp_file = None
         try:
-            # Roboflow inference
-            result = self.model.predict(image, confidence=self.conf_threshold)
+            # Roboflow needs a file path, so save to temp file
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                image.save(temp_file.name, format="JPEG")
+                temp_path = temp_file.name
+            
+            # Run inference
+            result = self.model.predict(temp_path, confidence=self.conf_threshold)
 
             # Parse result - Roboflow returns a response object
             predictions = result.json().get("predictions", [])
@@ -212,6 +272,13 @@ class RoboflowDetectionProcessor(
         except Exception as e:
             logger.error(f"❌ Detection failed: {e}")
             return {"predictions": []}
+        finally:
+            # Clean up temp file
+            if temp_file and os.path.exists(temp_file.name):
+                try:
+                    os.unlink(temp_file.name)
+                except:
+                    pass
 
     def _annotate_frame(
         self, frame_array: np.ndarray, predictions: List[Dict]

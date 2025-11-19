@@ -5,7 +5,7 @@ Example: Real-time Object Detection with Roboflow
 This example demonstrates how to:
 1. Create an Agent with Roboflow object detection
 2. Join a Stream video call
-3. Process video frames with your trained Roboflow model
+3. Process video frames with a Roboflow model
 4. Annotate frames with detected objects
 5. Interact with users about what the agent sees
 
@@ -14,7 +14,7 @@ Usage:
 
 Requirements:
     - Create a .env file with your credentials (see env.example)
-    - Train a model on Roboflow or use an existing one
+    - Either use your own trained model or a public Roboflow Universe model
     - Install dependencies: uv sync
 """
 
@@ -24,44 +24,46 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import cartesia, deepgram, getstream, gemini, vogent, roboflow
+from vision_agents.plugins import cartesia, deepgram, getstream, gemini, roboflow
 
 load_dotenv()
 
 
 async def main() -> None:
     """
-    Example agent using Roboflow for object detection.
+    Example agent using Roboflow Universe models for object detection.
     
-    Required environment variables:
-    - ROBOFLOW_API_KEY: Your Roboflow API key
-    - ROBOFLOW_WORKSPACE: Your Roboflow workspace ID
-    - ROBOFLOW_PROJECT: Your Roboflow project ID
-    - ROBOFLOW_VERSION: Model version number (default: 1)
+    Find models at: https://universe.roboflow.com
+    Format: ROBOFLOW_MODEL_ID=workspace/project or workspace/project/version
+    
+    Examples:
+    - ROBOFLOW_MODEL_ID=roboflow-100/aerial-spheres
+    - ROBOFLOW_MODEL_ID=roboflow-100/aerial-spheres/2
+    - ROBOFLOW_MODEL_ID=microsoft/coco
     """
     
     # Get Roboflow configuration from environment
-    workspace_id = os.getenv("ROBOFLOW_WORKSPACE")
-    project_id = os.getenv("ROBOFLOW_PROJECT")
-    model_version = int(os.getenv("ROBOFLOW_VERSION", "1"))
+    model_id = os.getenv("ROBOFLOW_MODEL_ID")
+    version = os.getenv("ROBOFLOW_VERSION")
     
-    if not workspace_id or not project_id:
+    if not model_id:
         raise ValueError(
-            "Missing Roboflow configuration. Set ROBOFLOW_WORKSPACE and ROBOFLOW_PROJECT env vars.\n"
-            "Get these from your Roboflow project URL: https://app.roboflow.com/YOUR_WORKSPACE/YOUR_PROJECT"
+            "Missing ROBOFLOW_MODEL_ID.\n"
+            "Format: workspace/project or workspace/project/version\n"
+            "Example: ROBOFLOW_MODEL_ID=roboflow-100/aerial-spheres\n"
+            "Find models at: https://universe.roboflow.com"
         )
     
     print("🔍 Roboflow Object Detection Example")
     print("=" * 50)
-    print(f"📦 Using model: {workspace_id}/{project_id} v{model_version}")
+    print(f"📦 Using model: {model_id}" + (f" v{version}" if version else ""))
     print()
     
     # Create Roboflow processor
+    # API key will be read from ROBOFLOW_API_KEY env var if needed
     roboflow_processor = roboflow.RoboflowDetectionProcessor(
-        # api_key will be read from ROBOFLOW_API_KEY env var
-        workspace_id=workspace_id,
-        project_id=project_id,
-        model_version=model_version,
+        model_id=model_id,
+        version=int(version) if version else None,
         conf_threshold=40,  # 40% confidence threshold
         fps=5,  # Process 5 frames per second (API-friendly)
     )
@@ -84,7 +86,6 @@ async def main() -> None:
         llm=llm,
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
-        turn_detection=vogent.TurnDetection(),
     )
     
     # Create a call
