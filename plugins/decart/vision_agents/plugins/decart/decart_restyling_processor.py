@@ -2,16 +2,17 @@ import asyncio
 import logging
 import os
 from asyncio import CancelledError
-from typing import Any, Literal, Optional, cast
+from typing import Any, Optional, cast
 
-import av
 import aiortc
+import av
 import websockets
 from aiortc import MediaStreamTrack, VideoStreamTrack
 from decart import DecartClient, models
 from decart import DecartSDKError
 from decart.realtime import RealtimeClient, RealtimeConnectOptions
 from decart.types import ModelState, Prompt
+from decart.models import RealTimeModels
 
 from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
@@ -66,7 +67,7 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "mirage_v2",
+        model: RealTimeModels = "mirage_v2",
         initial_prompt: str = "Cyberpunk city",
         enrich: bool = True,
         mirror: bool = True,
@@ -107,9 +108,7 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         self.width = width
         self.height = height
 
-        self.model = models.realtime(
-            cast(Literal["mirage", "mirage_v2", "lucy_v2v_720p_rt"], self.model_name)
-        )
+        self.model = models.realtime(self.model_name)
 
         self._decart_client = DecartClient(api_key=self.api_key, **kwargs)
         self._video_track = DecartVideoTrack(width=width, height=height)
@@ -240,7 +239,7 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
         self, transformed_stream: MediaStreamTrack
     ) -> None:
         try:
-            while not self._video_track._stopped:
+            while not self._video_track.is_stopped:
                 frame = await transformed_stream.recv()
                 await self._video_track.add_frame(cast(av.VideoFrame, frame))
         except asyncio.CancelledError:
@@ -285,7 +284,7 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             self._realtime_client = None
             self._connected = False
 
-    def close(self) -> None:
+    async def close(self) -> None:
         if self._video_track:
             self._video_track.stop()
 
@@ -294,18 +293,7 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
 
         if self._processing_task and not self._processing_task.done():
             self._processing_task.cancel()
-
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            if self._realtime_client or self._decart_client:
-                asyncio.create_task(self._async_close())
         else:
             if self._realtime_client or self._decart_client:
-                loop.run_until_complete(self._async_close())
-
-    async def _async_close(self) -> None:
-        if self._realtime_client:
-            await self._disconnect_from_decart()
-
-        if self._decart_client:
-            await self._decart_client.close()
+                await self._disconnect_from_decart()
+                await self._decart_client.close()

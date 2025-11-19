@@ -9,6 +9,7 @@ from PIL.Image import Resampling
 
 logger = logging.getLogger(__name__)
 
+
 def ensure_even_dimensions(frame: av.VideoFrame) -> av.VideoFrame:
     """
     Ensure frame has even dimensions for H.264 yuv420p encoding.
@@ -88,9 +89,19 @@ def frame_to_png_bytes(frame: av.VideoFrame) -> bytes:
 
 
 def resize_frame(self, frame: av.VideoFrame) -> av.VideoFrame:
-    logger.debug(
-        f"Resizing frame from {frame.width}x{frame.height} to {self.width}x{self.height}"
-    )
+    """
+    Resizes a video frame to target dimensions while maintaining the aspect ratio. The method centers the resized
+    image on a black background if the target dimensions do not match the original aspect ratio.
+
+    Parameters:
+        frame (av.VideoFrame): The input video frame to be resized.
+
+    Returns:
+        av.VideoFrame: The output video frame after resizing, maintaining the original aspect ratio.
+
+    Raises:
+        None
+    """
     img = frame.to_image()
 
     # Calculate scaling to maintain aspect ratio

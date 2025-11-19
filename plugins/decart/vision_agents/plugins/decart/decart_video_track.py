@@ -42,8 +42,10 @@ class DecartVideoTrack(VideoStreamTrack):
 
         logger.debug(f"DecartVideoTrack initialized ({width}x{height})")
 
-    async def add_frame(self, frame: av.VideoFrame) -> None:
+    async def add_frame(self, frame: av.VideoFrame | av.AudioFrame | av.Packet) -> None:
         if self._stopped:
+            return
+        if not isinstance(frame, av.VideoFrame):
             return
         if frame.width != self.width or frame.height != self.height:
             frame = await asyncio.to_thread(resize_frame, self, frame)
@@ -70,6 +72,11 @@ class DecartVideoTrack(VideoStreamTrack):
         output_frame.time_base = time_base
 
         return output_frame
+
+    @property
+    def is_stopped(self) -> bool:
+        """Check if the video track is stopped."""
+        return self._stopped
 
     def stop(self) -> None:
         self._stopped = True
