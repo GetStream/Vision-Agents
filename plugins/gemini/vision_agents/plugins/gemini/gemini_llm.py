@@ -393,13 +393,16 @@ class GeminiLLM(LLM):
             # Prefer the top-level convenience list if available
             function_calls = getattr(response, "function_calls", []) or []
             for fc in function_calls:
-                calls.append(
-                    {
-                        "type": "tool_call",
-                        "name": getattr(fc, "name", "unknown"),
-                        "arguments_json": getattr(fc, "args", {}),
-                    }
-                )
+                # Extract thought signature for Gemini 3 Pro compatibility
+                thought_sig = getattr(fc, "thought_signature", None)
+                call_item: NormalizedToolCallItem = {
+                    "type": "tool_call",
+                    "name": getattr(fc, "name", "unknown"),
+                    "arguments_json": getattr(fc, "args", {}),
+                }
+                if thought_sig is not None:
+                    call_item["thought_signature"] = thought_sig
+                calls.append(call_item)
 
             if not calls and getattr(response, "candidates", None):
                 for c in response.candidates:
