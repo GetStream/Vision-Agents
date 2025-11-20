@@ -46,12 +46,13 @@ def mock_decart_client():
 class TestRestylingProcessor:
     """Tests for RestylingProcessor."""
 
-    def test_publish_video_track(self, mock_decart_client):
+    @pytest.mark.asyncio
+    async def test_publish_video_track(self, mock_decart_client):
         """Test that publish_video_track returns DecartVideoTrack."""
         processor = RestylingProcessor(api_key="test_key")
         track = processor.publish_video_track()
         assert isinstance(track, DecartVideoTrack)
-        processor.close()
+        await processor.close()
 
     @pytest.mark.asyncio
     async def test_process_video_triggers_connection(
@@ -70,7 +71,7 @@ class TestRestylingProcessor:
 
             assert processor._current_track == mock_video_track
             assert mock_realtime.connect.called
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_process_video_prevents_duplicate_connections(
@@ -90,7 +91,7 @@ class TestRestylingProcessor:
             await processor.process_video(mock_video_track, None)
 
             assert not mock_realtime.connect.called
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_update_prompt_when_connected(self, mock_decart_client):
@@ -107,7 +108,7 @@ class TestRestylingProcessor:
 
             mock_client.set_prompt.assert_called_once_with("new style", enrich=False)
             assert processor.initial_prompt == "new style"
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_update_prompt_noop_when_disconnected(self, mock_decart_client):
@@ -123,7 +124,7 @@ class TestRestylingProcessor:
             await processor.update_prompt("new style")
 
             assert processor.initial_prompt == "original"
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_update_prompt_uses_default_enrich(self, mock_decart_client):
@@ -138,7 +139,7 @@ class TestRestylingProcessor:
             await processor.update_prompt("new style")
 
             mock_client.set_prompt.assert_called_once_with("new style", enrich=True)
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_set_mirror_when_connected(self, mock_decart_client):
@@ -154,7 +155,7 @@ class TestRestylingProcessor:
 
             mock_client.set_mirror.assert_called_once_with(False)
             assert processor.mirror is False
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_set_mirror_noop_when_disconnected(self, mock_decart_client):
@@ -168,7 +169,7 @@ class TestRestylingProcessor:
             await processor.set_mirror(False)
 
             assert processor.mirror is True
-            processor.close()
+            await processor.close()
 
 
 class TestConnectionManagement:
@@ -193,7 +194,7 @@ class TestConnectionManagement:
             assert processor._connected
             assert not processor._connecting
             assert processor._realtime_client is not None
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_reconnection_on_connection_error(
@@ -215,7 +216,7 @@ class TestConnectionManagement:
 
             await asyncio.sleep(0.1)
             assert mock_realtime.connect.called
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_reconnection_on_websocket_error(
@@ -237,7 +238,7 @@ class TestConnectionManagement:
 
             await asyncio.sleep(0.1)
             assert mock_realtime.connect.called
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_no_reconnection_on_non_connection_error(
@@ -255,7 +256,7 @@ class TestConnectionManagement:
 
             await asyncio.sleep(0.1)
             assert not processor._connected
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_connection_change_updates_state(self, mock_decart_client):
@@ -276,7 +277,7 @@ class TestConnectionManagement:
 
             processor._on_connection_change("error")
             assert not processor._connected
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_disconnect_cleans_up(self, mock_video_track, mock_decart_client):
@@ -297,7 +298,7 @@ class TestConnectionManagement:
             assert not processor._connected
             assert processor._realtime_client is None
             mock_client_instance.disconnect.assert_called_once()
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_processing_loop_reconnects(
@@ -326,7 +327,7 @@ class TestConnectionManagement:
                 pass
 
             assert mock_realtime.connect.called
-            processor.close()
+            await processor.close()
 
 
 class TestFrameHandling:
@@ -366,7 +367,7 @@ class TestFrameHandling:
                 pass
 
             assert processor._video_track.frame_queue.qsize() > 0
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_frame_receiving_task_cancelled_on_close(
@@ -386,11 +387,11 @@ class TestFrameHandling:
             )
             await asyncio.sleep(0.05)
 
-            processor.close()
+            await processor.close()
             await asyncio.sleep(0.1)
 
             assert task.done()
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_on_remote_stream_starts_frame_receiving(
@@ -414,7 +415,7 @@ class TestFrameHandling:
             processor._video_track.stop()
             await asyncio.sleep(0.1)
 
-            processor.close()
+            await processor.close()
 
     @pytest.mark.asyncio
     async def test_on_remote_stream_cancels_previous_task(
@@ -443,4 +444,4 @@ class TestFrameHandling:
 
             processor._video_track.stop()
             await asyncio.sleep(0.1)
-            processor.close()
+            await processor.close()
