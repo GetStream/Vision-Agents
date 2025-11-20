@@ -379,8 +379,12 @@ class TestFrameHandling:
         ):
             processor = RestylingProcessor(api_key="test_key")
 
+            async def mock_recv():
+                await asyncio.sleep(0.01)
+                return sample_frame
+
             mock_transformed_stream = AsyncMock()
-            mock_transformed_stream.recv = AsyncMock(return_value=sample_frame)
+            mock_transformed_stream.recv = mock_recv
 
             task = asyncio.create_task(
                 processor._receive_frames_from_decart(mock_transformed_stream)
@@ -403,8 +407,12 @@ class TestFrameHandling:
         ):
             processor = RestylingProcessor(api_key="test_key")
 
+            async def mock_recv():
+                await asyncio.sleep(0.01)
+                return sample_frame
+
             mock_transformed_stream = AsyncMock()
-            mock_transformed_stream.recv = AsyncMock(return_value=sample_frame)
+            mock_transformed_stream.recv = mock_recv
 
             processor._on_remote_stream(mock_transformed_stream)
 
@@ -427,11 +435,15 @@ class TestFrameHandling:
         ):
             processor = RestylingProcessor(api_key="test_key")
 
+            async def mock_recv():
+                await asyncio.sleep(0.01)
+                return sample_frame
+
             mock_stream1 = AsyncMock()
-            mock_stream1.recv = AsyncMock(return_value=sample_frame)
+            mock_stream1.recv = mock_recv
 
             mock_stream2 = AsyncMock()
-            mock_stream2.recv = AsyncMock(return_value=sample_frame)
+            mock_stream2.recv = mock_recv
 
             processor._on_remote_stream(mock_stream1)
             task1 = processor._frame_receiving_task
@@ -439,6 +451,8 @@ class TestFrameHandling:
             await asyncio.sleep(0.05)
             processor._on_remote_stream(mock_stream2)
 
+            # Yield to allow cancellation to propagate
+            await asyncio.sleep(0)
             assert task1.done()
             assert processor._frame_receiving_task != task1
 
