@@ -37,7 +37,7 @@ class TestXAILLM:
     @pytest.mark.integration
     @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
     async def test_simple(self):
-        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        llm = XAILLM(model="grok-4-latest", api_key=os.getenv("XAI_API_KEY"))
         response = await llm.simple_response(
             "Explain quantum computing in 1 paragraph",
         )
@@ -46,7 +46,7 @@ class TestXAILLM:
     @pytest.mark.integration
     @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
     async def test_native_api(self):
-        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        llm = XAILLM(model="grok-4-latest", api_key=os.getenv("XAI_API_KEY"))
         response = await llm.create_response(
             input="say hi", instructions="You are a helpful assistant."
         )
@@ -55,7 +55,7 @@ class TestXAILLM:
     @pytest.mark.integration
     @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
     async def test_streaming(self):
-        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        llm = XAILLM(model="grok-4-latest", api_key=os.getenv("XAI_API_KEY"))
         streaming_works = False
 
         @llm.events.subscribe
@@ -74,7 +74,7 @@ class TestXAILLM:
     @pytest.mark.integration
     @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
     async def test_memory(self):
-        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        llm = XAILLM(model="grok-4-latest", api_key=os.getenv("XAI_API_KEY"))
         await llm.simple_response(
             text="There are 2 dogs in the room",
         )
@@ -87,7 +87,7 @@ class TestXAILLM:
     @pytest.mark.integration
     @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
     async def test_native_memory(self):
-        llm = XAILLM(model="grok-4", api_key=os.getenv("XAI_API_KEY"))
+        llm = XAILLM(model="grok-4-latest", api_key=os.getenv("XAI_API_KEY"))
         await llm.create_response(
             input="There are 2 dogs in the room",
         )
