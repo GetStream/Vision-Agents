@@ -507,23 +507,25 @@ class GeminiLLM(LLM):
         # An empty message has no meaningful content (no text, no function_call, etc.)
         cleaned_history = []
         for content in history:
-            if content.role == "model" and content.parts:
-                # Check if all parts are empty
-                has_meaningful_content = False
-                for part in content.parts:
-                    if (
-                        part.function_call
-                        or part.function_response
-                        or (part.text and len(part.text) > 0)
-                    ):
-                        has_meaningful_content = True
-                        break
+            if content.role == "model":
+                # Only keep model messages that have parts with meaningful content
+                if content.parts:
+                    has_meaningful_content = False
+                    for part in content.parts:
+                        if (
+                            part.function_call
+                            or part.function_response
+                            or (part.text and len(part.text) > 0)
+                        ):
+                            has_meaningful_content = True
+                            break
 
-                # Only add model messages with meaningful content
-                if has_meaningful_content:
-                    cleaned_history.append(content)
+                    # Only add model messages with meaningful content
+                    if has_meaningful_content:
+                        cleaned_history.append(content)
+                # Skip model messages with no parts (they are empty)
             else:
-                # Keep all user messages and model messages with no parts
+                # Keep all non-model messages (e.g., user messages)
                 cleaned_history.append(content)
 
         # If we filtered anything out, recreate the chat with cleaned history
