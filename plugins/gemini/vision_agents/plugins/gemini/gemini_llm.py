@@ -242,12 +242,15 @@ class GeminiLLM(LLM):
                     func_response_part = types.Part.from_function_response(
                         name=tc["name"], response=sanitized_res
                     )
-                    
+
                     # Include thought signature for Gemini 3 Pro compatibility
                     # The thought signature from the function call must be included in the response
-                    if "thought_signature" in tc and tc["thought_signature"] is not None:
+                    if (
+                        "thought_signature" in tc
+                        and tc["thought_signature"] is not None
+                    ):
                         func_response_part.thought_signature = tc["thought_signature"]
-                    
+
                     parts.append(func_response_part)
 
                 # Fix for Gemini 3 Pro: Remove empty model messages from history
@@ -481,11 +484,11 @@ class GeminiLLM(LLM):
     async def _clean_chat_history_for_gemini_3(self) -> None:
         """
         Clean chat history for Gemini 3 Pro by removing empty model messages.
-        
+
         Gemini 3 Pro streaming returns an extra empty content chunk after function calls,
         which the SDK records as an empty model message in history. This breaks the
         requirement that "function response turn comes immediately after function call turn".
-        
+
         This method:
         1. Gets current chat history
         2. Filters out empty model messages
@@ -493,10 +496,10 @@ class GeminiLLM(LLM):
         """
         if not self.chat:
             return
-        
+
         # Get current history
         history = self.chat.get_history()
-        
+
         # Filter out empty model messages
         # An empty message has no meaningful content (no text, no function_call, etc.)
         cleaned_history = []
@@ -505,24 +508,24 @@ class GeminiLLM(LLM):
                 # Check if all parts are empty
                 has_meaningful_content = False
                 for part in content.parts:
-                    if (part.function_call or 
-                        part.function_response or
-                        (part.text and len(part.text) > 0)):
+                    if (
+                        part.function_call
+                        or part.function_response
+                        or (part.text and len(part.text) > 0)
+                    ):
                         has_meaningful_content = True
                         break
-                
+
                 # Only add model messages with meaningful content
                 if has_meaningful_content:
                     cleaned_history.append(content)
             else:
                 # Keep all user messages and model messages with no parts
                 cleaned_history.append(content)
-        
+
         # If we filtered anything out, recreate the chat with cleaned history
         if len(cleaned_history) < len(history):
             config = self._build_config(system_instruction=self._instructions)
             self.chat = self.client.chats.create(
-                model=self.model,
-                config=config,
-                history=cleaned_history
+                model=self.model, config=config, history=cleaned_history
             )
