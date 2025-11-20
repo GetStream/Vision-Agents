@@ -408,18 +408,18 @@ class GeminiLLM(LLM):
                             if getattr(part, "function_call", None):
                                 # Extract thought signature for Gemini 3 Pro compatibility
                                 thought_sig = getattr(part, "thought_signature", None)
-                                calls.append(
-                                    {
-                                        "type": "tool_call",
-                                        "name": getattr(
-                                            part.function_call, "name", "unknown"
-                                        ),
-                                        "arguments_json": getattr(
-                                            part.function_call, "args", {}
-                                        ),
-                                        "thought_signature": thought_sig,  # Store for later use
-                                    }
-                                )
+                                call_item: NormalizedToolCallItem = {
+                                    "type": "tool_call",
+                                    "name": getattr(
+                                        part.function_call, "name", "unknown"
+                                    ),
+                                    "arguments_json": getattr(
+                                        part.function_call, "args", {}
+                                    ),
+                                }
+                                if thought_sig is not None:
+                                    call_item["thought_signature"] = thought_sig
+                                calls.append(call_item)
         except Exception:
             pass  # Ignore extraction errors
 
