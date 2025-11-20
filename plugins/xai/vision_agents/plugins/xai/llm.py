@@ -42,7 +42,7 @@ class XAILLM(LLM):
 
     def __init__(
         self,
-        model: str = "grok-4",
+        model: str = "grok-4.1",
         api_key: Optional[str] = None,
         client: Optional[AsyncClient] = None,
     ):
