@@ -25,6 +25,7 @@ vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
 vision-agents-plugins-fast-whisper = { workspace = true }
+vision-agents-plugins-sam3 = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -55,7 +56,8 @@ members = [
     "plugins/inworld",
     "plugins/vogent",
     "plugins/moondream",
-    "plugins/fast_whisper"
+    "plugins/fast_whisper",
+    "plugins/sam3"
 ]
 exclude = [
 "**/__pycache__",

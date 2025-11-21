@@ -10,6 +10,8 @@ from PIL import Image
 from getstream.video.rtc import PcmData
 from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
 
+from vision_agents.core.utils.video_forwarder import VideoForwarder
+
 """
 TODO:
 - simple audio test
@@ -69,7 +71,15 @@ class VideoProcessorMixin(abc.ABC):
         self,
         track: aiortc.mediastreams.MediaStreamTrack,
         participant: models_pb2.Participant,
+        shared_forwarder: VideoForwarder,
     ):
+        """Process video from an incoming track.
+        
+        Args:
+            track: The incoming video track to process
+            participant: The participant information
+            shared_forwarder: Shared VideoForwarder instance for efficient frame distribution
+        """
         pass
 
 

@@ -82,8 +82,8 @@ packages = ["vision_agents"]
 [tool.hatch.build.targets.sdist]
 include = ["vision_agents"]
 
-#[tool.uv.sources]
+[tool.uv.sources]
 # getstream = { git = "https://github.com/GetStream/stream-py.git", branch = "audio-more" }
 # for local development
-# getstream = { path = "../../stream-py/", editable = true }
+getstream = { path = "../../stream-py/", editable = true }
 # aiortc = { path = "../stream-py/", editable = true }
