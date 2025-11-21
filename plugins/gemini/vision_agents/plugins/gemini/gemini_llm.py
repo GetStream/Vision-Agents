@@ -390,41 +390,24 @@ class GeminiLLM(LLM):
         calls: List[NormalizedToolCallItem] = []
 
         try:
-            # Prefer the top-level convenience list if available
-            function_calls = getattr(response, "function_calls", []) or []
-            for fc in function_calls:
-                # Extract thought signature for Gemini 3 Pro compatibility
-                thought_sig = getattr(fc, "thought_signature", None)
-                call_item: NormalizedToolCallItem = {
-                    "type": "tool_call",
-                    "name": getattr(fc, "name", "unknown"),
-                    "arguments_json": getattr(fc, "args", {}),
-                }
-                if thought_sig is not None:
-                    call_item["thought_signature"] = thought_sig
-                calls.append(call_item)
-
-            if not calls and getattr(response, "candidates", None):
+            # We must iterate through candidates to get the thought_signature
+            # The top-level response.function_calls convenience property returns FunctionCall objects
+            # which do not have the thought_signature attribute.
+            if response.candidates:
                 for c in response.candidates:
-                    if getattr(c, "content", None):
+                    if c.content:
                         for part in c.content.parts:
-                            if getattr(part, "function_call", None):
+                            if part.function_call:
                                 # Extract thought signature for Gemini 3 Pro compatibility
-                                thought_sig = getattr(part, "thought_signature", None)
-                                fallback_call_item: NormalizedToolCallItem = {
+                                thought_sig = part.thought_signature
+                                call_item: NormalizedToolCallItem = {
                                     "type": "tool_call",
-                                    "name": getattr(
-                                        part.function_call, "name", "unknown"
-                                    ),
-                                    "arguments_json": getattr(
-                                        part.function_call, "args", {}
-                                    ),
+                                    "name": part.function_call.name,
+                                    "arguments_json": part.function_call.args,
                                 }
                                 if thought_sig is not None:
-                                    fallback_call_item["thought_signature"] = (
-                                        thought_sig
-                                    )
-                                calls.append(fallback_call_item)
+                                    call_item["thought_signature"] = thought_sig
+                                calls.append(call_item)
         except Exception:
             pass  # Ignore extraction errors
 
