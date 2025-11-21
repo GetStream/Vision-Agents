@@ -31,7 +31,7 @@ class Instructions:
 
             base_dir: Base directory to search for markdown files. Default - current working directory.
         """
-        self._base_dir = Path(base_dir or _INITIAL_CWD).resolve()
+        self._base_dir = Path(base_dir or _INITIAL_CWD)
         self.input_text = input_text
         self.full_reference = self._extract_full_reference()
 
@@ -83,6 +83,9 @@ class Instructions:
             if file_path.is_absolute()
             else (self._base_dir / file_path).resolve()
         )
+        
+        # Resolve base_dir for comparison
+        resolved_base_dir = self._base_dir.resolve()
 
         # Check if the path is a file, it exists, and it's a markdown file.
         skip_reason = ""
@@ -95,7 +98,7 @@ class Instructions:
         elif full_path.suffix != ".md":
             skip_reason = "file is not .md"
         # The markdown file also must be inside the base_dir
-        elif not full_path.is_relative_to(self._base_dir):
+        elif not full_path.is_relative_to(resolved_base_dir):
             skip_reason = "file outside the base directory"
 
         if skip_reason:

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import datetime
 import json
 import logging
 import uuid
@@ -27,13 +28,18 @@ from getstream.video.rtc import PcmData
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "amazon.nova-sonic-v1:0"
-DEFAULT_SAMPLE_RATE = 16000
+DEFAULT_MODEL = "amazon.nova-2-sonic-v1:0"
 
 """
 AWS Bedrock Realtime with Nova Sonic support.
 
 Supports real-time audio streaming and function calling (tool use).
+
+TODO:
+* 8 minute window issue
+- VAD so _last_audio_at is accurate
+- Store history of messages
+- Reconnect endpoint support
 """
 
 
@@ -102,40 +108,9 @@ class Realtime(realtime.Realtime):
     connected: bool = False
     voice_id: str
 
-    # Event templates
-    TEXT_CONTENT_START_EVENT = """{
-        "event": {
-            "contentStart": {
-                "promptName": "%s",
-                "contentName": "%s",
-                "type": "TEXT",
-                "role": "%s",
-                "interactive": false,
-                "textInputConfiguration": {
-                    "mediaType": "text/plain"
-                }
-            }
-        }
-    }"""
-
-    TEXT_INPUT_EVENT = """{
-        "event": {
-            "textInput": {
-                "promptName": "%s",
-                "contentName": "%s",
-                "content": "%s"
-            }
-        }
-    }"""
-
-    CONTENT_END_EVENT = """{
-        "event": {
-            "contentEnd": {
-                "promptName": "%s",
-                "contentName": "%s"
-            }
-        }
-    }"""
+    last_connected_at: Optional[datetime.datetime] = None
+    # when we last hear or send audio (track this for reconnection logic)
+    _last_audio_at: Optional[datetime.datetime] = None
 
     def __init__(
         self,
@@ -159,26 +134,17 @@ class Realtime(realtime.Realtime):
         )
         self.client = BedrockRuntimeClient(config=config)
         self.logger = logging.getLogger(__name__)
+        self.prompt_name = self.session_id
 
         # Audio output track - Bedrock typically outputs at 24kHz
-        self._output_audio_track = AudioStreamTrack(
+        self.output_audio_track = AudioStreamTrack(
             sample_rate=24000, channels=1, format="s16"
         )
 
-        self._stream_task: Optional[asyncio.Task[Any]] = None
-        self._is_connected = False
-        self._message_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
-        self._conversation_messages: List[Dict[str, Any]] = []
+        self._handle_event_task: Optional[asyncio.Task[Any]] = None
         self._pending_tool_calls: Dict[
             str, Dict[str, Any]
         ] = {}  # Store tool calls until contentEnd: key=toolUseId
-
-        # Audio streaming configuration
-        self.prompt_name = self.session_id
-
-    @property
-    def output_audio_track(self) -> AudioStreamTrack:
-        return self._output_audio_track
 
     async def watch_video_track(
         self,
@@ -213,9 +179,10 @@ class Realtime(realtime.Realtime):
                 InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model)
             )
             self.connected = True
+            self.last_connected_at = datetime.datetime.now()
 
             # Start listener task
-            self._stream_task = asyncio.create_task(self._handle_events())
+            self._handle_event_task = asyncio.create_task(self._handle_events())
 
             # send start and prompt event
             await self.start_session()
@@ -238,9 +205,50 @@ class Realtime(realtime.Realtime):
             logger.info("AWS Bedrock connection established")
 
         except Exception as e:
-            logger.error(f"Failed to connect to AWS Bedrock: {e}", exc_info=True)
             self.connected = False
             raise
+
+    async def reconnect(self):
+        # first create the new connection
+        new_stream = await self.client.invoke_model_with_bidirectional_stream(
+            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model)
+        )
+
+        # Stop the old connection
+
+        # Create a new connection. Resend..
+        pass
+
+    def _should_reconnect(self) -> bool:
+        """Check if connection should be reconnected based on runtime.
+
+        AWS Nova has an 8 minute window limit. We should reconnect:
+        - After 5 minutes if there's been silence (>3 seconds since last audio)
+        - After 7 minutes regardless
+
+        Returns:
+            True if should reconnect, False otherwise
+        """
+        if not self.last_connected_at:
+            return False
+
+        now = datetime.datetime.now()
+        running = now - self.last_connected_at
+        running_minutes = running.total_seconds() / 60
+
+        # Check if there's been silence (more than 3 seconds since last audio)
+        has_silence = False
+        if self._last_audio_at:
+            silence_duration = (now - self._last_audio_at).total_seconds()
+            has_silence = silence_duration > 3
+
+        if running_minutes > 5 and has_silence:
+            return True
+        elif running_minutes > 7:
+            return True
+        else:
+            return False
+
 
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
@@ -254,6 +262,7 @@ class Realtime(realtime.Realtime):
 
         # Resample to 24kHz if needed, as required by AWS Nova
         pcm = pcm.resample(24000)
+        self._last_audio_at = datetime.datetime.now()
 
         content_name = str(uuid.uuid4())
 
@@ -283,14 +292,14 @@ class Realtime(realtime.Realtime):
         self.logger.info("Simple response called with text: %s", text)
         await self.content_input(content=text, role="USER")
 
-    async def content_input(self, content: str, role: str):
+    async def content_input(self, content: str, role: str, interactive: bool = True):
         """
         For text input Nova expects content start, text input and then content end
         This method wraps the 3 events in one operation
         """
         content_name = str(uuid.uuid4())
         logger.debug(f"Sending content input: role={role}, content={content[:100]}...")
-        await self.text_content_start(content_name, role)
+        await self.text_content_start(content_name, role, interactive)
         await self.text_input(content_name, content)
         await self.content_end(content_name)
 
@@ -330,19 +339,22 @@ class Realtime(realtime.Realtime):
 
     async def start_session(self):
         # subclass this to change the session start
-        event_json = """{
-          "event": {
-            "sessionStart": {
-              "inferenceConfiguration": {
-                "maxTokens": 1024,
-                "topP": 0.9,
-                "temperature": 0.7
-              }
+        event = {
+            "event": {
+                "sessionStart": {
+                    "inferenceConfiguration": {
+                        "maxTokens": 1024,
+                        "topP": 0.9,
+                        "temperature": 0.7
+                    }
+                },
+                "turnDetectionConfiguration": {
+                    "endpointingSensitivity": "MEDIUM"
+                }
             }
-          }
-        }"""
+        }
 
-        await self.send_raw_event(event_json)
+        await self.send_event(event)
 
     async def start_prompt(self):
         prompt_name = self.session_id
@@ -350,79 +362,77 @@ class Realtime(realtime.Realtime):
         # Add tool configuration if tools are available
         tools = self._convert_tools_to_provider_format(self.get_available_functions())
 
-        if tools:
-            import json as json_lib
-
-            self.logger.info(f"Adding tool configuration with {len(tools)} tools")
-
-            # Build the event with tools
-            event = {
-                "event": {
-                    "promptStart": {
-                        "promptName": prompt_name,
-                        "textOutputConfiguration": {"mediaType": "text/plain"},
-                        "audioOutputConfiguration": {
-                            "mediaType": "audio/lpcm",
-                            "sampleRateHertz": 24000,
-                            "sampleSizeBits": 16,
-                            "channelCount": 1,
-                            "voiceId": self.voice_id,
-                            "encoding": "base64",
-                            "audioType": "SPEECH",
-                        },
-                        "toolUseOutputConfiguration": {"mediaType": "application/json"},
-                        "toolConfiguration": {"tools": tools},
+        # Build the base event structure
+        event = {
+            "event": {
+                "promptStart": {
+                    "promptName": prompt_name,
+                    "textOutputConfiguration": {"mediaType": "text/plain"},
+                    "audioOutputConfiguration": {
+                        "mediaType": "audio/lpcm",
+                        "sampleRateHertz": 24000,
+                        "sampleSizeBits": 16,
+                        "channelCount": 1,
+                        "voiceId": self.voice_id,
+                        "encoding": "base64",
+                        "audioType": "SPEECH",
                     }
                 }
             }
-            event_json = json_lib.dumps(event)
-        else:
-            # Build the event without tools
-            event_json = f'''{{
-              "event": {{
-                "promptStart": {{
-                  "promptName": "{prompt_name}",
-                  "textOutputConfiguration": {{
-                    "mediaType": "text/plain"
-                  }},
-                  "audioOutputConfiguration": {{
-                    "mediaType": "audio/lpcm",
-                    "sampleRateHertz": 24000,
-                    "sampleSizeBits": 16,
-                    "channelCount": 1,
-                    "voiceId": "{self.voice_id}",
-                    "encoding": "base64",
-                    "audioType": "SPEECH"
-                  }}
-                }}
-              }}
-            }}'''
+        }
 
-        await self.send_raw_event(event_json)
+        # Add tool configuration if tools are available
+        if tools:
+            self.logger.info(f"Adding tool configuration with {len(tools)} tools")
+            event["event"]["promptStart"]["toolUseOutputConfiguration"] = {
+                "mediaType": "application/json"
+            }
+            event["event"]["promptStart"]["toolConfiguration"] = {"tools": tools}
 
-    async def text_content_start(self, content_name: str, role: str):
-        event_json = self.TEXT_CONTENT_START_EVENT % (
-            self.session_id,
-            content_name,
-            role,
-        )
-        await self.send_raw_event(event_json)
+        await self.send_event(event)
+
+    async def text_content_start(self, content_name: str, role: str, interactive: bool):
+        event = {
+            "event": {
+                "contentStart": {
+                    "promptName": self.session_id,
+                    "contentName": content_name,
+                    "type": "TEXT",
+                    "role": role,
+                    "interactive": interactive,
+                    "textInputConfiguration": {
+                        "mediaType": "text/plain"
+                    }
+                }
+            }
+        }
+
+        await self.send_event(event)
 
     async def text_input(self, content_name: str, content: str):
-        # Escape content for JSON
-        escaped_content = (
-            content.replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
-        )
-        event_json = self.TEXT_INPUT_EVENT % (
-            self.session_id,
-            content_name,
-            escaped_content,
-        )
-        await self.send_raw_event(event_json)
+        event = {
+            "event": {
+                "textInput": {
+                    "promptName": self.session_id,
+                    "contentName": content_name,
+                    "content": content,
+                }
+            }
+        }
+
+        await self.send_event(event)
 
     async def content_end(self, content_name: str):
-        event_json = self.CONTENT_END_EVENT % (self.session_id, content_name)
-        await self.send_raw_event(event_json)
+        event = {
+            "event": {
+                "contentEnd": {
+                    "promptName": self.session_id,
+                    "contentName": content_name,
+                }
+            }
+        }
+
+        await self.send_event(event)
 
     async def send_event(self, event_data: Dict[str, Any]) -> None:
         try:
@@ -433,17 +443,6 @@ class Realtime(realtime.Realtime):
             await self.stream.input_stream.send(event)
         except Exception as e:
             logger.error(f"Failed to send event to AWS Nova: {e}")
-            # Don't raise the exception, just log it to prevent connection reset
-
-    async def send_raw_event(self, event_json: str) -> None:
-        """Send a raw JSON event string to AWS Nova (matching working example approach)."""
-        try:
-            event = InvokeModelWithBidirectionalStreamInputChunk(
-                value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
-            )
-            await self.stream.input_stream.send(event)
-        except Exception as e:
-            logger.error(f"Failed to send raw event to AWS Nova: {e}")
             # Don't raise the exception, just log it to prevent connection reset
 
     def _convert_tools_to_provider_format(
@@ -635,8 +634,8 @@ class Realtime(realtime.Realtime):
 
         await self.stream.input_stream.close()
 
-        if self._stream_task:
-            self._stream_task.cancel()
+        if self._handle_event_task:
+            self._handle_event_task.cancel()
 
         self.connected = False
 
@@ -651,10 +650,14 @@ class Realtime(realtime.Realtime):
                         try:
                             response_data = result.value.bytes_.decode("utf-8")
                             json_data = json.loads(response_data)
-                            logger.debug(f"Received event: {json_data}")
+
 
                             # Handle different response types
                             if "event" in json_data:
+                                # Log all non audio events
+                                if not "audioOutput" in json_data["event"]:
+                                    logger.info(f"Received event: {json_data}")
+
                                 if "contentStart" in json_data["event"]:
                                     content_start = json_data["event"]["contentStart"]
                                     logger.debug(
@@ -692,6 +695,7 @@ class Realtime(realtime.Realtime):
                                         json_data["event"]["completionStart"],
                                     )
                                 elif "audioOutput" in json_data["event"]:
+                                    self._last_audio_at = datetime.datetime.now()
                                     audio_content = json_data["event"]["audioOutput"][
                                         "content"
                                     ]
@@ -702,7 +706,7 @@ class Realtime(realtime.Realtime):
                                     self._emit_audio_output_event(
                                         audio_data=pcm,
                                     )
-                                    await self._output_audio_track.write(pcm)
+                                    #await self.output_audio_track.write(pcm)
 
                                 elif "toolUse" in json_data["event"]:
                                     tool_use_data = json_data["event"]["toolUse"]
