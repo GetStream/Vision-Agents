@@ -109,6 +109,7 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 |-------------|-------------|-----------|
 | AWS Polly | TTS plugin using Amazon's cloud-based service with natural-sounding voices and neural engine support | [AWS Polly](https://visionagents.ai/integrations/aws-polly) |
 | Cartesia | TTS plugin for realistic voice synthesis in real-time voice applications | [Cartesia](https://visionagents.ai/integrations/cartesia) |
+| Decart | Real-time video restyling capabilities using generative AI models | [Decart](https://visionagents.ai/integrations/decart) |
 | Deepgram | STT plugin for fast, accurate real-time transcription with speaker diarization | [Deepgram](https://visionagents.ai/integrations/deepgram) |
 | ElevenLabs | TTS plugin with highly realistic and expressive voices for conversational agents | [ElevenLabs](https://visionagents.ai/integrations/elevenlabs) |
 | Fish Audio | STT and TTS plugin with automatic language detection and voice cloning capabilities | [Fish Audio](https://visionagents.ai/integrations/fish) |
@@ -121,6 +122,7 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 | Smart Turn | Advanced turn detection system combining Silero VAD, Whisper, and neural models for natural conversation flow | [Smart Turn](https://visionagents.ai/integrations/smart-turn) |
 | Vogent | Neural turn detection system for intelligent turn-taking in voice conversations | [Vogent](https://visionagents.ai/integrations/vogent) |
 | Wizper | STT plugin with real-time translation capabilities powered by Whisper v3 | [Wizper](https://visionagents.ai/integrations/wizper) |
+| xAI | xAI (Grok) integration for using powerful language models in conversational AI applications | [xAI](https://visionagents.ai/integrations/xai) |
 
 
 ## Processors
@@ -139,9 +141,9 @@ They take care of the hard stuff, like:
 
 Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai/).
 
-**Quickstart:** [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)  
-**Quickstart:** [Building a Video AI app](https://visionagents.ai/introduction/video-agents)  
-**Tutorial:** [Building real-time sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)  
+**Quickstart:** [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
+**Quickstart:** [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
+**Tutorial:** [Building real-time sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
 **Tutorial:** [Building a real-time meeting assistant](https://github.com/GetStream/Vision-Agents#)
 
 ## Development
@@ -174,7 +176,7 @@ Our favorite people & projects to follow for vision AI
 
 |            [<img src="https://pbs.twimg.com/profile_images/1664559115581145088/UMD1vtMw_400x400.jpg" width="80"/>](https://x.com/vikhyatk)            |
 | :----------------------------------------------------------------------------------------------------------------------: |
-| [@vikhyatk](https://x.com/vikhyatk)<br>AI Engineer<br><sub>Open-source AI projects, Creator of Moondream AI</sub> | 
+| [@vikhyatk](https://x.com/vikhyatk)<br>AI Engineer<br><sub>Open-source AI projects, Creator of Moondream AI</sub> |
 
 ## Inspiration
 
@@ -203,7 +205,7 @@ Our favorite people & projects to follow for vision AI
 
 ### Later
 
-[ ] Buffered video capture (for "catch the moment" scenarios)  
+[ ] Buffered video capture (for "catch the moment" scenarios)
 
 ## Star History
 

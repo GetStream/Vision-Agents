@@ -8,7 +8,7 @@ dependencies = [
   "python-dotenv",
   "vision-agents-plugins-openai",
   "vision-agents-plugins-decart",
-  "vision-agents-plugins-elvenlabs",
+  "vision-agents-plugins-elevenlabs",
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-deepgram",
 
