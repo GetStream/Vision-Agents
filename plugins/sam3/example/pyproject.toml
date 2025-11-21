@@ -1,0 +1,22 @@
+[project]
+name = "sam3-example"
+version = "0.1.0"
+description = "SAM3 video segmentation example"
+requires-python = ">=3.10"
+dependencies = [
+    "vision-agents",
+    "vision-agents-plugins-sam3",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-getstream",
+    "python-dotenv",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+vision-agents = { workspace = true }
+vision-agents-plugins-sam3 = { workspace = true }
+vision-agents-plugins-gemini = { workspace = true }
+vision-agents-plugins-getstream = { workspace = true }

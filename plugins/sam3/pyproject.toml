@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vision-agents-plugins-sam3"
+dynamic = ["version"]
+description = "SAM 3 (Segment Anything with Concepts) video segmentation plugin for Vision Agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "vision-agents",
+    "numpy>=2.0.0",
+    "pillow>=10.4.0",
+    "opencv-python>=4.8.0",
+    "torch>=2.7.1",
+    "transformers>=4.40.0",
+    "torchvision>=0.24.0",
+    "torchaudio>=2.9.0",
+    "sam3",
+    "einops>=0.8.1",
+    "modal>=1.2.2",
+]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
+
+[tool.hatch.build.targets.wheel]
+packages = [".", "vision_agents"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+]
+
+[tool.uv.sources]
+# getstream = { git = "https://github.com/GetStream/stream-py.git", branch = "audio-more" }
+# for local development
+sam3 = { path = "../../../sam3", editable = true }
+# aiortc = { path = "../stream-py/", editable = true }
