@@ -42,6 +42,63 @@ TODO:
 - Reconnect endpoint support
 """
 
+FORCE_RECONNECT_IN_MINUTES = 7.0
+
+
+class RealtimeConnection:
+    """Encapsulates a single AWS Bedrock bidirectional stream connection.
+    
+    This class manages the lifecycle of a single connection, including sending
+    events and receiving responses. It can be replaced to enable reconnection.
+    """
+
+    def __init__(self, client: BedrockRuntimeClient, model_id: str):
+        self.client = client
+        self.model_id = model_id
+        self.stream = None
+        self.logger = logging.getLogger(__name__)
+
+    async def connect(self):
+        """Initialize the bidirectional stream."""
+        self.stream = await self.client.invoke_model_with_bidirectional_stream(
+            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_id)
+        )
+
+    async def send_event(self, event_data: Dict[str, Any]) -> None:
+        """Send an event to AWS Nova.
+        
+        Args:
+            event_data: Dictionary containing the event data to send
+        """
+        if not self.stream:
+            raise RuntimeError("Connection not initialized. Call connect() first.")
+        
+        try:
+            event_json = json.dumps(event_data)
+            event = InvokeModelWithBidirectionalStreamInputChunk(
+                value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
+            )
+            await self.stream.input_stream.send(event)
+        except Exception as e:
+            self.logger.error(f"Failed to send event to AWS Nova: {e}")
+            # Don't raise the exception, just log it to prevent connection reset
+
+    async def await_output(self):
+        """Wait for and return output from the stream."""
+        if not self.stream:
+            raise RuntimeError("Connection not initialized. Call connect() first.")
+        return await self.stream.await_output()
+
+    async def close(self):
+        """Close the stream connection."""
+        if self.stream:
+            try:
+                await self.stream.input_stream.close()
+            except Exception as e:
+                self.logger.error(f"Error closing stream: {e}")
+            finally:
+                self.stream = None
+
 
 class Realtime(realtime.Realtime):
     """
@@ -117,6 +174,7 @@ class Realtime(realtime.Realtime):
         model: str = DEFAULT_MODEL,
         region_name: str = "us-east-1",
         voice_id: str = "matthew",
+        reconnect_after_minutes = 5.0, # Attempt to reconnect during silence after 5 minutes. Reconnect is forced after 7 minutes
         **kwargs,
     ) -> None:
         """ """
@@ -125,6 +183,7 @@ class Realtime(realtime.Realtime):
         self.region_name = region_name
         self.sample_rate = 24000
         self.voice_id = voice_id
+        self.reconnect_after_minutes = reconnect_after_minutes
 
         # Initialize Bedrock Runtime client with SDK
         config = Config(
@@ -141,7 +200,11 @@ class Realtime(realtime.Realtime):
             sample_rate=24000, channels=1, format="s16"
         )
 
+        # Connection management
+        self.connection: Optional[RealtimeConnection] = None
         self._handle_event_task: Optional[asyncio.Task[Any]] = None
+        self._reconnection_check_task: Optional[asyncio.Task[Any]] = None
+        self._reconnecting: bool = False
         self._pending_tool_calls: Dict[
             str, Dict[str, Any]
         ] = {}  # Store tool calls until contentEnd: key=toolUseId
@@ -173,16 +236,19 @@ class Realtime(realtime.Realtime):
             return
 
         try:
-            # Initialize the stream
+            # Initialize the connection
             logger.info("Connecting to AWS Bedrock for model %s", self.model)
-            self.stream = await self.client.invoke_model_with_bidirectional_stream(
-                InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model)
-            )
+            self.connection = RealtimeConnection(self.client, self.model)
+            await self.connection.connect()
+            
             self.connected = True
             self.last_connected_at = datetime.datetime.now()
 
             # Start listener task
             self._handle_event_task = asyncio.create_task(self._handle_events())
+            
+            # Start reconnection check task
+            self._reconnection_check_task = asyncio.create_task(self._reconnection_check_loop())
 
             # send start and prompt event
             await self.start_session()
@@ -209,15 +275,53 @@ class Realtime(realtime.Realtime):
             raise
 
     async def reconnect(self):
-        # first create the new connection
-        new_stream = await self.client.invoke_model_with_bidirectional_stream(
-            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model)
-        )
-
-        # Stop the old connection
-
-        # Create a new connection. Resend..
-        pass
+        """Reconnect to AWS Bedrock with a new connection.
+        
+        Creates a new connection, sets it up, then closes the old one.
+        This allows seamless transition without dropping the conversation.
+        """
+        if self._reconnecting:
+            logger.warning("Reconnection already in progress, skipping")
+            return
+            
+        self._reconnecting = True
+        try:
+            logger.info("Reconnecting to AWS Bedrock")
+            
+            # Create and initialize new connection
+            new_connection = RealtimeConnection(self.client, self.model)
+            await new_connection.connect()
+            
+            # Send session start and prompt start events
+            old_connection = self.connection
+            self.connection = new_connection
+            
+            await self.start_session()
+            await asyncio.sleep(0.1)
+            await self.start_prompt()
+            await asyncio.sleep(0.1)
+            
+            # Resend system instructions
+            if self._instructions:
+                await self.content_input(self._instructions, "SYSTEM")
+            
+            # Update timestamp
+            self.last_connected_at = datetime.datetime.now()
+            
+            # TODO: Resend conversation history if needed
+            
+            # Close old connection
+            if old_connection:
+                await old_connection.close()
+            
+            logger.info("Reconnection successful")
+            
+        except Exception as e:
+            logger.error(f"Failed to reconnect: {e}", exc_info=True)
+            self.connected = False
+            raise
+        finally:
+            self._reconnecting = False
 
     def _should_reconnect(self) -> bool:
         """Check if connection should be reconnected based on runtime.
@@ -229,6 +333,10 @@ class Realtime(realtime.Realtime):
         Returns:
             True if should reconnect, False otherwise
         """
+        # Don't reconnect if already in progress
+        if self._reconnecting:
+            return False
+            
         if not self.last_connected_at:
             return False
 
@@ -242,13 +350,30 @@ class Realtime(realtime.Realtime):
             silence_duration = (now - self._last_audio_at).total_seconds()
             has_silence = silence_duration > 3
 
-        if running_minutes > 5 and has_silence:
-            return True
-        elif running_minutes > 7:
-            return True
-        else:
-            return False
+        should_reconnect = False
+        if running_minutes > self.reconnect_after_minutes and has_silence:
+            should_reconnect = True
+        elif running_minutes > FORCE_RECONNECT_IN_MINUTES:
+            should_reconnect = True
 
+        logger.info(f"Connection is %.2f seconds old, should reconnect is %s", running.total_seconds(), should_reconnect)
+
+        return should_reconnect
+
+    async def _reconnection_check_loop(self):
+        """Periodic task that checks if reconnection is needed.
+        
+        Runs every second to check if the connection should be reconnected
+        based on runtime and silence detection.
+        """
+        try:
+            while self.connected:
+                await asyncio.sleep(1)
+                if self._should_reconnect() and not self._reconnecting:
+                    logger.info("Reconnection needed, initiating reconnect...")
+                    await self.reconnect()
+        except asyncio.CancelledError:
+            logger.debug("Reconnection check loop cancelled")
 
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
@@ -313,7 +438,7 @@ class Realtime(realtime.Realtime):
                 }
             }
         }
-        await self.send_event(audio_event)
+        await self.connection.send_event(audio_event)
 
     async def audio_content_start(self, content_name: str, role: str = "USER"):
         event = {
@@ -335,7 +460,7 @@ class Realtime(realtime.Realtime):
                 }
             }
         }
-        await self.send_event(event)
+        await self.connection.send_event(event)
 
     async def start_session(self):
         # subclass this to change the session start
@@ -354,7 +479,7 @@ class Realtime(realtime.Realtime):
             }
         }
 
-        await self.send_event(event)
+        await self.connection.send_event(event)
 
     async def start_prompt(self):
         prompt_name = self.session_id
@@ -389,7 +514,7 @@ class Realtime(realtime.Realtime):
             }
             event["event"]["promptStart"]["toolConfiguration"] = {"tools": tools}
 
-        await self.send_event(event)
+        await self.connection.send_event(event)
 
     async def text_content_start(self, content_name: str, role: str, interactive: bool):
         event = {
@@ -407,7 +532,7 @@ class Realtime(realtime.Realtime):
             }
         }
 
-        await self.send_event(event)
+        await self.connection.send_event(event)
 
     async def text_input(self, content_name: str, content: str):
         event = {
@@ -420,7 +545,7 @@ class Realtime(realtime.Realtime):
             }
         }
 
-        await self.send_event(event)
+        await self.connection.send_event(event)
 
     async def content_end(self, content_name: str):
         event = {
@@ -432,18 +557,7 @@ class Realtime(realtime.Realtime):
             }
         }
 
-        await self.send_event(event)
-
-    async def send_event(self, event_data: Dict[str, Any]) -> None:
-        try:
-            event_json = json.dumps(event_data)
-            event = InvokeModelWithBidirectionalStreamInputChunk(
-                value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
-            )
-            await self.stream.input_stream.send(event)
-        except Exception as e:
-            logger.error(f"Failed to send event to AWS Nova: {e}")
-            # Don't raise the exception, just log it to prevent connection reset
+        await self.connection.send_event(event)
 
     def _convert_tools_to_provider_format(
         self, tools: List[Any]
@@ -522,7 +636,7 @@ class Realtime(realtime.Realtime):
                 }
             }
         }
-        await self.send_event(event)
+        await self.connection.send_event(event)
 
     async def send_tool_result(self, content_name: str, result: Any):
         """Send tool result event.
@@ -547,7 +661,7 @@ class Realtime(realtime.Realtime):
                 }
             }
         }
-        await self.send_event(event)
+        await self.connection.send_event(event)
 
     async def _handle_tool_call(
         self, tool_name: str, tool_use_id: str, tool_use_content: Dict[str, Any]
@@ -627,15 +741,19 @@ class Realtime(realtime.Realtime):
                 }
             }
         }
-        await self.send_event(prompt_end)
+        await self.connection.send_event(prompt_end)
 
         session_end: Dict[str, Any] = {"event": {"sessionEnd": {}}}
-        await self.send_event(session_end)
+        await self.connection.send_event(session_end)
 
-        await self.stream.input_stream.close()
+        if self.connection:
+            await self.connection.close()
 
         if self._handle_event_task:
             self._handle_event_task.cancel()
+            
+        if self._reconnection_check_task:
+            self._reconnection_check_task.cancel()
 
         self.connected = False
 
@@ -644,7 +762,7 @@ class Realtime(realtime.Realtime):
         try:
             while True:
                 try:
-                    output = await self.stream.await_output()
+                    output = await self.connection.await_output()
                     result = await output[1].receive()
                     if result.value and result.value.bytes_:
                         try:
