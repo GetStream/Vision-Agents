@@ -35,11 +35,10 @@ AWS Bedrock Realtime with Nova Sonic support.
 
 Supports real-time audio streaming and function calling (tool use).
 
-TODO:
-* 8 minute window issue
-- VAD so _last_audio_at is accurate/ we know silence
+TODO: 8 minute window issue
+- Reconnect endpoint to actually work
 - Store history of messages
-- Reconnect endpoint support
+- VAD so _last_audio_at is accurate/ we know silence
 """
 
 FORCE_RECONNECT_IN_MINUTES = 0.5
