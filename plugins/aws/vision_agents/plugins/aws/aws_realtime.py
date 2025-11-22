@@ -37,12 +37,12 @@ Supports real-time audio streaming and function calling (tool use).
 
 TODO:
 * 8 minute window issue
-- VAD so _last_audio_at is accurate
+- VAD so _last_audio_at is accurate/ we know silence
 - Store history of messages
 - Reconnect endpoint support
 """
 
-FORCE_RECONNECT_IN_MINUTES = 7.0
+FORCE_RECONNECT_IN_MINUTES = 0.5
 
 
 class RealtimeConnection:
@@ -251,7 +251,8 @@ class Realtime(realtime.Realtime):
             self._reconnection_check_task = asyncio.create_task(self._reconnection_check_loop())
 
             # send start and prompt event
-            await self.start_session()
+            event = self._create_session_start_event()
+            await self.connection.send_event(event)
 
             # Small delay between init events
             await asyncio.sleep(0.1)
@@ -292,23 +293,28 @@ class Realtime(realtime.Realtime):
             new_connection = RealtimeConnection(self.client, self.model)
             await new_connection.connect()
             
-            # Send session start and prompt start events
+            # Send session start and prompt start events on NEW connection before swapping
+            session_start_event = self._create_session_start_event()
+            await new_connection.send_event(session_start_event)
+            prompt_start_event = self._create_prompt_start_event()
+            await new_connection.send_event(prompt_start_event)
+
+            # Now swap the connections
             old_connection = self.connection
             self.connection = new_connection
-            
-            await self.start_session()
-            await asyncio.sleep(0.1)
-            await self.start_prompt()
-            await asyncio.sleep(0.1)
+            # Update timestamp
+            self.last_connected_at = datetime.datetime.now()
+
+            # stop old events
+            self._handle_event_task.cancel()
+            # create the new one
+            self._handle_event_task = asyncio.create_task(self._handle_events())
             
             # Resend system instructions
             if self._instructions:
                 await self.content_input(self._instructions, "SYSTEM")
-            
-            # Update timestamp
-            self.last_connected_at = datetime.datetime.now()
-            
-            # TODO: Resend conversation history if needed
+
+            # TODO: Resend summary of conversation history if needed
             
             # Close old connection
             if old_connection:
@@ -356,7 +362,7 @@ class Realtime(realtime.Realtime):
         elif running_minutes > FORCE_RECONNECT_IN_MINUTES:
             should_reconnect = True
 
-        logger.info(f"Connection is %.2f seconds old, should reconnect is %s", running.total_seconds(), should_reconnect)
+        logger.info(f"Connection is %.2f seconds old. Silence: %s, should reconnect is %s", running.total_seconds(), has_silence, should_reconnect)
 
         return should_reconnect
 
@@ -462,9 +468,15 @@ class Realtime(realtime.Realtime):
         }
         await self.connection.send_event(event)
 
-    async def start_session(self):
-        # subclass this to change the session start
-        event = {
+    def _create_session_start_event(self) -> Dict[str, Any]:
+        """Create a session start event.
+        
+        Subclass this to customize the session start configuration.
+        
+        Returns:
+            Event dictionary for session start
+        """
+        return {
             "event": {
                 "sessionStart": {
                     "inferenceConfiguration": {
@@ -479,9 +491,21 @@ class Realtime(realtime.Realtime):
             }
         }
 
+    async def start_session(self):
+        """Send a session start event.
+        
+        Args:
+            connection: Optional connection to send on. Uses self.connection if not provided.
+        """
+        event = self._create_session_start_event()
         await self.connection.send_event(event)
 
-    async def start_prompt(self):
+    def _create_prompt_start_event(self) -> Dict[str, Any]:
+        """Create a prompt start event.
+        
+        Returns:
+            Event dictionary for prompt start
+        """
         prompt_name = self.session_id
 
         # Add tool configuration if tools are available
@@ -514,7 +538,17 @@ class Realtime(realtime.Realtime):
             }
             event["event"]["promptStart"]["toolConfiguration"] = {"tools": tools}
 
-        await self.connection.send_event(event)
+        return event
+
+    async def start_prompt(self, connection: Optional[RealtimeConnection] = None):
+        """Send a prompt start event.
+        
+        Args:
+            connection: Optional connection to send on. Uses self.connection if not provided.
+        """
+        event = self._create_prompt_start_event()
+        target_connection = connection or self.connection
+        await target_connection.send_event(event)
 
     async def text_content_start(self, content_name: str, role: str, interactive: bool):
         event = {
