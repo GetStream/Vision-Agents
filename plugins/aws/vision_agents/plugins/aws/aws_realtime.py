@@ -3,10 +3,14 @@ import base64
 import datetime
 import json
 import logging
+import os
+import time
 import uuid
 from typing import Optional, List, Dict, Any
 
 import aiortc
+import numpy as np
+
 from getstream.video.rtc.audio_track import AudioStreamTrack
 
 from vision_agents.core.llm import realtime
@@ -21,12 +25,16 @@ from aws_sdk_bedrock_runtime.models import (
 from aws_sdk_bedrock_runtime.config import Config
 from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 
+from vision_agents.core.utils.utils import ensure_model
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.processors import Processor
 from vision_agents.core.edge.types import Participant
 from getstream.video.rtc import PcmData
 
 logger = logging.getLogger(__name__)
+
+SILERO_ONNX_FILENAME = "silero_vad.onnx"
+SILERO_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
 
 DEFAULT_MODEL = "amazon.nova-2-sonic-v1:0"
 
@@ -36,12 +44,83 @@ AWS Bedrock Realtime with Nova Sonic support.
 Supports real-time audio streaming and function calling (tool use).
 
 TODO: 8 minute window issue
-- Reconnect endpoint to actually work
-- Store history of messages
 - VAD so _last_audio_at is accurate/ we know silence
+- Receive transcriptions of what the user says
+- Store history of messages
 """
 
 FORCE_RECONNECT_IN_MINUTES = 0.5
+
+CHUNK = 512
+class SileroVAD:
+    """
+    Minimal Silero VAD ONNX wrapper for 16 kHz, mono, chunk=512.
+
+    Reused from smart_turn implementation.
+    """
+
+    def __init__(self, model_path: str, reset_interval_seconds: float = 5.0):
+        """
+        Initialize Silero VAD.
+
+        Args:
+            model_path: Path to the ONNX model file
+            reset_interval_seconds: Reset internal state every N seconds to prevent drift
+        """
+        import onnxruntime as ort
+
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = 1
+        self.session = ort.InferenceSession(model_path, sess_options=opts)
+        self.context_size = 64  # Silero uses 64-sample context at 16 kHz
+        self.reset_interval_seconds = reset_interval_seconds
+        self._state: np.ndarray = np.zeros((2, 1, 128), dtype=np.float32)  # (2, B, 128)
+        self._context: np.ndarray = np.zeros((1, 64), dtype=np.float32)
+        self._init_states()
+
+    def _init_states(self):
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)  # (2, B, 128)
+        self._context = np.zeros((1, self.context_size), dtype=np.float32)
+        self._last_reset_time = time.time()
+
+    def maybe_reset(self):
+        if (time.time() - self._last_reset_time) >= self.reset_interval_seconds:
+            self._init_states()
+
+    def predict_speech_from_pcm(self, pcm: PcmData):
+        chunks = pcm.to_float32().chunks(CHUNK, pad_last=True)
+        scores = [self.predict_speech(c.samples) for c in chunks]
+        return max(scores)
+
+    def predict_speech(self, chunk_f32: np.ndarray) -> float:
+        """
+        Compute speech probability for one chunk of length 512 (float32, mono).
+        Returns a scalar float.
+        """
+        # Ensure shape (1, 512) and concat context
+        x = np.reshape(chunk_f32, (1, -1))
+        if x.shape[1] != CHUNK:
+            # Raise on incorrect usage
+            raise ValueError(
+                f"incorrect usage for predict speech. only send audio data in chunks of 512. got {x.shape[1]}"
+            )
+        x = np.concatenate((self._context, x), axis=1)
+
+        # Run ONNX
+        ort_inputs = {
+            "input": x.astype(np.float32),
+            "state": self._state,
+            "sr": np.array(16000, dtype=np.int64),
+        }
+        outputs = self.session.run(None, ort_inputs)
+        out, self._state = outputs
+
+        # Update context (keep last 64 samples)
+        self._context = x[:, -self.context_size :]
+        self.maybe_reset()
+
+        # out shape is (1, 1) -> return scalar
+        return float(out[0][0])
 
 
 class RealtimeConnection:
@@ -207,6 +286,21 @@ class Realtime(realtime.Realtime):
         self._pending_tool_calls: Dict[
             str, Dict[str, Any]
         ] = {}  # Store tool calls until contentEnd: key=toolUseId
+
+    async def warmup(self):
+        await self._prepare_silero_vad()
+
+    async def _prepare_silero_vad(self) -> None:
+        """Load Silero VAD model for speech detection."""
+        # TODO: make model dir configurable
+        path = os.path.join("/tmp", SILERO_ONNX_FILENAME)
+        await ensure_model(path, SILERO_ONNX_URL)
+        # Initialize VAD in thread pool to avoid blocking event loop
+        self.vad = await asyncio.to_thread(  # type: ignore[func-returns-value]
+            lambda: SileroVAD(  # type: ignore[arg-type]
+                path, reset_interval_seconds=5.0
+            )
+        )
 
     async def watch_video_track(
         self,
@@ -392,7 +486,13 @@ class Realtime(realtime.Realtime):
 
         # Resample to 24kHz if needed, as required by AWS Nova
         pcm = pcm.resample(24000)
-        self._last_audio_at = datetime.datetime.now()
+        is_talking = self.vad.predict_speech_from_pcm(pcm) > 0.5
+        if is_talking:
+            logger.info("User is talking")
+
+            self._last_audio_at = datetime.datetime.now()
+        else:
+            logger.info("User is not talking")
 
         content_name = str(uuid.uuid4())
 
@@ -846,6 +946,7 @@ class Realtime(realtime.Realtime):
                                         json_data["event"]["completionStart"],
                                     )
                                 elif "audioOutput" in json_data["event"]:
+                                    logger.info("audio output from AWS Bedrock")
                                     self._last_audio_at = datetime.datetime.now()
                                     audio_content = json_data["event"]["audioOutput"][
                                         "content"
