@@ -51,8 +51,6 @@ from ..utils.logging import (
     set_call_context,
 )
 from ..utils.video_forwarder import VideoForwarder
-from ..vad import VAD
-from ..vad.events import VADAudioEvent
 from . import events
 from .conversation import Conversation
 from ..profiling import Profiler
@@ -100,6 +98,8 @@ class Agent:
     - Small methods so its easy to subclass/change behaviour
     """
 
+    options: AgentOptions
+
     def __init__(
         self,
         # edge network for video & audio
@@ -114,7 +114,6 @@ class Agent:
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
         turn_detection: Optional[TurnDetector] = None,
-        vad: Optional[VAD] = None,
         # for video gather data at an interval
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
@@ -162,7 +161,6 @@ class Agent:
         self.stt = stt
         self.tts = tts
         self.turn_detection = turn_detection
-        self.vad = vad
         self.processors = processors or []
         self.mcp_servers = mcp_servers or []
         self._call_context_token: CallContextToken | None = None
@@ -184,7 +182,7 @@ class Agent:
         self._pending_user_transcripts: Dict[str, str] = {}
 
         # Merge plugin events BEFORE subscribing to any events
-        for plugin in [stt, tts, turn_detection, vad, llm, edge, profiler]:
+        for plugin in [stt, tts, turn_detection, llm, edge, profiler]:
             if plugin and hasattr(plugin, "events"):
                 self.logger.debug(f"Register events from plugin {plugin}")
                 self.events.merge(plugin.events)
@@ -196,7 +194,6 @@ class Agent:
             if hasattr(processor, "_attach_agent"):
                 processor._attach_agent(self)
 
-        self.events.subscribe(self._on_vad_audio)
         self.events.subscribe(self._on_agent_say)
         # Initialize state variables
         self._is_running: bool = False
@@ -778,9 +775,6 @@ class Agent:
         await call.get_or_create(data={"created_by_id": self.agent_user.id})
 
         return call
-
-    async def _on_vad_audio(self, event: VADAudioEvent):
-        self.logger.debug(f"Vad audio event {self._truncate_for_logging(event)}")
 
     def _on_rtc_reconnect(self):
         # update the code to listen?

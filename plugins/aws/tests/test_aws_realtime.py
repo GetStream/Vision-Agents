@@ -4,6 +4,7 @@ import asyncio
 import pytest
 from dotenv import load_dotenv
 
+from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
 from vision_agents.plugins.aws import Realtime
@@ -25,6 +26,8 @@ class TestNovaRealtime:
             model="amazon.nova-sonic-v1:0",
             region_name="us-east-1",
         )
+        realtime.options = AgentOptions(model_dir="/tmp")
+        await realtime.warmup()
         realtime.set_instructions(
             Instructions("you're a kind assistant, always be friendly please.")
         )
