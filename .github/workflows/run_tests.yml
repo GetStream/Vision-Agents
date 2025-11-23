@@ -63,6 +63,8 @@ jobs:
       DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       FAL_KEY: ${{ secrets.FAL_KEY }}
+      FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
