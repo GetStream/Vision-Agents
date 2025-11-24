@@ -6,6 +6,7 @@ available to all tests in the project, including plugin tests.
 """
 
 import asyncio
+import logging
 import os
 from typing import Iterator
 
@@ -77,16 +78,19 @@ class STTSession:
         self.transcripts = []
         self.partial_transcripts = []
         self.errors = []
+        self.logger = logging.getLogger("STTSession")
         self._event = asyncio.Event()
 
         # Subscribe to events
         @stt.events.subscribe
         async def on_transcript(event: STTTranscriptEvent):
+            self.logger.info(f"Received transcript event: {event}")
             self.transcripts.append(event)
             self._event.set()
 
         @stt.events.subscribe
         async def on_partial_transcript(event: STTPartialTranscriptEvent):
+            self.logger.info("Partial transcript event: %s", event)
             self.partial_transcripts.append(event)
 
         @stt.events.subscribe

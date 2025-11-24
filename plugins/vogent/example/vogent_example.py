@@ -14,16 +14,13 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-2.5-flash-lite")
-
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(name="My happy AI friend", id="agent"),
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        processors=[],  # processors can fetch extra data, check images/audio data or transform video
-        llm=llm,
+        llm=gemini.LLM("gemini-2.5-flash-lite"),
         tts=elevenlabs.TTS(),
-        stt=elevenlabs.STT(),  # eager_turn_detection -> lower latency (but higher token usage)
+        stt=elevenlabs.STT(),
         turn_detection=vogent.TurnDetection(), # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
     )
     return agent

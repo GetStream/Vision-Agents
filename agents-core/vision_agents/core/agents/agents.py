@@ -39,7 +39,7 @@ from ..llm.llm import AudioLLM, LLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..mcp import MCPBaseServer, MCPManager
 from ..processors.base_processor import Processor, ProcessorType, filter_processors
-from ..stt.events import STTTranscriptEvent, STTErrorEvent
+from ..stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
 from ..stt.stt import STT
 from ..tts.tts import TTS
 from ..tts.events import TTSAudioEvent
@@ -295,15 +295,18 @@ class Agent:
             await self._incoming_audio_queue.put(event.pcm_data)
 
         @self.events.subscribe
-        async def on_stt_transcript_event_create_response(event: STTTranscriptEvent):
+        async def on_stt_transcript_event_create_response(event: STTPartialTranscriptEvent):
+            logger.info("STTPartialTranscriptEvent %s", event.text)
+
+        @self.events.subscribe
+        async def on_stt_transcript_event_create_response(event: STTTranscriptEvent | STTPartialTranscriptEvent):
             if _is_audio_llm(self.llm):
                 # There is no need to send the response to the LLM if it handles audio itself.
                 return
 
-            user_id = event.user_id()
-            if user_id is None:
-                raise ValueError("user id is none, this indicates a bug in the code")
+            logger.info("STTTranscriptEvent %s", event.text)
 
+            user_id = event.user_id()
             # Determine how to handle LLM triggering based on turn detection
             # With turn detection: accumulate transcripts and wait for TurnEndedEvent
             # Store/append the transcript for this user
@@ -319,7 +322,7 @@ class Agent:
             )
 
             # if turn detection is disabled, treat the transcript event as an end of turn
-            if not self.turn_detection_enabled:
+            if not self.turn_detection_enabled and isinstance(event, STTTranscriptEvent):
                 self.events.send(
                     TurnEndedEvent(
                         participant=event.participant,
@@ -1074,6 +1077,8 @@ class Agent:
             transcript = self._pending_user_transcripts.get(
                 event.participant.user_id, ""
             )
+            if not transcript.strip():
+                self.logger.warning("Turn ended with no transcript, like STT is broken")
             if transcript.strip():
                 self.logger.info(
                     f"🤖 Triggering LLM response after turn ended for {event.participant.user_id}"

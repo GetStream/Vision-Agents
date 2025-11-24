@@ -215,6 +215,7 @@ class STT(stt.STT):
         Args:
             transcription_data: The partial transcription result from ElevenLabs (dict)
         """
+        logger.info("PP %s", transcription_data)
         # Extract transcript text from dict
         if isinstance(transcription_data, dict):
             transcript_text = transcription_data.get("text", "").strip()
@@ -253,6 +254,8 @@ class STT(stt.STT):
         Args:
             transcription_data: The committed transcription result from ElevenLabs (dict)
         """
+        logger.info("PP %s", transcription_data)
+
         # Extract transcript text from dict
         if isinstance(transcription_data, dict):
             transcript_text = transcription_data.get("text", "").strip()
