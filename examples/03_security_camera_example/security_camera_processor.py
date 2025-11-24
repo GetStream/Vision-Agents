@@ -11,7 +11,6 @@ import av
 import cv2
 import face_recognition
 import numpy as np
-from PIL import Image
 
 from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
@@ -64,7 +63,7 @@ class SecurityCameraProcessor(
     def __init__(
         self,
         fps: int = 5,
-        max_workers: int = 4,
+        max_workers: int = 10,
         time_window: int = 1800,
         thumbnail_size: int = 80,
         detection_interval: float = 2.0,
@@ -94,13 +93,13 @@ class SecurityCameraProcessor(
 
         # Load OpenCV face detector
         self._face_cascade = None
-        self._load_face_detector()
+        self.warmup()
 
         logger.info("🎥 Security Camera Processor initialized")
         logger.info(f"📊 Time window: {time_window}s ({time_window // 60} minutes)")
         logger.info(f"🖼️ Thumbnail size: {thumbnail_size}x{thumbnail_size}")
 
-    def _load_face_detector(self):
+    def warmup(self):
         """Load OpenCV Haar Cascade face detector."""
         try:
             cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
@@ -111,43 +110,31 @@ class SecurityCameraProcessor(
             raise
 
     def _cleanup_old_faces(self, current_time: float):
-        """Remove faces that haven't been seen within the time window."""
         cutoff_time = current_time - self.time_window
-        original_count = len(self._detected_faces)
-        
+
         # Remove faces whose last_seen is older than the cutoff
         faces_to_remove = [
             face_id
             for face_id, face in self._detected_faces.items()
             if face.last_seen < cutoff_time
         ]
-        
+
         for face_id in faces_to_remove:
             del self._detected_faces[face_id]
-        
+
         removed = len(faces_to_remove)
         if removed > 0:
             logger.debug(f"🧹 Cleaned up {removed} old face(s)")
 
     def _detect_faces_sync(self, frame_rgb: np.ndarray) -> List[Dict[str, Any]]:
-        """
-        Synchronously detect faces and generate encodings using face_recognition.
-
-        Args:
-            frame_rgb: Frame in RGB format
-
-        Returns:
-            List of dictionaries with 'bbox' and 'encoding' keys
-        """
-        # Detect face locations (top, right, bottom, left)
         face_locations = face_recognition.face_locations(frame_rgb, model="hog")
-        
+
         if not face_locations:
             return []
-        
+
         # Generate face encodings
         face_encodings = face_recognition.face_encodings(frame_rgb, face_locations)
-        
+
         # Convert to list of dicts with bbox in (x, y, w, h) format
         results = []
         for (top, right, bottom, left), encoding in zip(face_locations, face_encodings):
@@ -156,46 +143,31 @@ class SecurityCameraProcessor(
             y = top
             w = right - left
             h = bottom - top
-            
-            results.append({
-                "bbox": (x, y, w, h),
-                "encoding": encoding
-            })
-        
+
+            results.append({"bbox": (x, y, w, h), "encoding": encoding})
+
         return results
 
     def _find_matching_face(self, face_encoding: np.ndarray) -> Optional[str]:
-        """
-        Find if a face encoding matches any existing detected face.
-
-        Args:
-            face_encoding: Face encoding to match
-
-        Returns:
-            face_id of matching face, or None if no match
-        """
         if not self._detected_faces:
             return None
-        
+
         # Get all existing face encodings
         known_face_ids = list(self._detected_faces.keys())
         known_encodings = [
-            self._detected_faces[face_id].face_encoding 
-            for face_id in known_face_ids
+            self._detected_faces[face_id].face_encoding for face_id in known_face_ids
         ]
-        
+
         # Compare against all known faces
         matches = face_recognition.compare_faces(
-            known_encodings, 
-            face_encoding, 
-            tolerance=self.face_match_tolerance
+            known_encodings, face_encoding, tolerance=self.face_match_tolerance
         )
-        
+
         # If we found a match, return the face_id
         for i, is_match in enumerate(matches):
             if is_match:
                 return known_face_ids[i]
-        
+
         return None
 
     async def _detect_and_store_faces(
@@ -222,20 +194,20 @@ class SecurityCameraProcessor(
 
         new_faces = 0
         updated_faces = 0
-        
+
         for face_data in detected_faces:
             x, y, w, h = face_data["bbox"]
             face_encoding = face_data["encoding"]
-            
+
             # Extract face thumbnail (convert back to BGR for storage)
             face_roi = frame_bgr[y : y + h, x : x + w]
             face_thumbnail = cv2.resize(
                 face_roi, (self.thumbnail_size, self.thumbnail_size)
             )
-            
+
             # Check if this face matches any existing face
             matching_face_id = self._find_matching_face(face_encoding)
-            
+
             if matching_face_id:
                 # Update existing face
                 face_detection = self._detected_faces[matching_face_id]
@@ -274,9 +246,7 @@ class SecurityCameraProcessor(
 
         return new_faces
 
-    def _create_overlay(
-        self, frame_bgr: np.ndarray, face_count: int
-    ) -> np.ndarray:
+    def _create_overlay(self, frame_bgr: np.ndarray, face_count: int) -> np.ndarray:
         """
         Create video overlay with face count and thumbnail grid.
 
@@ -339,9 +309,7 @@ class SecurityCameraProcessor(
 
             # Get most recent 12 faces sorted by last_seen
             recent_faces = sorted(
-                self._detected_faces.values(),
-                key=lambda f: f.last_seen,
-                reverse=True
+                self._detected_faces.values(), key=lambda f: f.last_seen, reverse=True
             )[:12]
 
             for idx, detection in enumerate(recent_faces):
@@ -360,7 +328,7 @@ class SecurityCameraProcessor(
                     frame_with_overlay[
                         y_pos : y_pos + thumb_size, x_pos : x_pos + thumb_size
                     ] = detection.face_image
-                    
+
                     # Draw detection count badge
                     if detection.detection_count > 1:
                         badge_text = f"{detection.detection_count}x"
@@ -369,7 +337,7 @@ class SecurityCameraProcessor(
                         )[0]
                         badge_x = x_pos + thumb_size - badge_size[0] - 2
                         badge_y = y_pos + thumb_size - 2
-                        
+
                         # Draw badge background
                         cv2.rectangle(
                             frame_with_overlay,
@@ -378,7 +346,7 @@ class SecurityCameraProcessor(
                             (0, 0, 0),
                             -1,
                         )
-                        
+
                         # Draw badge text
                         cv2.putText(
                             frame_with_overlay,
@@ -394,7 +362,6 @@ class SecurityCameraProcessor(
                     logger.debug(f"Failed to draw thumbnail: {e}")
                     continue
 
-        # Draw timestamp
         timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
         cv2.putText(
             frame_with_overlay,
@@ -410,7 +377,6 @@ class SecurityCameraProcessor(
         return frame_with_overlay
 
     async def _process_and_add_frame(self, frame: av.VideoFrame):
-        """Process a video frame: detect faces and add overlay."""
         try:
             current_time = time.time()
 
@@ -530,24 +496,24 @@ class SecurityCameraProcessor(
         """
         current_time = time.time()
         self._cleanup_old_faces(current_time)
-        
+
         visitors = []
         for face in sorted(
-            self._detected_faces.values(), 
-            key=lambda f: f.last_seen, 
-            reverse=True
+            self._detected_faces.values(), key=lambda f: f.last_seen, reverse=True
         ):
-            visitors.append({
-                "face_id": face.face_id[:8],  # Shortened ID
-                "first_seen": time.strftime(
-                    "%Y-%m-%d %H:%M:%S", time.localtime(face.first_seen)
-                ),
-                "last_seen": time.strftime(
-                    "%Y-%m-%d %H:%M:%S", time.localtime(face.last_seen)
-                ),
-                "detection_count": face.detection_count,
-            })
-        
+            visitors.append(
+                {
+                    "face_id": face.face_id[:8],  # Shortened ID
+                    "first_seen": time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(face.first_seen)
+                    ),
+                    "last_seen": time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(face.last_seen)
+                    ),
+                    "detection_count": face.detection_count,
+                }
+            )
+
         return visitors
 
     def close(self):
@@ -556,4 +522,3 @@ class SecurityCameraProcessor(
         self.executor.shutdown(wait=False)
         self._detected_faces.clear()
         logger.info("🛑 Security Camera Processor closed")
-

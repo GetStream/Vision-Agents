@@ -57,7 +57,7 @@ The AI assistant has access to:
 
 1. Navigate to this directory:
 ```bash
-cd examples/10_security_camera_example
+cd examples/03_security_camera_example
 ```
 
 2. Install dependencies using uv:
@@ -204,4 +204,3 @@ To notify when faces are detected:
 ## License
 
 See the main repository LICENSE file for details.
-

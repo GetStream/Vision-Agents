@@ -53,7 +53,9 @@ Keep responses short and professional. You have access to unique visitor counts 
     )
 
     # Register function for getting visitor count
-    @llm.register_function(description="Get the number of unique visitors detected in the last 30 minutes")
+    @llm.register_function(
+        description="Get the number of unique visitors detected in the last 30 minutes"
+    )
     async def get_visitor_count() -> Dict[str, Any]:
         count = security_processor.get_visitor_count()
         state = security_processor.state()
@@ -63,9 +65,11 @@ Keep responses short and professional. You have access to unique visitor counts 
             "time_window": f"{state['time_window_minutes']} minutes",
             "last_detection": state["last_detection_time"],
         }
-    
+
     # Register function for getting detailed visitor information
-    @llm.register_function(description="Get detailed information about all visitors including when they were first and last seen")
+    @llm.register_function(
+        description="Get detailed information about all visitors including when they were first and last seen"
+    )
     async def get_visitor_details() -> Dict[str, Any]:
         details = security_processor.get_visitor_details()
         return {
@@ -93,4 +97,3 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-
