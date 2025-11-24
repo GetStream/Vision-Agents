@@ -25,8 +25,6 @@ from vision_agents.core.agents import Agent, AgentLauncher
 from vision_agents.core import cli
 from vision_agents.core.edge.types import User
 from vision_agents.plugins import cartesia, getstream, openai, deepgram
-from vision_agents.core.events import CallSessionParticipantJoinedEvent
-from vision_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
 
 logger = logging.getLogger(__name__)
 
