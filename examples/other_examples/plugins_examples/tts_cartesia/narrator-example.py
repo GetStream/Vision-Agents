@@ -37,33 +37,12 @@ async def create_agent(**kwargs) -> Agent:
     # Create agent with TTS
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="TTS Bot", id="agent"),
-        instructions="I'm a TTS bot that greets users when they join.",
+        agent_user=User(name="Narrator", id="agent"),
+        instructions="You're the narrator of a story. When you're given a topic start narrating a story and make heavy use of the audio markup tags to customize the speech output that are described in @sonic3-info.md.",
         stt=deepgram.STT(),
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=cartesia.TTS(),
     )
-
-    # Subscribe to participant joined events
-    @agent.subscribe
-    async def handle_participant_joined(event: CallSessionParticipantJoinedEvent):
-        await agent.simple_response(
-            f"Hello {event.participant.user.name}! Welcome to the call."
-        )
-
-    # Subscribe to TTS events
-    @agent.subscribe
-    async def handle_tts_audio(event: TTSAudioEvent):
-        print(
-            f"TTS audio generated: {event.chunk_index} chunks, final: {event.is_final_chunk}"
-        )
-
-    # Subscribe to TTS error events
-    @agent.subscribe
-    async def handle_tts_error(event: TTSErrorEvent):
-        print(f"\n❌ TTS Error: {event.error_message}")
-        if event.context:
-            print(f"    └─ context: {event.context}")
 
     return agent
 

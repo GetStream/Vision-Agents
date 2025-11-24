@@ -72,6 +72,15 @@ class TTS(tts.TTS):
             TtsRequestIdSpecifierParams | TtsRequestEmbeddingSpecifierParams
         ) = cast(TtsRequestIdSpecifierParams, {"id": self.voice_id})
 
+
+        print(f"voice_param: {voice_param}")
+        print(f"model_id: {self.model_id}")
+        print(f"transcript: {text}")
+        print(f"voice: {voice_param}")
+        print(f"APIkey: {self.api_key}")
+        print(f"text: {text}")
+        print(f"output_format: {output_format}")
+
         response = self.client.tts.bytes(
             model_id=self.model_id,
             transcript=text,
