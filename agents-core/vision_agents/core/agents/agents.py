@@ -5,6 +5,7 @@ import inspect
 import logging
 import time
 import uuid
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
@@ -53,6 +54,7 @@ from ..utils.logging import (
 from ..utils.video_forwarder import VideoForwarder
 from . import events
 from .conversation import Conversation
+from .transcript_buffer import TranscriptBuffer
 from ..profiling import Profiler
 from opentelemetry.trace import set_span_in_context
 from opentelemetry.trace.propagation import Span, Context
@@ -177,7 +179,9 @@ class Agent:
         self.conversation: Optional[Conversation] = None
 
         # Track pending transcripts for turn-based response triggering
-        self._pending_user_transcripts: Dict[str, str] = {}
+        self._pending_user_transcripts: Dict[str, TranscriptBuffer] = defaultdict(
+            TranscriptBuffer
+        )
 
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, llm, edge, profiler]:
@@ -305,30 +309,9 @@ class Agent:
                 return
 
             logger.info("STTTranscriptEvent %s", event.text)
-
             user_id = event.user_id()
-            # TODO
-            # - Pending user transcript (str -> str should be str -> TranscriptBuffer
-            # - The transcript buffer should have a method to update from an event
-            # - It should keep a list of transcripts (so a list of strings)
-            # - New events should update the last item in the list or create a new
-            # - A new buffer should be create when TurnCompleted runs
-            # - Add tests that updating the buffer with (I, I am, I am walking) updates the first part
-            # - While passing it (I, I am, I am walking, To the grocery store) first updates the first, and then starts a second
-
-            # Determine how to handle LLM triggering based on turn detection
             # With turn detection: accumulate transcripts and wait for TurnEndedEvent
-            # Store/append the transcript for this user
-            if user_id not in self._pending_user_transcripts:
-                self._pending_user_transcripts[user_id] = event.text
-            else:
-                # Append to existing transcript (user might be speaking in chunks)
-                self._pending_user_transcripts[user_id] += " " + event.text
-
-            self.logger.debug(
-                f"📝 Accumulated transcript for {user_id} (waiting for turn end): "
-                f"{self._pending_user_transcripts[user_id][:100]}..."
-            )
+            self._pending_user_transcripts[user_id].update(event)
 
             # if turn detection is disabled, treat the transcript event as an end of turn
             if not self.turn_detection_enabled and isinstance(event, STTTranscriptEvent):
@@ -893,11 +876,6 @@ class Agent:
 
                     participant = pcm.participant
 
-                    if self.turn_detection is not None and participant is not None:
-                        await self.turn_detection.process_audio(
-                            pcm, participant, conversation=self.conversation
-                        )
-
                     if (
                         participant
                         and getattr(participant, "user_id", None) != self.agent_user.id
@@ -915,6 +893,14 @@ class Agent:
                         # Process audio through STT
                         elif self.stt:
                             await self.stt.process_audio(pcm, participant)
+
+                    if self.turn_detection is not None and participant is not None:
+                        # TODO: find a better solution to this
+                        await asyncio.sleep(0.1) # ensure we don't trigger turn ended before transcription is done
+
+                        await self.turn_detection.process_audio(
+                            pcm, participant, conversation=self.conversation
+                        )
 
                 except (asyncio.TimeoutError, asyncio.QueueEmpty):
                     await asyncio.sleep(0.02)
@@ -1083,21 +1069,17 @@ class Agent:
 
             # When turn detection is enabled, trigger LLM response when user's turn ends.
             # This is the signal that the user has finished speaking and expects a response
-            transcript = self._pending_user_transcripts.get(
-                event.participant.user_id, ""
-            )
+            buffer = self._pending_user_transcripts[event.participant.user_id]
+            transcript = buffer.text
             if not transcript.strip():
                 self.logger.warning("Turn ended with no transcript, like STT is broken")
+
             if transcript.strip():
                 self.logger.info(
                     f"🤖 Triggering LLM response after turn ended for {event.participant.user_id}"
                 )
 
-                # Create participant object if we have metadata
-                participant = event.participant
 
-                # Clear the pending transcript for this speaker
-                self._pending_user_transcripts[participant.user_id] = ""
                 # cancel the old task if the text changed in the meantime
 
                 if (
@@ -1111,6 +1093,9 @@ class Agent:
                     )
                     if self._pending_turn.task:
                         self._pending_turn.task.cancel()
+
+                if not event.eager_end_of_turn:
+                    buffer.reset()
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:
