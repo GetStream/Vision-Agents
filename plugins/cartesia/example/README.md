@@ -1,6 +1,6 @@
 # Stream + Cartesia TTS Bot Example
 
-This example demonstrates how to build a text-to-speech bot that joins a Stream video call and greets participants using Cartesia's Sonic voices.
+This example demonstrates how to build a text-to-speech bot that joins a Stream video call and greets participants using [Cartesia's](https://cartesia.ai/?utm_medium=partner&utm_source=getstream) Sonic voices.
 
 ## What it does
 
@@ -11,8 +11,8 @@ This example demonstrates how to build a text-to-speech bot that joins a Stream 
 
 ## Prerequisites
 
-1. **Stream Account**: Get your API credentials from [Stream Dashboard](https://dashboard.getstream.io)
-2. **Cartesia Account**: Get your API key from [Cartesia](https://cartesia.ai)
+1. **Stream Account**: Get your API credentials from [Stream Dashboard](https://getstream.io/try-for-free/)
+2. **Cartesia Account**: Get your API key from [Cartesia](https://cartesia.ai/?utm_medium=partner&utm_source=getstream)
 3. **Python 3.10+**: Required for running the example
 
 ## Installation
