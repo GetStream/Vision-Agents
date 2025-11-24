@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from vision_agents.core.agents import Agent, AgentLauncher
 from vision_agents.core import cli
 from vision_agents.core.edge.types import User
-from vision_agents.plugins import cartesia, getstream, openai, deepgram
+from vision_agents.plugins import cartesia, getstream, openai
 from vision_agents.core.events import CallSessionParticipantJoinedEvent
 from vision_agents.core.tts.events import TTSAudioEvent, TTSErrorEvent
 
@@ -39,7 +39,6 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="TTS Bot", id="agent"),
         instructions="I'm a TTS bot that greets users when they join.",
-        stt=deepgram.STT(),
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=cartesia.TTS(),
     )
