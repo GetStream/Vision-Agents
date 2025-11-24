@@ -33,7 +33,7 @@ async def create_agent(**kwargs) -> Agent:
 
     # Create security camera processor
     security_processor = SecurityCameraProcessor(
-        fps=5,  # Process 5 frames per second
+        fps=30,  # Process 5 frames per second
         time_window=1800,  # 30 minutes in seconds
         thumbnail_size=80,  # Size of face thumbnails
         detection_interval=2.0,  # Detect faces every 2 seconds
@@ -42,10 +42,7 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Security AI", id="agent"),
-        instructions="""You're a security camera AI assistant with face recognition capabilities.
-You can detect and recognize unique individuals, tracking when they arrive and leave.
-You help monitor who visits and can answer questions about security activity.
-Keep responses short and professional. You have access to unique visitor counts and detailed visit information from the last 30 minutes.""",
+        instructions="Read @instructions.md",
         processors=[security_processor],  # Add the security camera processor
         llm=llm,
         tts=elevenlabs.TTS(),
