@@ -25,6 +25,7 @@ from vision_agents.core.agents import Agent, AgentLauncher
 from vision_agents.core import cli
 from vision_agents.core.edge.types import User
 from vision_agents.plugins import cartesia, getstream, openai, deepgram
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,8 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Join call and wait
     with await agent.join(call):
+        await asyncio.sleep(3)
+        await agent.simple_response("narrate a story about a dragon")
         await agent.finish()
 
 
