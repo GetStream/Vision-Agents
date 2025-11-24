@@ -307,6 +307,15 @@ class Agent:
             logger.info("STTTranscriptEvent %s", event.text)
 
             user_id = event.user_id()
+            # TODO
+            # - Pending user transcript (str -> str should be str -> TranscriptBuffer
+            # - The transcript buffer should have a method to update from an event
+            # - It should keep a list of transcripts (so a list of strings)
+            # - New events should update the last item in the list or create a new
+            # - A new buffer should be create when TurnCompleted runs
+            # - Add tests that updating the buffer with (I, I am, I am walking) updates the first part
+            # - While passing it (I, I am, I am walking, To the grocery store) first updates the first, and then starts a second
+
             # Determine how to handle LLM triggering based on turn detection
             # With turn detection: accumulate transcripts and wait for TurnEndedEvent
             # Store/append the transcript for this user

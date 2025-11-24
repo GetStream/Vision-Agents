@@ -7,3 +7,7 @@ This project uses `uv` to manage Python and its dependencies so when you run tes
 Extend from BaseTest
 
 Store data for fixtures in tests/test_assets/...
+
+When you're done with your test and it passes
+- see if you can create a fixture which makes the tests shorter
+- evaluate if there are other ways to make your test shorter
