@@ -10,7 +10,6 @@ dependencies = [
     "vision-agents-plugins-openai",
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-deepgram",
-    "vision-agents-plugins-moondream",
     "vision-agents-plugins-getstream",
     "python-dotenv>=1.1.1",
 ]
@@ -20,4 +19,3 @@ vision-agents-plugins-openai = { path = "../../../../plugins/openai", editable =
 vision-agents-plugins-cartesia = { path = "../../../../plugins/cartesia", editable = true }
 vision-agents-plugins-deepgram = { path = "../../../../plugins/deepgram", editable = true }
 vision-agents-plugins-getstream = { path = "../../../../plugins/getstream", editable = true }
-vision-agents-plugins-moondream = { path = "../../../../plugins/moondream", editable = true }
