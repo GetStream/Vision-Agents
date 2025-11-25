@@ -137,7 +137,7 @@ class STT(stt.STT):
             "language_code": self.language_code,
             "audio_format": AudioFormat.PCM_16000,
             "sample_rate": 16000,
-            "commit_strategy": CommitStrategy.MANUAL, # manual works best
+            "commit_strategy": CommitStrategy.MANUAL,  # manual works best
             "vad_silence_threshold_secs": self.vad_silence_threshold_secs,
             "vad_threshold": self.vad_threshold,
             "min_speech_duration_ms": self.min_speech_duration_ms,
@@ -220,8 +220,11 @@ class STT(stt.STT):
             transcript_text = transcription_data.get("text", "").strip()
             confidence = transcription_data.get("confidence", 0.0)
         else:
-            raise Exception("unexpected type for transcription data. expected dict got {}".format(type(transcription_data)))
-
+            raise Exception(
+                "unexpected type for transcription data. expected dict got {}".format(
+                    type(transcription_data)
+                )
+            )
 
         if not transcript_text:
             return
@@ -258,7 +261,11 @@ class STT(stt.STT):
             transcript_text = transcription_data.get("text", "").strip()
             confidence = transcription_data.get("confidence", 0.0)
         else:
-            raise Exception("unexpected type for transcription data. expected dict got {}".format(type(transcription_data)))
+            raise Exception(
+                "unexpected type for transcription data. expected dict got {}".format(
+                    type(transcription_data)
+                )
+            )
 
         if not transcript_text:
             return

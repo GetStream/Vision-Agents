@@ -430,4 +430,3 @@ class TestAudioQueue(BaseTest):
         assert np.array_equal(result3.samples, [700, 800])
 
         assert queue.empty()
-

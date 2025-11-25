@@ -19,7 +19,7 @@ async def create_agent(**kwargs) -> Agent:
         llm=gemini.LLM("gemini-2.5-flash-lite"),
         tts=elevenlabs.TTS(),
         stt=elevenlabs.STT(),
-        turn_detection=smart_turn.TurnDetection(), # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
+        turn_detection=smart_turn.TurnDetection(),  # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
     )
     return agent
 

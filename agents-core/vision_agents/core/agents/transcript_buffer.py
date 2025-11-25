@@ -15,7 +15,9 @@ class TranscriptBuffer:
     def __init__(self):
         self._segments: List[str] = []
 
-    def update(self, event: STTTranscriptEvent | STTPartialTranscriptEvent | str) -> None:
+    def update(
+        self, event: STTTranscriptEvent | STTPartialTranscriptEvent | str
+    ) -> None:
         """
         Update the buffer from an STT event or text string.
 
@@ -66,4 +68,3 @@ class TranscriptBuffer:
 
     def __bool__(self) -> bool:
         return bool(self._segments)
-
