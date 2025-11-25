@@ -415,11 +415,7 @@ class Realtime(realtime.Realtime):
         pcm = pcm.resample(24000)
         is_talking = self.vad.predict_speech(pcm) > 0.5
         if is_talking:
-            logger.info("User is talking")
-
             self._last_audio_at = datetime.datetime.now()
-        else:
-            logger.info("User is not talking")
 
         content_name = str(uuid.uuid4())
 
@@ -873,7 +869,6 @@ class Realtime(realtime.Realtime):
                                         json_data["event"]["completionStart"],
                                     )
                                 elif "audioOutput" in json_data["event"]:
-                                    logger.info("audio output from AWS Bedrock")
                                     self._last_audio_at = datetime.datetime.now()
                                     audio_content = json_data["event"]["audioOutput"][
                                         "content"
@@ -976,15 +971,8 @@ class Realtime(realtime.Realtime):
                     logger.debug("Stream ended normally")
                     break
                 except Exception as e:
-                    logger.error("Error in event handling: %s", e)
-                    # Handle ValidationException properly
-                    if "ValidationException" in str(e):
-                        error_message = str(e)
-                        logger.error(f"Validation error: {error_message}")
-                    else:
-                        logger.error(f"Error receiving response: {e}")
-                    # Don't break immediately, try to continue processing
-                    continue
+                    logger.error("Error in AWS realtime event handling: %s", e)
+                    raise
 
         except Exception as e:
             logger.error("Critical error in event handling: %s", e)
