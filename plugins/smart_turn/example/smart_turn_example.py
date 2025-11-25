@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import vogent, getstream, gemini, elevenlabs, deepgram
+from vision_agents.plugins import vogent, getstream, gemini, elevenlabs, deepgram, smart_turn
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ async def create_agent(**kwargs) -> Agent:
         llm=gemini.LLM("gemini-2.5-flash-lite"),
         tts=elevenlabs.TTS(),
         stt=elevenlabs.STT(),
-        turn_detection=vogent.TurnDetection(), # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
+        turn_detection=smart_turn.TurnDetection(), # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
     )
     return agent
 

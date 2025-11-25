@@ -237,7 +237,8 @@ class Agent:
         self._pending_turn = None
         event = turn.response
         if self.tts and event and event.text and event.text.strip():
-            await self.tts.send(event.text)
+            sanitized_text = self._sanitize_text(event.text)
+            await self.tts.send(sanitized_text)
 
     def setup_event_handling(self):
         """
@@ -261,7 +262,8 @@ class Agent:
             # turns started outside of the agent (instructions from code)
             if self._pending_turn is None:
                 if self.tts and event.text and event.text.strip():
-                    await self.tts.send(event.text)
+                    sanitized_text = self._sanitize_text(event.text)
+                    await self.tts.send(sanitized_text)
             else:
                 self._pending_turn.response = event
                 if self._pending_turn.turn_finished:
@@ -397,7 +399,7 @@ class Agent:
 
         @self.llm.events.subscribe
         async def on_llm_response_sync_conversation(event: LLMResponseCompletedEvent):
-            self.logger.info(f"🤖 [LLM response]: {event.text} {event.item_id}")
+            self.logger.info(f"🤖 [LLM response]: {event.text}")
 
             if self.conversation is None:
                 return
@@ -416,10 +418,6 @@ class Agent:
         @self.llm.events.subscribe
         async def _handle_output_text_delta(event: LLMResponseChunkEvent):
             """Handle partial LLM response text deltas."""
-
-            self.logger.info(
-                f"🤖 [LLM delta response]: {event.delta} {event.item_id} {event.content_index}"
-            )
 
             if self.conversation is None:
                 return
@@ -797,7 +795,8 @@ class Agent:
                 if event.metadata:
                     user_metadata.update(event.metadata)
 
-                await self.tts.send(event.text, user_metadata)
+                sanitized_text = self._sanitize_text(event.text)
+                await self.tts.send(sanitized_text, user_metadata)
 
                 # Calculate duration
                 duration_ms = (time.time() - start_time) * 1000
@@ -1099,6 +1098,8 @@ class Agent:
 
                 if not event.eager_end_of_turn:
                     buffer.reset()
+                    if self.stt:
+                        await self.stt.clear()
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:
@@ -1302,6 +1303,10 @@ class Agent:
             )
 
             self.logger.info("🎥 Video track initialized from video publisher")
+
+    def _sanitize_text(self, text: str) -> str:
+        """Remove markdown and special characters that don't speak well."""
+        return text.replace("*", "").replace("#", "")
 
     def _truncate_for_logging(self, obj, max_length=200):
         """Truncate object string representation for logging to prevent spam."""

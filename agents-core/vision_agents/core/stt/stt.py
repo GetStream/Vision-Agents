@@ -147,5 +147,9 @@ class STT(abc.ABC):
             raise ValueError("STT is already started, dont call this method twice")
         self.started = True
 
+    async def clear(self):
+        """Clear any pending audio or state. Override in subclasses if needed."""
+        pass
+
     async def close(self):
         self.closed = True

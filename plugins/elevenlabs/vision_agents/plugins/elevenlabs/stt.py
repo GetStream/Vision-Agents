@@ -137,7 +137,7 @@ class STT(stt.STT):
             "language_code": self.language_code,
             "audio_format": AudioFormat.PCM_16000,
             "sample_rate": 16000,
-            "commit_strategy": CommitStrategy.VAD,
+            "commit_strategy": CommitStrategy.MANUAL, # manual works best
             "vad_silence_threshold_secs": self.vad_silence_threshold_secs,
             "vad_threshold": self.vad_threshold,
             "min_speech_duration_ms": self.min_speech_duration_ms,
@@ -329,10 +329,13 @@ class STT(stt.STT):
 
         logger.error("Failed to reconnect after 3 attempts")
 
+    async def clear(self):
+        """Commit any pending audio to finalize transcription."""
+        if self.connection:
+            await self.connection.commit()
+
     async def close(self):
-        """
-        Close the ElevenLabs connection and clean up resources.
-        """
+        """Close the ElevenLabs connection and clean up resources."""
         # Mark as closed first
         await super().close()
 
