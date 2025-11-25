@@ -12,8 +12,6 @@ SILERO_ONNX_FILENAME = "silero_vad.onnx"
 SILERO_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
 
 
-
-
 class SileroVAD:
     """
     Minimal Silero VAD ONNX wrapper
@@ -40,7 +38,8 @@ class SileroVAD:
 
     def predict_speech(self, pcm: PcmData):
         # convert from pcm to the right format for silero
-        chunks = pcm.resample(16000,1).to_float32().chunks(SILERO_CHUNK, pad_last=True)
+
+        chunks = pcm.resample(16000, 1).to_float32().chunks(SILERO_CHUNK, pad_last=True)
         scores = [self._predict_speech(c.samples) for c in chunks]
         return max(scores)
 
@@ -83,6 +82,7 @@ class SileroVAD:
         # out shape is (1, 1) -> return scalar
         prediction = float(out[0][0])
         return prediction
+
 
 async def prepare_silero_vad(model_dir: str) -> SileroVAD:
     path = os.path.join(model_dir, SILERO_ONNX_FILENAME)
