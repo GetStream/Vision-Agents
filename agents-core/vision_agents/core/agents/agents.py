@@ -9,6 +9,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
+from hatch.cli import self
 
 import getstream.models
 from aiortc import VideoStreamTrack
@@ -301,16 +302,16 @@ class Agent:
             await self._incoming_audio_queue.put(event.pcm_data)
 
         @self.events.subscribe
-        async def on_stt_transcript_event_create_response(event: STTPartialTranscriptEvent):
-            logger.info("STTPartialTranscriptEvent %s", event.text)
-
-        @self.events.subscribe
         async def on_stt_transcript_event_create_response(event: STTTranscriptEvent | STTPartialTranscriptEvent):
             if _is_audio_llm(self.llm):
                 # There is no need to send the response to the LLM if it handles audio itself.
                 return
 
-            logger.info("STTTranscriptEvent %s", event.text)
+            if isinstance(event, STTPartialTranscriptEvent):
+                self.logger.debug(f"🎤 [Transcript Partial]: {event.text}")
+            else:
+                self.logger.info(f"🎤 [Transcript Complete]: {event.text}")
+
             user_id = event.user_id()
             # With turn detection: accumulate transcripts and wait for TurnEndedEvent
             self._pending_user_transcripts[user_id].update(event)
@@ -332,7 +333,7 @@ class Agent:
 
         @self.events.subscribe
         async def on_stt_transcript_event_sync_conversation(event: STTTranscriptEvent):
-            self.logger.info(f"🎤 [Transcript]: {event.text}")
+
 
             if self.conversation is None:
                 return
@@ -1048,7 +1049,7 @@ class Agent:
                         event.participant.user_id if event.participant else "unknown"
                     )
                     self.logger.info(
-                        f"👉 Turn started - participant speaking {participant_id} : {event.confidence}"
+                        f"👉 Turn started - participant speaking %s : %.2f", participant_id, event.confidence
                     )
                 if self._audio_track is not None:
                     await self._audio_track.flush()
@@ -1063,7 +1064,7 @@ class Agent:
                 event.participant.user_id if event.participant else "unknown"
             )
             self.logger.info(
-                f"👉 Turn ended - participant {participant_id} finished (confidence: {event.confidence})"
+                f"👉 Turn ended - participant %s finished (confidence: %.2f)", participant_id, event.confidence
             )
             if not event.participant or event.participant.user_id == self.agent_user.id:
                 # Exit early if the event is triggered by the model response.
@@ -1077,11 +1078,6 @@ class Agent:
                 self.logger.warning("Turn ended with no transcript, like STT is broken")
 
             if transcript.strip():
-                self.logger.info(
-                    f"🤖 Triggering LLM response after turn ended for {event.participant.user_id}"
-                )
-
-
                 # cancel the old task if the text changed in the meantime
 
                 if (

@@ -78,13 +78,17 @@ class STT(abc.ABC):
         self,
         participant: Participant,
         eager_end_of_turn: bool = False,
+        confidence: Optional[float] = None,
     ):
+        if confidence is None:
+            confidence = 0.5
         self.events.send(
             TurnEndedEvent(
                 session_id=self.session_id,
                 plugin_name=self.provider_name,
                 participant=participant,
                 eager_end_of_turn=eager_end_of_turn,
+                confidence=confidence,
             )
         )
 
