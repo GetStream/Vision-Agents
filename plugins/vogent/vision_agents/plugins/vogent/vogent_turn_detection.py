@@ -13,7 +13,7 @@ from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
 )
-from vision_agents.core.vad.silero import prepare_silero_vad
+from vision_agents.core.vad.silero import prepare_silero_vad, SileroVAD
 from vision_agents.plugins import fast_whisper
 
 import logging
@@ -100,7 +100,7 @@ class VogentTurnDetection(TurnDetector):
         self._shutdown_event = asyncio.Event()
 
         # Model instances (initialized in start())
-        self.vad = None
+        self.vad: Optional[SileroVAD] = None
         self.whisper_stt = fast_whisper.STT(
             model_size=whisper_model_size,
             device="cpu",

@@ -9,7 +9,6 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
-from hatch.cli import self
 
 import getstream.models
 from aiortc import VideoStreamTrack
@@ -313,6 +312,10 @@ class Agent:
                 self.logger.info(f"🎤 [Transcript Complete]: {event.text}")
 
             user_id = event.user_id()
+            if user_id is None:
+                self.logger.warning("STT transcript event missing user_id, skipping")
+                return
+            
             # With turn detection: accumulate transcripts and wait for TurnEndedEvent
             self._pending_user_transcripts[user_id].update(event)
 
@@ -1049,7 +1052,7 @@ class Agent:
                         event.participant.user_id if event.participant else "unknown"
                     )
                     self.logger.info(
-                        f"👉 Turn started - participant speaking %s : %.2f", participant_id, event.confidence
+                        "👉 Turn started - participant speaking %s : %.2f", participant_id, event.confidence
                     )
                 if self._audio_track is not None:
                     await self._audio_track.flush()
@@ -1064,7 +1067,7 @@ class Agent:
                 event.participant.user_id if event.participant else "unknown"
             )
             self.logger.info(
-                f"👉 Turn ended - participant %s finished (confidence: %.2f)", participant_id, event.confidence
+                "👉 Turn ended - participant %s finished (confidence: %.2f)", participant_id, event.confidence
             )
             if not event.participant or event.participant.user_id == self.agent_user.id:
                 # Exit early if the event is triggered by the model response.
