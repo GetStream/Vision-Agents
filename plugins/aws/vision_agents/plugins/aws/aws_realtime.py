@@ -3,13 +3,10 @@ import base64
 import datetime
 import json
 import logging
-import os
-import time
 import uuid
 from typing import Optional, List, Dict, Any
 
 import aiortc
-import numpy as np
 
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from vision_agents.core.agents.agent_types import AgentOptions
@@ -26,12 +23,11 @@ from aws_sdk_bedrock_runtime.models import (
 from aws_sdk_bedrock_runtime.config import Config
 from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 
-from vision_agents.core.utils.utils import ensure_model
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.processors import Processor
 from vision_agents.core.edge.types import Participant
 from getstream.video.rtc import PcmData
-from vision_agents.core.vad.silero import SileroVAD, prepare_silero_vad
+from vision_agents.core.vad.silero import prepare_silero_vad
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +39,11 @@ AWS Bedrock Realtime with Nova Sonic support.
 
 Supports real-time audio streaming and function calling (tool use).
 
-TODO: 8 minute window issue
-- Receive transcriptions of what the user says
-- Store history of messages
+TODO:
+- 
 """
 
-FORCE_RECONNECT_IN_MINUTES = 0.5
+FORCE_RECONNECT_IN_MINUTES = 7.0
 
 
 class RealtimeConnection:
@@ -79,15 +74,11 @@ class RealtimeConnection:
         if not self.stream:
             raise RuntimeError("Connection not initialized. Call connect() first.")
         
-        try:
-            event_json = json.dumps(event_data)
-            event = InvokeModelWithBidirectionalStreamInputChunk(
-                value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
-            )
-            await self.stream.input_stream.send(event)
-        except Exception as e:
-            self.logger.error(f"Failed to send event to AWS Nova: {e}")
-            # Don't raise the exception, just log it to prevent connection reset
+        event_json = json.dumps(event_data)
+        event = InvokeModelWithBidirectionalStreamInputChunk(
+            value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
+        )
+        await self.stream.input_stream.send(event)
 
     async def await_output(self):
         """Wait for and return output from the stream."""
@@ -100,8 +91,6 @@ class RealtimeConnection:
         if self.stream:
             try:
                 await self.stream.input_stream.close()
-            except Exception as e:
-                self.logger.error(f"Error closing stream: {e}")
             finally:
                 self.stream = None
 
@@ -255,45 +244,40 @@ class Realtime(realtime.Realtime):
             self.logger.warning("Already connected")
             return
 
-        try:
-            # Initialize the connection
-            logger.info("Connecting to AWS Bedrock for model %s", self.model)
-            self.connection = RealtimeConnection(self.client, self.model)
-            await self.connection.connect()
-            
-            self.connected = True
-            self.last_connected_at = datetime.datetime.now()
+        # Initialize the connection
+        logger.info("Connecting to AWS Bedrock for model %s", self.model)
+        self.connection = RealtimeConnection(self.client, self.model)
+        await self.connection.connect()
+        
+        self.last_connected_at = datetime.datetime.now()
 
-            # Start listener task
-            self._handle_event_task = asyncio.create_task(self._handle_events())
-            
-            # Start reconnection check task
-            self._reconnection_check_task = asyncio.create_task(self._reconnection_check_loop())
+        # Start listener task
+        self._handle_event_task = asyncio.create_task(self._handle_events())
+        
+        # Start reconnection check task
+        self._reconnection_check_task = asyncio.create_task(self._reconnection_check_loop())
 
-            # send start and prompt event
-            event = self._create_session_start_event()
-            await self.connection.send_event(event)
+        # send start and prompt event
+        event = self._create_session_start_event()
+        await self.connection.send_event(event)
 
-            # Small delay between init events
-            await asyncio.sleep(0.1)
+        # Small delay between init events
+        await asyncio.sleep(0.1)
 
-            await self.start_prompt()
+        await self.start_prompt()
 
-            # Give AWS Nova a moment to process the prompt start event
-            await asyncio.sleep(0.1)
+        # Give AWS Nova a moment to process the prompt start event
+        await asyncio.sleep(0.1)
 
-            # next send system instructions
-            if not self._instructions:
-                raise Exception(
-                    "AWS Bedrock requires system instructions before sending regular user input"
-                )
-            await self.content_input(self._instructions, "SYSTEM")
+        # next send system instructions
+        if not self._instructions:
+            raise ValueError(
+                "AWS Bedrock requires system instructions before sending regular user input"
+            )
+        await self.content_input(self._instructions, "SYSTEM")
 
-            logger.info("AWS Bedrock connection established")
-
-        except Exception as e:
-            self.connected = False
-            raise
+        self.connected = True
+        logger.info("AWS Bedrock connection established")
 
     async def reconnect(self):
         """Reconnect to AWS Bedrock with a new connection.
@@ -306,6 +290,7 @@ class Realtime(realtime.Realtime):
             return
             
         self._reconnecting = True
+        reconnect_succeeded = False
         try:
             logger.info("Reconnecting to AWS Bedrock")
             
@@ -340,14 +325,12 @@ class Realtime(realtime.Realtime):
             if old_connection:
                 await old_connection.close()
             
+            reconnect_succeeded = True
             logger.info("Reconnection successful")
-            
-        except Exception as e:
-            logger.error(f"Failed to reconnect: {e}", exc_info=True)
-            self.connected = False
-            raise
         finally:
             self._reconnecting = False
+            if not reconnect_succeeded:
+                self.connected = False
 
     def _should_reconnect(self) -> bool:
         """Check if connection should be reconnected based on runtime.
@@ -729,62 +712,47 @@ class Realtime(realtime.Realtime):
             tool_use_id: The tool use ID from AWS
             tool_use_content: Full tool use content from AWS
         """
-        try:
-            logger.debug(
-                f"Starting tool call execution: {tool_name} (id: {tool_use_id})"
-            )
+        logger.debug(
+            f"Starting tool call execution: {tool_name} (id: {tool_use_id})"
+        )
 
-            # Extract tool input from the tool use content (matching working example)
-            tool_input = {}
-            if "content" in tool_use_content:
-                try:
-                    tool_input = json.loads(tool_use_content["content"])
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(
-                        f"Could not parse tool input from content: {tool_use_content.get('content')}"
-                    )
-                    tool_input = {}
-            elif "input" in tool_use_content:
-                tool_input = tool_use_content["input"]
-
-            # Create normalized tool call
-            tool_call = {
-                "type": "tool_call",
-                "id": tool_use_id,
-                "name": tool_name,
-                "arguments_json": tool_input,
-            }
-
-            # Execute using existing tool execution infrastructure from base LLM
-            tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
-
-            # Prepare response data
-            if error:
-                response_data = {"error": str(error)}
-                logger.error(f"Tool call {tool_name} failed: {error}")
-            else:
-                response_data = result
-
-            # Send tool result back to AWS using Nova's format
-            content_name = str(uuid.uuid4())
-
-            await self.send_tool_content_start(content_name, tool_use_id)
-            await self.send_tool_result(content_name, response_data)
-            await self.content_end(content_name)
-
-        except Exception as e:
-            logger.error(f"Error handling tool call {tool_name}: {e}", exc_info=True)
-            # Send error response back
+        # Extract tool input from the tool use content (matching working example)
+        tool_input = {}
+        if "content" in tool_use_content:
             try:
-                content_name = str(uuid.uuid4())
-                await self.send_tool_content_start(content_name, tool_use_id)
-                await self.send_tool_result(content_name, {"error": str(e)})
-                await self.content_end(content_name)
-            except Exception as send_error:
-                logger.error(
-                    f"Failed to send error response for tool call {tool_name}: {send_error}",
-                    exc_info=True,
+                tool_input = json.loads(tool_use_content["content"])
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(
+                    f"Could not parse tool input from content: {tool_use_content.get('content')}"
                 )
+                tool_input = {}
+        elif "input" in tool_use_content:
+            tool_input = tool_use_content["input"]
+
+        # Create normalized tool call
+        tool_call = {
+            "type": "tool_call",
+            "id": tool_use_id,
+            "name": tool_name,
+            "arguments_json": tool_input,
+        }
+
+        # Execute using existing tool execution infrastructure from base LLM
+        tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
+
+        # Prepare response data
+        if error:
+            response_data = {"error": str(error)}
+            logger.error(f"Tool call {tool_name} failed: {error}")
+        else:
+            response_data = result
+
+        # Send tool result back to AWS using Nova's format
+        content_name = str(uuid.uuid4())
+
+        await self.send_tool_content_start(content_name, tool_use_id)
+        await self.send_tool_result(content_name, response_data)
+        await self.content_end(content_name)
 
     async def close(self):
         if not self.connected:
@@ -815,172 +783,148 @@ class Realtime(realtime.Realtime):
 
     async def _handle_events(self):
         """Process incoming responses from AWS Bedrock."""
-        try:
-            while True:
-                try:
-                    output = await self.connection.await_output()
-                    result = await output[1].receive()
-                    if result.value and result.value.bytes_:
-                        try:
-                            response_data = result.value.bytes_.decode("utf-8")
-                            json_data = json.loads(response_data)
+        while True:
+            try:
+                output = await self.connection.await_output()
+                result = await output[1].receive()
+                if result.value and result.value.bytes_:
+                    try:
+                        response_data = result.value.bytes_.decode("utf-8")
+                        json_data = json.loads(response_data)
 
+                        # Handle different response types
+                        if "event" in json_data:
+                            # Log all non audio events
+                            if "audioOutput" not in json_data["event"]:
+                                logger.info(f"Received event: {json_data}")
 
-                            # Handle different response types
-                            if "event" in json_data:
-                                # Log all non audio events
-                                if not "audioOutput" in json_data["event"]:
-                                    logger.info(f"Received event: {json_data}")
-
-                                if "contentStart" in json_data["event"]:
-                                    content_start = json_data["event"]["contentStart"]
-                                    logger.debug(
-                                        f"Content start from AWS Bedrock: {content_start}"
-                                    )
-                                    # set role
-                                    self.role = content_start["role"]
-                                    # Check for speculative content
-                                    if "additionalModelFields" in content_start:
-                                        try:
-                                            additional_fields = json.loads(
-                                                content_start["additionalModelFields"]
-                                            )
-                                            if (
-                                                additional_fields.get("generationStage")
-                                                == "SPECULATIVE"
-                                            ):
-                                                self.display_assistant_text = True
-                                            else:
-                                                self.display_assistant_text = False
-                                        except json.JSONDecodeError:
-                                            pass
-
-                                elif "textOutput" in json_data["event"]:
-                                    text_content = json_data["event"]["textOutput"][
-                                        "content"
-                                    ]
-                                    # role = json_data['event']['textOutput']['role']
-                                    logger.debug(
-                                        f"Text output from AWS Bedrock: {text_content}"
-                                    )
-                                elif "completionStart" in json_data["event"]:
-                                    logger.debug(
-                                        "Completion start from AWS Bedrock",
-                                        json_data["event"]["completionStart"],
-                                    )
-                                elif "audioOutput" in json_data["event"]:
-                                    self._last_audio_at = datetime.datetime.now()
-                                    audio_content = json_data["event"]["audioOutput"][
-                                        "content"
-                                    ]
-                                    audio_bytes = base64.b64decode(audio_content)
-                                    pcm = PcmData.from_bytes(
-                                        audio_bytes, self.sample_rate
-                                    )
-                                    self._emit_audio_output_event(
-                                        audio_data=pcm,
-                                    )
-                                    #await self.output_audio_track.write(pcm)
-
-                                elif "toolUse" in json_data["event"]:
-                                    tool_use_data = json_data["event"]["toolUse"]
-                                    tool_name = tool_use_data.get("toolName")
-                                    tool_use_id = tool_use_data.get("toolUseId")
-
-                                    logger.debug(
-                                        f"Tool use event received: {tool_name} (id: {tool_use_id})"
-                                    )
-
-                                    # Store tool call info until contentEnd (matching working example)
-                                    if tool_use_id and tool_name:
-                                        self._pending_tool_calls[tool_use_id] = {
-                                            "toolName": tool_name,
-                                            "toolUseId": tool_use_id,
-                                            "toolUseContent": tool_use_data,
-                                        }
-                                    else:
-                                        logger.warning(
-                                            f"Invalid tool use event - missing toolName or toolUseId: {tool_use_data}"
+                            if "contentStart" in json_data["event"]:
+                                content_start = json_data["event"]["contentStart"]
+                                logger.debug(
+                                    f"Content start from AWS Bedrock: {content_start}"
+                                )
+                                # set role
+                                self.role = content_start["role"]
+                                # Check for speculative content
+                                if "additionalModelFields" in content_start:
+                                    try:
+                                        additional_fields = json.loads(
+                                            content_start["additionalModelFields"]
                                         )
-
-                                elif "contentEnd" in json_data["event"]:
-                                    content_end_data = json_data["event"]["contentEnd"]
-                                    stopReason = content_end_data.get("stopReason")
-                                    content_type = content_end_data.get("type")
-
-                                    logger.debug(
-                                        f"Content end event: type={content_type}, stopReason={stopReason}"
-                                    )
-
-                                    # Process tool calls on contentEnd with type == 'TOOL' (matching reference implementation)
-                                    if content_type == "TOOL":
-                                        tool_use_id = content_end_data.get("toolUseId")
-
-                                        # If toolUseId not in contentEnd, process most recent pending tool call
-                                        if not tool_use_id and self._pending_tool_calls:
-                                            # Get the most recently added tool call
-                                            tool_use_id = list(
-                                                self._pending_tool_calls.keys()
-                                            )[-1]
-
                                         if (
-                                            tool_use_id
-                                            and tool_use_id in self._pending_tool_calls
+                                            additional_fields.get("generationStage")
+                                            == "SPECULATIVE"
                                         ):
-                                            tool_call_info = (
-                                                self._pending_tool_calls.pop(
-                                                    tool_use_id
-                                                )
-                                            )
-                                            asyncio.create_task(
-                                                self._handle_tool_call(
-                                                    tool_name=tool_call_info[
-                                                        "toolName"
-                                                    ],
-                                                    tool_use_id=tool_call_info[
-                                                        "toolUseId"
-                                                    ],
-                                                    tool_use_content=tool_call_info[
-                                                        "toolUseContent"
-                                                    ],
-                                                )
-                                            )
+                                            self.display_assistant_text = True
+                                        else:
+                                            self.display_assistant_text = False
+                                    except json.JSONDecodeError:
+                                        pass
 
-                                    if stopReason == "INTERRUPTED":
-                                        logger.debug("TODO: should flush audio buffer")
-                                    logger.debug(
-                                        f"Content end from AWS Bedrock {stopReason}: {content_end_data}"
-                                    )
+                            elif "textOutput" in json_data["event"]:
+                                text_content = json_data["event"]["textOutput"][
+                                    "content"
+                                ]
+                                logger.debug(
+                                    f"Text output from AWS Bedrock: {text_content}"
+                                )
+                            elif "completionStart" in json_data["event"]:
+                                logger.debug(
+                                    "Completion start from AWS Bedrock: %s",
+                                    json_data["event"]["completionStart"],
+                                )
+                            elif "audioOutput" in json_data["event"]:
+                                self._last_audio_at = datetime.datetime.now()
+                                audio_content = json_data["event"]["audioOutput"][
+                                    "content"
+                                ]
+                                audio_bytes = base64.b64decode(audio_content)
+                                pcm = PcmData.from_bytes(
+                                    audio_bytes, self.sample_rate
+                                )
+                                self._emit_audio_output_event(
+                                    audio_data=pcm,
+                                )
 
-                                elif "completionEnd" in json_data["event"]:
-                                    logger.debug(
-                                        f"Completion end from AWS Bedrock: {json_data['event']['completionEnd']}"
-                                    )
-                                    # Handle end of conversation, no more response will be generated
-                                elif "usageEvent" in json_data["event"]:
-                                    pass
+                            elif "toolUse" in json_data["event"]:
+                                tool_use_data = json_data["event"]["toolUse"]
+                                tool_name = tool_use_data.get("toolName")
+                                tool_use_id = tool_use_data.get("toolUseId")
+
+                                logger.debug(
+                                    f"Tool use event received: {tool_name} (id: {tool_use_id})"
+                                )
+
+                                # Store tool call info until contentEnd (matching working example)
+                                if tool_use_id and tool_name:
+                                    self._pending_tool_calls[tool_use_id] = {
+                                        "toolName": tool_name,
+                                        "toolUseId": tool_use_id,
+                                        "toolUseContent": tool_use_data,
+                                    }
                                 else:
                                     logger.warning(
-                                        f"Unhandled event: {json_data['event']}"
+                                        f"Invalid tool use event - missing toolName or toolUseId: {tool_use_data}"
                                     )
 
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse JSON response: {e}")
-                except StopAsyncIteration:
-                    # Stream has ended normally
-                    logger.debug("Stream ended normally")
-                    break
-                except Exception as e:
-                    logger.error("Error in AWS realtime event handling: %s", e)
-                    raise
+                            elif "contentEnd" in json_data["event"]:
+                                content_end_data = json_data["event"]["contentEnd"]
+                                stop_reason = content_end_data.get("stopReason")
+                                content_type = content_end_data.get("type")
 
-        except Exception as e:
-            logger.error("Critical error in event handling: %s", e)
-            # Only reset connection on critical errors
-            self.connected = False
-        finally:
-            # Only log connection state, don't unconditionally reset
-            if self.connected:
-                logger.debug("Event handling loop ended, connection still active")
-            else:
-                logger.debug("Event handling loop ended, connection was closed")
+                                logger.debug(
+                                    f"Content end event: type={content_type}, stopReason={stop_reason}"
+                                )
+
+                                # Process tool calls on contentEnd with type == 'TOOL' (matching reference implementation)
+                                if content_type == "TOOL":
+                                    tool_use_id = content_end_data.get("toolUseId")
+
+                                    # If toolUseId not in contentEnd, process most recent pending tool call
+                                    if not tool_use_id and self._pending_tool_calls:
+                                        # Get the most recently added tool call
+                                        tool_use_id = list(
+                                            self._pending_tool_calls.keys()
+                                        )[-1]
+
+                                    if (
+                                        tool_use_id
+                                        and tool_use_id in self._pending_tool_calls
+                                    ):
+                                        tool_call_info = self._pending_tool_calls.pop(
+                                            tool_use_id
+                                        )
+                                        asyncio.create_task(
+                                            self._handle_tool_call(
+                                                tool_name=tool_call_info["toolName"],
+                                                tool_use_id=tool_call_info["toolUseId"],
+                                                tool_use_content=tool_call_info[
+                                                    "toolUseContent"
+                                                ],
+                                            )
+                                        )
+
+                                if stop_reason == "INTERRUPTED":
+                                    logger.debug("TODO: should flush audio buffer")
+                                logger.debug(
+                                    f"Content end from AWS Bedrock {stop_reason}: {content_end_data}"
+                                )
+
+                            elif "completionEnd" in json_data["event"]:
+                                logger.debug(
+                                    f"Completion end from AWS Bedrock: {json_data['event']['completionEnd']}"
+                                )
+                                # Handle end of conversation, no more response will be generated
+                            elif "usageEvent" in json_data["event"]:
+                                pass
+                            else:
+                                logger.warning(
+                                    f"Unhandled event: {json_data['event']}"
+                                )
+
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse JSON response: {e}")
+            except StopAsyncIteration:
+                # Stream has ended normally
+                logger.debug("Stream ended normally")
+                break
