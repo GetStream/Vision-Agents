@@ -864,9 +864,11 @@ class Agent:
 
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from the queue."""
+        interval_seconds = 0.02  # 20ms target interval
 
         try:
             while self._is_running:
+                loop_start = time.perf_counter()
                 try:
                     # Get audio data from queue with timeout to allow checking _is_running
                     pcm = await asyncio.wait_for(
@@ -895,18 +897,19 @@ class Agent:
                             await self.stt.process_audio(pcm, participant)
 
                     if self.turn_detection is not None and participant is not None:
-                        # TODO: find a better solution to this
-                        await asyncio.sleep(0.1) # ensure we don't trigger turn ended before transcription is done
-
                         await self.turn_detection.process_audio(
                             pcm, participant, conversation=self.conversation
                         )
 
                 except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                    await asyncio.sleep(0.02)
-
                     # No audio data available, continue loop to check _is_running
-                    continue
+                    pass
+
+                # Sleep for remaining time to maintain consistent interval
+                elapsed = time.perf_counter() - loop_start
+                sleep_time = interval_seconds - elapsed
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
 
         except asyncio.CancelledError:
             self.logger.info("🎵 Audio consumer task cancelled")

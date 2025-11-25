@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import vogent, getstream, gemini, elevenlabs
+from vision_agents.plugins import vogent, getstream, gemini, elevenlabs, deepgram
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ async def create_agent(**kwargs) -> Agent:
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         llm=gemini.LLM("gemini-2.5-flash-lite"),
         tts=elevenlabs.TTS(),
-        stt=elevenlabs.STT(),
+        stt=deepgram.STT(),
         turn_detection=vogent.TurnDetection(), # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
     )
     return agent
