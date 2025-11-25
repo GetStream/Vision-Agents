@@ -39,7 +39,7 @@ class STT(stt.STT):
         api_key: Optional[str] = None,
         model_id: str = "scribe_v2_realtime",
         language_code: str = "en",
-        vad_silence_threshold_secs: float = 1.5,
+        vad_silence_threshold_secs: float = 0.3,
         vad_threshold: float = 0.4,
         min_speech_duration_ms: int = 100,
         min_silence_duration_ms: int = 100,
@@ -137,7 +137,7 @@ class STT(stt.STT):
             "language_code": self.language_code,
             "audio_format": AudioFormat.PCM_16000,
             "sample_rate": 16000,
-            "commit_strategy": CommitStrategy.VAD,
+            "commit_strategy": CommitStrategy.MANUAL,  # manual works best
             "vad_silence_threshold_secs": self.vad_silence_threshold_secs,
             "vad_threshold": self.vad_threshold,
             "min_speech_duration_ms": self.min_speech_duration_ms,
@@ -208,7 +208,7 @@ class STT(stt.STT):
             logger.debug("Audio send loop cancelled")
             raise
 
-    def _on_partial_transcript(self, transcription_data: Any):
+    def _on_partial_transcript(self, transcription_data: dict[str, Any]):
         """
         Event handler for partial transcription results from ElevenLabs.
 
@@ -220,8 +220,11 @@ class STT(stt.STT):
             transcript_text = transcription_data.get("text", "").strip()
             confidence = transcription_data.get("confidence", 0.0)
         else:
-            transcript_text = getattr(transcription_data, "text", "").strip()
-            confidence = getattr(transcription_data, "confidence", 0.0)
+            raise Exception(
+                "unexpected type for transcription data. expected dict got {}".format(
+                    type(transcription_data)
+                )
+            )
 
         if not transcript_text:
             return
@@ -246,7 +249,7 @@ class STT(stt.STT):
             transcript_text, participant, response_metadata
         )
 
-    def _on_committed_transcript(self, transcription_data: Any):
+    def _on_committed_transcript(self, transcription_data: dict[str, Any]):
         """
         Event handler for final (committed) transcription results from ElevenLabs.
 
@@ -258,8 +261,11 @@ class STT(stt.STT):
             transcript_text = transcription_data.get("text", "").strip()
             confidence = transcription_data.get("confidence", 0.0)
         else:
-            transcript_text = getattr(transcription_data, "text", "").strip()
-            confidence = getattr(transcription_data, "confidence", 0.0)
+            raise Exception(
+                "unexpected type for transcription data. expected dict got {}".format(
+                    type(transcription_data)
+                )
+            )
 
         if not transcript_text:
             return
@@ -330,10 +336,13 @@ class STT(stt.STT):
 
         logger.error("Failed to reconnect after 3 attempts")
 
+    async def clear(self):
+        """Commit any pending audio to finalize transcription."""
+        if self.connection:
+            await self.connection.commit()
+
     async def close(self):
-        """
-        Close the ElevenLabs connection and clean up resources.
-        """
+        """Close the ElevenLabs connection and clean up resources."""
         # Mark as closed first
         await super().close()
 

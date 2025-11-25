@@ -53,6 +53,8 @@ class TurnDetector(ABC):
         duration_ms: Optional[float] = None,
         eager_end_of_turn: bool = False,
     ) -> None:
+        if confidence is None:
+            confidence = 0.5
         event = TurnEndedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
