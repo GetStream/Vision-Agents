@@ -309,7 +309,7 @@ class Agent:
                 return
 
             if isinstance(event, STTPartialTranscriptEvent):
-                self.logger.debug(f"🎤 [Transcript Partial]: {event.text}")
+                self.logger.info(f"🎤 [Transcript Partial]: {event.text}")
             else:
                 self.logger.info(f"🎤 [Transcript Complete]: {event.text}")
 
@@ -1104,7 +1104,12 @@ class Agent:
                 if not event.eager_end_of_turn:
                     buffer.reset()
                     if self.stt:
+
                         await self.stt.clear()
+                        logger.info("stt clear completed")
+                        # give the speech to text a moment to catch up
+                        await asyncio.sleep(0.02)
+                        logger.info("stt clear completed part 2")
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:

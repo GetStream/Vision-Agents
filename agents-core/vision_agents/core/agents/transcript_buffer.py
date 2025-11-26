@@ -7,13 +7,20 @@ class TranscriptBuffer:
     """
     Buffer for accumulating transcript text from STT events.
 
-    Stores pending text in a list of strings. When new events are received,
-    updates the last item if the text has an overlapping start, otherwise
-    creates a new entry.
+    Partial events update the current working segment. Final events
+    finalize the segment and any subsequent events start a new one.
+
+    Example flow:
+    - Partial "I" → ["I"]
+    - Partial "I am" → ["I am"]
+    - Final "I am walking" → ["I am walking"]
+    - Partial "To" → ["I am walking", "To"]
+    - Final "To the store" → ["I am walking", "To the store"]
     """
 
     def __init__(self):
         self._segments: List[str] = []
+        self._has_pending_partial: bool = False
 
     def update(
         self, event: STTTranscriptEvent | STTPartialTranscriptEvent | str
@@ -24,34 +31,39 @@ class TranscriptBuffer:
         Args:
             event: Either an STT event or a plain text string.
 
-        If the new text starts with the same content as the last segment,
-        updates that segment. Otherwise, appends as a new segment.
+        Partial events update the current working segment.
+        Final events (STTTranscriptEvent or strings) finalize the segment.
         """
         text = event if isinstance(event, str) else event.text
         text = text.strip()
         if not text:
             return
 
-        if not self._segments:
-            self._segments.append(text)
-            return
+        is_partial = isinstance(event, STTPartialTranscriptEvent)
 
-        last_segment = self._segments[-1]
-
-        # Check if new text is an extension of the last segment
-        if text.startswith(last_segment):
-            # New text extends the last segment
-            self._segments[-1] = text
-        elif last_segment.startswith(text):
-            # Last segment already contains this text (duplicate/stale event)
-            pass
+        if is_partial:
+            if self._has_pending_partial and self._segments:
+                # Update the existing partial segment (unless text matches)
+                if self._segments[-1] != text:
+                    self._segments[-1] = text
+            else:
+                # Start a new partial segment
+                self._segments.append(text)
+                self._has_pending_partial = True
         else:
-            # No overlap - start a new segment
-            self._segments.append(text)
+            # Final event (STTTranscriptEvent or string)
+            if self._has_pending_partial and self._segments:
+                # Replace the partial with the final text
+                self._segments[-1] = text
+            else:
+                # No pending partial, add as new segment
+                self._segments.append(text)
+            self._has_pending_partial = False
 
     def reset(self) -> None:
         """Clear all accumulated segments."""
         self._segments.clear()
+        self._has_pending_partial = False
 
     @property
     def segments(self) -> List[str]:

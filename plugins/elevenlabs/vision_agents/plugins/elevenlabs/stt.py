@@ -5,7 +5,7 @@ import os
 from typing import Optional, Any
 
 from elevenlabs.client import AsyncElevenLabs
-from elevenlabs import RealtimeAudioOptions, AudioFormat, CommitStrategy, RealtimeEvents
+from elevenlabs import RealtimeAudioOptions, AudioFormat, CommitStrategy, RealtimeEvents, RealtimeConnection
 from getstream.video.rtc.track_util import PcmData
 
 from vision_agents.core import stt
@@ -33,6 +33,7 @@ class STT(stt.STT):
     """
 
     turn_detection: bool = False  # Scribe v2 does not support turn detection
+    connection: Optional[RealtimeConnection] = None
 
     def __init__(
         self,
@@ -76,13 +77,13 @@ class STT(stt.STT):
         self.audio_chunk_duration_ms = audio_chunk_duration_ms
 
         self._current_participant: Optional[Participant] = None
-        self.connection: Optional[Any] = None
         self._connection_ready = asyncio.Event()
         self._listen_task: Optional[asyncio.Task[Any]] = None
         self._send_task: Optional[asyncio.Task[Any]] = None
         self._audio_queue: Optional[AudioQueue] = None
         self._should_reconnect = {"value": False}
         self._reconnect_event = asyncio.Event()
+        self._commit_received = asyncio.Event()
 
     async def process_audio(
         self,
@@ -142,6 +143,7 @@ class STT(stt.STT):
             "vad_threshold": self.vad_threshold,
             "min_speech_duration_ms": self.min_speech_duration_ms,
             "min_silence_duration_ms": self.min_silence_duration_ms,
+            "include_timestamps": True,
         }
 
         # Connect to ElevenLabs realtime speech-to-text
@@ -155,7 +157,7 @@ class STT(stt.STT):
                 RealtimeEvents.PARTIAL_TRANSCRIPT, self._on_partial_transcript
             )
             self.connection.on(
-                RealtimeEvents.COMMITTED_TRANSCRIPT, self._on_committed_transcript
+                RealtimeEvents.COMMITTED_TRANSCRIPT_WITH_TIMESTAMPS, self._on_committed_transcript
             )
             self.connection.on(RealtimeEvents.ERROR, self._on_error)
             self.connection.on(RealtimeEvents.CLOSE, self._on_close)
@@ -219,6 +221,7 @@ class STT(stt.STT):
         if isinstance(transcription_data, dict):
             transcript_text = transcription_data.get("text", "").strip()
             confidence = transcription_data.get("confidence", 0.0)
+            words = transcription_data.get("words")
         else:
             raise Exception(
                 "unexpected type for transcription data. expected dict got {}".format(
@@ -229,11 +232,16 @@ class STT(stt.STT):
         if not transcript_text:
             return
 
-        # Build response metadata
+        # Build response metadata with word timestamps if available
+        other: Optional[dict[str, Any]] = None
+        if words:
+            other = {"words": words}
+
         response_metadata = TranscriptResponse(
             confidence=confidence,
             language=self.language_code,
             model_name=self.model_id,
+            other=other,
         )
 
         # Use the participant from the most recent process_audio call
@@ -260,6 +268,7 @@ class STT(stt.STT):
         if isinstance(transcription_data, dict):
             transcript_text = transcription_data.get("text", "").strip()
             confidence = transcription_data.get("confidence", 0.0)
+            words = transcription_data.get("words")
         else:
             raise Exception(
                 "unexpected type for transcription data. expected dict got {}".format(
@@ -270,11 +279,16 @@ class STT(stt.STT):
         if not transcript_text:
             return
 
-        # Build response metadata
+        # Build response metadata with word timestamps if available
+        other: Optional[dict[str, Any]] = None
+        if words:
+            other = {"words": words}
+
         response_metadata = TranscriptResponse(
             confidence=confidence,
             language=self.language_code,
             model_name=self.model_id,
+            other=other,
         )
 
         # Use the participant from the most recent process_audio call
@@ -287,6 +301,9 @@ class STT(stt.STT):
 
         # Emit final transcript
         self._emit_transcript_event(transcript_text, participant, response_metadata)
+
+        # Signal that commit was received
+        self._commit_received.set()
 
     def _on_error(self, error: Any):
         """
@@ -336,10 +353,26 @@ class STT(stt.STT):
 
         logger.error("Failed to reconnect after 3 attempts")
 
-    async def clear(self):
-        """Commit any pending audio to finalize transcription."""
-        if self.connection:
-            await self.connection.commit()
+    async def clear(self, timeout: float = 10.0):
+        """
+        Commit any pending audio and wait for the final transcript.
+
+        Args:
+            timeout: Maximum time to wait for the committed transcript in seconds.
+        """
+        if not self.connection:
+            return
+
+        # Clear the event before committing
+        self._commit_received.clear()
+
+        await self.connection.commit()
+
+        # Wait for the committed transcript event
+        try:
+            await asyncio.wait_for(self._commit_received.wait(), timeout=timeout)
+        except TimeoutError:
+            logger.warning("Timeout waiting for committed transcript after clear()")
 
     async def close(self):
         """Close the ElevenLabs connection and clean up resources."""

@@ -1,5 +1,6 @@
 import pytest
 from dotenv import load_dotenv
+import asyncio
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.plugins import elevenlabs
@@ -35,11 +36,13 @@ class TestElevenLabsSTT:
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
         # Wait for result
+        # Wait a bit longer for all audio to be processed
+        await asyncio.sleep(5)
+
+        await stt.clear()
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
-        # Wait a bit longer for all audio to be processed
-        import asyncio
 
         await asyncio.sleep(5)
 
