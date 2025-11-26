@@ -1,25 +1,33 @@
 import asyncio
+import logging
 
 import av
-from PIL import Image
 from aiortc import VideoStreamTrack
-
+from PIL import Image
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
-import logging
 
 logger = logging.getLogger(__name__)
 
 
+class VideoTrackClosedError(Exception): ...
+
+
 class QueuedVideoTrack(VideoStreamTrack):
     """
-    QueuedVideoTrack is an implementation of VideoStreamTrack that allows you write video frames to it
-    It also gives you control over the width and height of the video frames
+    QueuedVideoTrack is an implementation of VideoStreamTrack that allows you to write video frames to it.
+    It also gives you control over the width and height of the video frames.
     """
 
-    def __init__(self, width: int = 1280, height: int = 720, fps: int = 1):
+    def __init__(
+        self,
+        width: int = 1280,
+        height: int = 720,
+        fps: int = 1,
+        max_queue_size: int = 10,
+    ):
         super().__init__()
         self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(
-            maxlen=10
+            maxlen=max_queue_size
         )
 
         # Set video quality parameters
@@ -48,7 +56,7 @@ class QueuedVideoTrack(VideoStreamTrack):
     async def recv(self) -> av.frame.Frame:
         """Receive the next video frame."""
         if self._stopped:
-            raise Exception("Track stopped")
+            raise VideoTrackClosedError("Track stopped")
 
         try:
             # Try to get a frame from queue with fps interval
@@ -75,3 +83,4 @@ class QueuedVideoTrack(VideoStreamTrack):
 
     def stop(self):
         self._stopped = True
+        super(QueuedVideoTrack, self).stop()
