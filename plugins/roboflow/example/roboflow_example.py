@@ -30,13 +30,12 @@ async def start_agent() -> None:
             "Missing Roboflow configuration. Set ROBOFLOW_WORKSPACE and ROBOFLOW_PROJECT env vars.\n"
             "Get these from your Roboflow project URL: https://app.roboflow.com/YOUR_WORKSPACE/YOUR_PROJECT"
         )
-    
+
+    # TODO: This is broken
     # Create Roboflow processor
     roboflow_processor = roboflow.RoboflowDetectionProcessor(
+        model_id="soccer-players-ckbru/15",
         # api_key will be read from ROBOFLOW_API_KEY env var
-        workspace_id=workspace_id,
-        project_id=project_id,
-        model_version=model_version,
         conf_threshold=40,  # 40% confidence threshold
         fps=5,  # Process 5 frames per second (API-friendly)
     )
