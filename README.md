@@ -12,9 +12,8 @@
 
 ## Build Real-Time Vision AI Agents
 
-<a href="https://youtu.be/Hpl5EcCpLw8">
-  <img src="assets/demo_thumbnail.png" alt="Watch the demo" style="width:100%; max-width:900px;">
-</a>
+[Placeholder]
+
 
 ### Multi-modal AI agents that watch, listen, and understand video.
 
@@ -33,7 +32,7 @@ Vision Agents give you the building blocks to create intelligent, low-latency vi
 ## See It In Action
 
 ### Sports Coaching
-
+[ Place Holder ]
 This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
 For example: Drone fire detection, sports/video game coaching, physical therapy, workout coaching, just dance style games etc.
@@ -53,10 +52,6 @@ agent = Agent(
 This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
 For example: Drone fire detection. Sports/video game coaching. Physical therapy. Workout coaching, Just dance style games etc.
-
-<a href="https://x.com/nash0x7e2/status/1950341779745599769">
-  <img src="assets/golf_example_tweet.png" alt="Golf Example" style="width:100%; max-width:800px;">
-</a>
 
 ### Cluely style Invisible Assistant (coming soon)
 
@@ -145,6 +140,9 @@ Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai
 **Quickstart:** [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
 **Tutorial:** [Building real-time sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
 **Tutorial:** [Building a real-time meeting assistant](https://github.com/GetStream/Vision-Agents#)
+
+## Examples
+
 
 ## Development
 
