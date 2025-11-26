@@ -14,15 +14,14 @@ import numpy as np
 import pytest
 from blockbuster import BlockBuster, blockbuster_ctx
 from dotenv import load_dotenv
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from torchvision.io.video import av
-
-from getstream.video.rtc.track_util import PcmData, AudioFormat
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt.events import (
-    STTTranscriptEvent,
     STTErrorEvent,
     STTPartialTranscriptEvent,
+    STTTranscriptEvent,
 )
-from vision_agents.core.edge.types import Participant
 
 load_dotenv()
 
@@ -57,7 +56,15 @@ def blockbuster(request) -> Iterator[BlockBuster | None]:
     if request.node.get_closest_marker("skip_blockbuster"):
         yield None
     else:
+        # Always allow blocking calls inside "Agent.__init__".
+        # Agent.__init__ is called once before any processing, so it's ok for it to be blocking.
+        from vision_agents.core import Agent
+
+        agent_cls_file = Agent.__module__.replace(".", "/") + ".py"
+
         with blockbuster_ctx() as bb:
+            for func in bb.functions.values():
+                func.can_block_in(agent_cls_file, "__init__")
             yield bb
 
 
