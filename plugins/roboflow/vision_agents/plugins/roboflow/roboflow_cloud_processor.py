@@ -277,7 +277,7 @@ class RoboflowCloudDetectionProcessor(
             class_name = detection["class"]
             class_ids.append(class_id)
             # Filter only classes we want to detect
-            if self._classes and class_id not in self._classes:
+            if self._classes and class_name not in self._classes:
                 continue
             class_ids_to_labels[class_id] = class_name
 

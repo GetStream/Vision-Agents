@@ -15,7 +15,7 @@ def annotate_image(
     Draw bounding boxes and labels on frame.
     """
 
-    # Dim the background to make detected objects brigher
+    # Dim the background to make detected objects brigther
     if dim_factor:
         mask = np.zeros(image.shape[:2], dtype=np.uint8)
         for xyxy in detections.xyxy:

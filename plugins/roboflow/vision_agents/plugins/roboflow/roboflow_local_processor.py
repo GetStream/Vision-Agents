@@ -144,8 +144,6 @@ class RoboflowLocalDetectionProcessor(
             max_queue_size=self.fps,  # Buffer 1s of the video
         )
 
-        self._model: Optional[RFDETR] = None
-
     async def process_video(
         self,
         incoming_track: aiortc.MediaStreamTrack,
