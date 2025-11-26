@@ -9,6 +9,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
+from hatch.cli import self
 
 import getstream.models
 from aiortc import VideoStreamTrack
@@ -1082,7 +1083,24 @@ class Agent:
             # When turn detection is enabled, trigger LLM response when user's turn ends.
             # This is the signal that the user has finished speaking and expects a response
             buffer = self._pending_user_transcripts[event.participant.user_id]
+
+            # when turn is completed, wait for the last transcriptions
+
+
+            if not event.eager_end_of_turn:
+
+                if self.stt:
+                    await self.stt.clear()
+                    logger.info("stt clear completed")
+                    # give the speech to text a moment to catch up
+                    await asyncio.sleep(0.02)
+                    logger.info("stt clear completed part 2")
+
+            # get the transcript, and reset the buffer if it's not an eager turn
             transcript = buffer.text
+            if not event.eager_end_of_turn:
+                buffer.reset()
+
             if not transcript.strip():
                 self.logger.warning("Turn ended with no transcript, like STT is broken")
 
@@ -1101,15 +1119,7 @@ class Agent:
                     if self._pending_turn.task:
                         self._pending_turn.task.cancel()
 
-                if not event.eager_end_of_turn:
-                    buffer.reset()
-                    if self.stt:
 
-                        await self.stt.clear()
-                        logger.info("stt clear completed")
-                        # give the speech to text a moment to catch up
-                        await asyncio.sleep(0.02)
-                        logger.info("stt clear completed part 2")
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:
