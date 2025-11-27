@@ -67,7 +67,7 @@ class Instructions:
                 markdown_lines.append(f"\n### {filename}")
                 # Only include non-empty content
                 markdown_lines.append(
-                    content or "*(File not found or could not be read)*"
+                    content or "*(File is empty)*"
                 )
         full_reference = "\n".join(markdown_lines)
         return full_reference
