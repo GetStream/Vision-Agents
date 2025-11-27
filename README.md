@@ -12,7 +12,7 @@
 
 ## Build Real-Time Vision AI Agents
 
-[Placeholder]
+https://github.com/user-attachments/assets/d66587ea-7af4-40c4-9966-5c04fbcf467c
 
 
 ### Multi-modal AI agents that watch, listen, and understand video.
@@ -32,7 +32,11 @@ Vision Agents give you the building blocks to create intelligent, low-latency vi
 ## See It In Action
 
 ### Sports Coaching
-[ Place Holder ]
+
+https://github.com/user-attachments/assets/9527ab03-0541-493b-97b1-e17ff1b20e21
+
+
+
 This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
 For example: Drone fire detection, sports/video game coaching, physical therapy, workout coaching, just dance style games etc.
@@ -142,6 +146,13 @@ Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai
 **Tutorial:** [Building a real-time meeting assistant](https://github.com/GetStream/Vision-Agents#)
 
 ## Examples
+
+|  Name | Description  |  Demo |  
+|---|---|---|
+|  <h3> Real-life GeoGuesser </h3> | Using Vision Agents combined with OpenAI realtime, learn to build an Agent capable of reading your screen and seeing the world around you. Perfect if you decide to take GeoGuesser to the next level  | [See Example]($) | 
+|   |   |   |
+|   |   |   |
+|   |   |   |
 
 
 ## Development
