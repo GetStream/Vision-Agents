@@ -182,10 +182,10 @@ class RoboflowCloudDetectionProcessor(
         """Return the video track for publishing processed frames."""
         return self._video_track
 
-    def close(self):
+    async def close(self):
         """Clean up resources."""
         if self._video_forwarder is not None:
-            self._video_forwarder.remove_frame_handler(self._process_frame)
+            await self._video_forwarder.remove_frame_handler(self._process_frame)
         self._closed = True
         self._executor.shutdown(wait=False)
         self._video_track.stop()
@@ -244,6 +244,7 @@ class RoboflowCloudDetectionProcessor(
 
         self._agent.events.send(
             DetectionCompletedEvent(
+                raw_detections=detections,
                 objects=detected_objects,
                 image_width=img_width,
                 image_height=img_height,

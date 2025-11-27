@@ -25,7 +25,7 @@ class DetectionCompletedEvent(PluginBaseEvent):
     """
 
     objects: list[DetectedObject] = field(default_factory=list)
-    raw_detections: sv.Detections = field(default_factory=sv.Detections)
+    raw_detections: sv.Detections = field(default_factory=sv.Detections.empty)
     image_width: int = 0
     image_height: int = 0
     type: str = field(default="plugin.roboflow.detection_completed", init=False)
