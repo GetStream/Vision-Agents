@@ -5,7 +5,13 @@ import os
 from typing import Optional, Any
 
 from elevenlabs.client import AsyncElevenLabs
-from elevenlabs import RealtimeAudioOptions, AudioFormat, CommitStrategy, RealtimeEvents, RealtimeConnection
+from elevenlabs import (
+    RealtimeAudioOptions,
+    AudioFormat,
+    CommitStrategy,
+    RealtimeEvents,
+    RealtimeConnection,
+)
 from getstream.video.rtc.track_util import PcmData
 
 from vision_agents.core import stt
@@ -157,7 +163,8 @@ class STT(stt.STT):
                 RealtimeEvents.PARTIAL_TRANSCRIPT, self._on_partial_transcript
             )
             self.connection.on(
-                RealtimeEvents.COMMITTED_TRANSCRIPT_WITH_TIMESTAMPS, self._on_committed_transcript
+                RealtimeEvents.COMMITTED_TRANSCRIPT_WITH_TIMESTAMPS,
+                self._on_committed_transcript,
             )
             self.connection.on(RealtimeEvents.ERROR, self._on_error)
             self.connection.on(RealtimeEvents.CLOSE, self._on_close)

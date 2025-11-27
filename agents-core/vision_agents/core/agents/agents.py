@@ -1084,9 +1084,7 @@ class Agent:
 
             # when turn is completed, wait for the last transcriptions
 
-
             if not event.eager_end_of_turn:
-
                 if self.stt:
                     await self.stt.clear()
                     # give the speech to text a moment to catch up
@@ -1114,8 +1112,6 @@ class Agent:
                     )
                     if self._pending_turn.task:
                         self._pending_turn.task.cancel()
-
-
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:

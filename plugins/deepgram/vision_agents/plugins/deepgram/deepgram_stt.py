@@ -236,14 +236,15 @@ class STT(stt.STT):
             # broadcast turn event
             if is_final or eager_end_of_turn:
                 self._emit_turn_ended_event(
-                    participant=participant, eager_end_of_turn=eager_end_of_turn, confidence=end_of_turn_confidence
+                    participant=participant,
+                    eager_end_of_turn=eager_end_of_turn,
+                    confidence=end_of_turn_confidence,
                 )
 
             if start_of_turn:
                 self._emit_turn_started_event(
                     participant=participant, confidence=end_of_turn_confidence
                 )
-
 
     def _on_open(self, message):
         pass

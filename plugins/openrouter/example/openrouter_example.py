@@ -30,17 +30,32 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with OpenRouter LLM."""
+    model = "google/gemini-2.5-flash"  # Can also use other models like anthropic/claude-3-opus
+
+    # Determine personality based on model
+    if "anthropic" in model.lower():
+        personality = "Talk like a robot."
+    elif "openai" in model.lower() or "gpt" in model.lower():
+        personality = "Talk like a pirate."
+    elif "gemini" in model.lower():
+        personality = "Talk like a cowboy."
+    elif "x-ai" in model.lower():
+        personality = "Talk like a 1920s Chicago mobster."
+    else:
+        personality = "Talk casually."
+
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="OpenRouter AI", id="agent"),
-        instructions="Be helpful and friendly to the user",
-        llm=openrouter.LLM(
-            model="openai/gpt-4o",  # Can also use other models like anthropic/claude-3-opus
-        ),
+        instructions=f"""
+        Answer in 6 words or less.
+        {personality}
+        """,
+        llm=openrouter.LLM(model=model),
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         turn_detection=smart_turn.TurnDetection(
-            buffer_in_seconds=2.0, confidence_threshold=0.5
+            pre_speech_buffer_ms=2000, speech_probability_threshold=0.9
         ),
     )
     return agent
@@ -61,7 +76,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("LLM ready")
 
         await asyncio.sleep(5)
-        await agent.llm.simple_response(text="Hello! I'm powered by OpenRouter.")
 
         await agent.finish()  # Run till the call ends
 

@@ -44,10 +44,14 @@ class TestTranscriptBuffer(BaseTest):
         buffer.update(STTPartialTranscriptEvent(text="What is the fact"))
         assert buffer.segments == ["What is the fact"]
 
-        buffer.update(STTPartialTranscriptEvent(text="What is the fastest human ability"))
+        buffer.update(
+            STTPartialTranscriptEvent(text="What is the fastest human ability")
+        )
         assert buffer.segments == ["What is the fastest human ability"]
 
-        buffer.update(STTPartialTranscriptEvent(text="What is the fastest human alive?"))
+        buffer.update(
+            STTPartialTranscriptEvent(text="What is the fastest human alive?")
+        )
         assert buffer.segments == ["What is the fastest human alive?"]
 
         assert len(buffer) == 1

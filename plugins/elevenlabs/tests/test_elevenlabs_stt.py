@@ -43,7 +43,6 @@ class TestElevenLabsSTT:
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
-
         await asyncio.sleep(5)
 
         # Verify transcript - check for any significant part of the transcript

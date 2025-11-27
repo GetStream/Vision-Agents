@@ -14,7 +14,6 @@ Requirements:
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
 """
 
-import asyncio
 import logging
 
 from dotenv import load_dotenv
