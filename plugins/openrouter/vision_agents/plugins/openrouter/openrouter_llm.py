@@ -47,28 +47,30 @@ class OpenRouterLLM(OpenAILLM):
 
     async def create_response(self, *args: Any, **kwargs: Any):
         """Override create_response to handle OpenRouter-specific requirements.
-        
+
         OpenRouter doesn't support the 'instructions' parameter like OpenAI does,
         so we convert it to a system message in the input.
         """
         # # Set max_output_tokens default because we're getting rate limited by OpenRouter
         # kwargs.setdefault("max_output_tokens", 1024)
-        
+
         # Convert instructions to system message
         if not self._instructions:
             return await super().create_response(*args, **kwargs)
-        
+
         # Get and normalize input to list format
         current_input = kwargs.get("input", args[0] if args else "Hello")
         if not isinstance(current_input, list):
-            current_input = [{"content": str(current_input), "role": "user", "type": "message"}]
-        
+            current_input = [
+                {"content": str(current_input), "role": "user", "type": "message"}
+            ]
+
         # Prepend system message with instructions
         kwargs["input"] = [
             {"content": self._instructions, "role": "system", "type": "message"},
-            *current_input
+            *current_input,
         ]
-        
+
         # Temporarily clear instructions so parent doesn't add it
         self._instructions, original = None, self._instructions  # type: ignore[assignment]
         try:
@@ -83,10 +85,10 @@ class OpenRouterLLM(OpenAILLM):
         new_messages = kwargs["input"]
         if not isinstance(new_messages, list):
             new_messages = [dict(content=new_messages, role="user", type="message")]
-        
+
         # Build the message list
         messages = []
-        
+
         if hasattr(self, "_conversation") and self._conversation:
             # Extract serializable message content from conversation history
             for m in self._conversation.messages:
@@ -94,16 +96,14 @@ class OpenRouterLLM(OpenAILLM):
                     messages.append(m.original)
                 else:
                     # For non-dict originals, use the normalized content
-                    messages.append({
-                        "content": m.content,
-                        "role": "user",
-                        "type": "message"
-                    })
-        
+                    messages.append(
+                        {"content": m.content, "role": "user", "type": "message"}
+                    )
+
         # Add new messages
         messages.extend(new_messages)
         kwargs["input"] = messages
-        
+
         # Add messages to conversation
         if hasattr(self, "_conversation") and self._conversation:
             normalized_messages = self._normalize_message(new_messages)

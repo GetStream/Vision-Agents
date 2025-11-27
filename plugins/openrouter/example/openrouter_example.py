@@ -31,7 +31,7 @@ load_dotenv()
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with OpenRouter LLM."""
     model = "google/gemini-2.5-flash"  # Can also use other models like anthropic/claude-3-opus
-    
+
     # Determine personality based on model
     if "anthropic" in model.lower():
         personality = "Talk like a robot."
@@ -43,7 +43,7 @@ async def create_agent(**kwargs) -> Agent:
         personality = "Talk like a 1920s Chicago mobster."
     else:
         personality = "Talk casually."
-    
+
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="OpenRouter AI", id="agent"),

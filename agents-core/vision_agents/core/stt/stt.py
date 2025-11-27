@@ -101,11 +101,11 @@ class STT(abc.ABC):
         if confidence is None:
             confidence = 0.5
         event = TurnStartedEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                participant=participant,
-                confidence=confidence,
-            )
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            participant=participant,
+            confidence=confidence,
+        )
         self.events.send(event)
 
     def _emit_partial_transcript_event(
