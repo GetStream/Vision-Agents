@@ -211,11 +211,6 @@ class STT(stt.STT):
                 language=self.language or "auto",
                 audio_duration_ms=duration_ms,
                 model_name=self.model,
-                other={
-                    "end_of_turn_confidence": end_of_turn_confidence,
-                    "turn_index": getattr(message, "turn_index", None),
-                    "event": event,
-                },
             )
 
             # Use the participant from the most recent process_audio call
@@ -231,7 +226,7 @@ class STT(stt.STT):
                 )
 
                 self._emit_turn_ended_event(
-                    participant=participant, eager_end_of_turn=eager_end_of_turn
+                    participant=participant, eager_end_of_turn=eager_end_of_turn, confidence=end_of_turn_confidence
                 )
 
             else:

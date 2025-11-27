@@ -47,17 +47,19 @@ class TranscriptBuffer:
                 if self._segments[-1] != text:
                     self._segments[-1] = text
             else:
-                # Start a new partial segment
-                self._segments.append(text)
-                self._has_pending_partial = True
+                # Start a new partial segment only if different from last finalized
+                if not self._segments or self._segments[-1] != text:
+                    self._segments.append(text)
+                    self._has_pending_partial = True
         else:
             # Final event (STTTranscriptEvent or string)
             if self._has_pending_partial and self._segments:
                 # Replace the partial with the final text
                 self._segments[-1] = text
             else:
-                # No pending partial, add as new segment
-                self._segments.append(text)
+                # No pending partial - add as new segment only if different from last
+                if not self._segments or self._segments[-1] != text:
+                    self._segments.append(text)
             self._has_pending_partial = False
 
     def reset(self) -> None:

@@ -121,6 +121,29 @@ class TestTranscriptBuffer(BaseTest):
         buffer.update(STTTranscriptEvent(text="Goodbye world"))
         assert buffer.segments == ["Hello world", "Goodbye world"]
 
+    def test_duplicate_final_event_ignored(self, buffer):
+        """Duplicate final events are ignored."""
+        buffer.update(STTPartialTranscriptEvent(text="What is the fastest animal?"))
+        buffer.update(STTTranscriptEvent(text="What is the fastest animal?"))
+        buffer.update(STTTranscriptEvent(text="What is the fastest animal?"))
+        assert buffer.segments == ["What is the fastest animal?"]
+        assert len(buffer) == 1
+
+    def test_duplicate_final_without_partial_ignored(self, buffer):
+        """Duplicate final events without preceding partial are ignored."""
+        buffer.update(STTTranscriptEvent(text="Hello"))
+        buffer.update(STTTranscriptEvent(text="Hello"))
+        assert buffer.segments == ["Hello"]
+
+    def test_partial_after_final_with_same_text_ignored(self, buffer):
+        """Partial after final with same text should not create duplicate."""
+        buffer.update(STTPartialTranscriptEvent(text="Tell me about Deepgram."))
+        buffer.update(STTTranscriptEvent(text="Tell me about Deepgram."))
+        buffer.update(STTPartialTranscriptEvent(text="Tell me about Deepgram."))
+        buffer.update(STTTranscriptEvent(text="Tell me about Deepgram."))
+        assert buffer.segments == ["Tell me about Deepgram."]
+        assert len(buffer) == 1
+
     def test_string_adds_segment(self, buffer):
         """Plain strings are treated as final events."""
         buffer.update("Hello")

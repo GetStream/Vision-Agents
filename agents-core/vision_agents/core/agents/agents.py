@@ -9,8 +9,6 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
-from hatch.cli import self
-
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
@@ -1091,10 +1089,8 @@ class Agent:
 
                 if self.stt:
                     await self.stt.clear()
-                    logger.info("stt clear completed")
                     # give the speech to text a moment to catch up
                     await asyncio.sleep(0.02)
-                    logger.info("stt clear completed part 2")
 
             # get the transcript, and reset the buffer if it's not an eager turn
             transcript = buffer.text
