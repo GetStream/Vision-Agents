@@ -34,7 +34,7 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Friendly AI", id="agent"),
-        instructions="You're a friendly voice AI assistant. Keep your replies conversational and concise. Read @assistant.md for personality guidelines",
+        instructions="You're a friendly voice AI assistant. Keep your replies conversational",
         tts=elevenlabs.TTS(),  # Uses ElevenLabs for text-to-speech
         stt=elevenlabs.STT(),  # Uses ElevenLabs Scribe v2 for speech-to-text
         llm=gemini.LLM("gemini-2.5-flash-lite"),
@@ -45,21 +45,13 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join the call and start the agent."""
-    # Ensure the agent user is created
-    await agent.create_user()
-    # Create a call
     call = await agent.create_call(call_type, call_id)
 
     logger.info("🤖 Starting ElevenLabs Agent...")
 
     # Have the agent join the call/room
     with await agent.join(call):
-        logger.info("Joining call")
-        logger.info("LLM ready")
-
-        await asyncio.sleep(5)
-        await agent.llm.simple_response(text="Hello! How can I help you today?")
-
+        await agent.simple_response("tell me something interesting in a short sentence")
         await agent.finish()  # Run till the call ends
 
 
