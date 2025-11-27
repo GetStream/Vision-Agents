@@ -91,7 +91,7 @@ class OpenRouterLLM(OpenAILLM):
         # Build the message list
         messages = []
 
-        if hasattr(self, "_conversation") and self._conversation:
+        if self._conversation:
             # Extract serializable message content from conversation history
             for m in self._conversation.messages:
                 if isinstance(m.original, dict):
@@ -107,7 +107,7 @@ class OpenRouterLLM(OpenAILLM):
         kwargs["input"] = messages
 
         # Add messages to conversation
-        if hasattr(self, "_conversation") and self._conversation:
+        if self._conversation:
             normalized_messages = self._normalize_message(new_messages)
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
