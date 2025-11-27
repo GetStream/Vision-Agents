@@ -16,6 +16,11 @@ class TranscriptBuffer:
     - Final "I am walking" → ["I am walking"]
     - Partial "To" → ["I am walking", "To"]
     - Final "To the store" → ["I am walking", "To the store"]
+
+    It's also possible you receive corrections
+    - Partial "It's damp"
+    - Partial "It's a swamp"
+    - Final "It's a swamp"
     """
 
     def __init__(self):

@@ -167,6 +167,8 @@ class STT(stt.STT):
 
         Args:
             message: The message object from Deepgram
+
+        TODO: errors in this function are hidden silently. Not sure why this happens.
         """
         # Extract message data
         if not hasattr(message, "type"):
@@ -187,6 +189,7 @@ class STT(stt.STT):
 
             is_final = event == "EndOfTurn"
             eager_end_of_turn = event == "EagerEndOfTurn"
+            start_of_turn = event == "StartOfTurn"
 
             # Get end of turn confidence
             end_of_turn_confidence = getattr(message, "end_of_turn_confidence", 0.0)
@@ -220,20 +223,27 @@ class STT(stt.STT):
                 logger.warning("Received transcript but no participant set")
                 return
 
-            if is_final or eager_end_of_turn:
+            # broadcast STT event first
+            if is_final:
                 self._emit_transcript_event(
                     transcript_text, participant, response_metadata
                 )
+            else:
+                self._emit_partial_transcript_event(
+                    transcript_text, participant, response_metadata
+                )
 
+            # broadcast turn event
+            if is_final or eager_end_of_turn:
                 self._emit_turn_ended_event(
                     participant=participant, eager_end_of_turn=eager_end_of_turn, confidence=end_of_turn_confidence
                 )
 
-            else:
-                # Partial transcript (event == "StartOfTurn" or "Update")
-                self._emit_partial_transcript_event(
-                    transcript_text, participant, response_metadata
+            if start_of_turn:
+                self._emit_turn_started_event(
+                    participant=participant, confidence=end_of_turn_confidence
                 )
+
 
     def _on_open(self, message):
         pass
