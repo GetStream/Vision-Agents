@@ -70,7 +70,10 @@ class RoboflowCloudDetectionProcessor(
             Example: ["person", "sports ball"]
             Verify that the classes a supported by the given model.
             Default - None (all classes are detected).
+        annotate: if True, annotate the detected objects with boxes and labels.
+            Default - True.
         dim_background_factor: how much to dim the background around detected objects from 0 to 1.0.
+            Effective only when annotate=True.
             Default - 0.0 (no dimming).
 
     Examples:
@@ -100,6 +103,7 @@ class RoboflowCloudDetectionProcessor(
         api_url: Optional[str] = None,
         conf_threshold: int = 50,
         fps: int = 5,
+        annotate: bool = True,
         classes: Optional[list[str]] = None,
         dim_background_factor: float = 0.0,
     ):
@@ -122,6 +126,7 @@ class RoboflowCloudDetectionProcessor(
         self.conf_threshold = conf_threshold
         self.fps = fps
         self.dim_background_factor = max(0.0, dim_background_factor)
+        self.annotate = annotate
 
         self._agent: Optional[Agent] = None
         self._client = InferenceHTTPClient(
@@ -221,20 +226,24 @@ class RoboflowCloudDetectionProcessor(
             await self._video_track.add_frame(frame)
             return
 
-        # Annotate frame with detections
-        annotated_image = annotate_image(
-            image, detections, classes, dim_factor=self.dim_background_factor
-        )
+        if self.annotate:
+            # Annotate frame with detections
+            annotated_image = annotate_image(
+                image, detections, classes, dim_factor=self.dim_background_factor
+            )
 
-        # Convert back to av.VideoFrame
-        annotated_frame = av.VideoFrame.from_ndarray(annotated_image)
-        annotated_frame.pts = frame.pts
-        annotated_frame.time_base = frame.time_base
-        # Send the annotated frame to the output video track
-        await self._video_track.add_frame(annotated_frame)
+            # Convert back to av.VideoFrame
+            annotated_frame = av.VideoFrame.from_ndarray(annotated_image)
+            annotated_frame.pts = frame.pts
+            annotated_frame.time_base = frame.time_base
+            # Send the annotated frame to the output video track
+            await self._video_track.add_frame(annotated_frame)
+        else:
+            # Pass original frame downstream
+            await self._video_track.add_frame(frame)
 
         # Publish the event with detected data
-        img_height, img_width = annotated_image.shape[0:2]
+        img_height, img_width = image.shape[0:2]
         detected_objects = [
             DetectedObject(label=classes[class_id], x1=x1, y1=y1, x2=x2, y2=y2)
             for class_id, (x1, y1, x2, y2) in zip(
