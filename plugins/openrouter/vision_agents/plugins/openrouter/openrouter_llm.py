@@ -16,6 +16,8 @@ class OpenRouterLLM(OpenAILLM):
     - Use manual conversation storage
     """
 
+    _instructions: str
+
     def __init__(
         self,
         *,
