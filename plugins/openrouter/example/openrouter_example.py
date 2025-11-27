@@ -30,17 +30,17 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with OpenRouter LLM."""
-    model = "anthropic/claude-sonnet-4.5"  # Can also use other models like anthropic/claude-3-opus
+    model = "google/gemini-2.5-flash"  # Can also use other models like anthropic/claude-3-opus
     
     # Determine personality based on model
     if "anthropic" in model.lower():
-        personality = "Talk like a 1920s Chicago mobster."
+        personality = "Talk like a robot."
     elif "openai" in model.lower() or "gpt" in model.lower():
         personality = "Talk like a pirate."
     elif "gemini" in model.lower():
         personality = "Talk like a cowboy."
     elif "x-ai" in model.lower():
-        personality = "Talk like a robot."
+        personality = "Talk like a 1920s Chicago mobster."
     else:
         personality = "Talk casually."
     
@@ -55,7 +55,7 @@ async def create_agent(**kwargs) -> Agent:
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         turn_detection=smart_turn.TurnDetection(
-            pre_speech_buffer_ms=2000, speech_probability_threshold=0.5
+            pre_speech_buffer_ms=2000, speech_probability_threshold=0.9
         ),
     )
     return agent

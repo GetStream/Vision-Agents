@@ -51,40 +51,30 @@ class OpenRouterLLM(OpenAILLM):
         OpenRouter doesn't support the 'instructions' parameter like OpenAI does,
         so we convert it to a system message in the input.
         """
-        # Set max_output_tokens default because we're getting rate limited by OpenRouter
-        if "max_output_tokens" not in kwargs:
-            kwargs["max_output_tokens"] = 1024
+        # # Set max_output_tokens default because we're getting rate limited by OpenRouter
+        # kwargs.setdefault("max_output_tokens", 1024)
         
-        # Convert instructions to system message before processing
-        if self._instructions:
-            current_input = kwargs.get("input", args[0] if args else "Hello")
-            
-            # Normalize input to list format
-            if isinstance(current_input, str):
-                input_messages = [{"content": current_input, "role": "user", "type": "message"}]
-            elif isinstance(current_input, list):
-                input_messages = current_input
-            else:
-                input_messages = [current_input]
-            
-            # Prepend system message with instructions
-            system_message = {
-                "content": self._instructions,
-                "role": "system",
-                "type": "message"
-            }
-            kwargs["input"] = [system_message] + input_messages
-            
-            # Temporarily clear instructions so parent doesn't add it
-            original_instructions = self._instructions
-            self._instructions = None  # type: ignore[assignment]
-            try:
-                result = await super().create_response(*args, **kwargs)
-            finally:
-                self._instructions = original_instructions
-            return result
+        # Convert instructions to system message
+        if not self._instructions:
+            return await super().create_response(*args, **kwargs)
         
-        return await super().create_response(*args, **kwargs)
+        # Get and normalize input to list format
+        current_input = kwargs.get("input", args[0] if args else "Hello")
+        if not isinstance(current_input, list):
+            current_input = [{"content": str(current_input), "role": "user", "type": "message"}]
+        
+        # Prepend system message with instructions
+        kwargs["input"] = [
+            {"content": self._instructions, "role": "system", "type": "message"},
+            *current_input
+        ]
+        
+        # Temporarily clear instructions so parent doesn't add it
+        self._instructions, original = None, self._instructions  # type: ignore[assignment]
+        try:
+            return await super().create_response(*args, **kwargs)
+        finally:
+            self._instructions = original
 
     def add_conversation_history(self, kwargs):
         # Use the manual storage

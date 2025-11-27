@@ -105,4 +105,3 @@ explicit_package_bases = true
 [tool.hatch.version]
 source = "vcs"
 raw-options = {  search_parent_directories = true, fallback_version = "0.0.0" }
-

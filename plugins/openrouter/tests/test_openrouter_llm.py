@@ -6,6 +6,7 @@ import pytest
 from dotenv import load_dotenv
 
 from vision_agents.core.agents.conversation import Message, InMemoryConversation
+from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
 )
@@ -141,12 +142,11 @@ class TestOpenRouterLLM:
         if not os.environ.get("OPENROUTER_API_KEY"):
             pytest.skip("OPENROUTER_API_KEY environment variable not set")
 
-        pytest.skip("instruction following doesnt always work")
         llm = LLM(model="anthropic/claude-haiku-4.5")
-        llm.set_instructions("Only reply in 2 letter country shortcuts")
+        llm.set_instructions(Instructions("Only reply in 2 letter country shortcuts"))
 
         response = await llm.simple_response(
-            text="Which country is rainy, protected from water with dikes and below sea level?",
+            text="Which country is rainy, flat, famous for windmills and tulips, protected from water with dykes and below sea level?",
         )
 
         self.assert_response_successful(response)
