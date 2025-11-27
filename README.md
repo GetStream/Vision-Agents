@@ -12,7 +12,7 @@
 
 ## Build Real-Time Vision AI Agents
 
-https://github.com/user-attachments/assets/d66587ea-7af4-40c4-9966-5c04fbcf467c
+https://github.com/user-attachments/assets/d9778ab9-938d-4101-8605-ff879c29b0e4
 
 
 ### Multi-modal AI agents that watch, listen, and understand video.
@@ -26,6 +26,8 @@ Vision Agents give you the building blocks to create intelligent, low-latency vi
 - **Open:** Built by Stream, but works with any video edge network.
 - **Native APIs:** Native SDK methods from OpenAI (`create response`), Gemini (`generate`), and Claude (`create message`) — always access the latest LLM capabilities.
 - **SDKs:** SDKs for React, Android, iOS, Flutter, React Native, and Unity, powered by Stream's ultra-low-latency network.
+
+https://github.com/user-attachments/assets/d66587ea-7af4-40c4-9966-5c04fbcf467c
 
 ---
 
