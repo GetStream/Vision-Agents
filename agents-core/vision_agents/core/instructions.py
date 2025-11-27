@@ -3,13 +3,17 @@ import os
 import re
 from pathlib import Path
 
-__all__ = ["Instructions"]
+__all__ = ["Instructions", "InstructionsReadError"]
+
 
 logger = logging.getLogger(__name__)
 
 _INITIAL_CWD = os.getcwd()
 
-_MD_PATTERN = re.compile(r"@([^\s@]+\.md)")
+_MD_PATTERN = re.compile(r"@([^\s@]+)")
+
+
+class InstructionsReadError(Exception): ...
 
 
 class Instructions:
@@ -86,30 +90,29 @@ class Instructions:
 
         # Check if the path is a file, it exists, and it's a markdown file.
         skip_reason = ""
-        if not full_path.is_file():
+        if not full_path.exists():
+            skip_reason = "file not found"
+        elif not full_path.is_file():
             skip_reason = "path is not a file"
         elif full_path.name.startswith("."):
-            skip_reason = "path is invalid"
-        elif not full_path.exists():
-            skip_reason = "file not found"
+            skip_reason = 'filename cannot start with "."'
         elif full_path.suffix != ".md":
             skip_reason = "file is not .md"
         # The markdown file also must be inside the base_dir
         elif not full_path.is_relative_to(self._base_dir):
-            skip_reason = "file outside the base directory"
+            skip_reason = f"path outside the base directory {self._base_dir}"
 
         if skip_reason:
-            logger.debug(
-                f"Skip reading instructions from {full_path}. Reason: {skip_reason}"
+            raise InstructionsReadError(
+                f"Failed to read instructions from {full_path}; reason - {skip_reason}"
             )
-            return ""
 
         try:
             logger.info(f"Reading instructions from file {full_path}")
             with open(full_path, mode="r") as f:
                 return f.read()
-        except (OSError, IOError, UnicodeDecodeError):
-            logger.warning(
-                f"Failed to read instructions from file {full_path}", exc_info=True
-            )
-            return ""
+        except (OSError, IOError, UnicodeDecodeError) as exc:
+            raise InstructionsReadError(
+                f"Failed to read instructions from {full_path}"
+                f"Failed to read instructions from file {full_path}"
+            ) from exc

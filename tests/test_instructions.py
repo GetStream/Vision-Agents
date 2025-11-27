@@ -1,5 +1,5 @@
 import pytest
-from vision_agents.core.instructions import Instructions
+from vision_agents.core.instructions import Instructions, InstructionsReadError
 
 
 class TestInstructions:
@@ -28,40 +28,29 @@ class TestInstructions:
         file_path = tmp_path / "file1.md"
         file_path.mkdir()
         input_text = "read @file1.md"
-        instructions = Instructions(input_text=input_text, base_dir=tmp_path)
-        assert instructions.input_text == input_text
-        assert (
-            instructions.full_reference
-            == f"{input_text}\n\n\n## Referenced Documentation:\n\n### file1.md\n*(File not found or could not be read)*"
-        )
+        with pytest.raises(InstructionsReadError, match="reason - path is not a file"):
+            Instructions(input_text=input_text, base_dir=tmp_path)
 
     def test_parse_file_doesnt_exist(self, tmp_path):
         input_text = "read @file1.md"
-        instructions = Instructions(input_text=input_text, base_dir=tmp_path)
-        assert instructions.input_text == input_text
-        assert (
-            instructions.full_reference
-            == f"{input_text}\n\n\n## Referenced Documentation:\n\n### file1.md\n*(File not found or could not be read)*"
-        )
+        with pytest.raises(InstructionsReadError, match="reason - file not found"):
+            Instructions(input_text=input_text, base_dir=tmp_path)
 
     def test_parse_file_not_md(self, tmp_path):
         input_text = "read @file1.txt"
         file_path = tmp_path / "file1.txt"
         file_path.write_text("abcdef", encoding="utf-8")
-        instructions = Instructions(input_text=input_text, base_dir=tmp_path)
-        assert instructions.input_text == input_text
-        assert instructions.full_reference == input_text
+        with pytest.raises(InstructionsReadError, match="reason - file is not .md"):
+            Instructions(input_text=input_text, base_dir=tmp_path)
 
     def test_parse_file_hidden(self, tmp_path):
         input_text = "read @.file1.md"
         file_path = tmp_path / ".file1.md"
         file_path.write_text("abcdef", encoding="utf-8")
-        instructions = Instructions(input_text=input_text, base_dir=tmp_path)
-        assert instructions.input_text == input_text
-        assert (
-            instructions.full_reference
-            == f"{input_text}\n\n\n## Referenced Documentation:\n\n### .file1.md\n*(File not found or could not be read)*"
-        )
+        with pytest.raises(
+            InstructionsReadError, match='reason - filename cannot start with "."'
+        ):
+            Instructions(input_text=input_text, base_dir=tmp_path)
 
     def test_parse_file_outside_base_dir(self, tmp_path):
         file_path1 = tmp_path / "file1.md"
@@ -73,9 +62,7 @@ class TestInstructions:
         file_path1.write_text("abcdef", encoding="utf-8")
         file_path2.write_text("abcdef", encoding="utf-8")
 
-        instructions = Instructions(input_text=input_text, base_dir=base_dir)
-        assert instructions.input_text == input_text
-        assert (
-            instructions.full_reference
-            == f"{input_text}\n\n\n## Referenced Documentation:\n\n### {file_path1}\n*(File not found or could not be read)*"
-        )
+        with pytest.raises(
+            InstructionsReadError, match="reason - path outside the base directory"
+        ):
+            Instructions(input_text=input_text, base_dir=base_dir)
