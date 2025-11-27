@@ -468,7 +468,7 @@ class Realtime(realtime.Realtime):
         except Exception as e:
             logger.error(f"Failed to send tool response: {e}")
 
-    def set_instructions(self, instructions: Instructions):
+    def set_instructions(self, instructions: Instructions | str) -> None:
         super().set_instructions(instructions)
         self.realtime_session["instructions"] = self._instructions
 
