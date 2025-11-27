@@ -66,9 +66,7 @@ class Instructions:
             for filename, content in markdown_contents.items():
                 markdown_lines.append(f"\n### {filename}")
                 # Only include non-empty content
-                markdown_lines.append(
-                    content or "*(File is empty)*"
-                )
+                markdown_lines.append(content or "*(File is empty)*")
         full_reference = "\n".join(markdown_lines)
         return full_reference
 
