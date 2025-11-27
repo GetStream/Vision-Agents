@@ -113,6 +113,5 @@ class Instructions:
                 return f.read()
         except (OSError, IOError, UnicodeDecodeError) as exc:
             raise InstructionsReadError(
-                f"Failed to read instructions from {full_path}"
-                f"Failed to read instructions from file {full_path}"
+                f"Failed to read instructions from file {full_path}; reason - {exc}"
             ) from exc
