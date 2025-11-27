@@ -35,8 +35,6 @@ Vision Agents give you the building blocks to create intelligent, low-latency vi
 
 https://github.com/user-attachments/assets/9527ab03-0541-493b-97b1-e17ff1b20e21
 
-
-
 This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
 For example: Drone fire detection, sports/video game coaching, physical therapy, workout coaching, just dance style games etc.
@@ -147,12 +145,12 @@ Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai
 
 ## Examples
 
-|  Name | Description  |  Demo |  
-|---|---|---|
-|  <h3> Real-life GeoGuesser </h3> | Using Vision Agents combined with OpenAI realtime, learn to build an Agent capable of reading your screen and seeing the world around you. Perfect if you decide to take GeoGuesser to the next level  | [See Example]($) | 
-|   |   |   |
-|   |   |   |
-|   |   |   |
+| 🔮 Demo Applications | |
+|:-----|---------|
+|  <br><h3>Cartesia</h3>Using Cartesia's Sonic 3 model to visually look at what's in the frame and tell a story with emotion.<br><br>• Real-time visual understanding<br>• Emotional storytelling<br>• Frame-by-frame analysis<br><br> | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Cartesia Demo"> |
+|  <br><h3>Realtime Stable Diffusion</h3>Realtime stable diffusion using Vision Agents and Decart's Mirage 2 model to create interactive scenes and stories.<br><br>• Real-time video restyling<br>• Interactive scene generation<br>• Stable diffusion integration<br><br> | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Mirage Demo"> |
+|  <br><h3>Golf Coach</h3>Using Gemini Live together with Vision Agents and Ultralytics YOLO, we're able to track the user's pose and provide realtime actionable feedback on their golf game.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• YOLO pose detection<br>• Gemini Live integration<br><br> | <img src="assets/demo_gifs/golf.gif" width="320" alt="Golf Coach Demo"> |
+|  <br><h3>GeoGuesser</h3>Together with OpenAI Realtime and Vision Agents, we can take GeoGuesser to the next level by asking it to identify places in our real world surroundings.<br><br>• Real-world location identification<br>• OpenAI Realtime integration<br>• Visual scene understanding<br><br> | <img src="assets/demo_gifs/geoguesser.gif" width="320" alt="GeoGuesser Demo"> |
 
 
 ## Development
