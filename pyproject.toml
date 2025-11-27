@@ -26,6 +26,7 @@ vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
 vision-agents-plugins-fast-whisper = { workspace = true }
 vision-agents-plugins-roboflow = { workspace = true }
+vision-agents-plugins-decart = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -57,7 +58,8 @@ members = [
     "plugins/vogent",
     "plugins/moondream",
     "plugins/fast_whisper",
-    "plugins/roboflow"
+    "plugins/roboflow",
+    "plugins/decart",
 ]
 exclude = [
 "**/__pycache__",
@@ -105,4 +107,3 @@ explicit_package_bases = true
 [tool.hatch.version]
 source = "vcs"
 raw-options = {  search_parent_directories = true, fallback_version = "0.0.0" }
-

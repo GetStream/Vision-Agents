@@ -20,8 +20,6 @@ class STTTranscriptEvent(PluginBaseEvent):
     type: str = field(default="plugin.stt_transcript", init=False)
     text: str = ""
     response: TranscriptResponse = field(default_factory=TranscriptResponse)
-    is_final: bool = True
-    eager_end_of_turn: bool = False
 
     def __post_init__(self):
         if not self.text:
@@ -56,7 +54,6 @@ class STTPartialTranscriptEvent(PluginBaseEvent):
     type: str = field(default="plugin.stt_partial_transcript", init=False)
     text: str = ""
     response: TranscriptResponse = field(default_factory=TranscriptResponse)
-    is_final: bool = False
 
     # Convenience properties for backward compatibility
     @property

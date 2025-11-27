@@ -109,6 +109,9 @@ class NormalizedToolCallItem(TypedDict, total=False):
     name: str
     arguments_json: Dict[str, Any]
     id: NotRequired[str]  # Provider-specific tool call ID (e.g., for OpenAI, Anthropic)
+    thought_signature: NotRequired[
+        str
+    ]  # Gemini-specific thought signature for multi-turn function calls
 
 
 class NormalizedToolResultItem(TypedDict, total=False):

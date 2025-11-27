@@ -14,6 +14,7 @@ members = [
     "vision-agents-plugins-anthropic",
     "vision-agents-plugins-aws",
     "vision-agents-plugins-cartesia",
+    "vision-agents-plugins-decart",
     "vision-agents-plugins-deepgram",
     "vision-agents-plugins-elevenlabs",
     "vision-agents-plugins-fast-whisper",
@@ -1116,6 +1117,23 @@ wheels = [
 ]
 
 [[package]]
+name = "decart"
+version = "0.0.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "aiohttp" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pydantic" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/86/75e55da0dc56528b232e31186c02bf409ba9bce888e5520507a9737cdc36/decart-0.0.8.tar.gz", hash = "sha256:95ea6fc0af5896198ce76abf7d2ecf39feec77e3ebf7c5fa55e2f239879d5545", size = 198620, upload-time = "2025-11-12T17:02:42.627Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/e2/e128f098aaf0981849da4684a30d53b9a84be84fc372709de14557d135e9/decart-0.0.8-py3-none-any.whl", hash = "sha256:3f1ab43ced32edcd5a494673bc8f899a559f6a5c59796da88d71c5f48b8422dc", size = 20263, upload-time = "2025-11-12T17:02:40.913Z" },
+]
+
+[[package]]
 name = "decorator"
 version = "5.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1126,7 +1144,7 @@ wheels = [
 
 [[package]]
 name = "deepgram-sdk"
-version = "5.2.0"
+version = "5.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -1135,9 +1153,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/55/1f/eab4a75179e6ffdf0fa9fc60f5a9b6ece1de8eb41c98d1f44ae5264f242d/deepgram_sdk-5.2.0.tar.gz", hash = "sha256:14941667d68454fc66c3a0c109ca58d2f0eb626697e509946f84851966b61a77", size = 146909, upload-time = "2025-10-21T20:43:27.262Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2d/9c/4529cc5818e9305ac9be3c24545249ad57418cbc3736c3f1c0a8397b59f5/deepgram_sdk-5.3.0.tar.gz", hash = "sha256:4e682a53f64c26dc49d8fd70865eae1e98236d313870d1bcf5f107f125e53793", size = 148179, upload-time = "2025-11-03T15:24:02.436Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/f6/4f737f161ea4ce97af8c6f84e813183066831a7303b8b5b0a93852a45295/deepgram_sdk-5.2.0-py3-none-any.whl", hash = "sha256:077e81fafff1b9e954f792ee71c46381504f9c7805fb54d4a4e2ccbc752dfc93", size = 385989, upload-time = "2025-10-21T20:43:25.961Z" },
+    { url = "https://files.pythonhosted.org/packages/58/e2/cda09edad156199cc9e330533f6b72cb5276c0d476cab7f1744be7ffa16e/deepgram_sdk-5.3.0-py3-none-any.whl", hash = "sha256:431418fdffbd93cdf6a78a168984e3df3cb696818ced1cfc52ce336e0bc6a7fe", size = 390669, upload-time = "2025-11-03T15:24:01.078Z" },
 ]
 
 [[package]]
@@ -1229,7 +1247,7 @@ wheels = [
 
 [[package]]
 name = "elevenlabs"
-version = "2.22.1"
+version = "2.24.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -1239,9 +1257,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/82/6372ab2b1956223ba587ffa0da2aefd128961f7761af5681a40ccf74c973/elevenlabs-2.22.1.tar.gz", hash = "sha256:c45254dce38702e4775d6401ad5b3e4e3d12c4f9a3d55747258e0b13f01135e4", size = 419622, upload-time = "2025-11-11T11:41:41.55Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/b8/7ef371670766a09169969531bd9cfb6c3bfebe55ae479d2f009cfff4b2f7/elevenlabs-2.24.0.tar.gz", hash = "sha256:bd5278ea8521aeb463ef4649192b5aa8cedf12be7f9b3ca19c79331a7d33d305", size = 418072, upload-time = "2025-11-21T09:15:34.916Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/18/ed55f46a5d25f705e623f07decc8309294fe09b6e08149604cde2b519ae8/elevenlabs-2.22.1-py3-none-any.whl", hash = "sha256:3f3cfec2cca6959497e0d35ab039bbf793fd7f66f802322b7ed9234be2b97820", size = 1123688, upload-time = "2025-11-11T11:41:39.855Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/52/a21ebfa6a2cadeb3b234a4bd92a59809fbbcbb6024ee2e48774f30daf8cf/elevenlabs-2.24.0-py3-none-any.whl", hash = "sha256:b8d0435f84a3bc0592dd086b4945bd79d9430c6892bf3f75752c03bb53ae3ad6", size = 1121523, upload-time = "2025-11-21T09:15:31.77Z" },
 ]
 
 [[package]]
@@ -6290,6 +6308,32 @@ dev = [
 ]
 
 [[package]]
+name = "vision-agents-plugins-decart"
+source = { editable = "plugins/decart" }
+dependencies = [
+    { name = "decart" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "decart" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
 name = "vision-agents-plugins-deepgram"
 source = { editable = "plugins/deepgram" }
 dependencies = [
@@ -6309,7 +6353,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deepgram-sdk", specifier = "==5.2.0" },
+    { name = "deepgram-sdk", specifier = ">=5.3.0" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "vision-agents", editable = "agents-core" },
 ]
@@ -6339,7 +6383,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "elevenlabs", specifier = ">=2.22.1" },
+    { name = "elevenlabs", specifier = ">=2.24.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

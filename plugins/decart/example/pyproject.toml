@@ -1,0 +1,23 @@
+[project]
+name = "decart-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+  "vision-agents",
+  "python-dotenv",
+  "vision-agents-plugins-openai",
+  "vision-agents-plugins-decart",
+  "vision-agents-plugins-elevenlabs",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-deepgram",
+
+]
+
+[tool.uv.sources]
+vision-agents = { workspace = true }
+vision-agents-plugins-getstream = { editable=true }
+vision-agents-plugins-openai = { editable=true }
+vision-agents-plugins-elevenlabs = { editable=true }
+vision-agents-plugins-deepgram = { editable=true }
+vision-agents-plugins-decart = { editable=true }
