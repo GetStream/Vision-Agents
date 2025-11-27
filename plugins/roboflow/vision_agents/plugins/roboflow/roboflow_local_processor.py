@@ -219,7 +219,13 @@ class RoboflowLocalDetectionProcessor(
             # Suppress warnings from the insides of RF-DETR models
             warnings.filterwarnings("ignore")
             model = _RFDETR_MODELS[self._model_id]()
-            model.optimize_for_inference()
+            try:
+                model.optimize_for_inference()
+            except RuntimeError:
+                # Workaround for a bug in 1.3.0 https://github.com/roboflow/rf-detr/issues/383.
+                # Models other than rfdetr-seg-preview fail with "compile=True"
+                model.optimize_for_inference(compile=False)
+
         logger.info(f"✅ Loaded Roboflow model {self._model_id}")
         return model
 
