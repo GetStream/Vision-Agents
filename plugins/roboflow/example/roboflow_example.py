@@ -33,7 +33,7 @@ async def start_agent() -> None:
 
     # TODO: This is broken
     # Create Roboflow processor
-    roboflow_processor = roboflow.RoboflowDetectionProcessor(
+    roboflow_processor = roboflow.RoboflowLocalDetectionProcessor(
         model_id="soccer-players-ckbru/15",
         # api_key will be read from ROBOFLOW_API_KEY env var
         conf_threshold=40,  # 40% confidence threshold
