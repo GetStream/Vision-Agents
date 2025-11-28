@@ -153,3 +153,38 @@ class TestOpenRouterLLM:
         assert "nl" in response.text.lower(), (
             f"Expected 'NL' in response, got: {response.text}"
         )
+
+    @pytest.mark.integration
+    async def test_function_calling(self):
+        """Test function calling with tool execution."""
+        if not os.environ.get("OPENROUTER_API_KEY"):
+            pytest.skip("OPENROUTER_API_KEY environment variable not set")
+
+        # Use OpenAI model for function calling test since OpenRouter uses
+        # OpenAI-compatible format, which differs from native Anthropic format
+        llm = LLM(model="openai/gpt-4o-mini")
+
+        # Track function calls
+        calls: list[str] = []
+
+        @llm.register_function(
+            description="Probe tool that records invocation and returns a marker string"
+        )
+        def probe_tool(ping: str) -> str:
+            calls.append(ping)
+            return f"probe_ok:{ping}"
+
+        # Strongly nudge the model to use the tool
+        prompt = (
+            "You MUST call the tool named 'probe_tool' with the parameter ping='pong' now. "
+            "After receiving the tool result, reply by returning ONLY the tool result string and nothing else."
+        )
+
+        response = await llm.create_response(input=prompt)
+
+        # Assert the tool was executed and we got a response
+        assert len(calls) >= 1, "probe_tool was not invoked by the model"
+        assert isinstance(response.text, str)
+        assert "probe_ok:pong" in response.text, (
+            f"Expected 'probe_ok:pong' in response, got: {response.text}"
+        )

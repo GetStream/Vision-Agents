@@ -1,19 +1,23 @@
 """
 OpenRouter LLM Example
 
-This example demonstrates how to use the OpenRouter plugin with a Vision Agent.
-OpenRouter provides access to multiple LLM providers through a unified API.
+This example demonstrates how to use the OpenRouter plugin with a Vision Agent,
+including function calling and MCP server integration.
 
-Set OPENROUTER_API_KEY environment variable before running.
+Set these environment variables before running:
+- OPENROUTER_API_KEY: Your OpenRouter API key
+- GITHUB_PAT: (Optional) GitHub Personal Access Token for MCP integration
 """
 
 import asyncio
 import logging
+import os
 
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
+from vision_agents.core.mcp import MCPServerRemote
 from vision_agents.plugins import (
     openrouter,
     getstream,
@@ -29,34 +33,59 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create the agent with OpenRouter LLM."""
-    model = "google/gemini-2.5-flash"  # Can also use other models like anthropic/claude-3-opus
+    """Create the agent with OpenRouter LLM, function calling, and optional MCP."""
+    # Use an OpenAI model for function calling (OpenAI format is natively supported)
+    model = "openai/gpt-4o-mini"
 
-    # Determine personality based on model
-    if "anthropic" in model.lower():
-        personality = "Talk like a robot."
-    elif "openai" in model.lower() or "gpt" in model.lower():
-        personality = "Talk like a pirate."
-    elif "gemini" in model.lower():
-        personality = "Talk like a cowboy."
-    elif "x-ai" in model.lower():
-        personality = "Talk like a 1920s Chicago mobster."
+    llm = openrouter.LLM(model=model)
+
+    # Register local functions that the LLM can call
+    @llm.register_function(description="Get current weather for a location")
+    def get_weather(location: str):
+        """Get the current weather for a location."""
+        return {
+            "location": location,
+            "temperature": "22 degrees celsius",
+            "condition": "Sunny",
+            "humidity": "65 percent",
+        }
+
+    @llm.register_function(description="Calculate the sum of two numbers")
+    def calculate_sum(a: int, b: int):
+        """Calculate the sum of two numbers."""
+        return a + b
+
+    # Optional: Set up GitHub MCP server if GITHUB_PAT is available
+    mcp_servers = []
+    github_pat = os.getenv("GITHUB_PAT")
+    if github_pat:
+        logger.info("GitHub PAT found, enabling GitHub MCP integration")
+        github_server = MCPServerRemote(
+            url="https://api.githubcopilot.com/mcp/",
+            headers={"Authorization": f"Bearer {github_pat}"},
+            timeout=10.0,
+            session_timeout=300.0,
+        )
+        mcp_servers.append(github_server)
     else:
-        personality = "Talk casually."
+        logger.info("No GITHUB_PAT found, running without GitHub MCP integration")
 
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="OpenRouter AI", id="agent"),
-        instructions=f"""
-        Answer in 6 words or less.
-        {personality}
+        instructions="""
+        You are a helpful assistant. Answer concisely.
+        When asked about weather, use the get_weather function.
+        When asked to calculate, use the calculate_sum function.
+        If GitHub tools are available, you can help with repositories, issues, and pull requests.
         """,
-        llm=openrouter.LLM(model=model),
+        llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         turn_detection=smart_turn.TurnDetection(
             pre_speech_buffer_ms=2000, speech_probability_threshold=0.9
         ),
+        mcp_servers=mcp_servers,
     )
     return agent
 
@@ -70,12 +99,16 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     logger.info("🤖 Starting OpenRouter Agent...")
 
+    # Log available functions (including MCP tools if connected)
+    available_functions = agent.llm.get_available_functions()
+    logger.info(f"Available functions: {len(available_functions)}")
+    for func in available_functions:
+        logger.info(f"  - {func['name']}: {func.get('description', '')[:50]}...")
+
     # Have the agent join the call/room
     with await agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
-
-        await asyncio.sleep(5)
 
         await agent.finish()  # Run till the call ends
 
