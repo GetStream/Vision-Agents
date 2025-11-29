@@ -64,7 +64,7 @@ class RoboflowCloudDetectionProcessor(
         model_id: Universe model id. Example: "football-players-detection-3zvbc/20".
         api_key: Roboflow API key. If not provided, will use ROBOFLOW_API_KEY env variable.
         api_url: Roboflow API url. If not provided, will use ROBOFLOW_API_URL env variable.
-        conf_threshold: Confidence threshold for detections (0-100). Default - 50.
+        conf_threshold: Confidence threshold for detections (0-1.0). Default - 0.5.
         fps: Frame processing rate. Default - 5.
         classes: optional list of class names to be detected.
             Example: ["person", "sports ball"]
@@ -102,7 +102,7 @@ class RoboflowCloudDetectionProcessor(
         model_id: str,
         api_key: Optional[str] = None,
         api_url: Optional[str] = None,
-        conf_threshold: int = 50,
+        conf_threshold: float = 0.5,
         fps: int = 5,
         annotate: bool = True,
         classes: Optional[list[str]] = None,
@@ -131,8 +131,11 @@ class RoboflowCloudDetectionProcessor(
                 api_key=api_key,
             )
 
-        self.model_id = model_id
+        if not 0 <= conf_threshold <= 1.0:
+            raise ValueError("Confidence threshold must be between 0 and 1.")
+
         self.conf_threshold = conf_threshold
+        self.model_id = model_id
         self.fps = fps
         self.dim_background_factor = max(0.0, dim_background_factor)
         self.annotate = annotate
