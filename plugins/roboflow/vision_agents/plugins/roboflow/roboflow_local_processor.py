@@ -237,6 +237,9 @@ class RoboflowLocalDetectionProcessor(
         if self._closed:
             return None
 
+        if self._model is None:
+            raise RuntimeError("The Roboflow model is not loaded")
+
         image = frame.to_ndarray(format="rgb24")
         try:
             # Run inference
@@ -246,7 +249,8 @@ class RoboflowLocalDetectionProcessor(
             # Pass through original frame on error
             await self._video_track.add_frame(frame)
             return None
-        if detections.is_empty():
+
+        if detections.class_id is None or not detections.class_id.size:
             # The inference wasn't able to complete or nothing was detected
             await self._video_track.add_frame(frame)
             return None
@@ -294,26 +298,30 @@ class RoboflowLocalDetectionProcessor(
     async def _run_inference(self, image: np.ndarray) -> Detections:
         """Run Roboflow inference on frame."""
         loop = asyncio.get_running_loop()
+        model = cast(RFDETR, self._model)
 
         # Run inference in thread pool (Roboflow SDK is synchronous)
         def detect(img: np.ndarray) -> Detections:
-            if self._model is None:
-                raise RuntimeError("The Roboflow model is not loaded")
-
-            detected = self._model.predict(img, confidence=self.conf_threshold)
+            detected = model.predict(img, confidence=self.conf_threshold)
             detected_obj = detected[0] if isinstance(detected, list) else detected
+            if detected_obj.class_id is None:
+                return sv.Detections.empty()
+
             # Filter only classes we want to detect
             if self._classes:
                 classes_ids = [
-                    k for k, v in self._model.class_names.items() if v in self._classes
+                    k for k, v in model.class_names.items() if v in self._classes
                 ]
-                detected_obj = detected_obj[np.isin(detected_obj.class_id, classes_ids)]
+                detected_obj = cast(
+                    Detections,
+                    detected_obj[np.isin(detected_obj.class_id or [], classes_ids)],
+                )
 
-            if not detected_obj.class_id.size:
-                # Return empty Detections object if there are no detected classes
-                return sv.Detections.empty()
-            else:
+            if detected_obj.class_id and detected_obj.class_id.size:
                 # Return detected classes
                 return detected_obj
+            else:
+                # Return empty Detections object if there are no detected classes
+                return sv.Detections.empty()
 
         return await loop.run_in_executor(self._executor, detect, image)

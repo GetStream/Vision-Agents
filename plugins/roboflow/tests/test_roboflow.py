@@ -44,7 +44,6 @@ def agent_mock(events_manager: EventManager) -> Agent:
     return agent
 
 
-@pytest.mark.skip_blockbuster
 class TestRoboflowLocalDetectionProcessor:
     def test_init_prebuilt_model(self, assets_dir: pathlib.Path):
         RoboflowLocalDetectionProcessor(model_id="rfdetr-seg-preview")

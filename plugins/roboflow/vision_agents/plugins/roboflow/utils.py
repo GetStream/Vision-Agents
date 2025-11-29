@@ -24,7 +24,7 @@ def annotate_image(
         image[mask == 0] = (image[mask == 0] * dim_factor).astype(np.uint8)
 
     boxed_image = sv.BoxAnnotator(thickness=1).annotate(image.copy(), detections)
-    labels = [classes[class_id] for class_id in detections.class_id]
+    labels = [classes[class_id] for class_id in detections.class_id or []]
     labeled_image = sv.LabelAnnotator(
         text_position=sv.Position.BOTTOM_CENTER,
         text_scale=0.25,

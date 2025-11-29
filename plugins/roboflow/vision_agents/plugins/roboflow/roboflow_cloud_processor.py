@@ -226,7 +226,7 @@ class RoboflowCloudDetectionProcessor(
             await self._video_track.add_frame(frame)
             return
 
-        if detections.is_empty():
+        if detections.class_id is None or not detections.class_id.size:
             # Nothing detected, pass original frame and exit early
             await self._video_track.add_frame(frame)
             return
@@ -275,7 +275,7 @@ class RoboflowCloudDetectionProcessor(
         detected_obj = detected[0] if isinstance(detected, list) else detected
         detections = detected_obj.get("predictions", [])
         # Build a mapping of classes ids to name for labelling
-        class_ids_to_labels = {}
+        class_ids_to_labels: dict[int, str] = {}
 
         if not detections:
             # Exit early if nothing is detected
