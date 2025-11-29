@@ -53,7 +53,9 @@ def blockbuster(request) -> Iterator[BlockBuster | None]:
     Can be disabled for specific tests using the @skip_blockbuster decorator.
     """
     # Check if test is marked to skip blockbuster
-    if request.node.get_closest_marker("skip_blockbuster"):
+    if request.node.get_closest_marker("skip_blockbuster") or request.config.getoption(
+        "--skip-blockbuster"
+    ):
         yield None
     else:
         # Always allow blocking calls inside "Agent.__init__".
@@ -392,3 +394,13 @@ async def audio_track_48khz():
         yield track
     finally:
         track.container.close()
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--skip-blockbuster",
+        "--skip-bb",
+        action="store_true",
+        default=False,
+        help="Skip BlockBuster blocking calls detection for the test run",
+    )
