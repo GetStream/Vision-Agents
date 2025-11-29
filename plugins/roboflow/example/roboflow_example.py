@@ -1,5 +1,4 @@
 import logging
-import asyncio
 
 from dotenv import load_dotenv
 
@@ -19,8 +18,8 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(name="Sports Commentator", id="agent"),
         instructions="You will be shown a video feed of a sports game. "
-                     "You will need to commentate over the game and describe the action as a seasoned sports commentator. "
-                     "Only call out actions your are 100% sure about, otherwise just describe what you see in the video feed.",
+        "You will need to commentate over the game and describe the action as a seasoned sports commentator. "
+        "Only call out actions your are 100% sure about, otherwise just describe what you see in the video feed.",
         processors=[
             roboflow.RoboflowLocalDetectionProcessor(
                 classes=["person", "sports ball"],
