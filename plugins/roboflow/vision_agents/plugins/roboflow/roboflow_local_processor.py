@@ -7,7 +7,7 @@ from typing import Literal, Optional, Type, cast
 import aiortc
 import av
 import numpy as np
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+import supervision as sv
 from rfdetr.detr import (
     RFDETR,
     RFDETRBase,
@@ -17,9 +17,9 @@ from rfdetr.detr import (
     RFDETRSegPreview,
     RFDETRSmall,
 )
-from rfdetr.util.coco_classes import COCO_CLASSES
 from supervision import Detections
 from vision_agents.core import Agent
+from vision_agents.core.events import EventManager
 from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
     VideoProcessorMixin,
@@ -131,10 +131,10 @@ class RoboflowLocalDetectionProcessor(
         else:
             raise ValueError("Either model_id or model must be provided")
 
-        self._agent: Optional[Agent] = None
+        self._events: Optional[EventManager] = None
 
         # Limit object detection to certain classes only.
-        self._classes_ids = [k for k, v in COCO_CLASSES.items() if v in (classes or ())]
+        self._classes = classes or []
 
         self._closed = False
         self._video_forwarder: Optional[VideoForwarder] = None
@@ -152,10 +152,13 @@ class RoboflowLocalDetectionProcessor(
     async def process_video(
         self,
         incoming_track: aiortc.MediaStreamTrack,
-        participant: Participant,
+        participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
-        """Process incoming video track with Roboflow detection."""
+        """
+        Process incoming video track with Roboflow detection.
+        """
+
         if self._video_forwarder is not None:
             logger.info(
                 "🎥 Stopping the ongoing Roboflow video processing because the new video track is published"
@@ -191,10 +194,10 @@ class RoboflowLocalDetectionProcessor(
         logger.info("🎥 Roboflow Processor closed")
 
     @property
-    def agent(self) -> Agent:
-        if self._agent is None:
+    def events(self) -> EventManager:
+        if self._events is None:
             raise ValueError("Agent is not attached to the processor yet")
-        return self._agent
+        return self._events
 
     async def warmup(self):
         if self._model is None:
@@ -202,8 +205,8 @@ class RoboflowLocalDetectionProcessor(
             self._model = await loop.run_in_executor(self._executor, self._load_model)
 
     def _attach_agent(self, agent: Agent):
-        self._agent = agent
-        self._agent.events.register(DetectionCompletedEvent)
+        self._events = agent.events
+        self._events.register(DetectionCompletedEvent)
 
     def _load_model(self) -> RFDETR:
         """
@@ -243,8 +246,7 @@ class RoboflowLocalDetectionProcessor(
             # Pass through original frame on error
             await self._video_track.add_frame(frame)
             return None
-
-        if detections is None or detections.is_empty():
+        if detections.is_empty():
             # The inference wasn't able to complete or nothing was detected
             await self._video_track.add_frame(frame)
             return None
@@ -254,7 +256,7 @@ class RoboflowLocalDetectionProcessor(
             annotated_image = annotate_image(
                 image,
                 detections,
-                classes=COCO_CLASSES,
+                classes=self._model.class_names,
                 dim_factor=self.dim_background_factor,
             )
             # Convert back to av.VideoFrame
@@ -271,13 +273,15 @@ class RoboflowLocalDetectionProcessor(
         img_height, img_width = image.shape[0:2]
 
         detected_objects = [
-            DetectedObject(label=COCO_CLASSES[class_id], x1=x1, y1=y1, x2=x2, y2=y2)
+            DetectedObject(
+                label=self._model.class_names[class_id], x1=x1, y1=y1, x2=x2, y2=y2
+            )
             for class_id, (x1, y1, x2, y2) in zip(
                 detections.class_id, detections.xyxy.astype(float)
             )
         ]
 
-        self._agent.events.send(
+        self.events.send(
             DetectionCompletedEvent(
                 objects=detected_objects,
                 raw_detections=detections,
@@ -287,24 +291,29 @@ class RoboflowLocalDetectionProcessor(
         )
         return None
 
-    async def _run_inference(self, image: np.ndarray) -> Optional[Detections]:
+    async def _run_inference(self, image: np.ndarray) -> Detections:
         """Run Roboflow inference on frame."""
         loop = asyncio.get_running_loop()
 
         # Run inference in thread pool (Roboflow SDK is synchronous)
-        def detect(img: np.ndarray) -> Optional[Detections]:
+        def detect(img: np.ndarray) -> Detections:
             if self._model is None:
-                logger.error("The Roboflow model is not loaded yet, skipping inference")
-                return None
+                raise RuntimeError("The Roboflow model is not loaded")
 
             detected = self._model.predict(img, confidence=self.conf_threshold)
             detected_obj = detected[0] if isinstance(detected, list) else detected
             # Filter only classes we want to detect
-            if self._classes_ids:
-                detected_obj = detected_obj[
-                    np.isin(detected_obj.class_id, self._classes_ids)
+            if self._classes:
+                classes_ids = [
+                    k for k, v in self._model.class_names.items() if v in self._classes
                 ]
+                detected_obj = detected_obj[np.isin(detected_obj.class_id, classes_ids)]
 
-            return detected_obj
+            if not detected_obj.class_id.size:
+                # Return empty Detections object if there are no detected classes
+                return sv.Detections.empty()
+            else:
+                # Return detected classes
+                return detected_obj
 
         return await loop.run_in_executor(self._executor, detect, image)

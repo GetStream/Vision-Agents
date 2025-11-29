@@ -7,9 +7,9 @@ import aiortc
 import av
 import numpy as np
 import supervision as sv
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from inference_sdk import InferenceConfiguration, InferenceHTTPClient
 from vision_agents.core import Agent
+from vision_agents.core.events import EventManager
 from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
     VideoProcessorMixin,
@@ -75,6 +75,7 @@ class RoboflowCloudDetectionProcessor(
         dim_background_factor: how much to dim the background around detected objects from 0 to 1.0.
             Effective only when annotate=True.
             Default - 0.0 (no dimming).
+        client: optional custom instance of `inference_sdk.InferenceHTTPClient`.
 
     Examples:
         Example usage:
@@ -106,6 +107,7 @@ class RoboflowCloudDetectionProcessor(
         annotate: bool = True,
         classes: Optional[list[str]] = None,
         dim_background_factor: float = 0.0,
+        client: Optional[InferenceHTTPClient] = None,
     ):
         super().__init__(interval=0, receive_audio=False, receive_video=True)
 
@@ -113,14 +115,21 @@ class RoboflowCloudDetectionProcessor(
             raise ValueError("model_id is required")
 
         api_key = api_key or os.getenv("ROBOFLOW_API_KEY")
-        if not api_key:
+        api_url = api_url or os.getenv("ROBOFLOW_API_URL")
+
+        if client is not None:
+            self._client = client
+        elif not api_key:
             raise ValueError(
                 "ROBOFLOW_API_KEY required. Get it from https://app.roboflow.com → Settings → API"
             )
-
-        api_url = api_url or os.getenv("ROBOFLOW_API_URL")
-        if not api_url:
+        elif not api_url:
             raise ValueError("ROBOFLOW_API_URL is required")
+        else:
+            self._client = InferenceHTTPClient(
+                api_url=api_url,
+                api_key=api_key,
+            )
 
         self.model_id = model_id
         self.conf_threshold = conf_threshold
@@ -128,11 +137,7 @@ class RoboflowCloudDetectionProcessor(
         self.dim_background_factor = max(0.0, dim_background_factor)
         self.annotate = annotate
 
-        self._agent: Optional[Agent] = None
-        self._client = InferenceHTTPClient(
-            api_url=api_url,
-            api_key=api_key,
-        )
+        self._events: Optional[EventManager] = None
         self._client.configure(
             InferenceConfiguration(confidence_threshold=conf_threshold)
         )
@@ -158,7 +163,7 @@ class RoboflowCloudDetectionProcessor(
     async def process_video(
         self,
         incoming_track: aiortc.MediaStreamTrack,
-        participant: Participant,
+        participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
         """Process incoming video track with Roboflow detection."""
@@ -197,14 +202,14 @@ class RoboflowCloudDetectionProcessor(
         logger.info("🎥 Roboflow Processor closed")
 
     @property
-    def agent(self) -> Agent:
-        if self._agent is None:
+    def events(self) -> EventManager:
+        if self._events is None:
             raise ValueError("Agent is not attached to the processor yet")
-        return self._agent
+        return self._events
 
     def _attach_agent(self, agent: Agent):
-        self._agent = agent
-        self._agent.events.register(DetectionCompletedEvent)
+        self._events = agent.events
+        self._events.register(DetectionCompletedEvent)
 
     async def _process_frame(self, frame: av.VideoFrame):
         """Process frame, run detection, annotate, and publish."""
@@ -251,7 +256,7 @@ class RoboflowCloudDetectionProcessor(
             )
         ]
 
-        self._agent.events.send(
+        self.events.send(
             DetectionCompletedEvent(
                 raw_detections=detections,
                 objects=detected_objects,
@@ -269,6 +274,12 @@ class RoboflowCloudDetectionProcessor(
         logger.debug(f"Roboflow cloud inference complete in {detected['time']}")
         detected_obj = detected[0] if isinstance(detected, list) else detected
         detections = detected_obj.get("predictions", [])
+        # Build a mapping of classes ids to name for labelling
+        class_ids_to_labels = {}
+
+        if not detections:
+            # Exit early if nothing is detected
+            return sv.Detections.empty(), class_ids_to_labels
 
         # Convert the inference result to `sv.Detections` format
         x1_list, y1_list, x2_list, y2_list, confidences, class_ids = (
@@ -279,16 +290,14 @@ class RoboflowCloudDetectionProcessor(
             [],
             [],
         )
-        # Build a mapping of classes ids to name for labelling
-        class_ids_to_labels = {}
 
         for detection in detections:
             class_id = detection["class_id"]
             class_name = detection["class"]
-            class_ids.append(class_id)
             # Filter only classes we want to detect
             if self._classes and class_name not in self._classes:
                 continue
+            class_ids.append(class_id)
             class_ids_to_labels[class_id] = class_name
 
             x1 = int(detection["x"] - detection["width"] / 2)
@@ -302,9 +311,12 @@ class RoboflowCloudDetectionProcessor(
             y2_list.append(y2)
             confidences.append(detection["confidence"])
 
-        detections_obj = sv.Detections(
-            xyxy=np.array(list(zip(x1_list, y1_list, x2_list, y2_list))),
-            confidence=np.array(confidences),
-            class_id=np.array(class_ids),
-        )
+        if class_ids:
+            detections_obj = sv.Detections(
+                xyxy=np.array(list(zip(x1_list, y1_list, x2_list, y2_list))),
+                confidence=np.array(confidences),
+                class_id=np.array(class_ids),
+            )
+        else:
+            detections_obj = sv.Detections.empty()
         return detections_obj, class_ids_to_labels

@@ -84,3 +84,7 @@ class QueuedVideoTrack(VideoStreamTrack):
     def stop(self):
         self._stopped = True
         super(QueuedVideoTrack, self).stop()
+
+    @property
+    def stopped(self) -> bool:
+        return self._stopped
