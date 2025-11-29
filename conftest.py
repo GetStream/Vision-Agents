@@ -398,7 +398,8 @@ async def audio_track_48khz():
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--skip-blockbuster", "--skip-bb",
+        "--skip-blockbuster",
+        "--skip-bb",
         action="store_true",
         default=False,
         help="Skip BlockBuster blocking calls detection for the test run",
