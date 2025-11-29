@@ -83,9 +83,9 @@ class RoboflowLocalDetectionProcessor(
         model_id: identifier of the model to be used.
             Available models are: "rfdetr-base", "rfdetr-large", "rfdetr-nano", "rfdetr-small", "rfdetr-medium", "rfdetr-seg-preview".
             Default - "rfdetr-seg-preview".
-        conf_threshold: Confidence threshold for detections (0-1.0). Default - 0.5.
+        conf_threshold: Confidence threshold for detections (0 - 1.0). Default - 0.5.
         fps: Frame processing rate. Default - 10.
-        classes: optional list of COCO class names to be detected.
+        classes: optional list of class names to be detected.
             Example: ["person", "sports ball"]
             Verify that the classes a supported by the given model.
             Default - None (all classes are detected).
@@ -116,9 +116,7 @@ class RoboflowLocalDetectionProcessor(
             raise ValueError("Confidence threshold must be between 0 and 1.")
 
         self.conf_threshold = conf_threshold
-        self.fps = fps
-        self.dim_background_factor = max(0.0, dim_background_factor)
-        self.annotate = annotate
+
         self._model: Optional[RFDETR] = None
         self._model_id: Optional[RFDETRModelID] = None
 
@@ -133,6 +131,10 @@ class RoboflowLocalDetectionProcessor(
             self._model_id = model_id
         else:
             raise ValueError("Either model_id or model must be provided")
+
+        self.fps = fps
+        self.dim_background_factor = max(0.0, dim_background_factor)
+        self.annotate = annotate
 
         self._events: Optional[EventManager] = None
 

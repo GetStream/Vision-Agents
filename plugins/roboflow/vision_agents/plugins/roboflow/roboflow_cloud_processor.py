@@ -64,7 +64,7 @@ class RoboflowCloudDetectionProcessor(
         model_id: Universe model id. Example: "football-players-detection-3zvbc/20".
         api_key: Roboflow API key. If not provided, will use ROBOFLOW_API_KEY env variable.
         api_url: Roboflow API url. If not provided, will use ROBOFLOW_API_URL env variable.
-        conf_threshold: Confidence threshold for detections (0-1.0). Default - 0.5.
+        conf_threshold: Confidence threshold for detections (0 - 1.0). Default - 0.5.
         fps: Frame processing rate. Default - 5.
         classes: optional list of class names to be detected.
             Example: ["person", "sports ball"]
