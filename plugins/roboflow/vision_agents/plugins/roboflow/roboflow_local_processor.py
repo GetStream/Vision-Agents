@@ -95,7 +95,7 @@ class RoboflowLocalDetectionProcessor(
             Effective only when annotate=True.
             Default - 0.0 (no dimming).
         model: optional instance of `RFDETRModel` to be used for detections.
-            Use it provied a model of choosing with custom parameters.
+            Use it provide a model of choosing with custom parameters.
     """
 
     name = "roboflow_local"
