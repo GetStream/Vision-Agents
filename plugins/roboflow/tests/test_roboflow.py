@@ -246,7 +246,7 @@ class TestRoboflowCloudDetectionProcessor:
 
         # Start the processor and wait for the event
         output_track = processor.publish_video_track()
-        await processor.process_video(QueuedVideoTrack(), "user_id")
+        await processor.process_video(input_track, "user_id")
 
         # Expect a timeout because no event is emitted when nothing is detected
         with pytest.raises(asyncio.TimeoutError):
