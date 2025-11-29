@@ -106,6 +106,10 @@ class VideoForwarder:
             await self.stop()
         return removed
 
+    @property
+    def frame_handlers(self) -> list[FrameHandler]:
+        return self._frame_handlers
+
     def start(self) -> None:
         """Start the producer and consumer tasks if not already started."""
         if self._started:
@@ -113,6 +117,10 @@ class VideoForwarder:
         self._started = True
         self._producer_task = asyncio.create_task(self._producer())
         self._consumer_task = asyncio.create_task(self._start_consumer())
+
+    @property
+    def started(self) -> bool:
+        return self._started
 
     async def stop(self) -> None:
         if not self._started:
