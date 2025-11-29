@@ -2,12 +2,11 @@ import asyncio
 import datetime
 import logging
 from dataclasses import dataclass
-from typing import Optional, Callable, Any
+from typing import Any, Callable, Optional
 
 import av
-from aiortc import VideoStreamTrack
+from aiortc import MediaStreamError, VideoStreamTrack
 from av.frame import Frame
-
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
 
 logger = logging.getLogger(__name__)
@@ -107,6 +106,10 @@ class VideoForwarder:
             await self.stop()
         return removed
 
+    @property
+    def frame_handlers(self) -> list[FrameHandler]:
+        return self._frame_handlers
+
     def start(self) -> None:
         """Start the producer and consumer tasks if not already started."""
         if self._started:
@@ -114,6 +117,10 @@ class VideoForwarder:
         self._started = True
         self._producer_task = asyncio.create_task(self._producer())
         self._consumer_task = asyncio.create_task(self._start_consumer())
+
+    @property
+    def started(self) -> bool:
+        return self._started
 
     async def stop(self) -> None:
         if not self._started:
@@ -134,6 +141,10 @@ class VideoForwarder:
                 frame: Frame = await self.input_track.recv()
                 frame.dts = int(datetime.datetime.now().timestamp())
                 await self.queue.put_latest(frame)
+        except MediaStreamError:
+            # Raise errors only if the media track is still live.
+            if self.input_track.readyState == "live":
+                raise
         except asyncio.CancelledError:
             raise
 
@@ -159,9 +170,16 @@ class VideoForwarder:
                         handler.last_ts = now
 
                         # Call handler (sync or async)
-                        if asyncio.iscoroutinefunction(handler.callback):
-                            await handler.callback(frame)
-                        else:
-                            handler.callback(frame)
+                        try:
+                            if asyncio.iscoroutinefunction(handler.callback):
+                                await handler.callback(frame)
+                            else:
+                                handler.callback(frame)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            logger.exception(
+                                f"Frame handler {handler.name} failed with an exception"
+                            )
         except asyncio.CancelledError:
             raise

@@ -25,6 +25,7 @@ vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
 vision-agents-plugins-fast-whisper = { workspace = true }
+vision-agents-plugins-roboflow = { workspace = true }
 vision-agents-plugins-decart = { workspace = true }
 
 [tool.uv]
@@ -57,7 +58,8 @@ members = [
     "plugins/vogent",
     "plugins/moondream",
     "plugins/fast_whisper",
-    "plugins/decart"
+    "plugins/roboflow",
+    "plugins/decart",
 ]
 exclude = [
 "**/__pycache__",

@@ -47,6 +47,7 @@ inworld = ["vision-agents-plugins-inworld"]
 kokoro = ["vision-agents-plugins-kokoro"]
 moonshine = ["vision-agents-plugins-moonshine"]
 openai = ["vision-agents-plugins-openai"]
+roboflow = ["vision-agents-plugins-roboflow"]
 smart_turn = ["vision-agents-plugins-smart-turn"]
 ultralytics = ["vision-agents-plugins-ultralytics"]
 wizper = ["vision-agents-plugins-wizper"]
@@ -62,6 +63,7 @@ all-plugins = [
   "vision-agents-plugins-inworld",
   "vision-agents-plugins-kokoro",
   "vision-agents-plugins-moonshine",
+  "vision-agents-plugins-roboflow",
   "vision-agents-plugins-openai",
   "vision-agents-plugins-smart-turn",
   "vision-agents-plugins-ultralytics",
