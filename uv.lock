@@ -1118,16 +1118,19 @@ wheels = [
 
 [[package]]
 name = "decart"
-version = "0.0.3"
+version = "0.0.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },
+    { name = "numpy" },
+    { name = "opencv-python" },
     { name = "pydantic" },
+    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/81/76/eaf853fd45f140e6686353061da46b9f0ac2f3c2da5ad96974a918831b2d/decart-0.0.3.tar.gz", hash = "sha256:20fb08fd0155aa4cb353e3ced703f24f123a798999d6af1c786531151facbd0e", size = 237936, upload-time = "2025-10-21T14:26:17.385Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/25/8b4195b7e586e3c4d88b87e9bf2fab2021199b75852f1375140c40246bbe/decart-0.0.14.tar.gz", hash = "sha256:46a53fe1830ec5ba94480857f1078eda5231a93fbcb94e9bb302d652fc1e390d", size = 206929, upload-time = "2025-11-30T13:15:08.235Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/be/f0d278807c976cdafe8985346842177f5ea77cd7826c41f8b763df169455/decart-0.0.3-py3-none-any.whl", hash = "sha256:917c40ba670ca615129bf661f0f2c4733cdb09df05341076824a851785940c9a", size = 15909, upload-time = "2025-10-21T14:26:15.255Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/fb/a6f1f6cd37baa0fd988106e4e11596846f55ba320123bc05b39dff9381aa/decart-0.0.14-py3-none-any.whl", hash = "sha256:aec05676b97b82825afeae8ef58305e96b901ab91155a4fc9c29200060e8e1d9", size = 25839, upload-time = "2025-11-30T13:15:06.976Z" },
 ]
 
 [[package]]
@@ -2031,7 +2034,7 @@ wheels = [
 
 [[package]]
 name = "inference-sdk"
-version = "0.26.1"
+version = "0.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2046,7 +2049,7 @@ dependencies = [
     { name = "supervision" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/aa/8abc775b4d6fc0c0924bd48e263e5bda43093d45f0573378ed862ac88d1b/inference_sdk-0.26.1-py3-none-any.whl", hash = "sha256:b033cc38891eb957795f5f1a2463a5ab03f59adb22b6e87d127f390a432244fe", size = 32792, upload-time = "2024-11-13T10:07:20.01Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/43/3a9ef2522a9b3a9f4e1af44d01dc971ae83e23db6c82225f64e8930242cf/inference_sdk-0.17.0-py3-none-any.whl", hash = "sha256:b428e12b0a1ef896579e4a03221e2b6632af79c35a9d55d798f4f925a4145f1e", size = 30669, upload-time = "2024-08-30T14:57:18.898Z" },
 ]
 
 [[package]]
@@ -3365,19 +3368,19 @@ wheels = [
 
 [[package]]
 name = "opencv-python"
-version = "4.10.0.84"
+version = "4.12.0.88"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4a/e7/b70a2d9ab205110d715906fc8ec83fbb00404aeb3a37a0654fdb68eb0c8c/opencv-python-4.10.0.84.tar.gz", hash = "sha256:72d234e4582e9658ffea8e9cae5b63d488ad06994ef12d81dc303b17472f3526", size = 95103981, upload-time = "2024-06-17T18:29:56.757Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/71/25c98e634b6bdeca4727c7f6d6927b056080668c5008ad3c8fc9e7f8f6ec/opencv-python-4.12.0.88.tar.gz", hash = "sha256:8b738389cede219405f6f3880b851efa3415ccd674752219377353f017d2994d", size = 95373294, upload-time = "2025-07-07T09:20:52.389Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/82/564168a349148298aca281e342551404ef5521f33fba17b388ead0a84dc5/opencv_python-4.10.0.84-cp37-abi3-macosx_11_0_arm64.whl", hash = "sha256:fc182f8f4cda51b45f01c64e4cbedfc2f00aff799debebc305d8d0210c43f251", size = 54835524, upload-time = "2024-06-18T04:57:32.973Z" },
-    { url = "https://files.pythonhosted.org/packages/64/4a/016cda9ad7cf18c58ba074628a4eaae8aa55f3fd06a266398cef8831a5b9/opencv_python-4.10.0.84-cp37-abi3-macosx_12_0_x86_64.whl", hash = "sha256:71e575744f1d23f79741450254660442785f45a0797212852ee5199ef12eed98", size = 56475426, upload-time = "2024-06-17T19:34:10.927Z" },
-    { url = "https://files.pythonhosted.org/packages/81/e4/7a987ebecfe5ceaf32db413b67ff18eb3092c598408862fff4d7cc3fd19b/opencv_python-4.10.0.84-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:09a332b50488e2dda866a6c5573ee192fe3583239fb26ff2f7f9ceb0bc119ea6", size = 41746971, upload-time = "2024-06-17T20:00:25.211Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/a4/d2537f47fd7fcfba966bd806e3ec18e7ee1681056d4b0a9c8d983983e4d5/opencv_python-4.10.0.84-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9ace140fc6d647fbe1c692bcb2abce768973491222c067c131d80957c595b71f", size = 62548253, upload-time = "2024-06-17T18:29:43.659Z" },
-    { url = "https://files.pythonhosted.org/packages/1e/39/bbf57e7b9dab623e8773f6ff36385456b7ae7fa9357a5e53db732c347eac/opencv_python-4.10.0.84-cp37-abi3-win32.whl", hash = "sha256:2db02bb7e50b703f0a2d50c50ced72e95c574e1e5a0bb35a8a86d0b35c98c236", size = 28737688, upload-time = "2024-06-17T18:28:13.177Z" },
-    { url = "https://files.pythonhosted.org/packages/ec/6c/fab8113424af5049f85717e8e527ca3773299a3c6b02506e66436e19874f/opencv_python-4.10.0.84-cp37-abi3-win_amd64.whl", hash = "sha256:32dbbd94c26f611dc5cc6979e6b7aa1f55a64d6b463cc1dcd3c95505a63e48fe", size = 38842521, upload-time = "2024-06-17T18:28:21.813Z" },
+    { url = "https://files.pythonhosted.org/packages/85/68/3da40142e7c21e9b1d4e7ddd6c58738feb013203e6e4b803d62cdd9eb96b/opencv_python-4.12.0.88-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:f9a1f08883257b95a5764bf517a32d75aec325319c8ed0f89739a57fae9e92a5", size = 37877727, upload-time = "2025-07-07T09:13:31.47Z" },
+    { url = "https://files.pythonhosted.org/packages/33/7c/042abe49f58d6ee7e1028eefc3334d98ca69b030e3b567fe245a2b28ea6f/opencv_python-4.12.0.88-cp37-abi3-macosx_13_0_x86_64.whl", hash = "sha256:812eb116ad2b4de43ee116fcd8991c3a687f099ada0b04e68f64899c09448e81", size = 57326471, upload-time = "2025-07-07T09:13:41.26Z" },
+    { url = "https://files.pythonhosted.org/packages/62/3a/440bd64736cf8116f01f3b7f9f2e111afb2e02beb2ccc08a6458114a6b5d/opencv_python-4.12.0.88-cp37-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:51fd981c7df6af3e8f70b1556696b05224c4e6b6777bdd2a46b3d4fb09de1a92", size = 45887139, upload-time = "2025-07-07T09:13:50.761Z" },
+    { url = "https://files.pythonhosted.org/packages/68/1f/795e7f4aa2eacc59afa4fb61a2e35e510d06414dd5a802b51a012d691b37/opencv_python-4.12.0.88-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:092c16da4c5a163a818f120c22c5e4a2f96e0db4f24e659c701f1fe629a690f9", size = 67041680, upload-time = "2025-07-07T09:14:01.995Z" },
+    { url = "https://files.pythonhosted.org/packages/02/96/213fea371d3cb2f1d537612a105792aa0a6659fb2665b22cad709a75bd94/opencv_python-4.12.0.88-cp37-abi3-win32.whl", hash = "sha256:ff554d3f725b39878ac6a2e1fa232ec509c36130927afc18a1719ebf4fbf4357", size = 30284131, upload-time = "2025-07-07T09:14:08.819Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/80/eb88edc2e2b11cd2dd2e56f1c80b5784d11d6e6b7f04a1145df64df40065/opencv_python-4.12.0.88-cp37-abi3-win_amd64.whl", hash = "sha256:d98edb20aa932fd8ebd276a72627dad9dc097695b3d435a4257557bbb49a79d2", size = 39000307, upload-time = "2025-07-07T09:14:16.641Z" },
 ]
 
 [[package]]
@@ -6707,7 +6710,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "inference-sdk", specifier = ">=0.26.1" },
+    { name = "inference-sdk", specifier = ">=0.17.0" },
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "rfdetr", specifier = ">=1.3.0" },
     { name = "vision-agents", editable = "agents-core" },
