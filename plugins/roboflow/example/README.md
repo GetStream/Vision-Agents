@@ -11,13 +11,14 @@ This example demonstrates how to use the Roboflow plugin for real-time object de
 
 2. **Configure environment:**
    ```bash
+   cd plugins/roboflow/example
    cp .env.example .env
    # Edit .env with your actual API keys
    ```
 
 3. **Run the example:**
    ```bash
-   uv run python plugins/roboflow/example/roboflow_example.py
+   uv run python roboflow_example.py
    ```
 
 ## What It Does
