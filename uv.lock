@@ -1118,19 +1118,16 @@ wheels = [
 
 [[package]]
 name = "decart"
-version = "0.0.8"
+version = "0.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },
-    { name = "numpy" },
-    { name = "opencv-python" },
     { name = "pydantic" },
-    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/86/75e55da0dc56528b232e31186c02bf409ba9bce888e5520507a9737cdc36/decart-0.0.8.tar.gz", hash = "sha256:95ea6fc0af5896198ce76abf7d2ecf39feec77e3ebf7c5fa55e2f239879d5545", size = 198620, upload-time = "2025-11-12T17:02:42.627Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/76/eaf853fd45f140e6686353061da46b9f0ac2f3c2da5ad96974a918831b2d/decart-0.0.3.tar.gz", hash = "sha256:20fb08fd0155aa4cb353e3ced703f24f123a798999d6af1c786531151facbd0e", size = 237936, upload-time = "2025-10-21T14:26:17.385Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/e2/e128f098aaf0981849da4684a30d53b9a84be84fc372709de14557d135e9/decart-0.0.8-py3-none-any.whl", hash = "sha256:3f1ab43ced32edcd5a494673bc8f899a559f6a5c59796da88d71c5f48b8422dc", size = 20263, upload-time = "2025-11-12T17:02:40.913Z" },
+    { url = "https://files.pythonhosted.org/packages/63/be/f0d278807c976cdafe8985346842177f5ea77cd7826c41f8b763df169455/decart-0.0.3-py3-none-any.whl", hash = "sha256:917c40ba670ca615129bf661f0f2c4733cdb09df05341076824a851785940c9a", size = 15909, upload-time = "2025-10-21T14:26:15.255Z" },
 ]
 
 [[package]]
@@ -6698,10 +6695,7 @@ source = { editable = "plugins/roboflow" }
 dependencies = [
     { name = "inference-sdk" },
     { name = "numpy" },
-    { name = "opencv-python" },
-    { name = "pillow" },
     { name = "rfdetr" },
-    { name = "roboflow" },
     { name = "vision-agents" },
 ]
 
@@ -6715,10 +6709,7 @@ dev = [
 requires-dist = [
     { name = "inference-sdk", specifier = ">=0.26.1" },
     { name = "numpy", specifier = ">=2.0.0" },
-    { name = "opencv-python", specifier = ">=4.8.0" },
-    { name = "pillow", specifier = ">=10.4.0" },
-    { name = "rfdetr", specifier = "==1.3.0" },
-    { name = "roboflow", specifier = ">=1.1.0" },
+    { name = "rfdetr", specifier = ">=1.3.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
