@@ -317,9 +317,12 @@ class RoboflowLocalDetectionProcessor(
                 classes_ids = [
                     k for k, v in model.class_names.items() if v in self._classes
                 ]
+                detected_class_ids = (
+                    detected_obj.class_id if detected_obj.class_id is not None else []
+                )
                 detected_obj = cast(
                     Detections,
-                    detected_obj[np.isin(detected_obj.class_id or [], classes_ids)],
+                    detected_obj[np.isin(detected_class_ids, classes_ids)],
                 )
 
             if detected_obj.class_id and detected_obj.class_id.size:
