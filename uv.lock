@@ -1118,7 +1118,7 @@ wheels = [
 
 [[package]]
 name = "decart"
-version = "0.0.14"
+version = "0.0.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1128,9 +1128,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/25/8b4195b7e586e3c4d88b87e9bf2fab2021199b75852f1375140c40246bbe/decart-0.0.14.tar.gz", hash = "sha256:46a53fe1830ec5ba94480857f1078eda5231a93fbcb94e9bb302d652fc1e390d", size = 206929, upload-time = "2025-11-30T13:15:08.235Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/86/86/75e55da0dc56528b232e31186c02bf409ba9bce888e5520507a9737cdc36/decart-0.0.8.tar.gz", hash = "sha256:95ea6fc0af5896198ce76abf7d2ecf39feec77e3ebf7c5fa55e2f239879d5545", size = 198620, upload-time = "2025-11-12T17:02:42.627Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d8/fb/a6f1f6cd37baa0fd988106e4e11596846f55ba320123bc05b39dff9381aa/decart-0.0.14-py3-none-any.whl", hash = "sha256:aec05676b97b82825afeae8ef58305e96b901ab91155a4fc9c29200060e8e1d9", size = 25839, upload-time = "2025-11-30T13:15:06.976Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/e2/e128f098aaf0981849da4684a30d53b9a84be84fc372709de14557d135e9/decart-0.0.8-py3-none-any.whl", hash = "sha256:3f1ab43ced32edcd5a494673bc8f899a559f6a5c59796da88d71c5f48b8422dc", size = 20263, upload-time = "2025-11-12T17:02:40.913Z" },
 ]
 
 [[package]]
@@ -6323,7 +6323,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "decart" },
+    { name = "decart", specifier = "==0.0.8" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
