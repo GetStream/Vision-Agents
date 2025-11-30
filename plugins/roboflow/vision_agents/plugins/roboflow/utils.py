@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Iterable, Optional
 
 import cv2
 import numpy as np
@@ -24,7 +24,9 @@ def annotate_image(
         image[mask == 0] = (image[mask == 0] * dim_factor).astype(np.uint8)
 
     boxed_image = sv.BoxAnnotator(thickness=1).annotate(image.copy(), detections)
-    detected_class_ids = detections.class_id if detections.class_id is not None else []
+    detected_class_ids: Iterable[int] = (
+        detections.class_id if detections.class_id is not None else []
+    )
     labels = [classes[class_id] for class_id in detected_class_ids]
     labeled_image = sv.LabelAnnotator(
         text_position=sv.Position.BOTTOM_CENTER,
