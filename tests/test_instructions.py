@@ -1,5 +1,5 @@
 import pytest
-from vision_agents.core.instructions import Instructions, InstructionsReadError
+from vision_agents.core.instructions import Instructions
 
 
 class TestInstructions:
@@ -11,7 +11,7 @@ class TestInstructions:
             (
                 "read @file1.md and @file2.md",
                 "file1 data",
-                "read @file1.md and @file2.md\n\n\n## Referenced Documentation:\n\n### file1.md\nfile1 data\n\n### file2.md\nfile1 data",
+                "read @file1.md and @file2.md\n\n\n## Referenced Documentation:\n\n### @file1.md\nfile1 data\n\n### @file2.md\nfile1 data",
             ),
         ],
     )
@@ -28,29 +28,42 @@ class TestInstructions:
         file_path = tmp_path / "file1.md"
         file_path.mkdir()
         input_text = "read @file1.md"
-        with pytest.raises(InstructionsReadError, match="reason - path is not a file"):
-            Instructions(input_text=input_text, base_dir=tmp_path)
+        instructions = Instructions(input_text=input_text, base_dir=tmp_path)
+        assert (
+            "*(Warning: File `file1.md` not found or inaccessible)*"
+            in instructions.full_reference
+        )
 
     def test_parse_file_doesnt_exist(self, tmp_path):
         input_text = "read @file1.md"
-        with pytest.raises(InstructionsReadError, match="reason - file not found"):
-            Instructions(input_text=input_text, base_dir=tmp_path)
+        instructions = Instructions(input_text=input_text, base_dir=tmp_path)
+        assert (
+            "*(Warning: File `file1.md` not found or inaccessible)*"
+            in instructions.full_reference
+        )
 
     def test_parse_file_not_md(self, tmp_path):
         input_text = "read @file1.txt"
         file_path = tmp_path / "file1.txt"
         file_path.write_text("abcdef", encoding="utf-8")
-        with pytest.raises(InstructionsReadError, match="reason - file is not .md"):
-            Instructions(input_text=input_text, base_dir=tmp_path)
+        # Note: The regex only matches @... if it looks like a file?
+        # Actually the regex is r"@([^\s@]+)" which matches anything after @ until space.
+        # So @file1.txt IS matched.
+        instructions = Instructions(input_text=input_text, base_dir=tmp_path)
+        assert (
+            "*(Warning: File `file1.txt` not found or inaccessible)*"
+            in instructions.full_reference
+        )
 
     def test_parse_file_hidden(self, tmp_path):
         input_text = "read @.file1.md"
         file_path = tmp_path / ".file1.md"
         file_path.write_text("abcdef", encoding="utf-8")
-        with pytest.raises(
-            InstructionsReadError, match='reason - filename cannot start with "."'
-        ):
-            Instructions(input_text=input_text, base_dir=tmp_path)
+        instructions = Instructions(input_text=input_text, base_dir=tmp_path)
+        assert (
+            "*(Warning: File `.file1.md` not found or inaccessible)*"
+            in instructions.full_reference
+        )
 
     def test_parse_file_outside_base_dir(self, tmp_path):
         file_path1 = tmp_path / "file1.md"
@@ -62,7 +75,10 @@ class TestInstructions:
         file_path1.write_text("abcdef", encoding="utf-8")
         file_path2.write_text("abcdef", encoding="utf-8")
 
-        with pytest.raises(
-            InstructionsReadError, match="reason - path outside the base directory"
-        ):
-            Instructions(input_text=input_text, base_dir=base_dir)
+        instructions = Instructions(input_text=input_text, base_dir=base_dir)
+        # The match will be the full path string
+        match_str = str(file_path1)
+        assert (
+            f"*(Warning: File `{match_str}` not found or inaccessible)*"
+            in instructions.full_reference
+        )
