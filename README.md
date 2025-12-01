@@ -201,20 +201,31 @@ Our favorite people & projects to follow for vision AI
 
 ### 0.2 - Simplification - Nov
 
-- Simplify the library & improved code quality
+- Simplified the library & improved code quality
 - Deepgram Nova 3, Elevenlabs Scribe 2, Fish, Moondream, QWen3, Smart turn, Vogent, Inworld, Heygen, AWS and more
 - Improved openAI & Gemini realtime performance
 - Audio & Video utilities
 
-### 0.3 - Demos - Nov/Dec
+### 0.3 - Demos - Early Dec
 
-### 0.4 - Deploys
+- Mirage, Roboflow, Facial recognition. Nicer demos
+- Deepgram Flux & Elevenlabs Scribe improvements
+
+### 0.4 - Deploys - December
 
 - Tips on deploying agents at scale, monitoring them etc.
+- Guides on SIP & RAG
 
-### Later
+## Vision AI limitations
 
-[ ] Buffered video capture (for "catch the moment" scenarios)
+Video AI is the frontier of AI. The state of the art is changing daily to help models understand live video.
+While building the integrations, here are the limitations we've noticed (Dec 2025)
+
+* Video AI struggles with small text. If you want the AI to read the score in a game it will often get it wrong and hallucinate
+* Longer videos can cause the AI to lose context. For instance if it's watching a soccer match it will get confused after 30 seconds
+* Most applications require a combination of small specialized models like Yolo/Roboflow/Moondream, API calls to get more context and larger models like gemini/openAI
+* Image size & FPS need to stay relatively low due to performance constraints
+* Video doesn’t trigger responses in realtime models. You always need to send audio/text to trigger a response. 
 
 ## Star History
 
