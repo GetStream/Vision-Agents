@@ -25,6 +25,14 @@ from vision_agents.plugins.openai import LLM as OpenAILLM
 
 logger = logging.getLogger(__name__)
 
+# Models that reliably support tool calling via Chat Completions API.
+# Used as fallbacks when openrouter/auto routes to a model without tool support.
+TOOL_SUPPORTING_MODELS = [
+    "google/gemini-2.5-flash",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-4o",
+]
+
 
 class OpenRouterLLM(OpenAILLM):
     """OpenRouter LLM with automatic API format selection.
@@ -67,6 +75,11 @@ class OpenRouterLLM(OpenAILLM):
         """Check if the model is an OpenAI model (uses Responses API)."""
         model = model or self.model
         return model.startswith("openai/")
+
+    def _is_auto_model(self, model: Optional[str] = None) -> bool:
+        """Check if the model is a meta/auto model that may not support tools."""
+        model = model or self.model
+        return model in ("openrouter/auto",)
 
     async def create_conversation(self):
         """No-op for OpenRouter (no server-side conversation IDs)."""
@@ -460,13 +473,22 @@ class OpenRouterLLM(OpenAILLM):
         stream: bool = True,
     ) -> LLMResponseEvent:
         """Internal Chat Completions implementation with tool handling."""
+        effective_model = model or self.model
         request_kwargs: Dict[str, Any] = {
             "messages": messages,
-            "model": model or self.model,
+            "model": effective_model,
             "stream": stream,
         }
         if tools:
             request_kwargs["tools"] = tools
+            # openrouter/auto may route to models that don't support tools.
+            # Add fallbacks to ensure tool calls work.
+            if self._is_auto_model(effective_model):
+                logger.info(
+                    "openrouter/auto with tools: adding fallbacks %s",
+                    TOOL_SUPPORTING_MODELS,
+                )
+                request_kwargs["extra_body"] = {"models": TOOL_SUPPORTING_MODELS}
 
         response = await self.client.chat.completions.create(**request_kwargs)
 
@@ -720,13 +742,16 @@ class OpenRouterLLM(OpenAILLM):
             current_messages.extend(tool_results)
 
             # Make follow-up request
+            effective_model = model or self.model
             request_kwargs: Dict[str, Any] = {
                 "messages": current_messages,
-                "model": model or self.model,
+                "model": effective_model,
                 "stream": True,
             }
             if tools:
                 request_kwargs["tools"] = tools
+                if self._is_auto_model(effective_model):
+                    request_kwargs["extra_body"] = {"models": TOOL_SUPPORTING_MODELS}
 
             follow_up = await self.client.chat.completions.create(**request_kwargs)
 

@@ -170,3 +170,50 @@ class TestOpenRouterLLM:
 
         assert len(calls) >= 1, "probe_tool was not invoked by the model"
         assert "probe_ok:pong" in response.text, f"Expected 'probe_ok:pong', got: {response.text}"
+
+    # =========================================================================
+    # Auto model tests
+    # =========================================================================
+
+    async def test_is_auto_model_detection(self):
+        """Test that _is_auto_model correctly identifies auto models."""
+        llm = LLM(model="openrouter/auto")
+        assert llm._is_auto_model() is True
+        assert llm._is_auto_model("openrouter/auto") is True
+        assert llm._is_auto_model("google/gemini-2.0-flash-001") is False
+        assert llm._is_auto_model("openai/gpt-4o") is False
+        assert llm._is_auto_model("anthropic/claude-sonnet-4") is False
+
+    @pytest.mark.integration
+    async def test_auto_model_basic_response(self):
+        """Test that openrouter/auto works for basic queries without tools."""
+        skip_without_api_key()
+        llm = LLM(model="openrouter/auto")
+
+        response = await llm.simple_response("What is 2 + 2? Reply with just the number.")
+
+        assert_response_successful(response)
+        assert "4" in response.text, f"Expected '4' in response, got: {response.text}"
+
+    @pytest.mark.integration
+    async def test_auto_model_with_tools(self):
+        """Test that openrouter/auto with tools uses fallbacks and works correctly."""
+        skip_without_api_key()
+        llm = LLM(model="openrouter/auto")
+
+        calls: list[str] = []
+
+        @llm.register_function(description="Probe tool that records invocation")
+        def probe_tool(ping: str) -> str:
+            calls.append(ping)
+            return f"probe_ok:{ping}"
+
+        prompt = (
+            "You MUST call the tool named 'probe_tool' with the parameter ping='pong' now. "
+            "After receiving the tool result, reply by returning ONLY the tool result string."
+        )
+        response = await llm.create_response(input=prompt)
+
+        # The fallback mechanism should ensure a tool-supporting model is used
+        assert len(calls) >= 1, "probe_tool was not invoked - fallbacks may have failed"
+        assert "probe_ok:pong" in response.text, f"Expected 'probe_ok:pong', got: {response.text}"
