@@ -43,6 +43,9 @@ Insert these EXACTLY WHERE the sound should occur in your text:
    - `[laugh]` only after genuinely amusing content
    - `[clear_throat]` before important corrections
 
+6. **Never exceed 2000 characters on a response**:
+   - max length of response is 2000 characters, never more
+
 ## Example Response Patterns
 
 For a helpful response:

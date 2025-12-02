@@ -30,13 +30,19 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
+voice_ids = [
+    "Alex", # Aldric
+    "Wendy", # Seraphine
+    "Pixie", # Thornwood
+]
+
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with Inworld AI TTS."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Friendly AI", id="agent"),
-        instructions="Read @inworld-audio-guide.md",
-        tts=inworld.TTS(voice_id="Ashley"),
+        agent_user=User(name="Character", id="agent"),
+        instructions="You're a video game character ( read @thornwood.md ), give all answers completely in character. Make use of @inworld-audio-guide.md to stay in character. No more than 2000 characters per response.",
+        tts=inworld.TTS(voice_id="Pixie", model_id="inworld-tts-1-max"),
         stt=deepgram.STT(),
         llm=gemini.LLM("gemini-2.0-flash"),
         turn_detection=smart_turn.TurnDetection(),
