@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any, Optional, List, Dict, Union
 
 import aiortc
@@ -22,19 +23,17 @@ from openai.types.realtime import (
 from openai.types.realtime.realtime_transcription_session_audio_input_turn_detection_param import (
     SemanticVad,
 )
-
-
-from vision_agents.core.llm import realtime
-from vision_agents.core.llm.llm_types import ToolSchema
-import logging
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
-from .rtc_manager import RTCManager
 
+from vision_agents.core.llm import realtime
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.instructions import Instructions
+
+from .rtc_manager import RTCManager
+from .tool_utils import convert_tools_to_openai_format, parse_tool_arguments
 
 load_dotenv()
 
@@ -106,6 +105,10 @@ class Realtime(realtime.Realtime):
         # Map conversation item_id to participant to handle multi-user scenarios
         self._item_to_participant: Dict[str, Participant] = {}
         self._pending_participant: Optional[Participant] = None
+
+        # Track pending tool calls: item_id -> {call_id, name, argument_parts: []}
+        # We accumulate argument deltas until response.output_item.done
+        self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}
 
         # Store current session and rate limits
         self.current_session: Optional[
@@ -275,13 +278,34 @@ class Realtime(realtime.Realtime):
             InputAudioBufferSpeechStartedEvent.model_validate(event)
             # await self.output_track.flush()
         elif et == "response.output_item.added":
-            # Check if this is a function call
+            # Start tracking a function call (arguments will stream in)
             item = event.get("item", {})
             if item.get("type") == "function_call":
-                await self._handle_tool_call_event(event)
-        elif et == "response.tool_call":
-            # Handle tool calls from OpenAI realtime
-            await self._handle_tool_call_event(event)
+                item_id = item.get("id")
+                if item_id:
+                    self._pending_tool_calls[item_id] = {
+                        "call_id": item.get("call_id"),
+                        "name": item.get("name", "unknown"),
+                        "argument_parts": [],
+                    }
+                    logger.debug(f"Started tracking tool call: {item.get('name')} (item_id={item_id})")
+        elif et == "response.function_call_arguments.delta":
+            # Accumulate argument deltas
+            item_id = event.get("item_id")
+            delta = event.get("delta", "")
+            if item_id and item_id in self._pending_tool_calls:
+                self._pending_tool_calls[item_id]["argument_parts"].append(delta)
+        elif et == "response.function_call_arguments.done":
+            # Arguments complete - execute the tool call
+            item_id = event.get("item_id")
+            if item_id and item_id in self._pending_tool_calls:
+                await self._execute_pending_tool_call(item_id)
+        elif et == "response.output_item.done":
+            # Fallback: if we have a pending tool call for this item, execute it
+            item = event.get("item", {})
+            item_id = item.get("id")
+            if item_id and item_id in self._pending_tool_calls:
+                await self._execute_pending_tool_call(item_id)
         elif et == "response.created":
             pass
         elif et == "session.created":
@@ -326,9 +350,6 @@ class Realtime(realtime.Realtime):
         elif et == "response.content_part.done":
             # Content part complete - contains full transcript
             pass
-        elif et == "response.output_item.done":
-            # Output item complete - logged for debugging
-            pass
         else:
             logger.debug(f"Unrecognized OpenAI Realtime event: {et} {event}")
 
@@ -365,63 +386,40 @@ class Realtime(realtime.Realtime):
         # Video sender will be stopped when connection closes
         pass
 
-    async def _handle_tool_call_event(self, event: dict) -> None:
-        """Handle tool call events from OpenAI realtime.
+    async def _execute_pending_tool_call(self, item_id: str) -> None:
+        """Execute a pending tool call after arguments are complete.
 
         Args:
-            event: Tool call event from OpenAI realtime API
+            item_id: The item ID of the tool call to execute
         """
-        try:
-            # Handle both event structures
-            if event.get("type") == "response.output_item.added":
-                item = event.get("item", {})
-                tool_call_data = item
-            else:
-                tool_call_data = event.get("tool_call", {})
+        pending = self._pending_tool_calls.pop(item_id, None)
+        if not pending:
+            return
 
-            if not tool_call_data:
-                logger.warning("Received tool call event without tool_call data")
-                return
+        call_id = pending["call_id"]
+        name = pending["name"]
+        arguments_str = "".join(pending["argument_parts"])
+        arguments = parse_tool_arguments(arguments_str)
 
-            # Extract tool call details
-            tool_call = {
-                "type": "tool_call",
-                "id": tool_call_data.get("call_id"),
-                "name": tool_call_data.get("name", "unknown"),
-                "arguments_json": tool_call_data.get("arguments", {}),
-            }
+        tool_call = {
+            "type": "tool_call",
+            "id": call_id,
+            "name": name,
+            "arguments_json": arguments,
+        }
 
-            logger.info(
-                f"Executing tool call: {tool_call['name']} with args: {tool_call['arguments_json']}"
-            )
+        logger.info(f"Executing tool call: {name} with args: {arguments}")
 
-            # Execute using existing tool execution infrastructure
-            tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
+        tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
 
-            # Prepare response data
-            if error:
-                response_data = {"error": str(error)}
-                logger.error(f"Tool call {tool_call['name']} failed: {error}")
-            else:
-                # Ensure response is a dictionary for OpenAI realtime
-                if not isinstance(result, dict):
-                    response_data = {"result": result}
-                else:
-                    response_data = result
-                logger.info(f"Tool call {tool_call['name']} succeeded: {response_data}")
+        if error:
+            response_data = {"error": str(error)}
+            logger.error(f"Tool call {name} failed: {error}")
+        else:
+            response_data = {"result": result} if not isinstance(result, dict) else result
+            logger.info(f"Tool call {name} succeeded: {response_data}")
 
-            # Send tool response back to OpenAI realtime session
-            await self._send_tool_response(tool_call["id"], response_data)
-
-        except Exception as e:
-            logger.error(f"Error handling tool call event: {e}")
-            # Send error response back
-            call_id = None
-            if event.get("type") == "response.output_item.added":
-                call_id = event.get("item", {}).get("call_id")
-            else:
-                call_id = event.get("tool_call", {}).get("call_id")
-            await self._send_tool_response(call_id, {"error": str(e)})
+        await self._send_tool_response(call_id, response_data)
 
     async def _send_tool_response(
         self, call_id: Optional[str], response_data: Dict[str, Any]
@@ -436,37 +434,24 @@ class Realtime(realtime.Realtime):
             logger.warning("Cannot send tool response without call_id")
             return
 
-        try:
-            # Convert response to string for OpenAI realtime
-            response_str = self._sanitize_tool_output(response_data)
+        response_str = self._sanitize_tool_output(response_data)
 
-            # Send tool response event
-            event = {
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": response_str,
-                },
-            }
+        # Send tool response event
+        event = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": response_str,
+            },
+        }
 
-            await self.rtc._send_event(event)
-            logger.info(f"Sent tool response for call_id {call_id}")
+        await self.rtc._send_event(event)
+        logger.info(f"Sent tool response for call_id {call_id}")
 
-            # Trigger a new response to continue the conversation with audio
-            # This ensures the AI responds with audio after receiving the tool result
-            await self.rtc._send_event(
-                {
-                    "type": "response.create",
-                    "response": {
-                        "modalities": ["text", "audio"],
-                        "instructions": "Please respond to the user with the tool results in a conversational way.",
-                    },
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to send tool response: {e}")
+        # Trigger a response to continue the conversation
+        # Note: We don't override modalities/instructions - let the session config apply
+        await self.rtc._send_event({"type": "response.create"})
 
     def set_instructions(self, instructions: Instructions | str) -> None:
         super().set_instructions(instructions)
@@ -489,72 +474,20 @@ class Realtime(realtime.Realtime):
         else:
             return str(value)
 
-    def _convert_tools_to_openai_realtime_format(
-        self, tools: List[ToolSchema]
-    ) -> List[Dict[str, Any]]:
-        """Convert ToolSchema objects to OpenAI realtime format.
-
-        Args:
-            tools: List of ToolSchema objects from the function registry
-
-        Returns:
-            List of tools in OpenAI realtime format
-        """
-        out = []
-        for t in tools or []:
-            name = t.get("name", "unnamed_tool")
-            description = t.get("description", "") or ""
-            params = t.get("parameters_schema") or t.get("parameters") or {}
-            if not isinstance(params, dict):
-                params = {}
-            params.setdefault("type", "object")
-            params.setdefault("properties", {})
-            params.setdefault("additionalProperties", False)
-
-            out.append(
-                {
-                    "type": "function",
-                    "name": name,
-                    "description": description,
-                    "parameters": params,
-                }
-            )
-        return out
-
     async def _register_tools_with_openai_realtime(self) -> None:
-        """Register available tools with OpenAI realtime session.
+        """Register available tools with OpenAI realtime session."""
+        available_tools = self.get_available_functions()
 
-        This method registers all available functions and MCP tools with the
-        OpenAI realtime session so they can be called during conversations.
-        """
-        try:
-            # Get available tools from function registry
-            available_tools = self.get_available_functions()
+        if not available_tools:
+            logger.info("No tools available to register with OpenAI realtime")
+            return
 
-            if not available_tools:
-                logger.info("No tools available to register with OpenAI realtime")
-                return
+        tools_for_openai = convert_tools_to_openai_format(available_tools)
 
-            # Convert tools to OpenAI realtime format
-            tools_for_openai = self._convert_tools_to_openai_realtime_format(
-                available_tools
-            )
+        tools_event = {
+            "type": "session.update",
+            "session": {"tools": tools_for_openai},
+        }
 
-            if not tools_for_openai:
-                logger.info("No tools converted for OpenAI realtime")
-                return
-
-            # Send tools configuration to OpenAI realtime
-            tools_event = {
-                "type": "session.update",
-                "session": {"tools": tools_for_openai},
-            }
-
-            await self.rtc._send_event(tools_event)
-            logger.info(
-                f"Registered {len(tools_for_openai)} tools with OpenAI realtime"
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to register tools with OpenAI realtime: {e}")
-            # Don't raise the exception - tool registration failure shouldn't break the connection
+        await self.rtc._send_event(tools_event)
+        logger.info(f"Registered {len(tools_for_openai)} tools with OpenAI realtime")
