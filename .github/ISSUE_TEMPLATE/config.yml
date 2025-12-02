@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discord Community
+    url: https://discord.gg/RkhX9PxMS6
+    about: Join our Discord community for discussions and support
+  - name: 📚 Documentation
+    url: https://visionagents.ai
+    about: Check our documentation for guides and API reference
+  - name: 🐛 Bug Reports
+    url: https://github.com/GetStream/Vision-Agents/issues/new?template=bug_report.yml
+    about: Report a bug or unexpected behavior
+  - name: ✨ Feature Requests
+    url: https://github.com/GetStream/Vision-Agents/issues/new?template=feature_request.yml
+    about: Suggest a new feature or enhancement
