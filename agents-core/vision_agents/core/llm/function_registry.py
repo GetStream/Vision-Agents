@@ -34,6 +34,16 @@ class FunctionDefinition:
     returns: Optional[Type] = None
 
 
+@dataclass
+class _ExplicitSchemaFunction:
+    """Represents a function with an explicitly provided JSON schema (e.g., MCP tools)."""
+
+    name: str
+    description: str
+    parameters_schema: Dict[str, Any]
+    function: Callable
+
+
 class FunctionRegistry:
     """Registry for managing available functions that can be called by LLMs."""
 
@@ -41,7 +51,10 @@ class FunctionRegistry:
         self._functions: Dict[str, FunctionDefinition] = {}
 
     def register(
-        self, name: Optional[str] = None, description: Optional[str] = None
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        parameters_schema: Optional[Dict[str, Any]] = None,
     ) -> Callable:
         """
         Decorator to register a function with the registry.
@@ -49,6 +62,8 @@ class FunctionRegistry:
         Args:
             name: Optional custom name for the function. If not provided, uses the function name.
             description: Optional description for the function. If not provided, uses the docstring.
+            parameters_schema: Optional explicit JSON schema for parameters. If provided, this is
+                used instead of inferring from type hints. Useful for MCP tools or external APIs.
 
         Returns:
             Decorator function.
@@ -58,7 +73,17 @@ class FunctionRegistry:
             func_name = name or func.__name__
             func_description = description or func.__doc__ or ""
 
-            # Extract type hints
+            # If explicit schema provided, use it directly
+            if parameters_schema is not None:
+                self._functions[func_name] = _ExplicitSchemaFunction(
+                    name=func_name,
+                    description=func_description,
+                    parameters_schema=parameters_schema,
+                    function=func,
+                )
+                return func
+
+            # Otherwise, extract from type hints
             type_hints = get_type_hints(func)
             sig = inspect.signature(func)
 
@@ -116,8 +141,16 @@ class FunctionRegistry:
         """Get tool schemas for all registered functions."""
         schemas = []
         for func_def in self._functions.values():
-            schema = self._function_to_tool_schema(func_def)
-            schemas.append(schema)
+            if isinstance(func_def, _ExplicitSchemaFunction):
+                # Use the explicitly provided schema
+                schemas.append(ToolSchema(
+                    name=func_def.name,
+                    description=func_def.description,
+                    parameters_schema=func_def.parameters_schema,
+                ))
+            else:
+                schema = self._function_to_tool_schema(func_def)
+                schemas.append(schema)
         return schemas
 
     def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
@@ -140,7 +173,11 @@ class FunctionRegistry:
 
         func_def = self._functions[name]
 
-        # Validate required parameters
+        # For explicit schema functions, just call directly (validation is external)
+        if isinstance(func_def, _ExplicitSchemaFunction):
+            return func_def.function(**arguments)
+
+        # Validate required parameters for introspected functions
         for param in func_def.parameters:
             if param.required and param.name not in arguments:
                 raise TypeError(

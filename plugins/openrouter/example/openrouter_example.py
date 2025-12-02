@@ -9,7 +9,6 @@ Set these environment variables before running:
 - GITHUB_PAT: (Optional) GitHub Personal Access Token for MCP integration
 """
 
-import asyncio
 import logging
 import os
 
@@ -34,8 +33,13 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with OpenRouter LLM, function calling, and optional MCP."""
-    # Use an OpenAI model for function calling (OpenAI format is natively supported)
-    model = "openai/gpt-4o-mini"
+    # OpenRouter auto-detects the API format based on model:
+    # - openai/* models use Responses API
+    # - All other models (google/*, anthropic/*, etc.) use Chat Completions API
+    #
+    # For MCP/GitHub integration, Claude is recommended as it handles
+    # multi-step tool reasoning well (e.g., call get_me first, then use the result)
+    model = "openai/gpt-4o"
 
     llm = openrouter.LLM(model=model)
 
@@ -73,12 +77,15 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="OpenRouter AI", id="agent"),
-        instructions="""
-        You are a helpful assistant. Answer concisely.
-        When asked about weather, use the get_weather function.
-        When asked to calculate, use the calculate_sum function.
-        If GitHub tools are available, you can help with repositories, issues, and pull requests.
-        """,
+        instructions="""You are a helpful assistant. Answer concisely - give the final answer, not your reasoning.
+
+TOOL USE RULES:
+1. When you need info, call tools silently - don't narrate what you're doing
+2. For GitHub tasks requiring a username/owner: ALWAYS call get_me first, then use the returned username
+3. Chain multiple tool calls as needed - don't ask for clarification if you can figure it out
+4. Example: "How many PRs in my repo?" → call get_me → use username for list_pull_requests → report count
+
+Available: get_weather, calculate_sum, get_me, list_pull_requests, search_repositories, and GitHub tools.""",
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
