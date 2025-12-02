@@ -78,4 +78,3 @@ def parse_tool_arguments(args: str | dict) -> dict:
         return json.loads(args)
     except json.JSONDecodeError:
         return {}
-

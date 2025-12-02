@@ -143,9 +143,13 @@ class Realtime(realtime.Realtime):
         # Tools are registered via @llm.register_function() before connect() is called
         available_tools = self.get_available_functions()
         if available_tools:
-            tools_for_openai = convert_tools_to_openai_format(available_tools, for_realtime=True)
-            self.realtime_session["tools"] = tools_for_openai  # type: ignore[typeddict-unknown-key]
-            logger.info(f"Added {len(tools_for_openai)} tools to session config: {[t['name'] for t in tools_for_openai]}")
+            tools_for_openai = convert_tools_to_openai_format(
+                available_tools, for_realtime=True
+            )
+            self.realtime_session["tools"] = tools_for_openai  # type: ignore[typeddict-item]
+            logger.info(
+                f"Added {len(tools_for_openai)} tools to session config: {[t['name'] for t in tools_for_openai]}"
+            )
 
         # Wire callbacks so we can emit audio/events upstream
         self.rtc.set_event_callback(self._handle_openai_event)
@@ -293,7 +297,9 @@ class Realtime(realtime.Realtime):
                         "name": item.get("name", "unknown"),
                         "argument_parts": [],
                     }
-                    logger.debug(f"Started tracking tool call: {item.get('name')} (item_id={item_id})")
+                    logger.debug(
+                        f"Started tracking tool call: {item.get('name')} (item_id={item_id})"
+                    )
         elif et == "response.function_call_arguments.delta":
             # Accumulate argument deltas
             item_id = event.get("item_id")
@@ -421,7 +427,9 @@ class Realtime(realtime.Realtime):
             response_data = {"error": str(error)}
             logger.error(f"Tool call {name} failed: {error}")
         else:
-            response_data = {"result": result} if not isinstance(result, dict) else result
+            response_data = (
+                {"result": result} if not isinstance(result, dict) else result
+            )
             logger.info(f"Tool call {name} succeeded: {response_data}")
 
         await self._send_tool_response(call_id, response_data)
@@ -491,7 +499,9 @@ class Realtime(realtime.Realtime):
             logger.debug("No tools available to register with OpenAI realtime")
             return
 
-        tools_for_openai = convert_tools_to_openai_format(available_tools, for_realtime=True)
+        tools_for_openai = convert_tools_to_openai_format(
+            available_tools, for_realtime=True
+        )
 
         tools_event = {
             "type": "session.update",

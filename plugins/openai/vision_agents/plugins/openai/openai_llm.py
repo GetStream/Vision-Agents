@@ -20,7 +20,11 @@ from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.processors import Processor
 
 from . import events
-from .tool_utils import convert_tools_to_openai_format, tool_call_dedup_key, parse_tool_arguments
+from .tool_utils import (
+    convert_tools_to_openai_format,
+    tool_call_dedup_key,
+    parse_tool_arguments,
+)
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
@@ -236,9 +240,10 @@ class OpenAILLM(LLM):
                 break
 
             # Get follow-up response
-            llm_response, next_tool_calls = await self._send_tool_results_and_get_response(
-                tool_messages, seen
-            )
+            (
+                llm_response,
+                next_tool_calls,
+            ) = await self._send_tool_results_and_get_response(tool_messages, seen)
 
             if not next_tool_calls or round_num >= self.max_tool_rounds - 1:
                 break
@@ -259,18 +264,22 @@ class OpenAILLM(LLM):
 
             output = err if err is not None else res
             output_str = self._sanitize_tool_output(output)
-            tool_messages.append({
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": output_str,
-            })
+            tool_messages.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output_str,
+                }
+            )
         return tool_messages
 
     async def _send_tool_results_and_get_response(
         self,
         tool_messages: List[Dict[str, Any]],
         seen: set[tuple[str, str]],
-    ) -> tuple[Optional[LLMResponseEvent[OpenAIResponse]], List[NormalizedToolCallItem]]:
+    ) -> tuple[
+        Optional[LLMResponseEvent[OpenAIResponse]], List[NormalizedToolCallItem]
+    ]:
         """Send tool results and get follow-up response.
 
         Returns:
@@ -301,13 +310,13 @@ class OpenAILLM(LLM):
             return llm_response, next_tool_calls
 
         # Streaming response
-        llm_response: Optional[LLMResponseEvent[OpenAIResponse]] = None
+        llm_response_streaming: Optional[LLMResponseEvent[OpenAIResponse]] = None
         pending_tool_calls: List[NormalizedToolCallItem] = []
 
         async for event in follow_up_response:
             llm_response_optional = self._standardize_and_emit_event(event)
             if llm_response_optional is not None:
-                llm_response = llm_response_optional
+                llm_response_streaming = llm_response_optional
 
             if event.type == "response.completed":
                 calls = self._extract_tool_calls_from_response(event.response)
@@ -317,7 +326,7 @@ class OpenAILLM(LLM):
                         pending_tool_calls.append(c)
                         seen.add(key)
 
-        return llm_response, pending_tool_calls
+        return llm_response_streaming, pending_tool_calls
 
     @staticmethod
     def _normalize_message(openai_input) -> List["Message"]:
@@ -353,12 +362,14 @@ class OpenAILLM(LLM):
         calls: List[NormalizedToolCallItem] = []
         for item in response.output or []:
             if isinstance(item, ResponseFunctionToolCall):
-                calls.append({
-                    "type": "tool_call",
-                    "id": item.call_id,
-                    "name": item.name,
-                    "arguments_json": parse_tool_arguments(item.arguments),
-                })
+                calls.append(
+                    {
+                        "type": "tool_call",
+                        "id": item.call_id,
+                        "name": item.name,
+                        "arguments_json": parse_tool_arguments(item.arguments),
+                    }
+                )
         return calls
 
     def _create_tool_result_message(
