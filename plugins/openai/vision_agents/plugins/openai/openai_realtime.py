@@ -139,13 +139,18 @@ class Realtime(realtime.Realtime):
         Sets up callbacks and connects to OpenAI's servers. Emits connected event
         with session configuration when ready.
         """
+        # Add tools to the session config BEFORE connecting
+        # Tools are registered via @llm.register_function() before connect() is called
+        available_tools = self.get_available_functions()
+        if available_tools:
+            tools_for_openai = convert_tools_to_openai_format(available_tools, for_realtime=True)
+            self.realtime_session["tools"] = tools_for_openai  # type: ignore[typeddict-unknown-key]
+            logger.info(f"Added {len(tools_for_openai)} tools to session config: {[t['name'] for t in tools_for_openai]}")
+
         # Wire callbacks so we can emit audio/events upstream
         self.rtc.set_event_callback(self._handle_openai_event)
         self.rtc.set_audio_callback(self._handle_audio_output)
         await self.rtc.connect()
-
-        # Register tools with OpenAI realtime if available
-        await self._register_tools_with_openai_realtime()
 
         # Emit connected/ready
         self._emit_connected_event(
@@ -474,15 +479,19 @@ class Realtime(realtime.Realtime):
         else:
             return str(value)
 
-    async def _register_tools_with_openai_realtime(self) -> None:
-        """Register available tools with OpenAI realtime session."""
+    async def update_tools(self) -> None:
+        """Update tools in the OpenAI realtime session.
+
+        Call this method if tools are registered after connect() is called.
+        Normally tools are included in the initial session config.
+        """
         available_tools = self.get_available_functions()
 
         if not available_tools:
-            logger.info("No tools available to register with OpenAI realtime")
+            logger.debug("No tools available to register with OpenAI realtime")
             return
 
-        tools_for_openai = convert_tools_to_openai_format(available_tools)
+        tools_for_openai = convert_tools_to_openai_format(available_tools, for_realtime=True)
 
         tools_event = {
             "type": "session.update",
@@ -490,4 +499,4 @@ class Realtime(realtime.Realtime):
         }
 
         await self.rtc._send_event(tools_event)
-        logger.info(f"Registered {len(tools_for_openai)} tools with OpenAI realtime")
+        logger.info(f"Updated {len(tools_for_openai)} tools in OpenAI realtime session")

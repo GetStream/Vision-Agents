@@ -6,13 +6,15 @@ from typing import Any, Dict, List
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
 
-def convert_tools_to_openai_format(tools: List[ToolSchema]) -> List[Dict[str, Any]]:
+def convert_tools_to_openai_format(
+    tools: List[ToolSchema], for_realtime: bool = False
+) -> List[Dict[str, Any]]:
     """Convert ToolSchema to OpenAI format.
-
-    Works for both Responses API and Realtime API.
 
     Args:
         tools: List of ToolSchema objects from the function registry
+        for_realtime: If True, format for Realtime API (no strict field).
+                      If False, format for Responses API (includes strict).
 
     Returns:
         List of tools in OpenAI format
@@ -26,13 +28,18 @@ def convert_tools_to_openai_format(tools: List[ToolSchema]) -> List[Dict[str, An
         params.setdefault("properties", {})
         params.setdefault("additionalProperties", False)
 
-        out.append({
+        tool_def: Dict[str, Any] = {
             "type": "function",
             "name": t.get("name", "unnamed_tool"),
             "description": t.get("description", "") or "",
             "parameters": params,
-            "strict": True,
-        })
+        }
+
+        # Responses API supports strict mode, Realtime API does not
+        if not for_realtime:
+            tool_def["strict"] = True
+
+        out.append(tool_def)
     return out
 
 
