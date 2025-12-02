@@ -1,85 +1,78 @@
 import base64
 import json
 import logging
-import os
 
-import numpy as np
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import Response
+from getstream.video import rtc
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from getstream.video.rtc.track_util import PcmData, AudioFormat
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
+from getstream.video.rtc.track_util import PcmData
+from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from twilio.twiml.voice_response import VoiceResponse, Start
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, gemini
 
+from .utils import mulaw_to_pcm, pcm_to_mulaw, TWILIO_SAMPLE_RATE
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+"""
+Flow
+1. Twilio triggers webhook for phone number on /twilio/voice
+2. Start a bi directional stream using start.stream which goes to /twilio/media
+3. Start a call on Stream's edge network
+4. Create a participant for the phone call and join the call
+5. Create the AI, and have the AI join the call
+
+Notes, twilio uses ulaw audio encoding at 8khz
+
+TODO/ simplification
+* Cleanup the ulaw audio utils
+* Create some sort of session object to combine the Twilio Connection, Call object (or is call alone enough?)
+
+"""
 
 load_dotenv()
 
 NGROK_URL = "dc29ca3d3d70.ngrok-free.app"
-TWILIO_SAMPLE_RATE = 8000  # Twilio streams mulaw at 8kHz
 
 app = FastAPI()
 
 # Audio track to hold incoming Twilio audio
 audio_track: AudioStreamTrack | None = None
 
-# Precompute mulaw decoding table (ITU-T G.711)
-MULAW_DECODE_TABLE = np.array([
-    -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
-    -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
-    -15996, -15484, -14972, -14460, -13948, -13436, -12924, -12412,
-    -11900, -11388, -10876, -10364, -9852, -9340, -8828, -8316,
-    -7932, -7676, -7420, -7164, -6908, -6652, -6396, -6140,
-    -5884, -5628, -5372, -5116, -4860, -4604, -4348, -4092,
-    -3900, -3772, -3644, -3516, -3388, -3260, -3132, -3004,
-    -2876, -2748, -2620, -2492, -2364, -2236, -2108, -1980,
-    -1884, -1820, -1756, -1692, -1628, -1564, -1500, -1436,
-    -1372, -1308, -1244, -1180, -1116, -1052, -988, -924,
-    -876, -844, -812, -780, -748, -716, -684, -652,
-    -620, -588, -556, -524, -492, -460, -428, -396,
-    -372, -356, -340, -324, -308, -292, -276, -260,
-    -244, -228, -212, -196, -180, -164, -148, -132,
-    -120, -112, -104, -96, -88, -80, -72, -64,
-    -56, -48, -40, -32, -24, -16, -8, 0,
-    32124, 31100, 30076, 29052, 28028, 27004, 25980, 24956,
-    23932, 22908, 21884, 20860, 19836, 18812, 17788, 16764,
-    15996, 15484, 14972, 14460, 13948, 13436, 12924, 12412,
-    11900, 11388, 10876, 10364, 9852, 9340, 8828, 8316,
-    7932, 7676, 7420, 7164, 6908, 6652, 6396, 6140,
-    5884, 5628, 5372, 5116, 4860, 4604, 4348, 4092,
-    3900, 3772, 3644, 3516, 3388, 3260, 3132, 3004,
-    2876, 2748, 2620, 2492, 2364, 2236, 2108, 1980,
-    1884, 1820, 1756, 1692, 1628, 1564, 1500, 1436,
-    1372, 1308, 1244, 1180, 1116, 1052, 988, 924,
-    876, 844, 812, 780, 748, 716, 684, 652,
-    620, 588, 556, 524, 492, 460, 428, 396,
-    372, 356, 340, 324, 308, 292, 276, 260,
-    244, 228, 212, 196, 180, 164, 148, 132,
-    120, 112, 104, 96, 88, 80, 72, 64,
-    56, 48, 40, 32, 24, 16, 8, 0,
-], dtype=np.int16)
+# Active Twilio websocket connection for sending audio back
+twilio_websocket: WebSocket | None = None
+twilio_stream_sid: str | None = None
 
 
-def mulaw_to_pcm(mulaw_bytes: bytes) -> PcmData:
-    """Convert mulaw audio bytes to PcmData using lookup table."""
-    # Convert bytes to numpy array of uint8 indices
-    mulaw_samples = np.frombuffer(mulaw_bytes, dtype=np.uint8)
+async def send_audio_to_twilio(pcm: PcmData) -> None:
+    """Send PCM audio back to Twilio as mulaw."""
+    global twilio_websocket, twilio_stream_sid
     
-    # Decode using lookup table
-    samples = MULAW_DECODE_TABLE[mulaw_samples]
+    if twilio_websocket is None or twilio_stream_sid is None:
+        return
     
-    return PcmData(
-        samples=samples,
-        sample_rate=TWILIO_SAMPLE_RATE,
-        channels=1,
-        format=AudioFormat.S16,
-    )
+    # Convert PCM to mulaw and base64 encode
+    mulaw_bytes = pcm_to_mulaw(pcm)
+    payload = base64.b64encode(mulaw_bytes).decode("ascii")
+    
+    # Send media message per Twilio docs
+    message = {
+        "event": "media",
+        "streamSid": twilio_stream_sid,
+        "media": {
+            "payload": payload
+        }
+    }
+    
+    await twilio_websocket.send_json(message)
 
 
 @app.post("/twilio/voice")
@@ -99,12 +92,13 @@ async def twilio_voice_webhook(request: Request):
     return Response(content=str(response), media_type="application/xml")
 
 
-@app.websocket("/media")
+@app.websocket("/twilio/media")
 async def media_stream(websocket: WebSocket):
     """Receive real-time audio stream from Twilio and write to QueuedAudioTrack."""
-    global audio_track
+    global audio_track, twilio_websocket, twilio_stream_sid
     
     await websocket.accept()
+    twilio_websocket = websocket
     logger.info("WebSocket connection accepted")
     
     # Create audio track for this call
@@ -126,7 +120,9 @@ async def media_stream(websocket: WebSocket):
                 case "connected":
                     logger.info(f"Connected: {data}")
                 case "start":
-                    logger.info(f"Stream started: {data}")
+                    # Store the stream SID for sending audio back
+                    twilio_stream_sid = data["streamSid"]
+                    logger.info(f"Stream started, streamSid={twilio_stream_sid}")
                 case "media":
                     # Decode base64 mulaw audio
                     payload = data["media"]["payload"]
@@ -146,6 +142,9 @@ async def media_stream(websocket: WebSocket):
             message_count += 1
     except Exception as e:
         logger.info(f"WebSocket closed: {e}")
+    finally:
+        twilio_websocket = None
+        twilio_stream_sid = None
     
     logger.info(f"Connection closed. Received {message_count} messages, wrote to audio track")
 
@@ -162,6 +161,32 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     call = await agent.create_call(call_type, call_id)
+
+    """
+    TODO:
+    - when someone speaks on the phone. they should join the call as a participant..
+    
+    """
+    user = await agent.edge.create_user(User(name="phone call from123"))
+    subscription_config = SubscriptionConfig(
+        default=TrackSubscriptionConfig(
+            track_types=[
+                TrackType.TRACK_TYPE_AUDIO,
+            ]
+        )
+    )
+
+    # phone connection -> publish to the call
+    connection = await rtc.join(
+        call, user, subscription_config=subscription_config
+    )
+    await connection.add_tracks(audio=audio_track, video=None)
+
+    @connection.on("audio")
+    async def on_audio_received(pcm: PcmData):
+        # Forward audio from the call to Twilio
+        await send_audio_to_twilio(pcm)
+
 
     # join the call and open a demo env
     with await agent.join(call):
