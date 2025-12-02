@@ -9,7 +9,10 @@ dependencies = [
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-smart-turn",
     "vision-agents-plugins-gemini", 
+    "vision-agents-plugins-openai",
+    "vision-agents-plugins-kokoro",
     "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-fast-whisper",
     "python-dotenv",
 ]
 
@@ -19,5 +22,7 @@ vision-agents-plugins-inworld = { path = "..", editable = true }
 vision-agents-plugins-getstream = { path = "../../getstream", editable = true }
 vision-agents-plugins-smart-turn = { path = "../../smart_turn", editable = true }
 vision-agents-plugins-gemini = { path = "../../gemini", editable = true }
+vision-agents-plugins-openai = { path = "../../openai", editable = true }
 vision-agents-plugins-deepgram = { path = "../../deepgram", editable = true }
-
+vision-agents-plugins-kokoro = { path = "../../kokoro", editable = true }
+vision-agents-plugins-fast-whisper = { path = "../../fast_whisper", editable = true }
