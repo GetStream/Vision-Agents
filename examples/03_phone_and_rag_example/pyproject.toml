@@ -1,0 +1,18 @@
+[project]
+name = "vision-agents-phone"
+version = "0.0.0"
+requires-python = ">=3.13,<3.14"
+
+# put only what this example needs
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-gemini",
+  "twilio",
+  "fastapi",
+  "uvicorn",
+]
+
+[tool.uv.sources]
+"vision-agents" = {path = "../../agents-core", editable=true}
