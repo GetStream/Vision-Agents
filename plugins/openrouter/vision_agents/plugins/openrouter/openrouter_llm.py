@@ -113,14 +113,18 @@ class OpenRouterLLM(OpenAILLM):
         # Get and normalize input to list format
         user_input = kwargs.get("input", args[0] if args else "Hello")
         if not isinstance(user_input, list):
-            user_input = [{"content": str(user_input), "role": "user", "type": "message"}]
+            user_input = [
+                {"content": str(user_input), "role": "user", "type": "message"}
+            ]
 
         # Build messages: instructions + conversation history + new input
         messages: List[Dict[str, Any]] = []
 
         # Add system instructions
         if self._instructions:
-            messages.append({"content": self._instructions, "role": "system", "type": "message"})
+            messages.append(
+                {"content": self._instructions, "role": "system", "type": "message"}
+            )
 
         # Add conversation history
         if self._conversation:
@@ -128,7 +132,9 @@ class OpenRouterLLM(OpenAILLM):
                 if isinstance(m.original, dict):
                     messages.append(m.original)
                 else:
-                    messages.append({"content": m.content, "role": m.role, "type": "message"})
+                    messages.append(
+                        {"content": m.content, "role": m.role, "type": "message"}
+                    )
 
         # Add new user input
         messages.extend(user_input)
@@ -155,7 +161,9 @@ class OpenRouterLLM(OpenAILLM):
 
         if isinstance(response, OpenAIResponse):
             # Non-streaming response
-            llm_response = LLMResponseEvent[OpenAIResponse](response, response.output_text)
+            llm_response = LLMResponseEvent[OpenAIResponse](
+                response, response.output_text
+            )
             pending_tool_calls = self._extract_tool_calls_from_response(response)
         else:
             # Streaming response
@@ -167,7 +175,11 @@ class OpenRouterLLM(OpenAILLM):
                 # Collect tool calls
                 if getattr(event, "type", "") == "response.completed":
                     for c in self._extract_tool_calls_from_response(event.response):
-                        key = (c["id"], c["name"], json.dumps(c["arguments_json"], sort_keys=True))
+                        key = (
+                            c["id"],
+                            c["name"],
+                            json.dumps(c["arguments_json"], sort_keys=True),
+                        )
                         if key not in seen:
                             pending_tool_calls.append(c)
                             seen.add(key)
@@ -198,7 +210,9 @@ class OpenRouterLLM(OpenAILLM):
                     old_messages.append(m.original)
                 else:
                     # Fallback: create proper message format
-                    old_messages.append({"content": m.content, "role": m.role, "type": "message"})
+                    old_messages.append(
+                        {"content": m.content, "role": m.role, "type": "message"}
+                    )
             kwargs["input"] = old_messages + new_messages
             # Add messages to conversation
             normalized_messages = self._normalize_message(new_messages)
@@ -230,13 +244,15 @@ class OpenRouterLLM(OpenAILLM):
             # Don't set additionalProperties: false or strict: true
             # This allows MCP tools with optional parameters to work
 
-            out.append({
-                "type": "function",
-                "name": name,
-                "description": description,
-                "parameters": params,
-                # NO "strict": True - this breaks MCP tools with optional params
-            })
+            out.append(
+                {
+                    "type": "function",
+                    "name": name,
+                    "description": description,
+                    "parameters": params,
+                    # NO "strict": True - this breaks MCP tools with optional params
+                }
+            )
         return out
 
     async def _handle_tool_calls(
@@ -281,17 +297,23 @@ class OpenRouterLLM(OpenAILLM):
                 cid = tc.get("id")
                 if not cid:
                     continue
-                function_calls.append({
-                    "type": "function_call",
-                    "call_id": cid,
-                    "name": tc["name"],
-                    "arguments": json.dumps(tc.get("arguments_json", {})),
-                })
-                tool_outputs.append({
-                    "type": "function_call_output",
-                    "call_id": cid,
-                    "output": self._sanitize_tool_output(err if err is not None else res),
-                })
+                function_calls.append(
+                    {
+                        "type": "function_call",
+                        "call_id": cid,
+                        "name": tc["name"],
+                        "arguments": json.dumps(tc.get("arguments_json", {})),
+                    }
+                )
+                tool_outputs.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": cid,
+                        "output": self._sanitize_tool_output(
+                            err if err is not None else res
+                        ),
+                    }
+                )
 
             if not tool_outputs:
                 return llm_response or self._empty_response()
@@ -315,7 +337,9 @@ class OpenRouterLLM(OpenAILLM):
                 llm_response = LLMResponseEvent[OpenAIResponse](
                     follow_up_response, follow_up_response.output_text
                 )
-                next_tool_calls = self._extract_tool_calls_from_response(follow_up_response)
+                next_tool_calls = self._extract_tool_calls_from_response(
+                    follow_up_response
+                )
                 if next_tool_calls and round_num < max_rounds - 1:
                     current_tool_calls = next_tool_calls
                     conversation_context = follow_up_input
@@ -331,7 +355,11 @@ class OpenRouterLLM(OpenAILLM):
 
                     if getattr(event, "type", "") == "response.completed":
                         for c in self._extract_tool_calls_from_response(event.response):
-                            key = (c["id"], c["name"], json.dumps(c["arguments_json"], sort_keys=True))
+                            key = (
+                                c["id"],
+                                c["name"],
+                                json.dumps(c["arguments_json"], sort_keys=True),
+                            )
                             if key not in seen:
                                 pending_tool_calls.append(c)
                                 seen.add(key)
@@ -380,12 +408,20 @@ class OpenRouterLLM(OpenAILLM):
             # Add user message
             if isinstance(user_input, str):
                 self._conversation.messages.append(
-                    Message(original={"role": "user", "content": user_input}, content=user_input, role="user")
+                    Message(
+                        original={"role": "user", "content": user_input},
+                        content=user_input,
+                        role="user",
+                    )
                 )
             # Add assistant response
             if response.text:
                 self._conversation.messages.append(
-                    Message(original={"role": "assistant", "content": response.text}, content=response.text, role="assistant")
+                    Message(
+                        original={"role": "assistant", "content": response.text},
+                        content=response.text,
+                        role="assistant",
+                    )
                 )
 
         return response
@@ -418,11 +454,13 @@ class OpenRouterLLM(OpenAILLM):
                         continue
 
                     if item_type == "function_call_output":
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": item.get("call_id", ""),
-                            "content": item.get("output", ""),
-                        })
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": item.get("call_id", ""),
+                                "content": item.get("output", ""),
+                            }
+                        )
                     else:
                         messages.append({"role": role, "content": content})
                 else:
@@ -459,10 +497,12 @@ class OpenRouterLLM(OpenAILLM):
                 # Strict mode requires additionalProperties: false
                 params.setdefault("additionalProperties", False)
 
-            result.append({
-                "type": "function",
-                "function": func_spec,
-            })
+            result.append(
+                {
+                    "type": "function",
+                    "function": func_spec,
+                }
+            )
         return result
 
     async def _chat_completions_internal(
@@ -587,7 +627,9 @@ class OpenRouterLLM(OpenAILLM):
         # Check for tool calls
         tool_calls = self._extract_chat_tool_calls(response)
         if tool_calls:
-            return await self._handle_chat_tool_calls(tool_calls, messages, tools, model)
+            return await self._handle_chat_tool_calls(
+                tool_calls, messages, tools, model
+            )
 
         self.events.send(
             LLMResponseCompletedEvent(
@@ -641,7 +683,9 @@ class OpenRouterLLM(OpenAILLM):
         self._pending_tool_calls = {}
         return tool_calls
 
-    def _extract_chat_tool_calls(self, response: ChatCompletion) -> List[NormalizedToolCallItem]:
+    def _extract_chat_tool_calls(
+        self, response: ChatCompletion
+    ) -> List[NormalizedToolCallItem]:
         """Extract tool calls from non-streaming Chat Completions response."""
         tool_calls: List[NormalizedToolCallItem] = []
 
@@ -695,7 +739,9 @@ class OpenRouterLLM(OpenAILLM):
 
         # Debug: Log what tool calls the model is making
         for tc in tool_calls:
-            logger.info(f"🔧 Model requesting tool: {tc.get('name')} with args: {tc.get('arguments_json')}")
+            logger.info(
+                f"🔧 Model requesting tool: {tc.get('name')} with args: {tc.get('arguments_json')}"
+            )
 
         for round_num in range(max_rounds):
             triples, seen = await self._dedup_and_execute(
@@ -716,29 +762,37 @@ class OpenRouterLLM(OpenAILLM):
                 if not cid:
                     continue
 
-                assistant_tool_calls.append({
-                    "id": cid,
-                    "type": "function",
-                    "function": {
-                        "name": tc["name"],
-                        "arguments": json.dumps(tc.get("arguments_json", {})),
-                    },
-                })
-                tool_results.append({
-                    "role": "tool",
-                    "tool_call_id": cid,
-                    "content": self._sanitize_tool_output(err if err is not None else res),
-                })
+                assistant_tool_calls.append(
+                    {
+                        "id": cid,
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc.get("arguments_json", {})),
+                        },
+                    }
+                )
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": cid,
+                        "content": self._sanitize_tool_output(
+                            err if err is not None else res
+                        ),
+                    }
+                )
 
             if not tool_results:
                 return llm_response
 
             # Add assistant message with tool_calls, then tool results
-            current_messages.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": assistant_tool_calls,
-            })
+            current_messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": assistant_tool_calls,
+                }
+            )
             current_messages.extend(tool_results)
 
             # Make follow-up request

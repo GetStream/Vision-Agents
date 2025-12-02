@@ -95,7 +95,9 @@ class TestOpenRouterLLM:
     async def test_memory(self, llm: LLM):
         """Test conversation memory using simple_response."""
         await llm.simple_response(text="There are 2 dogs in the room")
-        response = await llm.simple_response(text="How many paws are there in the room?")
+        response = await llm.simple_response(
+            text="How many paws are there in the room?"
+        )
 
         assert_response_successful(response)
         assert "8" in response.text or "eight" in response.text.lower(), (
@@ -106,7 +108,9 @@ class TestOpenRouterLLM:
     async def test_native_memory(self, llm: LLM):
         """Test conversation memory using native API."""
         await llm.create_response(input="There are 2 dogs in the room")
-        response = await llm.create_response(input="How many paws are there in the room?")
+        response = await llm.create_response(
+            input="How many paws are there in the room?"
+        )
 
         assert_response_successful(response)
         assert "8" in response.text or "eight" in response.text.lower(), (
@@ -125,7 +129,9 @@ class TestOpenRouterLLM:
         )
 
         assert_response_successful(response)
-        assert "nl" in response.text.lower(), f"Expected 'NL' in response, got: {response.text}"
+        assert "nl" in response.text.lower(), (
+            f"Expected 'NL' in response, got: {response.text}"
+        )
 
     @pytest.mark.integration
     async def test_function_calling_openai(self):
@@ -147,7 +153,9 @@ class TestOpenRouterLLM:
         response = await llm.create_response(input=prompt)
 
         assert len(calls) >= 1, "probe_tool was not invoked by the model"
-        assert "probe_ok:pong" in response.text, f"Expected 'probe_ok:pong', got: {response.text}"
+        assert "probe_ok:pong" in response.text, (
+            f"Expected 'probe_ok:pong', got: {response.text}"
+        )
 
     @pytest.mark.integration
     async def test_function_calling_gemini(self):
@@ -169,7 +177,9 @@ class TestOpenRouterLLM:
         response = await llm.create_response(input=prompt)
 
         assert len(calls) >= 1, "probe_tool was not invoked by the model"
-        assert "probe_ok:pong" in response.text, f"Expected 'probe_ok:pong', got: {response.text}"
+        assert "probe_ok:pong" in response.text, (
+            f"Expected 'probe_ok:pong', got: {response.text}"
+        )
 
     # =========================================================================
     # Auto model tests
@@ -190,7 +200,9 @@ class TestOpenRouterLLM:
         skip_without_api_key()
         llm = LLM(model="openrouter/auto")
 
-        response = await llm.simple_response("What is 2 + 2? Reply with just the number.")
+        response = await llm.simple_response(
+            "What is 2 + 2? Reply with just the number."
+        )
 
         assert_response_successful(response)
         assert "4" in response.text, f"Expected '4' in response, got: {response.text}"
@@ -216,4 +228,6 @@ class TestOpenRouterLLM:
 
         # The fallback mechanism should ensure a tool-supporting model is used
         assert len(calls) >= 1, "probe_tool was not invoked - fallbacks may have failed"
-        assert "probe_ok:pong" in response.text, f"Expected 'probe_ok:pong', got: {response.text}"
+        assert "probe_ok:pong" in response.text, (
+            f"Expected 'probe_ok:pong', got: {response.text}"
+        )

@@ -313,11 +313,13 @@ class ChatCompletionsLLM(LLM):
                         messages.append({"role": role, "content": content})
                     elif item.get("type") == "function_call_output":
                         # Convert to Chat Completions tool result format
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": item.get("call_id", ""),
-                            "content": item.get("output", ""),
-                        })
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": item.get("call_id", ""),
+                                "content": item.get("output", ""),
+                            }
+                        )
                     else:
                         messages.append({"role": role, "content": content})
                 else:
@@ -381,14 +383,16 @@ class ChatCompletionsLLM(LLM):
             params.setdefault("type", "object")
             params.setdefault("properties", {})
 
-            result.append({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": params,
-                },
-            })
+            result.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": params,
+                    },
+                }
+            )
         return result
 
     def _extract_tool_calls_from_response(
@@ -454,29 +458,37 @@ class ChatCompletionsLLM(LLM):
                 if not cid:
                     continue
 
-                assistant_tool_calls.append({
-                    "id": cid,
-                    "type": "function",
-                    "function": {
-                        "name": tc["name"],
-                        "arguments": json.dumps(tc.get("arguments_json", {})),
-                    },
-                })
-                tool_results.append({
-                    "role": "tool",
-                    "tool_call_id": cid,
-                    "content": self._sanitize_tool_output(err if err is not None else res),
-                })
+                assistant_tool_calls.append(
+                    {
+                        "id": cid,
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc.get("arguments_json", {})),
+                        },
+                    }
+                )
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": cid,
+                        "content": self._sanitize_tool_output(
+                            err if err is not None else res
+                        ),
+                    }
+                )
 
             if not tool_results:
                 return llm_response
 
             # Add assistant message with tool_calls, then tool results
-            current_messages.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": assistant_tool_calls,
-            })
+            current_messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": assistant_tool_calls,
+                }
+            )
             current_messages.extend(tool_results)
 
             # Make follow-up request

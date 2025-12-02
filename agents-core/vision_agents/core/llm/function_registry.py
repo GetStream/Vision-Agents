@@ -143,11 +143,13 @@ class FunctionRegistry:
         for func_def in self._functions.values():
             if isinstance(func_def, _ExplicitSchemaFunction):
                 # Use the explicitly provided schema
-                schemas.append(ToolSchema(
-                    name=func_def.name,
-                    description=func_def.description,
-                    parameters_schema=func_def.parameters_schema,
-                ))
+                schemas.append(
+                    ToolSchema(
+                        name=func_def.name,
+                        description=func_def.description,
+                        parameters_schema=func_def.parameters_schema,
+                    )
+                )
             else:
                 schema = self._function_to_tool_schema(func_def)
                 schemas.append(schema)
