@@ -123,10 +123,8 @@ async def create_agent(**kwargs) -> Agent:
         # instructions="You act fully as a video game character described in @aldric.md . Always answer in less than 2000 characters. Make heavy use of @inworld-audio-guide.md to generate speech.",
         instructions=test_instructions,
         tts=inworld.TTS(voice_id="Alex", model_id="inworld-tts-1"),
-        # stt=deepgram.STT(),
-        stt=fast_whisper.STT(),
-        # llm=gemini.LLM("gemini-2.0-flash"),
-        llm=openai.LLM("gpt-4o-mini"),
+        stt=deepgram.STT(),
+        llm=gemini.LLM("gemini-2.0-flash"),
         turn_detection=smart_turn.TurnDetection(),
     )
     return agent
