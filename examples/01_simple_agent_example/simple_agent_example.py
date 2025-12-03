@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import deepgram, getstream, openai, elevenlabs
+from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_ex
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = openai.LLM(model="gpt-4o-mini")
+    llm = gemini.LLM("gemini-2.5-flash-lite")
 
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
