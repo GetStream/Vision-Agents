@@ -253,8 +253,8 @@ class OpenAILLM(LLM):
         return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
     def _build_tool_messages(
-        self, triples: List[tuple[Dict[str, Any], Any, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, triples: list[tuple[dict[str, Any], Any, Any]]
+    ) -> list[dict[str, Any]]:
         """Build tool result messages from execution results."""
         tool_messages = []
         for tc, res, err in triples:
