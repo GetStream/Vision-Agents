@@ -7,7 +7,6 @@ from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
-from vision_agents.plugins.ultralytics import YOLOPoseProcessor
 
 logger = logging.getLogger(__name__)
 
