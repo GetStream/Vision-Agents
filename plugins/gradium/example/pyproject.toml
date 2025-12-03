@@ -1,0 +1,18 @@
+[project]
+name = "gradium-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents-plugins-gradium",
+  "vision-agents-plugins-getstream",
+  "vision-agents",
+  "aiohttp>=3.9.0",
+]
+
+[tool.uv.sources]
+"vision-agents-plugins-getstream" = {path = "../../../plugins/getstream", editable=true}
+"vision-agents-plugins-gradium" = {path = "../../../plugins/gradium", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}
+

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -21,6 +21,7 @@ members = [
     "vision-agents-plugins-fish",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
+    "vision-agents-plugins-gradium",
     "vision-agents-plugins-heygen",
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
@@ -1687,6 +1688,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e5/7b/adfd75544c415c487b33061fe7ae526165241c1ea133f9a9125a56b39fd8/googleapis_common_protos-1.72.0.tar.gz", hash = "sha256:e55a601c1b32b52d7a3e65f43563e2aa61bcd737998ee672ac9b951cd49319f5", size = 147433, upload-time = "2025-11-06T18:29:24.087Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/ab/09169d5a4612a5f92490806649ac8d41e3ec9129c636754575b3553f4ea4/googleapis_common_protos-1.72.0-py3-none-any.whl", hash = "sha256:4299c5a82d5ae1a9702ada957347726b167f9f8d1fc352477702a1e851ff4038", size = 297515, upload-time = "2025-11-06T18:29:13.14Z" },
+]
+
+[[package]]
+name = "gradium"
+version = "0.5.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/c3/dc48d1a0ef06961ea8e180599c407b1db961a86e706ccd3af071424e67eb/gradium-0.5.4.tar.gz", hash = "sha256:489bdce70b394dbf75da898182ad28d35ef4efd4f2731d1f3d753f13f51f30b2", size = 65087, upload-time = "2025-12-02T11:47:55.801Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/21/1c/52c87a6cbb426a7ec7478c6958869fc617702c497172316ae3545b724b6b/gradium-0.5.4-py3-none-any.whl", hash = "sha256:e99c54e2968cd23f4969571c1899effd3eb6a22ff3f07bf06f59ffb58e0b61aa", size = 16209, upload-time = "2025-12-02T11:47:54.754Z" },
 ]
 
 [[package]]
@@ -6492,6 +6506,33 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-gradium"
+version = "0.1.0"
+source = { editable = "plugins/gradium" }
+dependencies = [
+    { name = "gradium" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gradium", specifier = ">=0.5.4" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
