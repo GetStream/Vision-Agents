@@ -166,7 +166,7 @@ class OpenAILLM(LLM):
         elif hasattr(response, "__aiter__"):  # async stream
             # Streaming response
             stream_response = response
-            pending_tool_calls: List[NormalizedToolCallItem] = []
+            pending_tool_calls: list[NormalizedToolCallItem] = []
             seen: set[tuple[str, str]] = set()
 
             # Process streaming events and collect tool calls
