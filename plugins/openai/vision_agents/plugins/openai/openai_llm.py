@@ -275,7 +275,7 @@ class OpenAILLM(LLM):
 
     async def _send_tool_results_and_get_response(
         self,
-        tool_messages: List[Dict[str, Any]],
+        tool_messages: list[dict[str, Any]],
         seen: set[tuple[str, str]],
     ) -> tuple[
         Optional[LLMResponseEvent[OpenAIResponse]], List[NormalizedToolCallItem]
