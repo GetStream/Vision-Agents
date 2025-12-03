@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -29,6 +29,7 @@ members = [
     "vision-agents-plugins-openrouter",
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-smart-turn",
+    "vision-agents-plugins-twilio",
     "vision-agents-plugins-ultralytics",
     "vision-agents-plugins-vogent",
     "vision-agents-plugins-wizper",
@@ -185,6 +186,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ff/f7/ba5f0ba4ea8d8f3c32850912944532b933acbf0f3a75546b89269b9b7dde/aiohttp-3.13.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:cf00e5db968c3f67eccd2778574cf64d8b27d95b237770aa32400bd7a1ca4f6c", size = 1762334, upload-time = "2025-10-28T20:58:47.936Z" },
     { url = "https://files.pythonhosted.org/packages/7e/83/1a5a1856574588b1cad63609ea9ad75b32a8353ac995d830bf5da9357364/aiohttp-3.13.2-cp314-cp314t-win32.whl", hash = "sha256:d23b5fe492b0805a50d3371e8a728a9134d8de5447dce4c885f5587294750734", size = 464685, upload-time = "2025-10-28T20:58:50.642Z" },
     { url = "https://files.pythonhosted.org/packages/9f/4d/d22668674122c08f4d56972297c51a624e64b3ed1efaa40187607a7cb66e/aiohttp-3.13.2-cp314-cp314t-win_amd64.whl", hash = "sha256:ff0a7b0a82a7ab905cbda74006318d1b12e37c797eb1b0d4eb3e316cf47f658f", size = 498093, upload-time = "2025-10-28T20:58:52.782Z" },
+]
+
+[[package]]
+name = "aiohttp-retry"
+version = "2.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/61/ebda4d8e3d8cfa1fd3db0fb428db2dd7461d5742cea35178277ad180b033/aiohttp_retry-2.9.1.tar.gz", hash = "sha256:8eb75e904ed4ee5c2ec242fefe85bf04240f685391c4879d8f541d6028ff01f1", size = 13608, upload-time = "2024-11-06T10:44:54.574Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/99/84ba7273339d0f3dfa57901b846489d2e5c2cd731470167757f1935fffbd/aiohttp_retry-2.9.1-py3-none-any.whl", hash = "sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6be6dc54", size = 9981, upload-time = "2024-11-06T10:44:52.917Z" },
 ]
 
 [[package]]
@@ -5886,6 +5899,21 @@ wheels = [
 ]
 
 [[package]]
+name = "twilio"
+version = "9.8.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "aiohttp-retry" },
+    { name = "pyjwt" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/16/c3/1d923bef66f48c8d139177c61b315dc376e9b6a669d0f383e09bb2acad42/twilio-9.8.8.tar.gz", hash = "sha256:b4d35cf5f7eceb39eeec243f740a8909c7dcdc67b9fa0840ee3718a71836df91", size = 946667, upload-time = "2025-12-03T11:26:40.646Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/a1/803ac455b0d9d08da5621f87fd26b8eb788b7c4975e6e5974cb04344e5fa/twilio-9.8.8-py2.py3-none-any.whl", hash = "sha256:fcbfff12633995dc56f5396747c6f3b45fd63cbb3f616949367aa7676b1614d5", size = 1843262, upload-time = "2025-12-03T11:26:39.176Z" },
+]
+
+[[package]]
 name = "twine"
 version = "6.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6745,6 +6773,35 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.20.1" },
     { name = "transformers", specifier = ">=4.48.2" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-twilio"
+version = "0.1.0"
+source = { editable = "plugins/twilio" }
+dependencies = [
+    { name = "numpy" },
+    { name = "twilio" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "twilio", specifier = ">=9.0.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

@@ -27,6 +27,7 @@ vision-agents-plugins-vogent = { workspace = true }
 vision-agents-plugins-fast-whisper = { workspace = true }
 vision-agents-plugins-roboflow = { workspace = true }
 vision-agents-plugins-decart = { workspace = true }
+vision-agents-plugins-twilio = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -60,6 +61,7 @@ members = [
     "plugins/fast_whisper",
     "plugins/roboflow",
     "plugins/decart",
+    "plugins/twilio",
 ]
 exclude = [
 "**/__pycache__",

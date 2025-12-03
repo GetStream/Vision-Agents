@@ -19,6 +19,7 @@ from vision_agents.core.llm.events import (
 )
 
 from . import events
+from .file_search import FileSearchStore
 
 from vision_agents.core.processors import Processor
 
@@ -57,6 +58,7 @@ class GeminiLLM(LLM):
         thinking_level: Optional[ThinkingLevel] = None,
         media_resolution: Optional[MediaResolution] = None,
         config: Optional[GenerateContentConfig] = None,
+        file_search_store: Optional[FileSearchStore] = None,
         **kwargs,
     ):
         """
@@ -71,10 +73,13 @@ class GeminiLLM(LLM):
                 Cannot be used with legacy thinking_budget parameter.
             media_resolution: Optional media resolution for multimodal processing. Use
                 MediaResolution.MEDIA_RESOLUTION_LOW, MEDIA_RESOLUTION_MEDIUM, or
-                MEDIA_RESOLUTION_HIGH. Recommended: "high" for images, "medium" for PDFs,
+                MediaResolution.MEDIA_RESOLUTION_HIGH. Recommended: "high" for images, "medium" for PDFs,
                 "low"/"medium" for general video, "high" for text-heavy video.
             config: Optional[GenerateContentConfig] to use as base. Any kwargs will be passed
                 to GenerateContentConfig constructor if config is not provided.
+            file_search_store: Optional FileSearchStore for RAG functionality. When provided,
+                the model will use the indexed documents to answer questions.
+                See: https://ai.google.dev/gemini-api/docs/file-search
             **kwargs: Additional arguments passed to GenerateContentConfig constructor.
         """
         super().__init__()
@@ -82,6 +87,7 @@ class GeminiLLM(LLM):
         self.model = model
         self.thinking_level = thinking_level
         self.media_resolution = media_resolution
+        self.file_search_store = file_search_store
 
         if config is not None:
             self._base_config: Optional[GenerateContentConfig] = config
@@ -103,7 +109,7 @@ class GeminiLLM(LLM):
         base_config: Optional[GenerateContentConfig] = None,
     ) -> GenerateContentConfig:
         """
-        Build GenerateContentConfig with Gemini 3 features.
+        Build GenerateContentConfig with Gemini 3 features and file search.
 
         Args:
             system_instruction: Optional system instruction to include. If not provided,
@@ -111,7 +117,7 @@ class GeminiLLM(LLM):
             base_config: Optional base config to extend (takes precedence over self._base_config)
 
         Returns:
-            GenerateContentConfig with thinking_level and media_resolution if set
+            GenerateContentConfig with thinking_level, media_resolution, and file_search if set
         """
         if base_config is not None:
             config = base_config
@@ -135,6 +141,15 @@ class GeminiLLM(LLM):
 
         if self.media_resolution:
             config.media_resolution = self.media_resolution
+
+        # Add file search tool if store is configured
+        if self.file_search_store and self.file_search_store.is_created:
+            file_search_tool = self.file_search_store.get_tool()
+            if config.tools is None:
+                config.tools = [file_search_tool]
+            else:
+                # Append to existing tools
+                config.tools = list(config.tools) + [file_search_tool]
 
         return config
 
