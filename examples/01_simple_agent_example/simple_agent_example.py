@@ -33,9 +33,7 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(name="My happy AI friend", id="agent"),
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        processors=[
-            YOLOPoseProcessor()
-        ],  # processors can fetch extra data, check images/audio data or transform video
+        processors=[],  # processors can fetch extra data, check images/audio data or transform video
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(

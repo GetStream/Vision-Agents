@@ -3,7 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional, cast
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from openai import AsyncOpenAI, AsyncStream
+from openai import APIError, APIConnectionError, AsyncOpenAI, AsyncStream, RateLimitError
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core.llm.events import (
@@ -502,7 +502,7 @@ class ChatCompletionsLLM(LLM):
 
             try:
                 follow_up = await self._client.chat.completions.create(**request_kwargs)  # type: ignore[arg-type]
-            except Exception as e:
+            except (APIError, APIConnectionError, RateLimitError) as e:
                 logger.exception("Failed to get follow-up response")
                 self.events.send(
                     events.LLMErrorEvent(
