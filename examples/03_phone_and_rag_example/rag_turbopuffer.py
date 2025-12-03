@@ -30,12 +30,9 @@ import os
 from pathlib import Path
 from typing import Optional
 
-import turbopuffer as tpuf
+from turbopuffer import AsyncTurbopuffer
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-# Configure TurboPuffer API key
-tpuf.api_key = os.environ.get("TURBO_PUFFER_KEY")
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +52,7 @@ class TurboPufferRAG:
         embedding_model: str = "text-embedding-3-small",
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
+        region: str = "gcp-us-central1",
     ):
         """
         Initialize the TurboPuffer RAG.
@@ -64,9 +62,15 @@ class TurboPufferRAG:
             embedding_model: OpenAI embedding model to use.
             chunk_size: Size of text chunks for splitting documents.
             chunk_overlap: Overlap between chunks for context continuity.
+            region: TurboPuffer region (default "gcp-us-central1").
         """
-        self.namespace = namespace
-        self._ns: Optional[tpuf.Namespace] = None
+        self._namespace_name = namespace
+        
+        # Initialize async TurboPuffer client (v0.5+ API)
+        self._client = AsyncTurbopuffer(
+            api_key=os.environ.get("TURBO_PUFFER_KEY"),
+            region=region,
+        )
         
         # Initialize embeddings
         self._embeddings = OpenAIEmbeddings(model=embedding_model)
@@ -79,13 +83,6 @@ class TurboPufferRAG:
         )
         
         self._indexed_files: list[str] = []
-
-    @property
-    def ns(self) -> tpuf.Namespace:
-        """Get or create the TurboPuffer namespace."""
-        if self._ns is None:
-            self._ns = tpuf.Namespace(self.namespace)
-        return self._ns
 
     async def index_file(self, file_path: str | Path, source_name: Optional[str] = None) -> int:
         """
@@ -111,27 +108,29 @@ class TurboPufferRAG:
             logger.warning(f"No chunks generated from {file_path}")
             return 0
         
-        # Generate embeddings
+        # Generate embeddings (run in executor since it's sync)
         loop = asyncio.get_event_loop()
         embeddings = await loop.run_in_executor(
             None, self._embeddings.embed_documents, chunks
         )
         
-        # Prepare vectors for TurboPuffer
-        vectors = []
+        # Prepare rows for TurboPuffer (v0.5+ flattened attribute format)
+        rows = []
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            vectors.append({
+            rows.append({
                 "id": f"{source_name}_{i}",
                 "vector": embedding,
-                "attributes": {
-                    "text": chunk,
-                    "source": source_name,
-                    "chunk_index": i,
-                }
+                "text": chunk,
+                "source": source_name,
+                "chunk_index": i,
             })
         
-        # Upsert to TurboPuffer
-        await loop.run_in_executor(None, lambda: self.ns.upsert(vectors))
+        # Upsert to TurboPuffer using namespace.write()
+        ns = self._client.namespace(self._namespace_name)
+        await ns.write(
+            upsert_rows=rows,
+            distance_metric="cosine_distance",
+        )
         
         self._indexed_files.append(source_name)
         logger.info(f"Indexed {len(chunks)} chunks from {source_name}")
@@ -189,46 +188,49 @@ class TurboPufferRAG:
         Returns:
             Formatted string with search results.
         """
-        # Generate query embedding
+        # Generate query embedding (run in executor since it's sync)
         loop = asyncio.get_event_loop()
         query_embedding = await loop.run_in_executor(
             None, self._embeddings.embed_query, query
         )
         
-        # Search TurboPuffer
-        results = await loop.run_in_executor(
-            None,
-            lambda: self.ns.query(
-                vector=query_embedding,
-                top_k=top_k,
-                include_attributes=["text", "source"],
-            )
+        # Search TurboPuffer using async client
+        ns = self._client.namespace(self._namespace_name)
+        results = await ns.query(
+            rank_by=("vector", "ANN", query_embedding),
+            top_k=top_k,
+            include_attributes=["text", "source"],
         )
         
-        if not results:
+        if not results.rows:
             return "No relevant information found in the knowledge base."
         
-        # Format results
+        # Format results (v0.5+ - rows have attributes as properties)
         formatted_results = []
-        for i, result in enumerate(results, 1):
-            source = result.attributes.get("source", "unknown")
-            text = result.attributes.get("text", "")
+        for i, row in enumerate(results.rows, 1):
+            source = row.source if hasattr(row, "source") else "unknown"
+            text = row.text if hasattr(row, "text") else ""
             formatted_results.append(f"[{i}] From {source}:\n{text}")
         
         return "\n\n".join(formatted_results)
 
     async def clear(self) -> None:
         """Clear all vectors from the namespace."""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self.ns.delete_all)
+        ns = self._client.namespace(self._namespace_name)
+        await ns.delete_all()
         self._indexed_files = []
-        logger.info(f"Cleared namespace: {self.namespace}")
+        logger.info(f"Cleared namespace: {self._namespace_name}")
+
+    async def close(self) -> None:
+        """Close the TurboPuffer client."""
+        await self._client.close()
 
 
 async def create_rag(
     namespace: str,
     knowledge_dir: str | Path,
     extensions: Optional[list[str]] = None,
+    region: str = "gcp-us-central1",
 ) -> TurboPufferRAG:
     """
     Convenience function to create and initialize a TurboPuffer RAG.
@@ -237,6 +239,7 @@ async def create_rag(
         namespace: TurboPuffer namespace name.
         knowledge_dir: Directory containing knowledge files.
         extensions: File extensions to include.
+        region: TurboPuffer region.
         
     Returns:
         Initialized TurboPufferRAG with files indexed.
@@ -251,7 +254,6 @@ async def create_rag(
         async def search_knowledge(query: str) -> str:
             return await rag.search(query)
     """
-    rag = TurboPufferRAG(namespace=namespace)
+    rag = TurboPufferRAG(namespace=namespace, region=region)
     await rag.index_directory(knowledge_dir, extensions=extensions)
     return rag
-
