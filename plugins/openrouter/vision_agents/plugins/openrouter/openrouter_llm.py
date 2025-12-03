@@ -125,6 +125,116 @@ class OpenRouterLLM(OpenAILLM):
                 self._conversation.messages.append(msg)
 
     # =========================================================================
+    # Responses API tool handling (for OpenAI models)
+    # =========================================================================
+
+    async def _handle_tool_calls(
+        self,
+        tool_calls: List[NormalizedToolCallItem],
+        original_kwargs: Dict[str, Any],
+    ) -> LLMResponseEvent:
+        """Handle tool calls for Responses API without server-side conversation.
+
+        Overrides parent to work without openai_conversation by manually
+        building the conversation context for follow-up requests.
+        """
+        from openai.types.responses import Response as OpenAIResponse
+
+        max_rounds = 3
+        current_tool_calls = tool_calls
+        seen: set[tuple] = set()
+        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
+
+        # Build conversation context from original input (ensure proper format)
+        raw_input = original_kwargs.get("input", [])
+        if isinstance(raw_input, str):
+            context = [{"role": "user", "content": raw_input, "type": "message"}]
+        elif isinstance(raw_input, list):
+            context = []
+            for item in raw_input:
+                if isinstance(item, str):
+                    context.append({"role": "user", "content": item, "type": "message"})
+                elif isinstance(item, dict):
+                    context.append(item)
+        else:
+            context = [{"role": "user", "content": str(raw_input), "type": "message"}]
+
+        for round_num in range(max_rounds):
+            triples, seen = await self._dedup_and_execute(
+                current_tool_calls, max_concurrency=8, timeout_s=30, seen=seen
+            )
+            if not triples:
+                break
+
+            # Build function_call items (what model requested) and outputs
+            function_calls, tool_outputs = [], []
+            for tc, res, err in triples:
+                cid = tc.get("id")
+                if not cid:
+                    continue
+                function_calls.append(
+                    {
+                        "type": "function_call",
+                        "call_id": cid,
+                        "name": tc["name"],
+                        "arguments": json.dumps(tc.get("arguments_json", {})),
+                    }
+                )
+                tool_outputs.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": cid,
+                        "output": self._sanitize_tool_output(
+                            err if err is not None else res
+                        ),
+                    }
+                )
+
+            if not tool_outputs:
+                return llm_response
+
+            # Make follow-up request: context + function_calls + outputs
+            follow_up_kwargs = {
+                "model": original_kwargs.get("model", self.model),
+                "input": context + function_calls + tool_outputs,
+                "stream": True,
+            }
+            if "tools" in original_kwargs:
+                follow_up_kwargs["tools"] = original_kwargs["tools"]
+
+            response = await self.client.responses.create(**follow_up_kwargs)
+
+            # Process response
+            next_tool_calls: List[NormalizedToolCallItem] = []
+            if isinstance(response, OpenAIResponse):
+                llm_response = LLMResponseEvent(response, response.output_text)
+                next_tool_calls = self._extract_tool_calls_from_response(response)
+            else:
+                async for event in response:
+                    result = self._standardize_and_emit_event(event)
+                    if result:
+                        llm_response = result
+                    if getattr(event, "type", "") == "response.completed":
+                        for c in self._extract_tool_calls_from_response(event.response):
+                            key = (
+                                c["id"],
+                                c["name"],
+                                json.dumps(c["arguments_json"], sort_keys=True),
+                            )
+                            if key not in seen:
+                                next_tool_calls.append(c)
+                                seen.add(key)
+
+            if next_tool_calls and round_num < max_rounds - 1:
+                current_tool_calls = next_tool_calls
+                context = context + function_calls + tool_outputs
+                continue
+
+            return llm_response
+
+        return llm_response
+
+    # =========================================================================
     # Chat Completions API path (for non-OpenAI models)
     # =========================================================================
 

@@ -37,9 +37,9 @@ async def create_agent(**kwargs) -> Agent:
     # - openai/* models use Responses API
     # - All other models (google/*, anthropic/*, etc.) use Chat Completions API
     #
-    # NOTE: openrouter/auto dynamically routes to different models. If routed to a
-    # model without tool support, the plugin falls back to Gemini/Claude/GPT-4o-mini.
-    model = "openrouter/auto"
+    # For MCP/GitHub integration, Claude is recommended as it handles
+    # multi-step tool reasoning well (e.g., call get_me first, then use the result)
+    model = "openai/gpt-4o"
 
     llm = openrouter.LLM(model=model)
 
