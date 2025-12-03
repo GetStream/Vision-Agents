@@ -19,12 +19,17 @@ This example shows you how to build a basic video AI agent using [Vision Agents]
 
 ## Installation
 
-1. Install dependencies using uv:
+1. Go to the example's directory
+    ```bash
+    cd examples/01_simple_agent_example
+    ```
+
+2. Install dependencies using uv:
    ```bash
    uv sync
    ```
 
-2. Create a `.env` file with your API keys:
+3. Create a `.env` file with your API keys:
    ```
    OPENAI_API_KEY=your_openai_key
    ELEVENLABS_API_KEY=your_11labs_key
