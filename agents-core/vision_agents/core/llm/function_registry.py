@@ -48,7 +48,7 @@ class FunctionRegistry:
     """Registry for managing available functions that can be called by LLMs."""
 
     def __init__(self):
-        self._functions: Dict[str, FunctionDefinition] = {}
+        self._functions: Dict[str, FunctionDefinition | _ExplicitSchemaFunction] = {}
 
     def register(
         self,
@@ -129,7 +129,9 @@ class FunctionRegistry:
 
         return decorator
 
-    def get_function(self, name: str) -> Optional[FunctionDefinition]:
+    def get_function(
+        self, name: str
+    ) -> Optional[FunctionDefinition | _ExplicitSchemaFunction]:
         """Get a function definition by name."""
         return self._functions.get(name)
 

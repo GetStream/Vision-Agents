@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.core.mcp import MCPServerRemote
+from vision_agents.core.mcp import MCPBaseServer, MCPServerRemote
 from vision_agents.plugins import (
     openrouter,
     getstream,
@@ -60,7 +60,7 @@ async def create_agent(**kwargs) -> Agent:
         return a + b
 
     # Optional: Set up GitHub MCP server if GITHUB_PAT is available
-    mcp_servers = []
+    mcp_servers: list[MCPBaseServer] = []
     github_pat = os.getenv("GITHUB_PAT")
     if github_pat:
         logger.info("GitHub PAT found, enabling GitHub MCP integration")
