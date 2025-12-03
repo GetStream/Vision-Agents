@@ -41,6 +41,9 @@ class CloudDetectionProcessor(
     which can be increased by contacting the Moondream team. If you are deploying
     to your own infrastructure, consider using LocalDetectionProcessor instead.
 
+    Detection runs asynchronously in the background while frames pass through at
+    full FPS. The last known detection results are overlaid on each frame.
+
     Args:
         api_key: API key for Moondream Cloud API. If not provided, will attempt to read
                 from MOONDREAM_API_KEY environment variable.
@@ -49,6 +52,8 @@ class CloudDetectionProcessor(
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
         fps: Frame processing rate (default: 30)
+        detection_fps: Rate at which to send frames for detection (default: 2).
+                      Lower values reduce API calls while maintaining smooth video.
         interval: Processing interval in seconds (default: 0)
         max_workers: Number of worker threads for CPU-intensive operations (default: 10)
     """
@@ -61,6 +66,7 @@ class CloudDetectionProcessor(
         conf_threshold: float = 0.3,
         detect_objects: Union[str, List[str]] = "person",
         fps: int = 30,
+        detection_fps: float = 5.0,
         interval: int = 0,
         max_workers: int = 10,
     ):
@@ -69,6 +75,7 @@ class CloudDetectionProcessor(
         self.api_key = api_key or os.getenv("MOONDREAM_API_KEY")
         self.conf_threshold = conf_threshold
         self.fps = fps
+        self.detection_fps = detection_fps
         self.max_workers = max_workers
         self._shutdown = False
 
@@ -76,6 +83,11 @@ class CloudDetectionProcessor(
         self._last_results: Dict[str, Any] = {}
         self._last_frame_time: Optional[float] = None
         self._last_frame_pil: Optional[Image.Image] = None
+
+        # Async detection state
+        self._detection_in_progress = False
+        self._last_detection_time: float = 0.0
+        self._cached_results: Dict[str, Any] = {"detections": []}
 
         # Font configuration constants for drawing efficiency
         self._font = cv2.FONT_HERSHEY_SIMPLEX
@@ -110,6 +122,7 @@ class CloudDetectionProcessor(
 
         logger.info("🌙 Moondream Processor initialized")
         logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
+        logger.info(f"📹 Video FPS: {fps}, Detection FPS: {detection_fps}")
 
     async def process_video(
         self,
@@ -213,20 +226,33 @@ class CloudDetectionProcessor(
         return all_detections
 
     async def _process_and_add_frame(self, frame: av.VideoFrame):
+        """Process frame: pass through immediately, run detection asynchronously."""
         try:
             frame_array = frame.to_ndarray(format="rgb24")
+            now = asyncio.get_event_loop().time()
 
-            results = await self._run_inference(frame_array)
+            # Check if we should start a new detection
+            detection_interval = 1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
+            should_detect = (
+                not self._detection_in_progress
+                and (now - self._last_detection_time) >= detection_interval
+            )
 
-            self._last_results = results
-            self._last_frame_time = asyncio.get_event_loop().time()
+            if should_detect:
+                # Start detection in background (don't await)
+                self._detection_in_progress = True
+                self._last_detection_time = now
+                asyncio.create_task(self._run_detection_background(frame_array.copy()))
+
+            # Always use cached results for annotation (don't wait for detection)
+            self._last_frame_time = now
             self._last_frame_pil = Image.fromarray(frame_array)
 
-            # Annotate frame with detections
-            if results.get("detections"):
+            # Annotate frame with cached detections
+            if self._cached_results.get("detections"):
                 frame_array = annotate_detections(
                     frame_array,
-                    results,
+                    self._cached_results,
                     font=self._font,
                     font_scale=self._font_scale,
                     font_thickness=self._font_thickness,
@@ -234,7 +260,7 @@ class CloudDetectionProcessor(
                     text_color=self._text_color,
                 )
 
-            # Convert back to av.VideoFrame and publish
+            # Convert back to av.VideoFrame and publish immediately
             processed_frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
             await self._video_track.add_frame(processed_frame)
 
@@ -242,6 +268,18 @@ class CloudDetectionProcessor(
             logger.exception(f"❌ Frame processing failed: {e}")
             # Pass through original frame on error
             await self._video_track.add_frame(frame)
+
+    async def _run_detection_background(self, frame_array: np.ndarray):
+        """Run detection in background and update cached results."""
+        try:
+            results = await self._run_inference(frame_array)
+            self._cached_results = results
+            self._last_results = results
+            logger.debug(f"🔍 Detection complete: {len(results.get('detections', []))} objects")
+        except Exception as e:
+            logger.warning(f"⚠️ Background detection failed: {e}")
+        finally:
+            self._detection_in_progress = False
 
     def close(self):
         """Clean up resources."""
