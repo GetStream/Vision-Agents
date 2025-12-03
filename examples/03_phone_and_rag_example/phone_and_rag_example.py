@@ -1,6 +1,9 @@
+import asyncio
 import base64
 import json
 import logging
+import os
+import uuid
 
 import uvicorn
 from dotenv import load_dotenv
@@ -11,13 +14,17 @@ from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
-from twilio.twiml.voice_response import VoiceResponse, Start
+from twilio.twiml.voice_response import VoiceResponse, Connect
+from twilio.rest import Client
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, gemini
 
-from .utils import mulaw_to_pcm, pcm_to_mulaw, TWILIO_SAMPLE_RATE
+try:
+    from .utils import mulaw_to_pcm, pcm_to_mulaw, TWILIO_SAMPLE_RATE
+except ImportError:
+    from utils import mulaw_to_pcm, pcm_to_mulaw, TWILIO_SAMPLE_RATE
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -32,146 +39,197 @@ Flow
 
 Notes, twilio uses ulaw audio encoding at 8khz
 
-TODO/ simplification
-* Cleanup the ulaw audio utils
-* Create some sort of session object to combine the Twilio Connection, Call object (or is call alone enough?)
+TODO
+- Call identifiers/ parsing the twilio data
+- Fix ulaw processing
+- There is some delay... Why? (think it selects frankfurt somehow...)
+- pass session id from voice to media
+- maybe start stream call earlier
 
+Outbound example
 """
 
 load_dotenv()
 
-NGROK_URL = "dc29ca3d3d70.ngrok-free.app"
+NGROK_URL = os.environ['NGROK_URL']
 
 app = FastAPI()
+
+
+class TwilioMediaStream:
+    """
+    Manages a Twilio Media Stream WebSocket connection.
+    
+    Handles:
+    - Audio track for incoming audio
+    - WebSocket connection to Twilio
+    - Parsing Twilio WebSocket messages
+    - Sending audio back to Twilio
+    """
+    
+    def __init__(self, websocket: WebSocket):
+        self.websocket = websocket
+        self.stream_sid: str | None = None
+        self.audio_track = AudioStreamTrack(
+            sample_rate=TWILIO_SAMPLE_RATE,
+            channels=1,
+            format="s16",
+        )
+        self._connected = False
+    
+    async def accept(self):
+        """Accept the WebSocket connection."""
+        await self.websocket.accept()
+        self._connected = True
+        logger.info("TwilioMediaStream: WebSocket connection accepted")
+    
+    async def run(self):
+        """
+        Process incoming Twilio WebSocket messages.
+        
+        Parses messages and writes audio to the audio track.
+        Returns when the stream ends.
+        """
+        has_seen_media = False
+        message_count = 0
+        
+        try:
+            while True:
+                message = await self.websocket.receive_text()
+                data = json.loads(message)
+                
+                match data["event"]:
+                    case "connected":
+                        logger.info(f"TwilioMediaStream: Connected: {data}")
+                    case "start":
+                        self.stream_sid = data["streamSid"]
+                        logger.info(f"TwilioMediaStream: Stream started, streamSid={self.stream_sid}")
+                    case "media":
+                        # Decode base64 mulaw audio
+                        payload = data["media"]["payload"]
+                        mulaw_bytes = base64.b64decode(payload)
+                        
+                        # Convert to PCM and write to audio track
+                        pcm = mulaw_to_pcm(mulaw_bytes)
+                        await self.audio_track.write(pcm)
+                        
+                        if not has_seen_media:
+                            logger.info(f"TwilioMediaStream: Receiving audio: {len(mulaw_bytes)} bytes/chunk")
+                            has_seen_media = True
+                    case "stop":
+                        logger.info("TwilioMediaStream: Stream stopped")
+                        break
+                
+                message_count += 1
+        except Exception as e:
+            logger.info(f"TwilioMediaStream: WebSocket closed: {e}")
+        finally:
+            self._connected = False
+        
+        logger.info(f"TwilioMediaStream: Connection closed. Received {message_count} messages")
+    
+    async def send_audio(self, pcm: PcmData) -> None:
+        """Send PCM audio back to Twilio as mulaw."""
+        if not self._connected or self.stream_sid is None:
+            return
+        
+        # Convert PCM to mulaw and base64 encode
+        mulaw_bytes = pcm_to_mulaw(pcm)
+        payload = base64.b64encode(mulaw_bytes).decode("ascii")
+        
+        # Send media message per Twilio docs
+        message = {
+            "event": "media",
+            "streamSid": self.stream_sid,
+            "media": {
+                "payload": payload
+            }
+        }
+        
+        await self.websocket.send_json(message)
+    
+    @property
+    def is_connected(self) -> bool:
+        """Check if the WebSocket is still connected."""
+        return self._connected
 
 
 @app.post("/twilio/voice")
 async def twilio_voice_webhook(request: Request):
     """Handle incoming Twilio voice calls and start media streaming."""
     response = VoiceResponse()
-    response.say("Hi! Thanks for calling. I'm now listening.", voice="alice")
 
-    # Start streaming audio to our WebSocket endpoint
-    start = Start()
-    start.stream(url=f"wss://{NGROK_URL}/media")
-    response.append(start)
+    # Use <Connect><Stream> to keep the call open for the duration of the stream
+    # Unlike <Start><Stream>, <Connect> blocks until the stream ends
+    url = f"wss://{NGROK_URL}/twilio/media"
+    connect = Connect()
+    connect.stream(url=url)
+    logger.info(f"Connecting to media stream on {url}")
+    response.append(connect)
 
-    # Keep the call alive with a pause
-    response.pause(length=60)
+    twiml = str(response)
+    logger.info(f"TWIML {twiml}")
 
-    return Response(content=str(response), media_type="application/xml")
+    return Response(content=twiml, media_type="application/xml")
 
 
 @app.websocket("/twilio/media")
 async def media_stream(websocket: WebSocket):
-    """Receive real-time audio stream from Twilio and write to QueuedAudioTrack."""
-    global audio_track, twilio_websocket, twilio_stream_sid
+    """Receive real-time audio stream from Twilio."""
+    
+    # Create the Twilio media stream connection
+    twilio_stream = TwilioMediaStream(websocket)
+    await twilio_stream.accept()
+    
+    # Create an agent
+    agent = await create_agent()
+    
+    # Create the agent's user first (required for server-side auth)
+    await agent.create_user()
+    
+    # Create the call on Stream
+    call = await agent.create_call("default", str(uuid.uuid4()))
+    
+    # Join the call with the Twilio stream
+    await join_call(agent, call, twilio_stream)
 
-    await websocket.accept()
-    twilio_websocket = websocket
-    logger.info("WebSocket connection accepted")
 
-    # Create audio track for this call
-    audio_track = AudioStreamTrack(
-        sample_rate=TWILIO_SAMPLE_RATE,
-        channels=1,
-        format="s16",
+def outbound_example():
+    account_sid = os.environ["TWILIO_ACCOUNT_SID"]
+    auth_token = os.environ["TWILIO_AUTH_TOKEN"]
+    client = Client(account_sid, auth_token)
+    # TODO: replace with media stream
+    call = client.calls.create(
+        twiml="<Response><Say>Ahoy, World</Say></Response>",
+        to="+14155551212",
+        from_="+172505482175",
     )
-
-    has_seen_media = False
-    message_count = 0
-
-    try:
-        while True:
-            message = await websocket.receive_text()
-            data = json.loads(message)
-
-            match data["event"]:
-                case "connected":
-                    logger.info(f"Connected: {data}")
-                case "start":
-                    # Store the stream SID for sending audio back
-                    twilio_stream_sid = data["streamSid"]
-                    logger.info(f"Stream started, streamSid={twilio_stream_sid}")
-                case "media":
-                    # Decode base64 mulaw audio
-                    payload = data["media"]["payload"]
-                    mulaw_bytes = base64.b64decode(payload)
-
-                    # Convert to PCM and write to audio track
-                    pcm = mulaw_to_pcm(mulaw_bytes)
-                    await audio_track.write(pcm)
-
-                    if not has_seen_media:
-                        logger.info(f"Receiving audio: {len(mulaw_bytes)} bytes/chunk, writing to audio track")
-                        has_seen_media = True
-                case "stop":
-                    logger.info("Stream stopped")
-                    break
-
-            message_count += 1
-    except Exception as e:
-        logger.info(f"WebSocket closed: {e}")
-    finally:
-        twilio_websocket = None
-        twilio_stream_sid = None
-
-    logger.info(f"Connection closed. Received {message_count} messages, wrote to audio track")
-
-
-# Audio track to hold incoming Twilio audio
-audio_track: AudioStreamTrack | None = None
-
-# Active Twilio websocket connection for sending audio back
-twilio_websocket: WebSocket | None = None
-twilio_stream_sid: str | None = None
-
-
-async def send_audio_to_twilio(pcm: PcmData) -> None:
-    """Send PCM audio back to Twilio as mulaw."""
-    global twilio_websocket, twilio_stream_sid
-    
-    if twilio_websocket is None or twilio_stream_sid is None:
-        return
-    
-    # Convert PCM to mulaw and base64 encode
-    mulaw_bytes = pcm_to_mulaw(pcm)
-    payload = base64.b64encode(mulaw_bytes).decode("ascii")
-    
-    # Send media message per Twilio docs
-    message = {
-        "event": "media",
-        "streamSid": twilio_stream_sid,
-        "media": {
-            "payload": payload
-        }
-    }
-    
-    await twilio_websocket.send_json(message)
-
-
 
 
 
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),  # use stream for edge video transport
-        agent_user=User(name="AI"),
-        instructions="Assist the user, short answers only please",
+        agent_user=User(id="ai-agent", name="AI"),
+        instructions="You're a sales person, explaining to customers why they should use Stream's chat, video, feed and moderation products. As a voice agent use short replies",
         llm=gemini.Realtime(),  # Share video with gemini
     )
     return agent
 
 
-async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    call = await agent.create_call(call_type, call_id)
-
+async def join_call(agent: Agent, call, twilio_stream: TwilioMediaStream) -> None:
     """
-    TODO:
-    - when someone speaks on the phone. they should join the call as a participant..
+    Join a call and bridge audio between Twilio and Stream.
     
+    Args:
+        agent: The AI agent
+        call: The Stream call object
+        twilio_stream: The Twilio media stream connection
     """
-    user = await agent.edge.create_user(User(name="phone call from123"))
+    # Create a user for the phone caller
+    user = User(name="phone caller", id="phonenumber")
+    full_user = await agent.edge.create_user(user=user)
+    
     subscription_config = SubscriptionConfig(
         default=TrackSubscriptionConfig(
             track_types=[
@@ -180,27 +238,35 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         )
     )
 
-    # phone connection -> publish to the call
+    # Phone connection -> publish to the call
     connection = await rtc.join(
-        call, user, subscription_config=subscription_config
+        call, user.id, subscription_config=subscription_config
     )
-    await connection.add_tracks(audio=audio_track, video=None)
+
 
     @connection.on("audio")
     async def on_audio_received(pcm: PcmData):
         # Forward audio from the call to Twilio
-        await send_audio_to_twilio(pcm)
+        await twilio_stream.send_audio(pcm)
 
+    await (
+        connection.__aenter__()
+    )
+    await asyncio.sleep(1.0)
+    await connection.add_tracks(audio=twilio_stream.audio_track, video=None)
 
-    # join the call and open a demo env
+    logger.info("phone caller joined the call, agent is joining next")
+
+    # Join the call with the agent
     with await agent.join(call):
         await agent.llm.simple_response(
             text="Say hi. After the user does their golf swing offer helpful feedback."
         )
-        await agent.finish()  # run till the call ends
+        
+        # Run the Twilio stream (blocks until stream ends)
+        await twilio_stream.run()
 
 
 if __name__ == "__main__":
     # Run the FastAPI server to receive Twilio webhooks
     uvicorn.run(app, host="localhost", port=8000)
-    # cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
