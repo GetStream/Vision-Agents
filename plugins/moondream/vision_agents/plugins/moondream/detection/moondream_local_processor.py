@@ -53,7 +53,6 @@ class LocalDetectionProcessor(
         detect_objects: Object(s) to detect. Moondream uses zero-shot detection,
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
-        fps: Frame processing rate (default: 30)
         detection_fps: Rate at which to run detection (default: 10.0).
                       Lower values reduce CPU/GPU load while maintaining smooth video.
         interval: Processing interval in seconds (default: 0)
@@ -71,7 +70,6 @@ class LocalDetectionProcessor(
         self,
         conf_threshold: float = 0.3,
         detect_objects: Union[str, List[str]] = "person",
-        fps: int = 30,
         detection_fps: float = 10.0,
         interval: int = 0,
         max_workers: int = 10,
@@ -87,7 +85,6 @@ class LocalDetectionProcessor(
             self.options = options
         self.model_name = model_name
         self.conf_threshold = conf_threshold
-        self.fps = fps
         self.detection_fps = detection_fps
         self.max_workers = max_workers
         self._shutdown = False
@@ -135,7 +132,7 @@ class LocalDetectionProcessor(
         logger.info("🌙 Moondream Local Processor initialized")
         logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
         logger.info(f"🔧 Device: {self.device}")
-        logger.info(f"📹 Video FPS: {fps}, Detection FPS: {detection_fps}")
+        logger.info(f"📹 Detection FPS: {detection_fps}")
 
     @property
     def device(self) -> str:
@@ -241,18 +238,17 @@ class LocalDetectionProcessor(
             await self._prepare_moondream()
 
         if shared_forwarder is not None:
+            # Use the shared forwarder at its native FPS
             self._video_forwarder = shared_forwarder
-            logger.info(
-                f"🎥 Moondream subscribing to shared VideoForwarder at {self.fps} FPS"
-            )
+            logger.info("🎥 Moondream subscribing to shared VideoForwarder")
             self._video_forwarder.add_frame_handler(
-                self._process_and_add_frame, fps=float(self.fps), name="moondream_local"
+                self._process_and_add_frame, name="moondream_local"
             )
         else:
+            # Create our own VideoForwarder at default FPS
             self._video_forwarder = VideoForwarder(
                 incoming_track,  # type: ignore[arg-type]
-                max_buffer=30,  # 1 second at 30fps
-                fps=self.fps,
+                max_buffer=30,
                 name="moondream_local_forwarder",
             )
 
@@ -322,7 +318,9 @@ class LocalDetectionProcessor(
             now = asyncio.get_event_loop().time()
 
             # Check if we should start a new detection
-            detection_interval = 1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
+            detection_interval = (
+                1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
+            )
             should_detect = (
                 not self._detection_in_progress
                 and (now - self._last_detection_time) >= detection_interval
@@ -364,7 +362,9 @@ class LocalDetectionProcessor(
             results = await self._run_inference(frame_array)
             self._cached_results = results
             self._last_results = results
-            logger.debug(f"🔍 Detection complete: {len(results.get('detections', []))} objects")
+            logger.debug(
+                f"🔍 Detection complete: {len(results.get('detections', []))} objects"
+            )
         except Exception as e:
             logger.warning(f"⚠️ Background detection failed: {e}")
         finally:

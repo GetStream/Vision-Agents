@@ -56,38 +56,21 @@ _RFDETR_MODELS: dict[str, Type[RFDETR]] = {
 class RoboflowLocalDetectionProcessor(
     AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
 ):
-    """
-    A VideoProcessor for real-time object detection with Roboflow's RF-DETR models.
-    This processor downloads pre-trained models from Roboflow and runs them locally.
-    Use it to detect and label objects on the video frames and react on them.
-    On each detection, the Processor emits `DetectionCompletedEvent` with the data about detected objects.
+    """Real-time object detection using Roboflow's RF-DETR models running locally.
 
-    Example usage:
-
-        ```
-        from vision_agents.core import Agent
-        from vision_agents.plugins import roboflow
-
-        processor = roboflow.RoboflowLocalDetectionProcessor(...)
-
-        agent = Agent(processors=[processor], ...)
-
-        @agent.events.subscribe
-        async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
-            # React on detected objects here
-            ...
-
-        ```
+    Detection runs asynchronously in the background while frames pass through at
+    full FPS. The last known detection results are overlaid on each frame.
 
     Args:
         model_id: identifier of the model to be used.
-            Available models are: "rfdetr-base", "rfdetr-large", "rfdetr-nano", "rfdetr-small", "rfdetr-medium", "rfdetr-seg-preview".
+            Available models are: "rfdetr-base", "rfdetr-large", "rfdetr-nano",
+            "rfdetr-small", "rfdetr-medium", "rfdetr-seg-preview".
             Default - "rfdetr-seg-preview".
         conf_threshold: Confidence threshold for detections (0 - 1.0). Default - 0.5.
-        fps: Frame processing rate. Default - 10.
+        detection_fps: Rate at which to run detection (default: 10.0).
+                      Lower values reduce CPU/GPU load while maintaining smooth video.
         classes: optional list of class names to be detected.
             Example: ["person", "sports ball"]
-            Verify that the classes a supported by the given model.
             Default - None (all classes are detected).
         annotate: if True, annotate the detected objects with boxes and labels.
             Default - True.
@@ -95,7 +78,24 @@ class RoboflowLocalDetectionProcessor(
             Effective only when annotate=True.
             Default - 0.0 (no dimming).
         model: optional instance of `RFDETRModel` to be used for detections.
-            Use it provide a model of choosing with custom parameters.
+
+    Example:
+        ```python
+        from vision_agents.core import Agent
+        from vision_agents.plugins import roboflow
+
+        processor = roboflow.RoboflowLocalDetectionProcessor(
+            model_id="rfdetr-nano",
+            detection_fps=10.0
+        )
+
+        agent = Agent(processors=[processor], ...)
+
+        @agent.events.subscribe
+        async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
+            # React on detected objects here
+            ...
+        ```
     """
 
     name = "roboflow_local"
@@ -104,7 +104,7 @@ class RoboflowLocalDetectionProcessor(
         self,
         model_id: Optional[RFDETRModelID] = "rfdetr-seg-preview",
         conf_threshold: float = 0.5,
-        fps: int = 10,
+        detection_fps: float = 10.0,
         classes: Optional[list[str]] = None,
         annotate: bool = True,
         dim_background_factor: float = 0.0,
@@ -132,7 +132,7 @@ class RoboflowLocalDetectionProcessor(
         else:
             raise ValueError("Either model_id or model must be provided")
 
-        self.fps = fps
+        self.detection_fps = detection_fps
         self.dim_background_factor = max(0.0, dim_background_factor)
         self.annotate = annotate
 
@@ -144,14 +144,19 @@ class RoboflowLocalDetectionProcessor(
         self._closed = False
         self._video_forwarder: Optional[VideoForwarder] = None
 
+        # Async detection state
+        self._detection_in_progress = False
+        self._last_detection_time: float = 0.0
+        self._cached_detections: Optional[sv.Detections] = None
+
         # Thread pool for async inference
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="roboflow_processor"
         )
-        # Video track for publishing
+        # Video track for publishing at 30 FPS
         self._video_track: QueuedVideoTrack = QueuedVideoTrack(
-            fps=self.fps,
-            max_queue_size=self.fps,  # Buffer 1s of the video
+            fps=30,
+            max_queue_size=30,
         )
 
     async def process_video(
@@ -160,29 +165,26 @@ class RoboflowLocalDetectionProcessor(
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
-        """
-        Process incoming video track with Roboflow detection.
-        """
-
+        """Process incoming video track with Roboflow detection."""
         if self._video_forwarder is not None:
             logger.info(
                 "🎥 Stopping the ongoing Roboflow video processing because the new video track is published"
             )
             await self._video_forwarder.remove_frame_handler(self._process_frame)
 
-        logger.info(f"🎥 Starting Roboflow video processing at {self.fps} FPS")
+        logger.info("🎥 Starting Roboflow video processing")
+        logger.info(f"📹 Detection FPS: {self.detection_fps}")
         self._video_forwarder = (
             shared_forwarder
             if shared_forwarder
             else VideoForwarder(
                 cast(aiortc.VideoStreamTrack, incoming_track),
-                max_buffer=self.fps,  # 1 second
-                fps=self.fps,
+                max_buffer=30,
                 name="roboflow_forwarder",
             )
         )
         self._video_forwarder.add_frame_handler(
-            self._process_frame, fps=float(self.fps), name="roboflow_processor"
+            self._process_frame, name="roboflow_processor"
         )
 
     def publish_video_track(self) -> QueuedVideoTrack:
@@ -238,7 +240,7 @@ class RoboflowLocalDetectionProcessor(
         return model
 
     async def _process_frame(self, frame: av.VideoFrame) -> None:
-        """Process frame, run detection, annotate, and publish."""
+        """Process frame: pass through immediately, run detection asynchronously."""
         if self._closed:
             return None
 
@@ -246,59 +248,83 @@ class RoboflowLocalDetectionProcessor(
             raise RuntimeError("The Roboflow model is not loaded")
 
         image = frame.to_ndarray(format="rgb24")
-        try:
-            # Run inference
-            detections = await self._run_inference(image)
-        except Exception:
-            logger.exception("❌ Frame processing failed")
-            # Pass through original frame on error
-            await self._video_track.add_frame(frame)
-            return None
+        now = asyncio.get_event_loop().time()
 
-        if detections.class_id is None or not detections.class_id.size:
-            # The inference wasn't able to complete or nothing was detected
-            await self._video_track.add_frame(frame)
-            return None
+        # Check if we should start a new detection
+        detection_interval = (
+            1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
+        )
+        should_detect = (
+            not self._detection_in_progress
+            and (now - self._last_detection_time) >= detection_interval
+        )
 
-        if self.annotate:
-            # Annotate frame with detections
+        if should_detect:
+            # Start detection in background (don't await)
+            self._detection_in_progress = True
+            self._last_detection_time = now
+            asyncio.create_task(self._run_detection_background(image.copy()))
+
+        # Apply cached detections to current frame
+        if (
+            self.annotate
+            and self._cached_detections is not None
+            and self._cached_detections.class_id is not None
+            and self._cached_detections.class_id.size > 0
+        ):
             annotated_image = annotate_image(
                 image,
-                detections,
+                self._cached_detections,
                 classes=self._model.class_names,
                 dim_factor=self.dim_background_factor,
             )
-            # Convert back to av.VideoFrame
             annotated_frame = av.VideoFrame.from_ndarray(annotated_image)
             annotated_frame.pts = frame.pts
             annotated_frame.time_base = frame.time_base
-            # Send the annotated frame to the output video track
             await self._video_track.add_frame(annotated_frame)
         else:
-            # Forward original frame
             await self._video_track.add_frame(frame)
 
-        # Publish the event with detected data
-        img_height, img_width = image.shape[0:2]
-
-        detected_objects = [
-            DetectedObject(
-                label=self._model.class_names[class_id], x1=x1, y1=y1, x2=x2, y2=y2
-            )
-            for class_id, (x1, y1, x2, y2) in zip(
-                detections.class_id, detections.xyxy.astype(float)
-            )
-        ]
-
-        self.events.send(
-            DetectionCompletedEvent(
-                objects=detected_objects,
-                raw_detections=detections,
-                image_width=img_width,
-                image_height=img_height,
-            )
-        )
         return None
+
+    async def _run_detection_background(self, image: np.ndarray) -> None:
+        """Run detection in background and update cached results."""
+        try:
+            detections = await self._run_inference(image)
+            self._cached_detections = detections
+
+            # Emit detection event if objects found
+            if (
+                self._model is not None
+                and detections.class_id is not None
+                and detections.class_id.size > 0
+            ):
+                img_height, img_width = image.shape[0:2]
+                detected_objects = [
+                    DetectedObject(
+                        label=self._model.class_names[class_id],
+                        x1=x1,
+                        y1=y1,
+                        x2=x2,
+                        y2=y2,
+                    )
+                    for class_id, (x1, y1, x2, y2) in zip(
+                        detections.class_id, detections.xyxy.astype(float)
+                    )
+                ]
+                self.events.send(
+                    DetectionCompletedEvent(
+                        objects=detected_objects,
+                        raw_detections=detections,
+                        image_width=img_width,
+                        image_height=img_height,
+                    )
+                )
+                logger.debug(f"🔍 Detection complete: {len(detected_objects)} objects")
+        except Exception as e:
+            logger.warning(f"⚠️ Background detection failed: {e}")
+        finally:
+            self._detection_in_progress = False
 
     async def _run_inference(self, image: np.ndarray) -> Detections:
         """Run Roboflow inference on frame."""

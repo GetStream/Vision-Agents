@@ -51,8 +51,7 @@ class CloudDetectionProcessor(
         detect_objects: Object(s) to detect. Moondream uses zero-shot detection,
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
-        fps: Frame processing rate (default: 30)
-        detection_fps: Rate at which to send frames for detection (default: 2).
+        detection_fps: Rate at which to send frames for detection (default: 5.0).
                       Lower values reduce API calls while maintaining smooth video.
         interval: Processing interval in seconds (default: 0)
         max_workers: Number of worker threads for CPU-intensive operations (default: 10)
@@ -65,7 +64,6 @@ class CloudDetectionProcessor(
         api_key: Optional[str] = None,
         conf_threshold: float = 0.3,
         detect_objects: Union[str, List[str]] = "person",
-        fps: int = 30,
         detection_fps: float = 5.0,
         interval: int = 0,
         max_workers: int = 10,
@@ -74,7 +72,6 @@ class CloudDetectionProcessor(
 
         self.api_key = api_key or os.getenv("MOONDREAM_API_KEY")
         self.conf_threshold = conf_threshold
-        self.fps = fps
         self.detection_fps = detection_fps
         self.max_workers = max_workers
         self._shutdown = False
@@ -122,7 +119,7 @@ class CloudDetectionProcessor(
 
         logger.info("🌙 Moondream Processor initialized")
         logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
-        logger.info(f"📹 Video FPS: {fps}, Detection FPS: {detection_fps}")
+        logger.info(f"📹 Detection FPS: {detection_fps}")
 
     async def process_video(
         self,
@@ -141,20 +138,17 @@ class CloudDetectionProcessor(
         logger.info("✅ Moondream process_video starting")
 
         if shared_forwarder is not None:
-            # Use the shared forwarder
+            # Use the shared forwarder at its native FPS
             self._video_forwarder = shared_forwarder
-            logger.info(
-                f"🎥 Moondream subscribing to shared VideoForwarder at {self.fps} FPS"
-            )
+            logger.info("🎥 Moondream subscribing to shared VideoForwarder")
             self._video_forwarder.add_frame_handler(
-                self._process_and_add_frame, fps=float(self.fps), name="moondream"
+                self._process_and_add_frame, name="moondream"
             )
         else:
-            # Create our own VideoForwarder
+            # Create our own VideoForwarder at default FPS
             self._video_forwarder = VideoForwarder(
                 incoming_track,  # type: ignore[arg-type]
-                max_buffer=30,  # 1 second at 30fps
-                fps=self.fps,
+                max_buffer=30,
                 name="moondream_forwarder",
             )
 
@@ -232,7 +226,9 @@ class CloudDetectionProcessor(
             now = asyncio.get_event_loop().time()
 
             # Check if we should start a new detection
-            detection_interval = 1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
+            detection_interval = (
+                1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
+            )
             should_detect = (
                 not self._detection_in_progress
                 and (now - self._last_detection_time) >= detection_interval
@@ -275,7 +271,9 @@ class CloudDetectionProcessor(
             results = await self._run_inference(frame_array)
             self._cached_results = results
             self._last_results = results
-            logger.debug(f"🔍 Detection complete: {len(results.get('detections', []))} objects")
+            logger.debug(
+                f"🔍 Detection complete: {len(results.get('detections', []))} objects"
+            )
         except Exception as e:
             logger.warning(f"⚠️ Background detection failed: {e}")
         finally:
