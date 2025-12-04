@@ -47,7 +47,7 @@ class MyPlugin:
     def __init__(self):
         # EventManager is automatically available
         self.events = EventManager()
-        
+
         # Register your custom events
         self.events.register_events_from_module(events)
 ```
@@ -121,7 +121,7 @@ class MyValidatedEvent(PluginBaseEvent):
     type: str = field(default='plugin.myplugin.validated', init=False)
     text: str = ""
     confidence: float = 0.0
-    
+
     def __post_init__(self):
         if not self.text:
             raise ValueError("Text cannot be empty")
@@ -160,17 +160,17 @@ class MyPlugin:
                 message="Processing started",
                 data=data
             ))
-            
+
             # Do processing
             result = await self._process(data)
-            
+
             # Emit success event
             self.events.send(MyPluginEvent(
                 plugin_name="myplugin",
                 message="Processing completed",
                 data=result
             ))
-            
+
         except Exception as e:
             # Emit error event
             self.events.send(MyPluginErrorEvent(
@@ -205,21 +205,21 @@ class MyPlugin:
         super().__init__()
         self.events.register_events_from_module(events)
         self._setup_event_handlers()
-    
+
     def _setup_event_handlers(self):
         """Set up event handlers for the plugin."""
-        
+
         @self.events.subscribe
         async def handle_stt_transcript(event: STTTranscriptEvent):
             """Handle speech-to-text transcripts."""
             if event.is_final:
                 await self._process_transcript(event.text)
-        
+
         @self.events.subscribe
         async def handle_llm_response(event: LLMResponseEvent):
             """Handle LLM responses."""
             await self._process_llm_response(event.text)
-        
+
         @self.events.subscribe
         async def handle_error_events(event: MyPluginErrorEvent | STTErrorEvent):
             """Handle error events."""
@@ -268,16 +268,16 @@ class MyPlugin(PluginBase):
         super().__init__()
         # Register custom events
         self.events.register_events_from_module(events)
-    
+
     async def process(self, data):
         # Send custom events
         self.events.send(events.MyPluginStartEvent(
             plugin_name="myplugin",
             config=self.config
         ))
-        
+
         result = await self._process_data(data)
-        
+
         self.events.send(events.MyPluginDataEvent(
             plugin_name="myplugin",
             data=result,
@@ -296,11 +296,11 @@ class SimpleSTT(STT):
     def __init__(self):
         super().__init__()
         # No need to register custom events - use base class events
-    
+
     async def transcribe(self, audio_data: bytes) -> str:
         try:
             result = await self._call_api(audio_data)
-            
+
             # Send base class event
             self.events.send(STTTranscriptEvent(
                 plugin_name="simple_stt",
@@ -308,9 +308,9 @@ class SimpleSTT(STT):
                 confidence=result.confidence,
                 is_final=True
             ))
-            
+
             return result.text
-            
+
         except Exception as e:
             # Send error event
             self.events.send(STTErrorEvent(
@@ -332,32 +332,32 @@ class MyAgent(Agent):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._setup_agent_handlers()
-    
+
     def _setup_agent_handlers(self):
         @self.events.subscribe
         async def handle_agent_say(event: AgentSayEvent):
             """Handle when agent wants to say something."""
             print(f"Agent wants to say: {event.text}")
-            
+
             # Process the speech request
             await self._process_speech_request(event)
-    
+
     # Three ways to send events:
-    
+
     # Method 1: Direct event sending
     def send_custom_event(self, data):
         self.events.send(MyCustomEvent(
             plugin_name="agent",
             data=data
         ))
-    
+
     # Method 2: Convenience method
     def send_event_convenience(self, data):
         self.send(MyCustomEvent(
             plugin_name="agent",
             data=data
         ))
-    
+
     # Method 3: High-level speech
     async def make_agent_speak(self, text):
         await self.say(text, metadata={"source": "custom_handler"})
@@ -423,7 +423,7 @@ class ValidatedEvent(PluginBaseEvent):
     type: str = field(default='plugin.myplugin.validated', init=False)
     text: str = ""
     confidence: float = 0.0
-    
+
     def __post_init__(self):
         if not self.text.strip():
             raise ValueError("Text cannot be empty")
@@ -440,20 +440,20 @@ from my_plugin import MyPlugin
 @pytest.mark.asyncio
 async def test_plugin_events():
     plugin = MyPlugin()
-    
+
     # Track events
     events_received = []
-    
+
     @plugin.events.subscribe
     async def track_events(event):
         events_received.append(event)
-    
+
     # Trigger event
     await plugin.process_data("test")
-    
+
     # Wait for events
     await plugin.events.wait()
-    
+
     # Verify events
     assert len(events_received) > 0
     assert any(isinstance(e, MyPluginEvent) for e in events_received)
@@ -483,7 +483,7 @@ class OpenAILLM(LLM):
         super().__init__()
         self.events.register_events_from_module(events)
         self.model = model
-    
+
     def _standardize_and_emit_event(self, event: ResponseStreamEvent):
         # Send raw OpenAI event
         self.events.send(events.OpenAIStreamEvent(
@@ -491,7 +491,7 @@ class OpenAILLM(LLM):
             event_type=event.type,
             event_data=event
         ))
-        
+
         if event.type == "response.error":
             self.events.send(events.LLMErrorEvent(
                 plugin_name="openai",
@@ -519,10 +519,10 @@ class Realtime(realtime.Realtime):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.events.register_events_from_module(events)
-    
+
     async def connect(self):
         # ... connection logic ...
-        
+
         # Emit connection event
         self.events.send(events.GeminiConnectedEvent(
             plugin_name="gemini",

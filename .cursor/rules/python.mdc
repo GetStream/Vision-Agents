@@ -4,8 +4,8 @@ globs:
 alwaysApply: true
 ---
 
-never mock. 
-tests use pytest. 
+never mock.
+tests use pytest.
 never adjust sys.path.
 
 never write: except Exception as e

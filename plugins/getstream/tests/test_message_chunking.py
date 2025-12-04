@@ -180,7 +180,7 @@ End text."""
 - List item 1
 - List item 2
   - Nested item
-  
+
 Some text.
 
 ```python

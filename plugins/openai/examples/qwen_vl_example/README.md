@@ -1,7 +1,7 @@
-# Qwen3-VL hosted on Baseten 
-Qwen3-VL is the latest open-source Video Language Model (VLM) from Alibaba. 
-This plugin allows developers to easily run the model hosted on [Baseten](https://www.baseten.co/) with Vision Agents. 
-The model accepts text and video and responds with text vocalised with the TTS service of your choice. 
+# Qwen3-VL hosted on Baseten
+Qwen3-VL is the latest open-source Video Language Model (VLM) from Alibaba.
+This plugin allows developers to easily run the model hosted on [Baseten](https://www.baseten.co/) with Vision Agents.
+The model accepts text and video and responds with text vocalised with the TTS service of your choice.
 
 ## Features
 
@@ -26,7 +26,7 @@ async def create_agent(**kwargs) -> Agent:
     # Initialize the Baseten VLM
     # The api key and base url can be passed via OPENAI_API_KEY and OPENAI_BASE_URL environment variables.
     llm = openai.ChatCompletionsVLM(model="qwen3vl")
-    
+
     # Create an agent with video understanding capabilities
     agent = Agent(
         edge=getstream.Edge(),
@@ -43,7 +43,7 @@ async def create_agent(**kwargs) -> Agent:
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     await agent.create_user()
     call = await agent.create_call(call_type, call_id)
-    
+
     with await agent.join(call):
         # The agent will automatically process video frames and respond to user input
         await agent.finish()

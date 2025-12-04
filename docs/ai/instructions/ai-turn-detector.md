@@ -11,14 +11,14 @@ class MyTurnDetector(TurnDetector):
         participant: Participant,
         conversation: Optional[Conversation],
     ) -> None:
-    
+
         self._emit_start_turn_event(TurnStartedEvent(participant=participant))
         self._emit_end_turn_event(participant=participant, confidence=0.7)
 
     def start(self):
         super().start()
         # Any custom model loading/ or other heavy prep steps go here
-        
+
     def stop(self):
         super().stop()
         # cleanup time. start and stop are optional

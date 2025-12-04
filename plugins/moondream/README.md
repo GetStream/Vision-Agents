@@ -131,7 +131,7 @@ async def create_agent(**kwargs) -> Agent:
         api_key=os.getenv("MOONDREAM_API_KEY"),  # or set MOONDREAM_API_KEY env var
         mode="vqa",  # or "caption" for image captioning
     )
-    
+
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="My happy AI friend", id="agent"),
@@ -295,12 +295,10 @@ pytest plugins/moondream/tests/ -k "annotation" -v
 - `torch` - PyTorch for model inference
 - `transformers` - HuggingFace transformers library for model loading
 
-**Note:** LocalDetectionProcessor and LocalVLM both require these dependencies. We recommend only running the model locally on CUDA devices. 
+**Note:** LocalDetectionProcessor and LocalVLM both require these dependencies. We recommend only running the model locally on CUDA devices.
 
 ## Links
 
 - [Moondream Documentation](https://docs.moondream.ai/)
 - [Vision Agents Documentation](https://visionagents.ai/)
 - [GitHub Repository](https://github.com/GetStream/Vision-Agents)
-
-

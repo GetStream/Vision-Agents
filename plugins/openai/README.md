@@ -19,9 +19,9 @@ pip install vision-agents[openai]
 
 This example shows how to use "gpt-4.1" model with TTS and STT services for audio communication via `openai.LLM()` API.
 
-The `openai.LLM()` class uses OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) under the hood. 
+The `openai.LLM()` class uses OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) under the hood.
 
-To work with models via legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat), see the [Chat Completions models](#chat-completions-models) section. 
+To work with models via legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat), see the [Chat Completions models](#chat-completions-models) section.
 
 ```python
 from vision_agents.core import User, Agent
@@ -57,9 +57,9 @@ agent = Agent(
 ```
 
 ### Chat Completions models
-The `openai.ChatCompletionsLLM` and `openai.ChatCompletionsVLM` classes provide APIs for text and vision models that use the [Chat Completions API](https://platform.openai.com/docs/api-reference/chat).  
+The `openai.ChatCompletionsLLM` and `openai.ChatCompletionsVLM` classes provide APIs for text and vision models that use the [Chat Completions API](https://platform.openai.com/docs/api-reference/chat).
 
-They are compatible with popular inference backends such as vLLM, TGI, and Ollama. 
+They are compatible with popular inference backends such as vLLM, TGI, and Ollama.
 
 For example, you can use them to interact with Qwen 3 VL visual model hosted on [Baseten](https://www.baseten.co/):
 
@@ -69,7 +69,7 @@ from vision_agents.plugins import deepgram, getstream, elevenlabs, vogent, opena
 
 # Instantiate the visual model wrapper
 llm = openai.ChatCompletionsVLM(model="qwen3vl")
-    
+
 # Create an agent with video understanding capabilities
 agent = Agent(
     edge=getstream.Edge(),
@@ -88,7 +88,7 @@ For full code, see [examples/qwen_vl_example](examples/qwen_vl_example/README.md
 
 ## Function Calling
 
-The `LLM` and `Realtime` APIs support function calling, allowing the assistant to invoke custom functions you define.   
+The `LLM` and `Realtime` APIs support function calling, allowing the assistant to invoke custom functions you define.
 
 This enables dynamic interactions like:
 

@@ -40,11 +40,11 @@ async def start_avatar_agent():
         edge=getstream.Edge(),
         agent_user=User(name="AI Assistant with Avatar", id="agent"),
         instructions="You're a friendly AI assistant.",
-        
+
         llm=gemini.LLM("gemini-2.0-flash"),
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
-        
+
         # Add HeyGen avatar
         processors=[
             heygen.AvatarPublisher(
@@ -53,9 +53,9 @@ async def start_avatar_agent():
             )
         ]
     )
-    
+
     call = agent.edge.client.video.call("default", str(uuid4()))
-    
+
     with await agent.join(call):
         await agent.simple_response("Hello! I'm your AI assistant with an avatar.")
         await agent.finish()
@@ -98,9 +98,9 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Realtime Avatar AI"),
     instructions="Be conversational and responsive.",
-    
+
     llm=gemini.Realtime(fps=2),  # No separate TTS needed
-    
+
     processors=[
         heygen.AvatarPublisher(avatar_id="professional_presenter")
     ]
@@ -121,9 +121,9 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Fitness Coach"),
     instructions="Analyze user poses and provide feedback.",
-    
+
     llm=gemini.Realtime(fps=3),
-    
+
     processors=[
         # Process incoming user video
         ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt"),
@@ -185,4 +185,3 @@ MIT
 - [Documentation](https://visionagents.ai/)
 - [GitHub](https://github.com/GetStream/Vision-Agents)
 - [HeyGen API Docs](https://docs.heygen.com/docs/streaming-api)
-

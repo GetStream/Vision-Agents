@@ -67,4 +67,3 @@ tts = fish.TTS(base_url="https://your-custom-endpoint.com")
 
 - [Fish Audio Documentation](https://docs.fish.audio)
 - [Vision Agents Documentation](https://visionagents.ai)
-

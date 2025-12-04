@@ -50,6 +50,6 @@ roboflow_processor = roboflow.RoboflowLocalDetectionProcessor(
     conf_threshold=0.5,  # Confidence threshold (0 - 1.0)
     fps=5,  # Frames per second to process
     annotate=True,  # when True, annotate the detected objects with boxes and labels
-    dim_background_factor=0.25  # How much to dim the background around detected objects from 0 to 1.0. 
+    dim_background_factor=0.25  # How much to dim the background around detected objects from 0 to 1.0.
 )
 ```

@@ -1,2 +1,2 @@
 ## Moondream example
-Please see root readme for details. 
+Please see root readme for details.

@@ -150,4 +150,3 @@ ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
 - [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
 - [Main Vision Agents README](../../README.md)
 - [Simple Agent Example](../01_simple_agent_example) - Start here if you're new to Vision Agents
-

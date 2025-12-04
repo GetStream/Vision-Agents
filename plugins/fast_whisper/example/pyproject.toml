@@ -20,4 +20,3 @@ vision-agents-plugins-aws = { editable = true }
 vision-agents-plugins-cartesia = { editable = true }
 vision-agents-plugins-getstream = { editable = true }
 vision-agents-plugins-smart-turn = { editable = true }
-

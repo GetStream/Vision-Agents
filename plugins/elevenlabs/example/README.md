@@ -134,4 +134,3 @@ User Hears Response
 - Consider using `eleven_flash_v2_5` for TTS
 - Check your network connection
 - Reduce `buffer_in_seconds` in turn detection
-

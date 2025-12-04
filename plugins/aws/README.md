@@ -32,7 +32,7 @@ The full example is available in example/aws_qwen_example.py
 
 Nova Sonic audio realtime STS is also supported:
 
-```python    
+```python
 agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Story Teller AI"),

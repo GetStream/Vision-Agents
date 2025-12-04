@@ -44,4 +44,3 @@ dev = [
     "pytest-asyncio>=1.0.0",
     "vision-agents-plugins-deepgram",
 ]
-
