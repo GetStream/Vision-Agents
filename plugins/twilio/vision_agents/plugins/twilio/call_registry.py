@@ -1,15 +1,18 @@
 """Twilio call registry for tracking active calls."""
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Any, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from .media_stream import TwilioMediaStream
     from .models import CallWebhookInput
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -26,6 +29,7 @@ class TwilioCall:
     stream_call: Optional[Any] = None
     started_at: datetime = field(default_factory=datetime.utcnow)
     ended_at: Optional[datetime] = None
+    _prepare_task: Optional[asyncio.Task] = field(default=None, repr=False)
     
     @property
     def from_number(self) -> Optional[str]:
@@ -83,6 +87,20 @@ class TwilioCall:
             return None
         return (self.ended_at - self.started_at).total_seconds()
 
+    async def await_prepare(self) -> Any:
+        """
+        Wait for the prepare task to complete and return its result.
+        
+        Returns:
+            The result of the prepare function, or None if no prepare was set.
+            
+        Raises:
+            Any exception raised by the prepare function.
+        """
+        if self._prepare_task is None:
+            return None
+        return await self._prepare_task
+
 
 class TwilioCallRegistry:
     """
@@ -95,18 +113,30 @@ class TwilioCallRegistry:
     def __init__(self):
         self._calls: dict[str, TwilioCall] = {}
     
-    def create(self, call_id: str, webhook_data: Optional["CallWebhookInput"] = None) -> TwilioCall:
+    def create(
+        self,
+        call_id: str,
+        webhook_data: Optional["CallWebhookInput"] = None,
+        prepare: Optional[Callable[[], Awaitable[Any]]] = None,
+    ) -> TwilioCall:
         """
         Create and register a new TwilioCall.
         
         Args:
             call_id: The unique identifier for this call.
             webhook_data: Optional parsed webhook data from Twilio (for inbound calls).
+            prepare: Optional async function to prepare the call (e.g. create agent, stream call).
+                    If provided, starts running immediately as a background task.
+                    Use `twilio_call.await_prepare()` to get the result.
             
         Returns:
             The created TwilioCall instance.
         """
         call = TwilioCall(call_sid=call_id, webhook_data=webhook_data)
+        
+        if prepare is not None:
+            call._prepare_task = asyncio.create_task(prepare())
+        
         self._calls[call_id] = call
         logger.info(f"TwilioCallRegistry: Created call {call.call_sid} from {call.from_number} to {call.to_number}")
         return call

@@ -2,6 +2,7 @@
 
 This example teaches you how to handle inbound or outbound phone connects and RAG.
 It uses Twilio for the voice connection and either Gemini or turbopuffer for RAG.
+Note that this example will have relatively high latency unless you run it in US-east/ close to the twilio/stream servers
 
 ## Requirements to run the example
 
