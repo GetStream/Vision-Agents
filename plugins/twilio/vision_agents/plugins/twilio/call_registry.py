@@ -7,6 +7,7 @@ from typing import Optional, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .media_stream import TwilioMediaStream
+    from .models import CallWebhookInput
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +17,11 @@ class TwilioCall:
     """
     Represents an active Twilio call session.
     
-    Stores all webhook form data from Twilio along with associated
+    Stores the webhook data from Twilio along with associated
     connections and timestamps.
     """
     call_sid: str
-    form_data: dict[str, Any] = field(default_factory=dict)
+    webhook_data: Optional["CallWebhookInput"] = None
     twilio_stream: Optional["TwilioMediaStream"] = None
     stream_call: Optional[Any] = None
     started_at: datetime = field(default_factory=datetime.utcnow)
@@ -29,32 +30,47 @@ class TwilioCall:
     @property
     def from_number(self) -> Optional[str]:
         """Get the caller's phone number."""
-        return self.form_data.get("From")
+        return self.webhook_data.from_number if self.webhook_data else None
     
     @property
     def to_number(self) -> Optional[str]:
         """Get the called phone number."""
-        return self.form_data.get("To")
+        return self.webhook_data.to if self.webhook_data else None
     
     @property
     def call_status(self) -> Optional[str]:
         """Get the call status."""
-        return self.form_data.get("CallStatus")
+        return self.webhook_data.call_status if self.webhook_data else None
+    
+    @property
+    def caller(self) -> Optional[str]:
+        """Get the caller's phone number (alias)."""
+        return self.webhook_data.caller if self.webhook_data else None
     
     @property
     def caller_city(self) -> Optional[str]:
         """Get the caller's city."""
-        return self.form_data.get("CallerCity")
+        return self.webhook_data.caller_city if self.webhook_data else None
     
     @property
     def caller_state(self) -> Optional[str]:
         """Get the caller's state."""
-        return self.form_data.get("CallerState")
+        return self.webhook_data.caller_state if self.webhook_data else None
     
     @property
     def caller_country(self) -> Optional[str]:
         """Get the caller's country."""
-        return self.form_data.get("CallerCountry")
+        return self.webhook_data.caller_country if self.webhook_data else None
+    
+    @property
+    def direction(self) -> Optional[str]:
+        """Get the call direction (inbound/outbound)."""
+        return self.webhook_data.direction if self.webhook_data else None
+    
+    @property
+    def stir_verstat(self) -> Optional[str]:
+        """Get the STIR/SHAKEN verification status."""
+        return self.webhook_data.stir_verstat if self.webhook_data else None
     
     def end(self):
         """Mark the call as ended."""
@@ -79,22 +95,20 @@ class TwilioCallRegistry:
     def __init__(self):
         self._calls: dict[str, TwilioCall] = {}
     
-    def create(self, call_sid: str, form_data: Optional[dict[str, Any]] = None) -> TwilioCall:
+    def create(self, call_id: str, webhook_data: Optional["CallWebhookInput"] = None) -> TwilioCall:
         """
         Create and register a new TwilioCall.
         
         Args:
-            call_sid: The Twilio CallSid.
-            form_data: All form data from the Twilio webhook.
+            call_id: The unique identifier for this call.
+            webhook_data: Optional parsed webhook data from Twilio (for inbound calls).
             
         Returns:
             The created TwilioCall instance.
         """
-        if form_data is None:
-            form_data = {}
-        call = TwilioCall(call_sid=call_sid, form_data=form_data)
-        self._calls[call_sid] = call
-        logger.info(f"TwilioCallRegistry: Created call {call_sid} from {call.from_number} to {call.to_number}")
+        call = TwilioCall(call_sid=call_id, webhook_data=webhook_data)
+        self._calls[call_id] = call
+        logger.info(f"TwilioCallRegistry: Created call {call.call_sid} from {call.from_number} to {call.to_number}")
         return call
     
     def get(self, call_sid: str) -> Optional[TwilioCall]:
@@ -108,6 +122,24 @@ class TwilioCallRegistry:
             The TwilioCall if found, None otherwise.
         """
         return self._calls.get(call_sid)
+    
+    def require(self, call_sid: str) -> TwilioCall:
+        """
+        Get a TwilioCall by its SID, raising if not found.
+        
+        Args:
+            call_sid: The Twilio CallSid.
+            
+        Returns:
+            The TwilioCall.
+            
+        Raises:
+            ValueError: If no call with the given SID exists.
+        """
+        call = self._calls.get(call_sid)
+        if not call:
+            raise ValueError(f"Unknown call_sid: {call_sid}")
+        return call
     
     def remove(self, call_sid: str) -> Optional[TwilioCall]:
         """
@@ -138,4 +170,3 @@ class TwilioCallRegistry:
     def __len__(self) -> int:
         """Return the number of registered calls."""
         return len(self._calls)
-

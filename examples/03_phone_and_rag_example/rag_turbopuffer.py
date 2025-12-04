@@ -248,6 +248,9 @@ class TurboPufferRAG:
             chunks = await self.index_file(file_path)
             total_chunks += chunks
         
+        # Warm cache for low-latency queries
+        await self.warm_cache()
+        
         return total_chunks
 
     async def _vector_search(self, query: str, top_k: int) -> list[tuple[str, float]]:

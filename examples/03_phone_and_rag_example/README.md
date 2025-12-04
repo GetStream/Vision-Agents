@@ -1,111 +1,76 @@
-# Phone + RAG Example
+# Phone & RAG example
 
-A voice AI agent that answers phone calls via Twilio with RAG (Retrieval Augmented Generation) capabilities.
+This example teaches you how to handle inbound or outbound phone connects and RAG.
+It uses Twilio for the voice connection and either Gemini or turbopuffer for RAG.
 
-## RAG Backend Options
+## Requirements to run the example
 
-Configure via the `RAG_BACKEND` environment variable:
+### Set your .env file
 
-| Backend | Description |
-|---------|-------------|
-| `gemini` (default) | Uses Gemini's built-in File Search |
-| `turbopuffer` | Uses TurboPuffer + LangChain with function calling |
+Create a .env file and set the following vars
 
-### Gemini File Search
-
-- Documents uploaded and indexed by Gemini
-- Automatic retrieval during conversations
-- No additional infrastructure needed
-
-### TurboPuffer + LangChain
-
-- More control over the RAG process
-- Exposed as a callable function
-- Works with any LLM that supports function calling
-
-```python
-@llm.register_function(description="Search knowledge base")
-async def search_knowledge(query: str) -> str:
-    return await rag.search(query, top_k=3)
+```
+STREAM_API_KEY=
+STREAM_API_SECRET=
+GOOGLE_API_KEY=
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TURBO_PUFFER_KEY=
 ```
 
-## Setup
+### Running the example - Inbound call
 
-### Environment Variables
+A. Start NGROK 
 
-```bash
-# Stream
-STREAM_API_KEY=your_stream_api_key
-STREAM_API_SECRET=your_stream_api_secret
-
-# Twilio
-TWILIO_ACCOUNT_SID=your_twilio_account_sid
-TWILIO_AUTH_TOKEN=your_twilio_auth_token
-
-# Ngrok (for exposing local server to Twilio)
-NGROK_URL=your_ngrok_url  # e.g., abc123.ngrok.io
-
-# AI Services
-GOOGLE_API_KEY=your_google_api_key
-ELEVENLABS_API_KEY=your_elevenlabs_api_key
-DEEPGRAM_API_KEY=your_deepgram_api_key
-
-# RAG Backend (optional, defaults to "gemini")
-RAG_BACKEND=gemini  # or "turbopuffer"
-
-# For TurboPuffer backend only
-OPENAI_API_KEY=your_openai_api_key
-TURBO_PUFFER_KEY=your_turbopuffer_api_key
+```
+ngrok http 8000
 ```
 
-### Install & Run
+B. HTTP
 
-```bash
-cd examples/03_phone_and_rag_example
+Copy the ngrok url from the first tab. And in a new tab start your http endpoint
+
+```
+cd 03_phone_and_rag_example
 uv sync
-
-# Run with Gemini (default)
-uv run python phone_and_rag_example.py
-
-# Run with TurboPuffer
-RAG_BACKEND=turbopuffer uv run python phone_and_rag_example.py
+RAG_BACKEND=turbopuffer NGROK_URL=replaceme.ngrok-free.app uv run phone_and_rag_example.py
 ```
 
-### Configure Twilio
+C. Twilio console
 
-1. Get a Twilio phone number
-2. Set webhook URL to `https://<your-ngrok-url>/twilio/voice` (POST)
+For one of your phone numbers set the webhook url to
 
-## How It Works
-
-1. **Incoming Call**: Twilio receives a call to your phone number
-2. **Webhook**: Twilio sends a POST to `/twilio/voice`
-3. **Media Stream**: Bidirectional WebSocket at `/twilio/media/{call_sid}`
-4. **Audio Bridge**: Audio bridged between Twilio (mulaw @ 8kHz) and Stream
-5. **AI Agent**: Agent uses RAG to answer questions about Stream's products
-
-## Knowledge Base
-
-The `knowledge/` directory contains product documentation:
-- `chat.md` - Chat API
-- `video.md` - Video API
-- `feeds.md` - Feeds API
-- `moderation.md` - Moderation features
-
-## Using TurboPuffer RAG Independently
-
-```python
-from rag_turbopuffer import TurboPufferRAG, create_rag
-
-# Quick setup
-rag = await create_rag(namespace="my-knowledge", knowledge_dir="./knowledge")
-
-# Search
-results = await rag.search("How does the chat API work?")
-
-# Register as LLM function
-@llm.register_function(description="Search knowledge base")
-async def search_knowledge(query: str) -> str:
-    return await rag.search(query)
 ```
+replaceme.ngrok-free.app/twilio/voice
+```
+
+D. Call the number
+
+Call the number. You'll end up talking to the agent
+
+
+### Running the example - Outbound call
+
+```
+cd 03_phone_and_rag_example
+uv sync
+RAG_BACKEND=turbopuffer TWILIO_NUMBER=numberhere uv run outbound_example.py
+```
+
+
+## Understanding the examples
+
+### Twilio
+
+Twilio works by creating a websocket based media stream.
+This logic is the same for both inbound and outbound. 
+
+
+
+
+## RAG
+
+RAG is a relatively complicated topic. Have a look at the full docs on
+
+
 

@@ -17,6 +17,8 @@ Flow:
 Notes: Twilio uses ulaw audio encoding at 8kHz.
 
 TODO/ to fix:
+- Things should prep when creating the call in the voice endpoint
+- Auth for stream endpoint
 - Ulaw audio bugs
 - Frankfurt connection bug
 - Study best practices for Gemini RAG
@@ -25,21 +27,18 @@ TODO/ to fix:
 - See if there is a nicer diff approach to rag indexing
 - Write docs about Rag
 """
-
+import asyncio
 import logging
 import os
-import uuid
 from pathlib import Path
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import Response
+from fastapi import Depends, FastAPI, WebSocket
 from getstream.video import rtc
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
-from twilio.twiml.voice_response import VoiceResponse, Connect
 
 from vision_agents.core import User, Agent
 from vision_agents.plugins import getstream, gemini, twilio, elevenlabs, deepgram
@@ -49,9 +48,6 @@ logging.basicConfig(level=logging.INFO)
 
 load_dotenv()
 
-# =============================================================================
-# Configuration
-# =============================================================================
 
 NGROK_URL = os.environ["NGROK_URL"]
 KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
@@ -66,13 +62,53 @@ rag = None  # For TurboPuffer
 app = FastAPI()
 call_registry = twilio.TwilioCallRegistry()
 
+"""
+Twilio call webhook points here. Signature is validated and we start the media stream
+"""
+@app.post("/twilio/voice")
+async def twilio_voice_webhook(
+        _: None = Depends(twilio.verify_twilio_signature),
+        data: twilio.CallWebhookInput = Depends(twilio.CallWebhookInput.as_form),
+):
+    url = f"wss://{NGROK_URL}/twilio/media/{data.call_sid}"
+    logger.info(f"📞 Call from {data.caller} ({data.caller_city or 'unknown location'}) forwarding to {url}")
 
-# =============================================================================
-# Startup - Initialize RAG
-# =============================================================================
+    call_registry.create(data.call_sid, data)
+
+    return twilio.create_media_stream_response(url)
 
 
-@app.on_event("startup")
+"""
+Twilio media stream endpoint
+"""
+@app.websocket("/twilio/media/{call_sid}")
+async def media_stream(websocket: WebSocket, call_sid: str):
+    """Receive real-time audio stream from Twilio."""
+    twilio_call = call_registry.require(call_sid)
+
+    logger.info(f"🔗 Media stream connecting for {twilio_call.caller} from {twilio_call.caller_city or 'unknown location'}")
+
+    twilio_stream = twilio.TwilioMediaStream(websocket)
+    await twilio_stream.accept()
+    twilio_call.twilio_stream = twilio_stream
+
+    try:
+        agent = await create_agent()
+        await agent.create_user()
+
+        phone_number = twilio_call.from_number or "unknown"
+        sanitized_number = phone_number.replace("+", "").replace(" ", "").replace("(", "").replace(")", "")
+        phone_user = User(name=f"Call from {phone_number}", id=f"phone-{sanitized_number}")
+        await agent.edge.create_user(user=phone_user)
+
+        stream_call = await agent.create_call("default", call_sid)
+        twilio_call.stream_call = stream_call
+
+        await join_call(agent, stream_call, twilio_stream, phone_user)
+    finally:
+        call_registry.remove(call_sid)
+
+
 async def startup_event():
     """Initialize the RAG backend based on RAG_BACKEND environment variable."""
     global file_search_store, rag
@@ -108,76 +144,12 @@ async def _init_turbopuffer_rag():
 
     logger.info(f"📚 Initializing TurboPuffer RAG from {KNOWLEDGE_DIR}")
     rag = await create_rag(
-        namespace="stream-product-knowledge",
+        namespace="stream-product-knowledge-gemini",
         knowledge_dir=KNOWLEDGE_DIR,
         extensions=[".md"],
     )
     logger.info(f"✅ TurboPuffer RAG ready with {len(rag._indexed_files)} documents indexed")
 
-
-# =============================================================================
-# FastAPI Endpoints
-# =============================================================================
-
-
-@app.post("/twilio/voice")
-async def twilio_voice_webhook(request: Request):
-    """Handle incoming Twilio voice calls and start media streaming."""
-    form = await request.form()
-    form_data = dict(form)
-    call_sid = form_data.get("CallSid", str(uuid.uuid4()))
-
-    caller = form_data.get("Caller", "unknown")
-    called_city = form_data.get("CalledCity", "unknown location")
-    logger.info(f"📞 Received call {caller} calling from {called_city}")
-
-    call_registry.create(call_sid, form_data)
-    response = VoiceResponse()
-
-    url = f"wss://{NGROK_URL}/twilio/media/{call_sid}"
-    connect = Connect()
-    connect.stream(url=url)
-    logger.info(f"Forwarding to media stream on {url}")
-    response.append(connect)
-
-    return Response(content=str(response), media_type="application/xml")
-
-
-@app.websocket("/twilio/media/{call_sid}")
-async def media_stream(websocket: WebSocket, call_sid: str):
-    """Receive real-time audio stream from Twilio."""
-    twilio_call = call_registry.get(call_sid)
-    if not twilio_call:
-        raise ValueError(f"Unknown call_sid: {call_sid}")
-
-    caller = twilio_call.form_data.get("Caller", "unknown")
-    called_city = twilio_call.form_data.get("CalledCity", "unknown location")
-    logger.info(f"🔗 Media stream connecting for {caller} from {called_city}")
-
-    twilio_stream = twilio.TwilioMediaStream(websocket)
-    await twilio_stream.accept()
-    twilio_call.twilio_stream = twilio_stream
-
-    try:
-        agent = await create_agent()
-        await agent.create_user()
-
-        phone_number = twilio_call.from_number or "unknown"
-        sanitized_number = phone_number.replace("+", "").replace(" ", "").replace("(", "").replace(")", "")
-        phone_user = User(name=f"Call from {phone_number}", id=f"phone-{sanitized_number}")
-        await agent.edge.create_user(user=phone_user)
-
-        stream_call = await agent.create_call("default", call_sid)
-        twilio_call.stream_call = stream_call
-
-        await join_call(agent, stream_call, twilio_stream, phone_user)
-    finally:
-        call_registry.remove(call_sid)
-
-
-# =============================================================================
-# Agent Creation
-# =============================================================================
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -190,14 +162,7 @@ async def create_agent(**kwargs) -> Agent:
 
 async def _create_agent_gemini() -> Agent:
     """Create agent with Gemini File Search RAG."""
-    instructions = """You're a sales person for Stream, helping customers understand Stream's products:
-- Chat API: Real-time messaging with offline support and edge network
-- Video API: WebRTC-based video calling and streaming  
-- Feeds API: Activity feeds and social features
-- Moderation: AI-powered content moderation
-
-Use the file_search tool to find detailed product information when answering questions.
-As a voice agent, keep your replies concise and conversational."""
+    instructions = """Read the instructions in @instructions.md"""
 
     return Agent(
         edge=getstream.Edge(),
@@ -211,15 +176,7 @@ As a voice agent, keep your replies concise and conversational."""
 
 async def _create_agent_turbopuffer() -> Agent:
     """Create agent with TurboPuffer RAG via function calling."""
-    instructions = """You're a sales person for Stream, helping customers understand Stream's products:
-- Chat API: Real-time messaging with offline support and edge network
-- Video API: WebRTC-based video calling and streaming  
-- Feeds API: Activity feeds and social features
-- Moderation: AI-powered content moderation
-
-IMPORTANT: When answering questions about Stream's products, use the search_knowledge 
-function to find accurate information from our knowledge base.
-As a voice agent, keep your replies concise and conversational."""
+    instructions = """Read the instructions in @instructions.md"""
 
     llm = gemini.LLM("gemini-2.5-flash-lite")
 
@@ -228,9 +185,6 @@ As a voice agent, keep your replies concise and conversational."""
         description="Search Stream's product knowledge base for detailed information about Chat, Video, Feeds, and Moderation APIs."
     )
     async def search_knowledge(query: str) -> str:
-        """Search the knowledge base for relevant product information."""
-        if rag is None:
-            return "Knowledge base not available."
         return await rag.search(query, top_k=3)
 
     return Agent(
@@ -275,5 +229,6 @@ async def join_call(
 
 
 if __name__ == "__main__":
+    asyncio.run(startup_event())
     logger.info(f"Starting with RAG_BACKEND={RAG_BACKEND}")
     uvicorn.run(app, host="localhost", port=8000)
