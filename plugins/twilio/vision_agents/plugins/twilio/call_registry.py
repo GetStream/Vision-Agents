@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING, TypeVar
@@ -24,6 +25,7 @@ class TwilioCall:
     connections and timestamps.
     """
     call_sid: str
+    token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     webhook_data: Optional["CallWebhookInput"] = None
     twilio_stream: Optional["TwilioMediaStream"] = None
     stream_call: Optional[Any] = None
@@ -169,6 +171,27 @@ class TwilioCallRegistry:
         call = self._calls.get(call_sid)
         if not call:
             raise ValueError(f"Unknown call_sid: {call_sid}")
+        return call
+
+    def validate(self, call_sid: str, token: str) -> TwilioCall:
+        """
+        Validate a call by its SID and token.
+        
+        Args:
+            call_sid: The Twilio CallSid.
+            token: The secret token to validate.
+            
+        Returns:
+            The TwilioCall if valid.
+            
+        Raises:
+            ValueError: If call not found or token doesn't match.
+        """
+        call = self._calls.get(call_sid)
+        if not call:
+            raise ValueError(f"Unknown call_sid: {call_sid}")
+        if not secrets.compare_digest(call.token, token):
+            raise ValueError(f"Invalid token for call_sid: {call_sid}")
         return call
     
     def remove(self, call_sid: str) -> Optional[TwilioCall]:

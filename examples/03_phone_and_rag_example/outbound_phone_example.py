@@ -28,7 +28,7 @@ call_registry = twilio.TwilioCallRegistry()
 
 """
 TODO
-- secret/auth for media endpoint
+- fix the bug
 """
 
 
@@ -46,7 +46,6 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
     client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
 
     call_id = str(uuid.uuid4())
-    url = f"wss://{NGROK_URL}/twilio/media/{call_id}"
 
     async def prepare_call():
         agent = await create_agent()
@@ -59,7 +58,8 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
         agent_session = await agent.join(stream_call)
         return agent, phone_user, stream_call, agent_session
 
-    call_registry.create(call_id, prepare=prepare_call)
+    twilio_call = call_registry.create(call_id, prepare=prepare_call)
+    url = f"wss://{NGROK_URL}/twilio/media/{call_id}?token={twilio_call.token}"
 
     client.calls.create(
         twiml=twilio.create_media_stream_twiml(url),
@@ -71,9 +71,9 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
 
 
 @app.websocket("/twilio/media/{call_sid}")
-async def media_stream(websocket: WebSocket, call_sid: str):
+async def media_stream(websocket: WebSocket, call_sid: str, token: str):
     """Receive real-time audio stream from Twilio."""
-    twilio_call = call_registry.require(call_sid)
+    twilio_call = call_registry.validate(call_sid, token)
 
     logger.info(f"🔗 Media stream connected for call {call_sid}")
 
