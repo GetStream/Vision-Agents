@@ -14,7 +14,7 @@ from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConf
 from twilio.rest import Client
 
 from vision_agents.core import Agent, User
-from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream, twilio
+from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream, twilio, openai
 
 load_dotenv()
 
@@ -26,26 +26,23 @@ NGROK_URL = os.environ["NGROK_URL"]
 app = FastAPI()
 call_registry = twilio.TwilioCallRegistry()
 
+"""
+TODO
+- agent join should happen earlier
+"""
+
 
 async def create_agent() -> Agent:
-    """Create the AI agent."""
-    instructions = """You are a friendly AI assistant. Ask the user to buy Datadog monitoring"""
-
     return Agent(
         edge=getstream.Edge(),
-        agent_user=User(id="ai-agent", name="AI"),
-        instructions=instructions,
-        tts=elevenlabs.TTS(voice_id="FGY2WhTYpPnrIDTdsKH5"),
-        stt=deepgram.STT(eager_turn_detection=True),
-        llm=gemini.LLM("gemini-2.5-flash-lite"),
+        agent_user=User(id="ai-agent", name="AI Assistant"),
+        instructions="Speak english. Keep your replies short. You're calling a restaurant and want to make a dinner reservation. for 4, today between 18:00 or 19:00 pm. ideally 18:30",
+        llm=gemini.Realtime(),
     )
 
 
 def initiate_outbound_call(from_number: str, to_number: str) -> str:
-    """Initiate an outbound call via Twilio. Returns the call_id."""
-    account_sid = os.environ["TWILIO_ACCOUNT_SID"]
-    auth_token = os.environ["TWILIO_AUTH_TOKEN"]
-    client = Client(account_sid, auth_token)
+    client = Client( os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
 
     call_id = str(uuid.uuid4())
     url = f"wss://{NGROK_URL}/twilio/media/{call_id}"
@@ -86,7 +83,7 @@ async def media_stream(websocket: WebSocket, call_sid: str):
 
         with await agent.join(stream_call):
             await agent.llm.simple_response(
-                text="Greet the person warmly and introduce yourself."
+                text="Ask to reserve and answer any follow up questions as needed"
             )
             await twilio_stream.run()
     finally:

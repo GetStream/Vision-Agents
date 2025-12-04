@@ -18,7 +18,30 @@ TWILIO_AUTH_TOKEN=
 TURBO_PUFFER_KEY=
 ```
 
+### Running the Outbound Call example
+
+A. Start NGROK 
+
+```
+ngrok http 8000
+```
+
+B. HTTP & Call
+
+Copy the ngrok url from the first tab. And in a new tab start your http endpoint
+
+```
+cd 03_phone_and_rag_example
+uv sync
+NGROK_URL=replaceme.ngrok-free.app uv run outbound_phone_example.py --from +1**** --to +1***
+```
+
+This will start an HTTP server that can accept the twilio media stream. It also initiates the call
+
+
 ### Running the example - Inbound call
+
+The inbound call example is more complex. It showcases RAG and inbound call handling
 
 A. Start NGROK 
 
@@ -64,7 +87,6 @@ RAG_BACKEND=turbopuffer TWILIO_NUMBER=numberhere uv run outbound_example.py
 
 Twilio works by creating a websocket based media stream.
 This logic is the same for both inbound and outbound. 
-
 
 
 
