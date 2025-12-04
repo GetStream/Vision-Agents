@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -129,9 +130,9 @@ class RoboflowCloudDetectionProcessor(
         self._closed = False
         self._video_forwarder: Optional[VideoForwarder] = None
 
-        # Async detection state
-        self._detection_in_progress = False
+        # Parallel detection state - track when results were requested to handle out-of-order completion
         self._last_detection_time: float = 0.0
+        self._last_result_time: float = 0.0
         self._cached_detections: Optional[sv.Detections] = None
         self._cached_classes: dict[int, str] = {}
 
@@ -139,10 +140,10 @@ class RoboflowCloudDetectionProcessor(
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="roboflow_processor"
         )
-        # Video track for publishing at 30 FPS
+        # Video track for publishing at 30 FPS with minimal buffering
         self._video_track: QueuedVideoTrack = QueuedVideoTrack(
             fps=30,
-            max_queue_size=30,
+            max_queue_size=5,
         )
 
         logger.info("🔍 Roboflow Cloud Processor initialized")
@@ -167,7 +168,7 @@ class RoboflowCloudDetectionProcessor(
             if shared_forwarder
             else VideoForwarder(
                 cast(aiortc.VideoStreamTrack, incoming_track),
-                max_buffer=30,
+                max_buffer=5,
                 name="roboflow_forwarder",
             )
         )
@@ -203,25 +204,19 @@ class RoboflowCloudDetectionProcessor(
         if self._closed:
             return
 
-        import asyncio
-
         image = frame.to_ndarray(format="rgb24")
         now = asyncio.get_event_loop().time()
 
-        # Check if we should start a new detection
+        # Check if we should start a new detection based on detection_fps
         detection_interval = (
             1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
         )
-        should_detect = (
-            not self._detection_in_progress
-            and (now - self._last_detection_time) >= detection_interval
-        )
+        should_detect = (now - self._last_detection_time) >= detection_interval
 
         if should_detect:
-            # Start detection in background (don't await)
-            self._detection_in_progress = True
+            # Start detection in background (don't await) - runs in parallel
             self._last_detection_time = now
-            asyncio.create_task(self._run_detection_background(image.copy()))
+            asyncio.create_task(self._run_detection_background(image.copy(), now))
 
         # Apply cached detections to current frame
         if (
@@ -243,35 +238,43 @@ class RoboflowCloudDetectionProcessor(
         else:
             await self._video_track.add_frame(frame)
 
-    async def _run_detection_background(self, image: np.ndarray):
-        """Run detection in background and update cached results."""
+    async def _run_detection_background(self, image: np.ndarray, request_time: float):
+        """Run detection in background and update cached results if newer."""
         try:
             detections, classes = await self._run_inference(image)
-            self._cached_detections = detections
-            self._cached_classes = classes
 
-            # Emit detection event if objects found
-            if detections.class_id is not None and detections.class_id.size > 0:
-                img_height, img_width = image.shape[0:2]
-                detected_objects = [
-                    DetectedObject(label=classes[class_id], x1=x1, y1=y1, x2=x2, y2=y2)
-                    for class_id, (x1, y1, x2, y2) in zip(
-                        detections.class_id, detections.xyxy.astype(float)
+            # Only update cache if this result is newer than current cached result
+            if request_time > self._last_result_time:
+                self._cached_detections = detections
+                self._cached_classes = classes
+                self._last_result_time = request_time
+
+                # Emit detection event if objects found
+                if detections.class_id is not None and detections.class_id.size > 0:
+                    img_height, img_width = image.shape[0:2]
+                    detected_objects = [
+                        DetectedObject(
+                            label=classes[class_id], x1=x1, y1=y1, x2=x2, y2=y2
+                        )
+                        for class_id, (x1, y1, x2, y2) in zip(
+                            detections.class_id, detections.xyxy.astype(float)
+                        )
+                    ]
+                    self.events.send(
+                        DetectionCompletedEvent(
+                            raw_detections=detections,
+                            objects=detected_objects,
+                            image_width=img_width,
+                            image_height=img_height,
+                        )
                     )
-                ]
-                self.events.send(
-                    DetectionCompletedEvent(
-                        raw_detections=detections,
-                        objects=detected_objects,
-                        image_width=img_width,
-                        image_height=img_height,
+                    logger.debug(
+                        f"🔍 Detection complete: {len(detected_objects)} objects"
                     )
-                )
-                logger.debug(f"🔍 Detection complete: {len(detected_objects)} objects")
-        except Exception as e:
-            logger.warning(f"⚠️ Background detection failed: {e}")
-        finally:
-            self._detection_in_progress = False
+            else:
+                logger.debug("🔍 Detection complete but discarded (newer result exists)")
+        except Exception as ex:
+            logger.warning(f"⚠️ Background detection failed: {ex}")
 
     async def _run_inference(
         self, image: np.ndarray

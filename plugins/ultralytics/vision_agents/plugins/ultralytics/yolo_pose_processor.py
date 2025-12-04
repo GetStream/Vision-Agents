@@ -22,27 +22,6 @@ from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WIDTH = 640
-DEFAULT_HEIGHT = 480
-DEFAULT_WIDTH = 1920
-DEFAULT_HEIGHT = 1080
-
-"""
-TODO: video track & Queuing need more testing/ thought
-
-- Process video track not image
-- Use ND array
-- Fix bugs
-
-"""
-
-
-class YOLOPoseVideoTrack(QueuedVideoTrack):
-    """Video track for YOLO pose output at 30 FPS."""
-
-    def __init__(self):
-        super().__init__(fps=30)
-
 
 class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
     """YOLO pose detection processor.
@@ -55,7 +34,7 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         conf_threshold: Confidence threshold for detections (default: 0.5)
         imgsz: Image size for inference (default: 512)
         device: Device to run inference on (default: "cpu")
-        max_workers: Number of worker threads (default: 24)
+        max_workers: Number of worker threads (default: 2)
         detection_fps: Rate at which to run pose detection (default: 15.0).
                       Lower values reduce CPU/GPU load while maintaining smooth video.
         interval: Processing interval in seconds (default: 0)
@@ -71,7 +50,7 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         conf_threshold: float = 0.5,
         imgsz: int = 512,
         device: str = "cpu",
-        max_workers: int = 24,
+        max_workers: int = 2,
         detection_fps: float = 15.0,
         interval: int = 0,
         enable_hand_tracking: bool = True,
@@ -88,12 +67,11 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         self.device = device
         self.enable_hand_tracking = enable_hand_tracking
         self.enable_wrist_highlights = enable_wrist_highlights
-        self._last_frame: Optional[Image.Image] = None
         self._video_forwarder: Optional[VideoForwarder] = None
 
-        # Async detection state
-        self._detection_in_progress = False
+        # Parallel detection state - track when results were requested to handle out-of-order completion
         self._last_detection_time: float = 0.0
+        self._last_result_time: float = 0.0
         self._cached_pose_data: Dict[str, Any] = {"persons": []}
 
         # Initialize YOLO model
@@ -105,8 +83,8 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         )
         self._shutdown = False
 
-        # Video track for publishing (if used as video publisher)
-        self._video_track: YOLOPoseVideoTrack = YOLOPoseVideoTrack()
+        # Video track for publishing at 30 FPS with minimal buffering
+        self._video_track: QueuedVideoTrack = QueuedVideoTrack(fps=30, max_queue_size=5)
 
         logger.info(f"🤖 YOLO Pose Processor initialized with model: {model_path}")
         logger.info(f"📹 Detection FPS: {detection_fps}")
@@ -143,20 +121,18 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
             frame_array = frame.to_ndarray(format="rgb24")
             now = asyncio.get_event_loop().time()
 
-            # Check if we should start a new detection
+            # Check if we should start a new detection based on detection_fps
             detection_interval = (
                 1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
             )
-            should_detect = (
-                not self._detection_in_progress
-                and (now - self._last_detection_time) >= detection_interval
-            )
+            should_detect = (now - self._last_detection_time) >= detection_interval
 
             if should_detect:
-                # Start detection in background (don't await)
-                self._detection_in_progress = True
+                # Start detection in background (don't await) - runs in parallel
                 self._last_detection_time = now
-                asyncio.create_task(self._run_detection_background(frame_array.copy()))
+                asyncio.create_task(
+                    self._run_detection_background(frame_array.copy(), now)
+                )
 
             # Apply cached pose annotations to current frame
             if self._cached_pose_data.get("persons"):
@@ -172,18 +148,63 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
             logger.exception(f"❌ Frame processing failed: {e}")
             await self._video_track.add_frame(frame)
 
-    async def _run_detection_background(self, frame_array: np.ndarray):
-        """Run pose detection in background and update cached results."""
+    async def _run_detection_background(
+        self, frame_array: np.ndarray, request_time: float
+    ):
+        """Run pose detection in background and update cached results if newer."""
         try:
-            _, pose_data = await self._process_pose_async(frame_array)
-            self._cached_pose_data = pose_data
-            logger.debug(
-                f"🔍 Pose detection complete: {len(pose_data.get('persons', []))} persons"
-            )
+            pose_data = await self._detect_pose_async(frame_array)
+            # Only update cache if this result is newer than current cached result
+            if request_time > self._last_result_time:
+                self._cached_pose_data = pose_data
+                self._last_result_time = request_time
+                logger.debug(
+                    f"🔍 Pose detection complete: {len(pose_data.get('persons', []))} persons"
+                )
+            else:
+                logger.debug("🔍 Pose detection complete but discarded (newer result exists)")
         except Exception as e:
             logger.warning(f"⚠️ Background pose detection failed: {e}")
-        finally:
-            self._detection_in_progress = False
+
+    async def _detect_pose_async(self, frame_array: np.ndarray) -> Dict[str, Any]:
+        """Run pose detection without annotation (for background detection)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self.executor, self._detect_pose_sync, frame_array
+        )
+
+    def _detect_pose_sync(self, frame_array: np.ndarray) -> Dict[str, Any]:
+        """Run YOLO pose detection and return pose data only (no annotation)."""
+        if self._shutdown:
+            return {}
+
+        pose_results = self.pose_model(
+            frame_array,
+            verbose=False,
+            conf=self.conf_threshold,
+            device=self.device,
+        )
+
+        if not pose_results:
+            return {}
+
+        pose_data: Dict[str, Any] = {"persons": []}
+
+        for person_idx, result in enumerate(pose_results):
+            if not result.keypoints:
+                continue
+
+            keypoints = result.keypoints
+            if keypoints is not None and len(keypoints.data) > 0:
+                kpts = keypoints.data[0].cpu().numpy()
+                person_data = {
+                    "person_id": person_idx,
+                    "keypoints": kpts.tolist(),
+                    "confidence": float(np.mean(kpts[:, 2])),
+                }
+                pose_data["persons"].append(person_data)
+
+        return pose_data
 
     def _apply_pose_annotations(
         self, frame_array: np.ndarray, pose_data: Dict[str, Any]
