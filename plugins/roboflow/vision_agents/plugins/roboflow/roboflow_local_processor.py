@@ -325,7 +325,7 @@ class RoboflowLocalDetectionProcessor(
                     detected_obj[np.isin(detected_class_ids, classes_ids)],
                 )
 
-            if detected_obj.class_id and detected_obj.class_id.size:
+            if detected_obj.class_id is not None and detected_obj.class_id.size:
                 # Return detected classes
                 return detected_obj
             else:

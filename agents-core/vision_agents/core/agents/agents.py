@@ -1096,9 +1096,6 @@ class Agent:
             if not event.eager_end_of_turn:
                 buffer.reset()
 
-            if not transcript.strip():
-                self.logger.warning("Turn ended with no transcript, like STT is broken")
-
             if transcript.strip():
                 # cancel the old task if the text changed in the meantime
 
