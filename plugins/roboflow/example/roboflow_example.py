@@ -22,7 +22,7 @@ async def create_agent(**kwargs) -> Agent:
             roboflow.RoboflowLocalDetectionProcessor(
                 classes=["person", "sports ball"],
                 conf_threshold=0.5,
-                fps=5,
+                detection_fps=15,
             )
         ],
         llm=llm,
