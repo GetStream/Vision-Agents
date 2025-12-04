@@ -15,6 +15,15 @@ Flow:
 5. Create the AI, and have the AI join the call
 
 Notes: Twilio uses ulaw audio encoding at 8kHz.
+
+TODO/ to fix:
+- Ulaw audio bugs
+- Frankfurt connection bug
+- Study best practices for Gemini RAG
+- Study Turbopuffer Rag
+- Add an outbound calling example
+- See if there is a nicer diff approach to rag indexing
+- Write docs about Rag
 """
 
 import logging

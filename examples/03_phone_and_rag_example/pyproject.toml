@@ -15,9 +15,9 @@ dependencies = [
   "fastapi",
   "uvicorn",
   "audioop-lts>=0.2.2",
-  # TurboPuffer RAG dependencies (for phone_and_rag_turbopuffer.py)
+  # TurboPuffer RAG dependencies
   "turbopuffer>=0.1",
-  "langchain-openai>=0.3",
+  "langchain-google-genai>=2.0",
   "langchain-text-splitters>=0.3",
 ]
 
