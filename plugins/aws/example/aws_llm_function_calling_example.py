@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import aws, getstream, cartesia, deepgram
+from vision_agents.plugins import aws, getstream, elevenlabs, deepgram
 from vision_agents.core.utils.examples import get_weather_by_location
 
 
@@ -32,7 +32,7 @@ async def create_agent(**kwargs) -> Agent:
         llm=aws.LLM(
             model="anthropic.claude-3-sonnet-20240229-v1:0", region_name="us-east-1"
         ),
-        tts=cartesia.TTS(),
+        tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
     )
 
