@@ -12,8 +12,8 @@ requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "boto3>=1.28.0",
-    "aws-sdk-bedrock-runtime>=0.1.0",
+    "boto3>=1.42.4",
+    "aws-sdk-bedrock-runtime>=0.2.0",
 ]
 
 [project.urls]
