@@ -57,7 +57,7 @@ Copy the ngrok url from the first tab. And in a new tab start your http endpoint
 ```
 cd 03_phone_and_rag_example
 uv sync
-RAG_BACKEND=turbopuffer NGROK_URL=replaceme.ngrok-free.app uv run phone_and_rag_example.py
+RAG_BACKEND=gemini NGROK_URL=replaceme.ngrok-free.app uv run inbound_phone_and_rag_example.py
 ```
 
 C. Twilio console
@@ -70,26 +70,17 @@ replaceme.ngrok-free.app/twilio/voice
 
 D. Call the number
 
-Call the number. You'll end up talking to the agent
-
-
-### Running the example - Outbound call
-
-```
-cd 03_phone_and_rag_example
-uv sync
-RAG_BACKEND=turbopuffer TWILIO_NUMBER=numberhere uv run outbound_example.py
-```
+Call the number and you'll end up talking to the agent.
+Note that there is some added latency during development if you're not running in US-east.
 
 
 ## Understanding the examples
 
-### Twilio
+### Twilio & Twiml
 
-Twilio works by creating a websocket based media stream.
-This logic is the same for both inbound and outbound. 
-
-
+Both the inbound and outbound code for twilio generate a TwiML doc.
+This TwiML doc starts the media websocket connection to Twilio.
+After that it behaves like a regular agent.
 
 ## RAG
 
