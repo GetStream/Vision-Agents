@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import aws, getstream, cartesia, deepgram, smart_turn
+from vision_agents.plugins import aws, getstream, elevenlabs, deepgram, smart_turn
 
 
 logger = logging.getLogger(__name__)
@@ -26,11 +26,9 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="Friendly AI", id="agent"),
         instructions="Be nice to the user",
         llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
-        tts=cartesia.TTS(),
+        tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
-        turn_detection=smart_turn.TurnDetection(
-            buffer_in_seconds=2.0, confidence_threshold=0.5
-        ),
+        turn_detection=smart_turn.TurnDetection(),
     )
     return agent
 
@@ -49,7 +47,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("Joining call")
         logger.info("LLM ready")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
         await agent.llm.simple_response(text="Say hi")
 
         await agent.finish()  # Run till the call ends
