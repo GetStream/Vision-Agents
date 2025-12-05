@@ -43,7 +43,7 @@ async def create_agent() -> Agent:
 
 async def initiate_outbound_call(from_number: str, to_number: str) -> str:
     """Initiate an outbound call via Twilio. Returns the call_id."""
-    client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
+    twilio_client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
 
     call_id = str(uuid.uuid4())
 
@@ -56,12 +56,13 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
 
         stream_call = await agent.create_call("default", call_id)
         agent_session = await agent.join(stream_call)
+        logger.info("prepared the call, ready to start")
         return agent, phone_user, stream_call, agent_session
 
     twilio_call = call_registry.create(call_id, prepare=prepare_call)
     url = f"wss://{NGROK_URL}/twilio/media/{call_id}?token={twilio_call.token}"
 
-    client.calls.create(
+    twilio_client.calls.create(
         twiml=twilio.create_media_stream_twiml(url),
         to=to_number,
         from_=from_number,
@@ -72,7 +73,7 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
 
 @app.websocket("/twilio/media/{call_sid}")
 async def media_stream(websocket: WebSocket, call_sid: str, token: str):
-    """Receive real-time audio stream from Twilio."""
+    logger.info("media stream with token %s", token)
     twilio_call = call_registry.validate(call_sid, token)
 
     logger.info(f"🔗 Media stream connected for call {call_sid}")
@@ -142,6 +143,7 @@ async def run_with_server(from_number: str, to_number: str):
 @click.option("--from", "from_number", required=True, help="The phone number to call from. Needs to be active in your Twilio account")
 @click.option("--to", "to_number", required=True, help="The phone number to call")
 def main(from_number: str, to_number: str):
+    logger.info("Starting outbound example. Note that latency is higher in dev. Deploy to US east for low latency")
     asyncio.run(run_with_server(from_number, to_number))
 
 
