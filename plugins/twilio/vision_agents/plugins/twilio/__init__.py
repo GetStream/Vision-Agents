@@ -2,7 +2,7 @@
 
 from .audio import mulaw_to_pcm, pcm_to_mulaw, TWILIO_SAMPLE_RATE
 from .call_registry import TwilioCall, TwilioCallRegistry
-from .media_stream import TwilioMediaStream
+from .media_stream import TwilioMediaStream, attach_phone_to_call
 from .models import (
     CallWebhookInput,
     TwilioSignatureVerifier,
@@ -17,6 +17,7 @@ __all__ = [
     "TwilioCallRegistry",
     "TwilioMediaStream",
     "TwilioSignatureVerifier",
+    "attach_phone_to_call",
     "create_media_stream_response",
     "create_media_stream_twiml",
     "mulaw_to_pcm",

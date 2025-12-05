@@ -5,8 +5,11 @@ import json
 import logging
 from typing import Any, Protocol
 
+from getstream.video import rtc
 from getstream.video.rtc.audio_track import AudioStreamTrack
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from getstream.video.rtc.track_util import PcmData
+from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 
 from .audio import mulaw_to_pcm, pcm_to_mulaw, TWILIO_SAMPLE_RATE
 
@@ -142,4 +145,28 @@ class TwilioMediaStream:
         """Check if the WebSocket is still connected."""
         return self._connected
 
+
+async def attach_phone_to_call(call, twilio_stream: TwilioMediaStream, user_id: str) -> None:
+    """
+    Attach a phone user to a Stream call, bridging audio between Twilio and Stream.
+
+    Args:
+        call: The Stream call to attach to.
+        twilio_stream: The TwilioMediaStream handling the Twilio WebSocket.
+        user_id: The user ID for the phone participant.
+    """
+    subscription_config = SubscriptionConfig(
+        default=TrackSubscriptionConfig(track_types=[TrackType.TRACK_TYPE_AUDIO])
+    )
+
+    connection = await rtc.join(call, user_id, subscription_config=subscription_config)
+
+    @connection.on("audio")
+    async def on_audio_received(pcm: PcmData):
+        await twilio_stream.send_audio(pcm)
+
+    await connection.__aenter__()
+    await connection.add_tracks(audio=twilio_stream.audio_track, video=None)
+
+    logger.info(f"Phone user {user_id} attached to call")
 

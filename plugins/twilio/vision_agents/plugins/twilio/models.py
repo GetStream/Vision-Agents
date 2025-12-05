@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Optional
 
+from fastapi import Form, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from twilio.request_validator import RequestValidator
@@ -82,14 +83,13 @@ class TwilioSignatureVerifier:
             )
         return token
     
-    async def __call__(self, request) -> None:
+    async def __call__(self, request: Request) -> None:
         """
         FastAPI dependency that verifies Twilio signature.
         
         Raises:
             HTTPException: If signature is missing or invalid.
         """
-        # Import here to avoid requiring FastAPI as a dependency
         from fastapi import HTTPException
         
         signature = request.headers.get("X-Twilio-Signature")
@@ -174,33 +174,33 @@ class CallWebhookInput(BaseModel):
     @classmethod
     def as_form(
         cls,
-        CallSid: str = "",
-        AccountSid: str = "",
-        ApiVersion: str = "2010-04-01",
-        CallStatus: str = "",
-        Direction: str = "",
-        From: str = "",
-        Caller: str = "",
-        CallerCity: Optional[str] = None,
-        CallerState: Optional[str] = None,
-        CallerZip: Optional[str] = None,
-        CallerCountry: Optional[str] = None,
-        FromCity: Optional[str] = None,
-        FromState: Optional[str] = None,
-        FromZip: Optional[str] = None,
-        FromCountry: Optional[str] = None,
-        To: str = "",
-        Called: str = "",
-        CalledCity: Optional[str] = None,
-        CalledState: Optional[str] = None,
-        CalledZip: Optional[str] = None,
-        CalledCountry: Optional[str] = None,
-        ToCity: Optional[str] = None,
-        ToState: Optional[str] = None,
-        ToZip: Optional[str] = None,
-        ToCountry: Optional[str] = None,
-        StirVerstat: Optional[str] = None,
-        CallToken: Optional[str] = None,
+        CallSid: str = Form(""),
+        AccountSid: str = Form(""),
+        ApiVersion: str = Form("2010-04-01"),
+        CallStatus: str = Form(""),
+        Direction: str = Form(""),
+        From: str = Form(""),
+        Caller: str = Form(""),
+        CallerCity: Optional[str] = Form(None),
+        CallerState: Optional[str] = Form(None),
+        CallerZip: Optional[str] = Form(None),
+        CallerCountry: Optional[str] = Form(None),
+        FromCity: Optional[str] = Form(None),
+        FromState: Optional[str] = Form(None),
+        FromZip: Optional[str] = Form(None),
+        FromCountry: Optional[str] = Form(None),
+        To: str = Form(""),
+        Called: str = Form(""),
+        CalledCity: Optional[str] = Form(None),
+        CalledState: Optional[str] = Form(None),
+        CalledZip: Optional[str] = Form(None),
+        CalledCountry: Optional[str] = Form(None),
+        ToCity: Optional[str] = Form(None),
+        ToState: Optional[str] = Form(None),
+        ToZip: Optional[str] = Form(None),
+        ToCountry: Optional[str] = Form(None),
+        StirVerstat: Optional[str] = Form(None),
+        CallToken: Optional[str] = Form(None),
     ) -> "CallWebhookInput":
         """
         Create CallWebhookInput from FastAPI Form fields.

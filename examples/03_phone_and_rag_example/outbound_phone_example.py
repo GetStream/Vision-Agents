@@ -7,14 +7,10 @@ import click
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
-from getstream.video import rtc
-from getstream.video.rtc import PcmData
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
-from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from twilio.rest import Client
 
 from vision_agents.core import Agent, User
-from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream, twilio, openai
+from vision_agents.plugins import gemini, getstream, twilio
 
 load_dotenv()
 
@@ -81,7 +77,7 @@ async def media_stream(websocket: WebSocket, call_sid: str, token: str):
         agent, phone_user, stream_call, agent_session = await twilio_call.await_prepare()
         twilio_call.stream_call = stream_call
 
-        await attach_phone_to_call(stream_call, twilio_stream, phone_user)
+        await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
 
         with agent_session:
             await agent.llm.simple_response(
@@ -90,26 +86,6 @@ async def media_stream(websocket: WebSocket, call_sid: str, token: str):
             await twilio_stream.run()
     finally:
         call_registry.remove(call_sid)
-
-
-async def attach_phone_to_call(
-    call, twilio_stream: twilio.TwilioMediaStream, phone_user: User
-) -> None:
-    """Join a call and bridge audio between Twilio and Stream."""
-    subscription_config = SubscriptionConfig(
-        default=TrackSubscriptionConfig(track_types=[TrackType.TRACK_TYPE_AUDIO])
-    )
-
-    connection = await rtc.join(call, phone_user.id, subscription_config=subscription_config)
-
-    @connection.on("audio")
-    async def on_audio_received(pcm: PcmData):
-        await twilio_stream.send_audio(pcm)
-
-    await connection.__aenter__()
-    await connection.add_tracks(audio=twilio_stream.audio_track, video=None)
-
-    logger.info(f"🔊 {phone_user.name} attached to call")
 
 
 async def run_with_server(from_number: str, to_number: str):

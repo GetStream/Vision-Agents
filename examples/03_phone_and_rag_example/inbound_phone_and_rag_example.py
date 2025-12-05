@@ -8,37 +8,24 @@ RAG Backend Configuration (via RAG_BACKEND environment variable):
 - "turbopuffer": Uses TurboPuffer + LangChain with function calling
 
 Flow:
-1. Twilio triggers webhook for phone number on /twilio/voice
-2. Start a bi directional stream using start.stream which goes to /twilio/media
-3. Start a call on Stream's edge network
-4. Create a participant for the phone call and join the call
-5. Create the AI, and have the AI join the call
+1. Twilio triggers webhook on /twilio/voice, which starts preparing the call
+2. Start a bi-directional stream using start.stream which goes to /twilio/media
+3. When media stream connects, await the prepared call and attach the phone user
+4. Run the agent session until the call ends
 
-Notes: Twilio uses ulaw audio encoding at 8kHz.
-
-TODO/ to fix:
-- Things should prep when creating the call in the voice endpoint
-- Auth for stream endpoint
-- Ulaw audio bugs
-- Frankfurt connection bug
-- Study best practices for Gemini RAG
-- Study Turbopuffer Rag
-- Add an outbound calling example
-- See if there is a nicer diff approach to rag indexing
-- Write docs about Rag
+Notes: Twilio uses mulaw audio encoding at 8kHz.
 """
 import asyncio
 import logging
 import os
+import traceback
+import uuid
 from pathlib import Path
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, WebSocket
-from getstream.video import rtc
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
-from getstream.video.rtc.track_util import PcmData
-from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
+from fastapi import Depends, FastAPI, Request, WebSocket
+from fastapi.responses import JSONResponse
 
 from vision_agents.core import User, Agent
 from vision_agents.plugins import getstream, gemini, twilio, elevenlabs, deepgram
@@ -62,54 +49,69 @@ rag = None  # For TurboPuffer
 app = FastAPI()
 call_registry = twilio.TwilioCallRegistry()
 
-"""
-Twilio call webhook points here. Signature is validated and we start the media stream
-"""
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}\n{traceback.format_exc()}")
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
 @app.post("/twilio/voice")
 async def twilio_voice_webhook(
         _: None = Depends(twilio.verify_twilio_signature),
         data: twilio.CallWebhookInput = Depends(twilio.CallWebhookInput.as_form),
 ):
-    url = f"wss://{NGROK_URL}/twilio/media/{data.call_sid}"
-    logger.info(f"📞 Call from {data.caller} ({data.caller_city or 'unknown location'}) forwarding to {url}")
+    """Twilio call webhook. Validates signature and starts the media stream."""
+    logger.info(f"📞 Call from {data.caller} ({data.caller_city or 'unknown location'})")
+    call_id = str(uuid.uuid4())
 
-    call_registry.create(data.call_sid, data)
+    async def prepare_call():
+        agent = await create_agent()
+        await agent.create_user()
+
+        phone_number = data.from_number or "unknown"
+        sanitized_number = phone_number.replace("+", "").replace(" ", "").replace("(", "").replace(")", "")
+        phone_user = User(name=f"Call from {phone_number}", id=f"phone-{sanitized_number}")
+        await agent.edge.create_user(user=phone_user)
+
+        stream_call = await agent.create_call("default", call_id=call_id)
+        agent_session = await agent.join(stream_call, wait_for_participant=False)
+        return agent, phone_user, stream_call, agent_session
+
+    twilio_call = call_registry.create(call_id, data, prepare=prepare_call)
+    url = f"wss://{NGROK_URL}/twilio/media/{call_id}/{twilio_call.token}"
+    logger.info("twilio redirect to %s", url)
 
     return twilio.create_media_stream_response(url)
 
 
-"""
-Twilio media stream endpoint
-"""
-@app.websocket("/twilio/media/{call_sid}")
-async def media_stream(websocket: WebSocket, call_sid: str):
+@app.websocket("/twilio/media/{call_id}/{token}")
+async def media_stream(websocket: WebSocket, call_id: str, token: str):
     """Receive real-time audio stream from Twilio."""
-    twilio_call = call_registry.require(call_sid)
+    twilio_call = call_registry.validate(call_id, token)
 
-    logger.info(f"🔗 Media stream connecting for {twilio_call.caller} from {twilio_call.caller_city or 'unknown location'}")
+    logger.info(f"🔗 Media stream connected for {twilio_call.caller}")
 
     twilio_stream = twilio.TwilioMediaStream(websocket)
     await twilio_stream.accept()
     twilio_call.twilio_stream = twilio_stream
 
     try:
-        agent = await create_agent()
-        await agent.create_user()
-
-        phone_number = twilio_call.from_number or "unknown"
-        sanitized_number = phone_number.replace("+", "").replace(" ", "").replace("(", "").replace(")", "")
-        phone_user = User(name=f"Call from {phone_number}", id=f"phone-{sanitized_number}")
-        await agent.edge.create_user(user=phone_user)
-
-        stream_call = await agent.create_call("default", call_sid)
+        agent, phone_user, stream_call, agent_session = await twilio_call.await_prepare()
         twilio_call.stream_call = stream_call
 
-        await join_call(agent, stream_call, twilio_stream, phone_user)
+        await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
+
+        with agent_session:
+            await agent.llm.simple_response(
+                text="Greet the caller warmly and ask what kind of app they're building. Use your knowledge base to provide relevant product recommendations."
+            )
+            await twilio_stream.run()
     finally:
-        call_registry.remove(call_sid)
+        call_registry.remove(call_id)
 
 
-async def startup_event():
+async def create_rag_knowledge():
     """Initialize the RAG backend based on RAG_BACKEND environment variable."""
     global file_search_store, rag
 
@@ -197,38 +199,7 @@ async def _create_agent_turbopuffer() -> Agent:
     )
 
 
-# =============================================================================
-# Call Handling
-# =============================================================================
-
-
-async def join_call(
-    agent: Agent, call, twilio_stream: twilio.TwilioMediaStream, phone_user: User
-) -> None:
-    """Join a call and bridge audio between Twilio and Stream."""
-    subscription_config = SubscriptionConfig(
-        default=TrackSubscriptionConfig(track_types=[TrackType.TRACK_TYPE_AUDIO])
-    )
-
-    connection = await rtc.join(call, phone_user.id, subscription_config=subscription_config)
-
-    @connection.on("audio")
-    async def on_audio_received(pcm: PcmData):
-        await twilio_stream.send_audio(pcm)
-
-    await connection.__aenter__()
-    await connection.add_tracks(audio=twilio_stream.audio_track, video=None)
-
-    logger.info(f"{phone_user.name} joined the call, agent is joining next")
-
-    with await agent.join(call):
-        await agent.llm.simple_response(
-            text="Greet the caller warmly and ask what kind of app they're building. Use your knowledge base to provide relevant product recommendations."
-        )
-        await twilio_stream.run()
-
-
 if __name__ == "__main__":
-    asyncio.run(startup_event())
+    asyncio.run(create_rag_knowledge())
     logger.info(f"Starting with RAG_BACKEND={RAG_BACKEND}")
     uvicorn.run(app, host="localhost", port=8000)
