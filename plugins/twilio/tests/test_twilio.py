@@ -2,6 +2,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from vision_agents.plugins import twilio
+from vision_agents.plugins.twilio import CallWebhookInput
 
 
 load_dotenv()
@@ -18,14 +19,20 @@ class TestTwilioPlugin:
 class TestTwilioCall:
     def test_create_call(self):
         """Test creating a TwilioCall."""
+        webhook_data = CallWebhookInput(
+            CallSid="CA123456",
+            AccountSid="AC123",
+            CallStatus="ringing",
+            Direction="inbound",
+            From="+1234567890",
+            Caller="+1234567890",
+            CallerCity="New York",
+            To="+0987654321",
+            Called="+0987654321",
+        )
         call = twilio.TwilioCall(
             call_sid="CA123456",
-            form_data={
-                "From": "+1234567890",
-                "To": "+0987654321",
-                "CallStatus": "ringing",
-                "CallerCity": "New York",
-            }
+            webhook_data=webhook_data,
         )
         
         assert call.call_sid == "CA123456"
@@ -48,9 +55,20 @@ class TestTwilioCallRegistry:
     def test_create_and_get(self):
         """Test creating and retrieving calls."""
         registry = twilio.TwilioCallRegistry()
+        webhook_data = CallWebhookInput(
+            CallSid="CA123",
+            AccountSid="AC123",
+            CallStatus="ringing",
+            Direction="inbound",
+            From="+123",
+            Caller="+123",
+            To="+456",
+            Called="+456",
+        )
         
-        call = registry.create("CA123", {"From": "+123"})
+        call = registry.create("CA123", webhook_data=webhook_data)
         assert call.call_sid == "CA123"
+        assert call.from_number == "+123"
         
         retrieved = registry.get("CA123")
         assert retrieved is call
@@ -63,7 +81,7 @@ class TestTwilioCallRegistry:
     def test_remove(self):
         """Test removing a call."""
         registry = twilio.TwilioCallRegistry()
-        registry.create("CA123", {})
+        registry.create("CA123")
         
         removed = registry.remove("CA123")
         assert removed is not None
@@ -73,9 +91,9 @@ class TestTwilioCallRegistry:
     def test_list_active(self):
         """Test listing active calls."""
         registry = twilio.TwilioCallRegistry()
-        registry.create("CA1", {})
-        registry.create("CA2", {})
-        registry.create("CA3", {})
+        registry.create("CA1")
+        registry.create("CA2")
+        registry.create("CA3")
         
         # End one call
         registry.remove("CA2")
