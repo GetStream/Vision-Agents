@@ -1,0 +1,18 @@
+[project]
+name = "deepgram-tts-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents-plugins-deepgram",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-gemini",
+  "vision-agents",
+]
+
+[tool.uv.sources]
+"vision-agents-plugins-deepgram" = {path = "..", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../gemini", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}
