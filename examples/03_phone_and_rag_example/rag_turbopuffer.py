@@ -104,7 +104,7 @@ class TurboPufferRAG:
         self,
         namespace: str,
         embedding_model: str = "models/gemini-embedding-001",
-        chunk_size: int = 1000,
+        chunk_size: int = 10000,
         chunk_overlap: int = 200,
         region: str = "gcp-us-central1",
     ):
