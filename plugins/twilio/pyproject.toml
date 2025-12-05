@@ -13,6 +13,7 @@ dependencies = [
     "vision-agents",
     "twilio>=9.0.0",
     "numpy>=1.24.0",
+    "fastapi>=0.100.0",
 ]
 
 [project.urls]

@@ -353,7 +353,7 @@ class GeminiRealtime(realtime.Realtime):
         if self.file_search_store and self.file_search_store.is_created:
             file_search_config = self.file_search_store.get_tool_config()
             tools.append(file_search_config)
-            logger.info(f"Adding file search tool to Gemini Live config")
+            logger.info("Adding file search tool to Gemini Live config")
 
         if tools:
             config["tools"] = tools  # type: ignore[typeddict-item]

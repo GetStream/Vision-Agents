@@ -5,7 +5,7 @@ import logging
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING, TypeVar
+from typing import Any, Callable, Coroutine, Optional, TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from .media_stream import TwilioMediaStream
@@ -119,7 +119,7 @@ class TwilioCallRegistry:
         self,
         call_id: str,
         webhook_data: Optional["CallWebhookInput"] = None,
-        prepare: Optional[Callable[[], Awaitable[Any]]] = None,
+        prepare: Optional[Callable[[], Coroutine[Any, Any, Any]]] = None,
     ) -> TwilioCall:
         """
         Create and register a new TwilioCall.

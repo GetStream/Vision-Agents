@@ -277,6 +277,15 @@ wheels = [
 ]
 
 [[package]]
+name = "annotated-doc"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/ba/046ceea27344560984e26a590f90bc7f4a75b06701f653222458922b558c/annotated_doc-0.0.4.tar.gz", hash = "sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4", size = 7288, upload-time = "2025-11-10T22:07:42.062Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl", hash = "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320", size = 5303, upload-time = "2025-11-10T22:07:40.673Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1352,6 +1361,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/21/6a199b0e5933a93ecb69ca919aa58e62682ff4619e5cdf9e5b17becebeeb/fal_client-0.8.1.tar.gz", hash = "sha256:2c12cb0b0a327f4aa9c24fc7952722acf7aa059a1421a1c53283466f3bc07353", size = 15795, upload-time = "2025-10-15T19:33:09.608Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/45/dc/0012b95c05448264329ba71ad568e440f12b7f5acdf2ddc09fa1aec42e0d/fal_client-0.8.1-py3-none-any.whl", hash = "sha256:ab37063f2b35ca6fad06f75fe45b05b72c774ad7590e0f93d47a8f6ad5e1f9db", size = 10912, upload-time = "2025-10-15T19:33:07.797Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.123.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/ff/e01087de891010089f1620c916c0c13130f3898177955c13e2b02d22ec4a/fastapi-0.123.10.tar.gz", hash = "sha256:624d384d7cda7c096449c889fc776a0571948ba14c3c929fa8e9a78cd0b0a6a8", size = 356360, upload-time = "2025-12-05T21:27:46.237Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/f0/7cb92c4a720def85240fd63fbbcf147ce19e7a731c8e1032376bb5a486ac/fastapi-0.123.10-py3-none-any.whl", hash = "sha256:0503b7b7bc71bc98f7c90c9117d21fdf6147c0d74703011b87936becc86985c1", size = 111774, upload-time = "2025-12-05T21:27:44.78Z" },
 ]
 
 [[package]]
@@ -6787,6 +6811,7 @@ name = "vision-agents-plugins-twilio"
 version = "0.1.0"
 source = { editable = "plugins/twilio" }
 dependencies = [
+    { name = "fastapi" },
     { name = "numpy" },
     { name = "twilio" },
     { name = "vision-agents" },
@@ -6800,6 +6825,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.100.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "twilio", specifier = ">=9.0.0" },
     { name = "vision-agents", editable = "agents-core" },

@@ -86,6 +86,7 @@ class FileSearchStore:
         )
         self._store_name = store.name
         logger.info(f"Created FileSearchStore '{self.name}': {self._store_name}")
+        assert self._store_name is not None
         return self._store_name
     
     async def upload_file(self, file_path: str | Path, display_name: Optional[str] = None) -> None:
@@ -98,6 +99,8 @@ class FileSearchStore:
         """
         if not self._store_name:
             raise ValueError("Store not created. Call create() first.")
+        
+        store_name = self._store_name
         
         file_path = Path(file_path)
         if not file_path.exists():
@@ -112,7 +115,7 @@ class FileSearchStore:
             None,
             lambda: self._client.file_search_stores.upload_to_file_search_store(
                 file=str(file_path),
-                file_search_store_name=self._store_name,
+                file_search_store_name=store_name,
                 config={"display_name": display_name}
             )
         )

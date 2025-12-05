@@ -1,5 +1,6 @@
 """Tests for TurboPuffer Hybrid RAG."""
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,6 @@ from dotenv import load_dotenv
 from rag_turbopuffer import TurboPufferRAG
 
 load_dotenv()
-import logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -31,6 +31,5 @@ async def test_index_and_search(knowledge_dir: Path):
     result = await rag.search("chat messaging")
     assert "Chat" in result
     logger.info("result %s", result)
-    import pdb; pdb.set_trace()
 
     await rag.close()

@@ -1,7 +1,6 @@
 """Comprehensive tests for mulaw/PCM audio conversion."""
 
 import numpy as np
-import pytest
 from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 from vision_agents.plugins.twilio.audio import (
@@ -131,7 +130,7 @@ class TestMulawEncode:
                     f"PCM {pcm_val}: ours={our_mulaw:#04x}, expected={expected_mulaw:#04x}"
                 )
 
-        assert not mismatches, f"Encoding mismatches:\n" + "\n".join(mismatches)
+        assert not mismatches, "Encoding mismatches:\n" + "\n".join(mismatches)
 
     def test_encode_symmetry(self):
         """Positive and negative values should encode symmetrically."""

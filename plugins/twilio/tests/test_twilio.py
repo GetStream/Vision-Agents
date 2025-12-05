@@ -1,4 +1,3 @@
-import pytest
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -90,7 +89,6 @@ class TestAudioConversion:
     def test_mulaw_to_pcm(self):
         """Test mulaw to PCM conversion."""
         # Create some test mulaw bytes
-        import numpy as np
         mulaw_bytes = bytes([0xFF, 0x7F, 0x00, 0x80])  # Various mulaw values
         
         pcm = twilio.mulaw_to_pcm(mulaw_bytes)

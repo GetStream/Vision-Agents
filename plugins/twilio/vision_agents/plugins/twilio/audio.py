@@ -64,11 +64,11 @@ def _build_mulaw_encode_table() -> np.ndarray:
 
     # Fallback: Try audioop-lts (available for Python >= 3.13)
     try:
-        import audioop_lts as audioop
+        import audioop_lts
 
         for i in range(65536):
             pcm_bytes = i.to_bytes(2, byteorder="little", signed=False)
-            table[i] = audioop.lin2ulaw(pcm_bytes, 2)[0]
+            table[i] = audioop_lts.lin2ulaw(pcm_bytes, 2)[0]
         return table
 
     except ImportError:
