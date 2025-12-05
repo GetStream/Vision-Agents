@@ -55,12 +55,13 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
         await agent.edge.create_users([agent.agent_user, phone_user])
 
         stream_call = await agent.create_call("default", call_id)
-        agent_session = await agent.join(stream_call)
+        agent_session = await agent.join(stream_call, wait_for_participant=False)
         logger.info("prepared the call, ready to start")
         return agent, phone_user, stream_call, agent_session
 
     twilio_call = call_registry.create(call_id, prepare=prepare_call)
-    url = f"wss://{NGROK_URL}/twilio/media/{call_id}?token={twilio_call.token}"
+    url = f"wss://{NGROK_URL}/twilio/media/{call_id}/{twilio_call.token}"
+    logger.info(f"Forwarding to media url: {url} \n %s", twilio.create_media_stream_twiml(url))
 
     twilio_client.calls.create(
         twiml=twilio.create_media_stream_twiml(url),
@@ -71,29 +72,42 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
     return call_id
 
 
-@app.websocket("/twilio/media/{call_sid}")
+@app.websocket("/twilio/media/{call_sid}/{token}")
 async def media_stream(websocket: WebSocket, call_sid: str, token: str):
-    logger.info("media stream with token %s", token)
     twilio_call = call_registry.validate(call_sid, token)
 
     logger.info(f"🔗 Media stream connected for call {call_sid}")
 
+    logger.info("DEBUG: Creating TwilioMediaStream...")
     twilio_stream = twilio.TwilioMediaStream(websocket)
+    logger.info("DEBUG: Calling twilio_stream.accept()...")
     await twilio_stream.accept()
+    logger.info("DEBUG: twilio_stream.accept() completed")
     twilio_call.twilio_stream = twilio_stream
 
     try:
         # Wait for the prepare task to complete
+        logger.info("DEBUG: Calling twilio_call.await_prepare()...")
         agent, phone_user, stream_call, agent_session = await twilio_call.await_prepare()
+        logger.info("DEBUG: twilio_call.await_prepare() completed")
         twilio_call.stream_call = stream_call
 
+        logger.info("DEBUG: Calling attach_phone_to_call()...")
         await attach_phone_to_call(stream_call, twilio_stream, phone_user)
+        logger.info("DEBUG: attach_phone_to_call() completed")
 
+        logger.info("Twilio phone is attached to call")
+
+        logger.info("DEBUG: Entering agent_session context...")
         with agent_session:
+            logger.info("DEBUG: Inside agent_session, calling agent.llm.simple_response()...")
             await agent.llm.simple_response(
                 text="Ask to reserve and answer any follow up questions as needed"
             )
+            logger.info("DEBUG: agent.llm.simple_response() completed, calling twilio_stream.run()...")
             await twilio_stream.run()
+            logger.info("DEBUG: twilio_stream.run() completed")
+        logger.info("DEBUG: Exited agent_session context")
     finally:
         call_registry.remove(call_sid)
 
@@ -106,14 +120,21 @@ async def attach_phone_to_call(
         default=TrackSubscriptionConfig(track_types=[TrackType.TRACK_TYPE_AUDIO])
     )
 
+    logger.info("DEBUG attach_phone_to_call: Calling rtc.join()...")
     connection = await rtc.join(call, phone_user.id, subscription_config=subscription_config)
+    logger.info("DEBUG attach_phone_to_call: rtc.join() completed")
 
     @connection.on("audio")
     async def on_audio_received(pcm: PcmData):
         await twilio_stream.send_audio(pcm)
 
+    logger.info("DEBUG attach_phone_to_call: Calling connection.__aenter__()...")
     await connection.__aenter__()
+    logger.info("DEBUG attach_phone_to_call: connection.__aenter__() completed")
+    
+    logger.info("DEBUG attach_phone_to_call: Calling connection.add_tracks()...")
     await connection.add_tracks(audio=twilio_stream.audio_track, video=None)
+    logger.info("DEBUG attach_phone_to_call: connection.add_tracks() completed")
 
     logger.info(f"{phone_user.name} is now attached to the call")
 

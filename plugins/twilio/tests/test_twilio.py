@@ -118,3 +118,4 @@ class TestAudioConversion:
         assert isinstance(mulaw_bytes, bytes)
         assert len(mulaw_bytes) == 4
 
+
