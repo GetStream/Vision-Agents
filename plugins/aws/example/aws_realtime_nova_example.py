@@ -7,13 +7,11 @@ AWS Bedrock Nova Sonic 2 Example
 
 import asyncio
 import logging
-from typing import Dict, Any
 
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import aws, getstream
 
 

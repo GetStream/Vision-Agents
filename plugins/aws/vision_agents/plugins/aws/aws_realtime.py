@@ -302,7 +302,8 @@ class Realtime(realtime.Realtime):
             self.last_connected_at = datetime.datetime.now()
 
             # stop old events
-            self._handle_event_task.cancel()
+            if self._handle_event_task:
+                self._handle_event_task.cancel()
             # create the new one
             self._handle_event_task = asyncio.create_task(self._handle_events())
             
@@ -356,7 +357,7 @@ class Realtime(realtime.Realtime):
         elif running_minutes > FORCE_RECONNECT_IN_MINUTES:
             should_reconnect = True
 
-        logger.info(f"Connection is %.2f seconds old. Silence: %s, should reconnect is %s", running.total_seconds(), has_silence, should_reconnect)
+        logger.info("Connection is %.2f seconds old. Silence: %s, should reconnect is %s", running.total_seconds(), has_silence, should_reconnect)
 
         return should_reconnect
 
@@ -431,6 +432,8 @@ class Realtime(realtime.Realtime):
         await self.content_end(content_name)
 
     async def audio_input(self, content_name: str, audio_bytes: str):
+        if not self.connection:
+            raise RuntimeError("Not connected")
         audio_event = {
             "event": {
                 "audioInput": {
@@ -443,6 +446,8 @@ class Realtime(realtime.Realtime):
         await self.connection.send_event(audio_event)
 
     async def audio_content_start(self, content_name: str, role: str = "USER"):
+        if not self.connection:
+            raise RuntimeError("Not connected")
         event = {
             "event": {
                 "contentStart": {
@@ -488,11 +493,9 @@ class Realtime(realtime.Realtime):
         }
 
     async def start_session(self):
-        """Send a session start event.
-        
-        Args:
-            connection: Optional connection to send on. Uses self.connection if not provided.
-        """
+        """Send a session start event."""
+        if not self.connection:
+            raise RuntimeError("Not connected")
         event = self._create_session_start_event()
         await self.connection.send_event(event)
 
@@ -544,9 +547,13 @@ class Realtime(realtime.Realtime):
         """
         event = self._create_prompt_start_event()
         target_connection = connection or self.connection
+        if not target_connection:
+            raise RuntimeError("Not connected")
         await target_connection.send_event(event)
 
     async def text_content_start(self, content_name: str, role: str, interactive: bool):
+        if not self.connection:
+            raise RuntimeError("Not connected")
         event = {
             "event": {
                 "contentStart": {
@@ -565,6 +572,8 @@ class Realtime(realtime.Realtime):
         await self.connection.send_event(event)
 
     async def text_input(self, content_name: str, content: str):
+        if not self.connection:
+            raise RuntimeError("Not connected")
         event = {
             "event": {
                 "textInput": {
@@ -578,6 +587,8 @@ class Realtime(realtime.Realtime):
         await self.connection.send_event(event)
 
     async def content_end(self, content_name: str):
+        if not self.connection:
+            raise RuntimeError("Not connected")
         event = {
             "event": {
                 "contentEnd": {
@@ -650,6 +661,8 @@ class Realtime(realtime.Realtime):
             content_name: Unique content identifier
             tool_use_id: The tool use ID from the toolUse event
         """
+        if not self.connection:
+            raise RuntimeError("Not connected")
         event = {
             "event": {
                 "contentStart": {
@@ -675,6 +688,8 @@ class Realtime(realtime.Realtime):
             content_name: Unique content identifier
             result: The result from executing the tool (will be stringified as JSON)
         """
+        if not self.connection:
+            raise RuntimeError("Not connected")
         # AWS Nova expects content as a stringified JSON string
         # Reference: https://docs.aws.amazon.com/nova/latest/userguide/input-events.html
         if isinstance(result, str):
@@ -749,19 +764,19 @@ class Realtime(realtime.Realtime):
         if not self.connected:
             return
 
-        prompt_end = {
-            "event": {
-                "promptEnd": {
-                    "promptName": self.session_id,
+        if self.connection:
+            prompt_end = {
+                "event": {
+                    "promptEnd": {
+                        "promptName": self.session_id,
+                    }
                 }
             }
-        }
-        await self.connection.send_event(prompt_end)
+            await self.connection.send_event(prompt_end)
 
-        session_end: Dict[str, Any] = {"event": {"sessionEnd": {}}}
-        await self.connection.send_event(session_end)
+            session_end: Dict[str, Any] = {"event": {"sessionEnd": {}}}
+            await self.connection.send_event(session_end)
 
-        if self.connection:
             await self.connection.close()
 
         if self._handle_event_task:
@@ -776,6 +791,9 @@ class Realtime(realtime.Realtime):
         """Process incoming responses from AWS Bedrock."""
         while True:
             try:
+                if not self.connection:
+                    logger.warning("Connection lost, stopping event handler")
+                    break
                 output = await self.connection.await_output()
                 result = await output[1].receive()
                 if result.value and result.value.bytes_:
@@ -786,7 +804,7 @@ class Realtime(realtime.Realtime):
                         # Handle different response types
                         if "event" in json_data:
                             # Log all non audio events
-                            if "audioOutput" not in json_data["event"]:
+                            if "audioOutput" not in json_data["event"] and "usageEvent" not in json_data["event"]:
                                 logger.info(f"Received event: {json_data}")
 
                             if "contentStart" in json_data["event"]:
