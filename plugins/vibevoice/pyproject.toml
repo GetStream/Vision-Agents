@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vision-agents-plugins-vibevoice"
+version = "0.0.1"
+description = "VibeVoice TTS plugin for Vision Agents"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "vision-agents",
+    "vibevoice @ git+https://github.com/microsoft/VibeVoice.git",
+    "huggingface_hub",
+    "numpy",
+    "torch",
+    "websockets",
+    "pydantic"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["vision_agents"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv.sources]
+vision-agents = { workspace = true }
