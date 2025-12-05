@@ -24,7 +24,7 @@ Find the docs and python SDK for this project. Typically you can find these in t
 
 ## 4. See if we're up to date
 
-Evaluate if we're up to date. Is the plugin code still using the latest best practices. 
+Evaluate if we're up to date. Is the plugin code still using the latest best practices.
 If possible upgrade to the latest best practices
 
 ## 5. Repeat running tests

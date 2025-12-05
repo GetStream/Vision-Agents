@@ -25,5 +25,5 @@ While we appreciate any information that you are willing to provide, please make
 
 ### Scope
 
-Only code in this repository is in scope.  
+Only code in this repository is in scope.
 Third-party services (hosted demo, npm registry, etc.) are handled separately.

@@ -122,4 +122,3 @@ The STT implementation accepts PCM audio data and converts it to WAV format inte
 2. Navigate to the API Keys section in your dashboard
 3. Create a new API key
 4. Set the `FISH_API_KEY` environment variable or pass it directly to the plugin
-

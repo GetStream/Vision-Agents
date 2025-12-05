@@ -57,7 +57,7 @@ If your STT supports Turn detection/turn events do the following
 ```
 class MySTT(stt.STT):
     turn_detection: bool = True
-    
+
     async def process_audio(
         self,
         pcm_data: PcmData,

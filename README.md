@@ -225,7 +225,7 @@ While building the integrations, here are the limitations we've noticed (Dec 202
 * Longer videos can cause the AI to lose context. For instance if it's watching a soccer match it will get confused after 30 seconds
 * Most applications require a combination of small specialized models like Yolo/Roboflow/Moondream, API calls to get more context and larger models like gemini/openAI
 * Image size & FPS need to stay relatively low due to performance constraints
-* Video doesn’t trigger responses in realtime models. You always need to send audio/text to trigger a response. 
+* Video doesn’t trigger responses in realtime models. You always need to send audio/text to trigger a response.
 
 ## Star History
 

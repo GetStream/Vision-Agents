@@ -29,10 +29,10 @@ async def main():
         model="grok-4",
         api_key="your_xai_api_key"  # or set XAI_API_KEY environment variable
     )
-    
+
     # Simple response
     response = await llm.simple_response("Explain quantum computing in simple terms")
-    
+
     print(f"\n\nComplete response: {response.text}")
 
 if __name__ == "__main__":
@@ -60,7 +60,7 @@ print(response.text)  # Will mention the 2 cats
 
 ```python
 llm = LLM(
-    model="grok-4", 
+    model="grok-4",
     api_key="your_api_key"
 )
 

@@ -59,7 +59,7 @@ class Participant(DataClassJsonMixin):
     is_speaking: Optional[bool] = None
     audio_level: Optional[float] = None
     # ... all other fields
-    
+
     @classmethod
     def from_proto(cls, proto_obj) -> 'Participant':
         """Create from protobuf Participant."""
@@ -243,7 +243,7 @@ The EventManager has been updated to seamlessly handle the new protobuf events:
    ```python
    from vision_agents.core.events.manager import EventManager
    from vision_agents.core.edge.sfu_events import AudioLevelEvent
-   
+
    manager = EventManager()
    manager.register(AudioLevelEvent)
    ```
@@ -255,13 +255,13 @@ The EventManager has been updated to seamlessly handle the new protobuf events:
      event = AudioLevelEvent.from_proto(proto, session_id='session123')
      manager.send(event)  # BaseEvent fields preserved
      ```
-   
+
    - Send raw protobuf messages (auto-wrapped):
      ```python
      proto = events_pb2.AudioLevel(user_id='user456', level=0.95)
      manager.send(proto)  # Automatically wrapped in AudioLevelEvent
      ```
-   
+
    - Create events without payload (all fields optional):
      ```python
      event = AudioLevelEvent()  # No protobuf payload needed
@@ -283,4 +283,3 @@ The EventManager has been updated to seamlessly handle the new protobuf events:
 - **Simplified logic**: Single check distinguishes raw protobuf from wrapped events
 - **Type safety**: All generated events properly inherit from BaseEvent
 - **Flexible usage**: Use raw protobuf or wrapped events interchangeably
-

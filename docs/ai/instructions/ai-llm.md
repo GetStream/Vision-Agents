@@ -14,19 +14,19 @@ class MyLLM(LLM):
         super().__init__()
         self.model = model
         self.client = client
-        
-        
+
+
     # native method wrapped. wrap the native method, every llm has its own name for this
     # openai calls it create response, anthropic create message. so the name depends on your llm
     async def mynativemethod(self, *args, **kwargs):
-        
+
         # some details to get right here...
         # ensure conversation history is maintained. typically by passing it ie:
         if self._instructions:
             kwargs["system"] = [{"text": self._instructions}]
-            
+
         response_iterator = await self.client.mynativemethod(self, *args, **kwargs)
-        
+
         # while receiving streaming do this
         total_text = ""
         for chunk in response_iterator:
@@ -39,7 +39,7 @@ class MyLLM(LLM):
                     delta=chunk.text,
                 ))
             total_text += chunk.text
-            
+
         llm_response = LLMResponseEvent(response_iterator, total_text)
         # and when completed
         self.events.send(LLMResponseCompletedEvent(
@@ -57,7 +57,7 @@ class MyLLM(LLM):
         # call the LLM with the given text
         # be sure to use the streaming version
         self.mynativemethod(...)
-    
+
     @staticmethod
     def _normalize_message(my_input) -> List["Message"]:
         # convert the message to a list of messages so our conversation storage gets it

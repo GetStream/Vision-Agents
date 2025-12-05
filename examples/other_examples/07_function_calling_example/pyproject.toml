@@ -8,7 +8,7 @@ authors = [
 dependencies = [
     "python-dotenv",
     "vision-agents-plugins-openai",
-    "vision-agents-plugins-anthropic", 
+    "vision-agents-plugins-anthropic",
     "vision-agents-plugins-gemini",
     "vision-agents",
 ]

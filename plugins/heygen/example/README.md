@@ -189,4 +189,3 @@ Make sure `HEYGEN_API_KEY` is set in your `.env` file.
 - [HeyGen API Documentation](https://docs.heygen.com/docs/streaming-api)
 - [Vision Agents Documentation](https://visionagents.ai/)
 - [GetStream Video Documentation](https://getstream.io/video/docs/)
-

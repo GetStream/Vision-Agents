@@ -18,4 +18,3 @@ vision-agents-plugins-openai = { workspace = true }
 vision-agents-plugins-elevenlabs = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
 vision-agents-plugins-deepgram = { workspace = true }
-

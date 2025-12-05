@@ -11,4 +11,3 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "getstream-plugins-common>=0.1.0",
 ]
-

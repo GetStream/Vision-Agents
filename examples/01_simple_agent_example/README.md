@@ -149,4 +149,3 @@ Add items to the `processors` list to give your agent new capabilities. See the 
 - [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
 - [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
 - [Main Vision Agents README](../../README.md)
-

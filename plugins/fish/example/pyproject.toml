@@ -18,4 +18,3 @@ dependencies = [
 "vision-agents-plugins-deepgram" = {path = "../../deepgram", editable=true}
 "vision-agents-plugins-smart-turn" = {path = "../../smart_turn", editable=true}
 "vision-agents" = {path = "../../../agents-core", editable=true}
-
