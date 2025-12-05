@@ -33,10 +33,7 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with OpenRouter LLM, function calling, and optional MCP."""
-    # OpenRouter auto-detects the API format based on model:
-    # - openai/* models use Responses API
-    # - All other models (google/*, anthropic/*, etc.) use Chat Completions API
-    #
+    # OpenRouter uses Chat Completions API for all models for consistent behavior.
     # For MCP/GitHub integration, Claude is recommended as it handles
     # multi-step tool reasoning well (e.g., call get_me first, then use the result)
     model = "openai/gpt-4o"

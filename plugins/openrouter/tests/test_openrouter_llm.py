@@ -5,7 +5,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 
-from vision_agents.core.agents.conversation import Message, InMemoryConversation
+from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.plugins.openrouter import LLM
@@ -28,36 +28,13 @@ def skip_without_api_key():
 class TestOpenRouterLLM:
     """Test suite for OpenRouter LLM class."""
 
-    def test_message(self):
-        """Test basic message normalization."""
-        messages = LLM._normalize_message("say hi")
-        assert isinstance(messages[0], Message)
-        message = messages[0]
-        assert message.original is not None
-        assert message.content == "say hi"
-
-    def test_advanced_message(self):
-        """Test advanced message format with image."""
-        img_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
-
-        advanced = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": "what do you see in this image?"},
-                    {"type": "input_image", "image_url": f"{img_url}"},
-                ],
-            }
-        ]
-        messages = LLM._normalize_message(advanced)
-        assert messages[0].original is not None
-
     @pytest.fixture
     async def llm(self) -> LLM:
         """Fixture for OpenRouter LLM with conversation."""
         skip_without_api_key()
         llm = LLM(model="anthropic/claude-haiku-4.5")
-        llm.set_conversation(InMemoryConversation("be friendly", []))
+        llm.set_instructions(Instructions("be friendly"))
+        llm.set_conversation(InMemoryConversation("test", []))
         return llm
 
     @pytest.mark.integration
@@ -68,9 +45,9 @@ class TestOpenRouterLLM:
 
     @pytest.mark.integration
     async def test_native_api(self, llm: LLM):
-        """Test native OpenAI-compatible API."""
+        """Test native Chat Completions API."""
         response = await llm.create_response(
-            input="say hi", instructions="You are a helpful assistant."
+            input="say hi"
         )
         assert_response_successful(response)
         assert hasattr(response.original, "id")
@@ -105,24 +82,12 @@ class TestOpenRouterLLM:
         )
 
     @pytest.mark.integration
-    async def test_native_memory(self, llm: LLM):
-        """Test conversation memory using native API."""
-        await llm.create_response(input="There are 2 dogs in the room")
-        response = await llm.create_response(
-            input="How many paws are there in the room?"
-        )
-
-        assert_response_successful(response)
-        assert "8" in response.text or "eight" in response.text.lower(), (
-            f"Expected '8' or 'eight' in response, got: {response.text}"
-        )
-
-    @pytest.mark.integration
     async def test_instruction_following(self):
         """Test that the LLM follows system instructions."""
         skip_without_api_key()
         llm = LLM(model="anthropic/claude-haiku-4.5")
         llm.set_instructions(Instructions("Only reply in 2 letter country shortcuts"))
+        llm.set_conversation(InMemoryConversation("test", []))
 
         response = await llm.simple_response(
             text="Which country is rainy, flat, famous for windmills and tulips, protected from water with dykes and below sea level?"
@@ -135,7 +100,7 @@ class TestOpenRouterLLM:
 
     @pytest.mark.integration
     async def test_function_calling_openai(self):
-        """Test function calling with OpenAI model (Responses API path)."""
+        """Test function calling with OpenAI model."""
         skip_without_api_key()
         llm = LLM(model="openai/gpt-4o-mini")
 
@@ -159,7 +124,7 @@ class TestOpenRouterLLM:
 
     @pytest.mark.integration
     async def test_function_calling_gemini(self):
-        """Test function calling with Gemini model (Chat Completions API path)."""
+        """Test function calling with Gemini model."""
         skip_without_api_key()
         llm = LLM(model="google/gemini-2.0-flash-001")
 
