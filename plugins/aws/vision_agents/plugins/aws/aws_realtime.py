@@ -33,16 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_MODEL = "amazon.nova-2-sonic-v1:0"
-
-"""
-AWS Bedrock Realtime with Nova Sonic support.
-
-Supports real-time audio streaming and function calling (tool use).
-
-TODO:
-- 
-"""
-
+# Reconnect after 5 seconds if there is silence. If there is no break in speech reconnect after 7 seconds
 FORCE_RECONNECT_IN_MINUTES = 7.0
 
 

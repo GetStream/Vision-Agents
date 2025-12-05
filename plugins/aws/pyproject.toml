@@ -13,6 +13,7 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "boto3>=1.28.0",
+    "onnxruntime",
     "aws-sdk-bedrock-runtime>=0.1.0",
 ]
 
@@ -30,9 +31,6 @@ packages = ["."]
 
 [tool.hatch.build.targets.sdist]
 include = ["/vision_agents"]
-
-[tool.uv.sources]
-vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

@@ -167,6 +167,8 @@ class STT(stt.STT):
 
         Args:
             message: The message object from Deepgram
+
+        TODO: errors in this function are hidden silently. Not sure why this happens.
         """
         # Extract message data
         if not hasattr(message, "type"):
@@ -187,6 +189,7 @@ class STT(stt.STT):
 
             is_final = event == "EndOfTurn"
             eager_end_of_turn = event == "EagerEndOfTurn"
+            start_of_turn = event == "StartOfTurn"
 
             # Get end of turn confidence
             end_of_turn_confidence = getattr(message, "end_of_turn_confidence", 0.0)
@@ -211,11 +214,6 @@ class STT(stt.STT):
                 language=self.language or "auto",
                 audio_duration_ms=duration_ms,
                 model_name=self.model,
-                other={
-                    "end_of_turn_confidence": end_of_turn_confidence,
-                    "turn_index": getattr(message, "turn_index", None),
-                    "event": event,
-                },
             )
 
             # Use the participant from the most recent process_audio call
@@ -225,19 +223,27 @@ class STT(stt.STT):
                 logger.warning("Received transcript but no participant set")
                 return
 
-            if is_final or eager_end_of_turn:
+            # broadcast STT event first
+            if is_final:
                 self._emit_transcript_event(
                     transcript_text, participant, response_metadata
                 )
-
-                self._emit_turn_ended_event(
-                    participant=participant, eager_end_of_turn=eager_end_of_turn
-                )
-
             else:
-                # Partial transcript (event == "StartOfTurn" or "Update")
                 self._emit_partial_transcript_event(
                     transcript_text, participant, response_metadata
+                )
+
+            # broadcast turn event
+            if is_final or eager_end_of_turn:
+                self._emit_turn_ended_event(
+                    participant=participant,
+                    eager_end_of_turn=eager_end_of_turn,
+                    confidence=end_of_turn_confidence,
+                )
+
+            if start_of_turn:
+                self._emit_turn_started_event(
+                    participant=participant, confidence=end_of_turn_confidence
                 )
 
     def _on_open(self, message):

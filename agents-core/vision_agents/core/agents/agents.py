@@ -9,7 +9,6 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
-
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
@@ -311,7 +310,7 @@ class Agent:
                 return
 
             if isinstance(event, STTPartialTranscriptEvent):
-                self.logger.debug(f"🎤 [Transcript Partial]: {event.text}")
+                self.logger.info(f"🎤 [Transcript Partial]: {event.text}")
             else:
                 self.logger.info(f"🎤 [Transcript Complete]: {event.text}")
 
@@ -1084,9 +1083,19 @@ class Agent:
             # When turn detection is enabled, trigger LLM response when user's turn ends.
             # This is the signal that the user has finished speaking and expects a response
             buffer = self._pending_user_transcripts[event.participant.user_id]
+
+            # when turn is completed, wait for the last transcriptions
+
+            if not event.eager_end_of_turn:
+                if self.stt:
+                    await self.stt.clear()
+                    # give the speech to text a moment to catch up
+                    await asyncio.sleep(0.02)
+
+            # get the transcript, and reset the buffer if it's not an eager turn
             transcript = buffer.text
-            if not transcript.strip():
-                self.logger.warning("Turn ended with no transcript, like STT is broken")
+            if not event.eager_end_of_turn:
+                buffer.reset()
 
             if transcript.strip():
                 # cancel the old task if the text changed in the meantime
@@ -1102,11 +1111,6 @@ class Agent:
                     )
                     if self._pending_turn.task:
                         self._pending_turn.task.cancel()
-
-                if not event.eager_end_of_turn:
-                    buffer.reset()
-                    if self.stt:
-                        await self.stt.clear()
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:

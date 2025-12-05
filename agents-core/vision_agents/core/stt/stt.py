@@ -8,7 +8,7 @@ from ..edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 from . import events
 from .events import TranscriptResponse
-from ..turn_detection import TurnEndedEvent
+from ..turn_detection import TurnEndedEvent, TurnStartedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ class STT(abc.ABC):
 
         self.events = EventManager()
         self.events.register(TurnEndedEvent)
+        self.events.register(TurnStartedEvent)
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
     async def warmup(self) -> None:
@@ -91,6 +92,21 @@ class STT(abc.ABC):
                 confidence=confidence,
             )
         )
+
+    def _emit_turn_started_event(
+        self,
+        participant: Participant,
+        confidence: Optional[float] = None,
+    ):
+        if confidence is None:
+            confidence = 0.5
+        event = TurnStartedEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            participant=participant,
+            confidence=confidence,
+        )
+        self.events.send(event)
 
     def _emit_partial_transcript_event(
         self,

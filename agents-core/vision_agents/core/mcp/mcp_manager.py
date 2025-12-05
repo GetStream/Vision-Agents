@@ -132,13 +132,19 @@ class MCPManager:
                         server_index, tool.name, self
                     )
 
-                    # Register the tool with the LLM's function registry
+                    # Convert the MCP tool schema to our format
+                    tool_schema = MCPToolConverter.mcp_tool_to_tool_schema(tool)
+
+                    # Register with prefix to avoid collisions between servers
+                    # and with locally registered functions
+                    prefixed_name = f"mcp_{server_index}_{tool.name}"
                     self.llm.function_registry.register(
-                        name=f"mcp_{server_index}_{tool.name}",
+                        name=prefixed_name,
                         description=tool.description or f"MCP tool: {tool.name}",
+                        parameters_schema=tool_schema.get("parameters_schema", {}),
                     )(tool_wrapper)
 
-                    self.logger.info(f"    ✅ Registered tool: {tool.name}")
+                    self.logger.info(f"    ✅ Registered tool: {prefixed_name}")
 
                 except Exception as e:
                     self.logger.error(

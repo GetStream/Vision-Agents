@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "vision-agents-plugins-deepgram"
 dynamic = ["version"]
-description = "Deepgram STT integration for Vision Agents"
+description = "Deepgram STT and TTS integration for Vision Agents"
 readme = "README.md"
-keywords = ["deepgram", "STT", "speech-to-text", "transcription", "AI", "voice agents", "agents"]
+keywords = ["deepgram", "STT", "TTS", "speech-to-text", "text-to-speech", "transcription", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "deepgram-sdk==5.2.0",
+    "deepgram-sdk>=5.3.0",
     "numpy>=2.2.6,<2.3",
 ]
 
