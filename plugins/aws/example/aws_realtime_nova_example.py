@@ -31,10 +31,6 @@ async def create_agent(**kwargs) -> Agent:
         llm=llm,
     )
 
-    # MCP and function calling are supported. see https://visionagents.ai/guides/mcp-tool-calling
-    @llm.register_function(description="Get current weather for a location")
-    async def get_weather(location: str) -> Dict[str, Any]:
-        return await get_weather_by_location(location)
     return agent
 
 
@@ -45,7 +41,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     with await agent.join(call):
 
         await asyncio.sleep(5)
-        await agent.llm.simple_response(text="Tell me about the weather in Boulder")
+        await agent.llm.simple_response(text="Tell me a short story about a dragon and a princess")
 
         await agent.finish()  # Run till the call ends
 

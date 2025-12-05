@@ -7,12 +7,15 @@ The agent can call custom functions to get weather information and perform calcu
 
 import asyncio
 import logging
+from typing import Dict
+from typing_extensions import Any
 
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import aws, getstream, cartesia, deepgram
+from vision_agents.plugins import aws, getstream, elevenlabs, deepgram
+from vision_agents.core.utils.examples import get_weather_by_location
 
 
 logger = logging.getLogger(__name__)
@@ -29,7 +32,7 @@ async def create_agent(**kwargs) -> Agent:
         llm=aws.LLM(
             model="anthropic.claude-3-sonnet-20240229-v1:0", region_name="us-east-1"
         ),
-        tts=cartesia.TTS(),
+        tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
     )
 
@@ -37,12 +40,8 @@ async def create_agent(**kwargs) -> Agent:
     @agent.llm.register_function(
         name="get_weather", description="Get the current weather for a given city"
     )
-    def get_weather(city: str) -> dict:
-        """Get weather information for a city."""
-        logger.info(f"Tool: get_weather called for city: {city}")
-        if city.lower() == "boulder":
-            return {"city": city, "temperature": 72, "condition": "Sunny"}
-        return {"city": city, "temperature": "unknown", "condition": "unknown"}
+    async def get_weather(location: str) -> Dict[str, Any]:
+        return await get_weather_by_location(location)
 
     @agent.llm.register_function(
         name="calculate", description="Performs a mathematical calculation"

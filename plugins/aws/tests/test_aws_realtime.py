@@ -16,7 +16,7 @@ from getstream.video.rtc import PcmData, AudioFormat
 load_dotenv()
 
 
-class TestNovaRealtime:
+class TestBedrockRealtime:
     """Integration tests for AWS Bedrock Realtime connect flow"""
 
     @pytest.fixture
@@ -155,6 +155,7 @@ class TestNova2Realtime:
             model="amazon.nova-2-sonic-v1:0",
             region_name="us-east-1",
         )
+
         realtime.set_instructions("you're a kind assistant, always be friendly please.")
         try:
             yield realtime
