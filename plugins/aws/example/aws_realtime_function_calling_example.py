@@ -7,12 +7,15 @@ weather information and perform calculations.
 
 import asyncio
 import logging
+from typing import Dict
+from typing_extensions import Any
 
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import aws, getstream
+from vision_agents.core.utils.examples import get_weather_by_location
 
 
 logger = logging.getLogger(__name__)
@@ -38,32 +41,8 @@ async def create_agent(**kwargs) -> Agent:
     @agent.llm.register_function(
         name="get_weather", description="Get the current weather for a given city"
     )
-    def get_weather(city: str) -> dict:
-        """Get weather information for a city.
-
-        Args:
-            city: The name of the city
-
-        Returns:
-            Weather information including temperature and conditions
-        """
-        # This is a mock implementation - in production you'd call a real weather API
-        weather_data = {
-            "Boulder": {"temp": 72, "condition": "Sunny", "humidity": 30},
-            "Seattle": {"temp": 58, "condition": "Rainy", "humidity": 85},
-            "Miami": {"temp": 85, "condition": "Partly Cloudy", "humidity": 70},
-        }
-
-        city_weather = weather_data.get(
-            city, {"temp": 70, "condition": "Unknown", "humidity": 50}
-        )
-        return {
-            "city": city,
-            "temperature": city_weather["temp"],
-            "condition": city_weather["condition"],
-            "humidity": city_weather["humidity"],
-            "unit": "Fahrenheit",
-        }
+    async def get_weather(location: str) -> Dict[str, Any]:
+        return await get_weather_by_location(location)
 
     @agent.llm.register_function(
         name="calculate", description="Perform a mathematical calculation"

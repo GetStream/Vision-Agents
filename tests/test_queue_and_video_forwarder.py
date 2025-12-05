@@ -1,14 +1,13 @@
 import asyncio
-import pytest
 
-from vision_agents.core.utils.video_queue import VideoLatestNQueue
+import pytest
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.utils.video_queue import VideoLatestNQueue
 
 
 class TestLatestNQueue:
     """Test suite for LatestNQueue"""
 
-    @pytest.mark.asyncio
     async def test_basic_put_get(self):
         """Test basic put and get operations"""
         queue = VideoLatestNQueue[int](maxlen=3)
@@ -21,7 +20,6 @@ class TestLatestNQueue:
         assert await queue.get() == 2
         assert await queue.get() == 3
 
-    @pytest.mark.asyncio
     async def test_put_latest_discards_oldest(self):
         """Test that put_latest discards oldest items when full"""
         queue = VideoLatestNQueue[int](maxlen=2)
@@ -37,7 +35,6 @@ class TestLatestNQueue:
         with pytest.raises(asyncio.QueueEmpty):
             queue.get_nowait()
 
-    @pytest.mark.asyncio
     async def test_put_latest_nowait(self):
         """Test synchronous put_latest_nowait"""
         queue = VideoLatestNQueue[int](maxlen=2)
@@ -49,7 +46,6 @@ class TestLatestNQueue:
         assert queue.get_nowait() == 2
         assert queue.get_nowait() == 3
 
-    @pytest.mark.asyncio
     async def test_put_latest_nowait_discards_oldest(self):
         """Test that put_latest_nowait discards oldest when full"""
         queue = VideoLatestNQueue[int](maxlen=3)
@@ -70,7 +66,6 @@ class TestLatestNQueue:
 
         assert items == [3, 4, 5]
 
-    @pytest.mark.asyncio
     async def test_queue_size_limits(self):
         """Test that queue respects size limits"""
         queue = VideoLatestNQueue[int](maxlen=1)
@@ -83,7 +78,6 @@ class TestLatestNQueue:
         assert queue.full()
         assert await queue.get() == 2
 
-    @pytest.mark.asyncio
     async def test_generic_type_support(self):
         """Test that queue works with different types"""
         # Test with strings
@@ -114,7 +108,6 @@ class TestLatestNQueue:
 class TestVideoForwarder:
     """Test suite for VideoForwarder"""
 
-    @pytest.mark.asyncio
     async def test_multiple_handlers_with_different_fps(self, bunny_video_track):
         """Test forwarding to 2 handlers with different FPS rates"""
         forwarder = VideoForwarder(bunny_video_track, max_buffer=5, fps=30.0)
@@ -176,7 +169,6 @@ class TestVideoForwarder:
         finally:
             await forwarder.stop()
 
-    @pytest.mark.asyncio
     async def test_handler_fps_exceeds_forwarder_fps_raises_error(
         self, bunny_video_track
     ):
@@ -196,7 +188,6 @@ class TestVideoForwarder:
         finally:
             await forwarder.stop()
 
-    @pytest.mark.asyncio
     async def test_stop_stops_handlers(self, bunny_video_track):
         """Test that stop() stops frame delivery to handlers"""
         forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
@@ -215,7 +206,7 @@ class TestVideoForwarder:
 
         # Stop forwarder
         await forwarder.stop()
-        assert not forwarder._started
+        assert not forwarder.started
 
         # Wait a bit and verify no new frames are received
         await asyncio.sleep(0.1)
@@ -224,7 +215,6 @@ class TestVideoForwarder:
             "Should not receive frames after stop"
         )
 
-    @pytest.mark.asyncio
     async def test_add_and_remove_handlers(self, bunny_video_track):
         """Test adding and removing frame handlers"""
         forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
@@ -238,23 +228,60 @@ class TestVideoForwarder:
         # Add handlers
         forwarder.add_frame_handler(handler1, fps=5, name="handler-1")
         forwarder.add_frame_handler(handler2, fps=10, name="handler-2")
-        assert len(forwarder._frame_handlers) == 2
-        assert forwarder._started
+        assert len(forwarder.frame_handlers) == 2
+        assert forwarder.started
 
         # Remove first handler
         removed = await forwarder.remove_frame_handler(handler1)
         assert removed is True
-        assert len(forwarder._frame_handlers) == 1
-        assert forwarder._frame_handlers[0].callback == handler2
-        assert forwarder._started  # Should still be running
+        assert len(forwarder.frame_handlers) == 1
+        assert forwarder.frame_handlers[0].callback == handler2
+        assert forwarder.started  # Should still be running
 
         # Try removing handler that doesn't exist
         removed = await forwarder.remove_frame_handler(handler1)
         assert removed is False
-        assert len(forwarder._frame_handlers) == 1
+        assert len(forwarder.frame_handlers) == 1
 
         # Remove last handler (should auto-stop)
         removed = await forwarder.remove_frame_handler(handler2)
         assert removed is True
-        assert len(forwarder._frame_handlers) == 0
-        assert not forwarder._started  # Should have stopped automatically
+        assert len(forwarder.frame_handlers) == 0
+        assert not forwarder.started  # Should have stopped automatically
+
+    async def test_handler_raises_an_error_forwarder_keeps_working(
+        self, bunny_video_track
+    ):
+        """
+        Test that one failing frame handler doesn't take the forwarder down.
+        """
+        forwarder = VideoForwarder(bunny_video_track, max_buffer=3, fps=10.0)
+
+        frames_to_succeed = 10
+        frames_to_fail = 2
+        frames_succeeded = 0
+        frames_failed = 0
+        finished = asyncio.Event()
+
+        async def handler(_):
+            nonlocal frames_failed, frames_succeeded
+
+            if frames_failed < frames_to_fail:
+                frames_failed += 1
+                raise ValueError("Failed")
+
+            frames_succeeded += 1
+
+            if (
+                frames_failed == frames_to_fail
+                and frames_succeeded == frames_to_succeed
+            ):
+                finished.set()
+
+        # Add handlers
+        forwarder.add_frame_handler(handler, fps=5, name="handler-1")
+        assert forwarder.started
+
+        await finished.wait()
+        assert frames_failed == frames_to_fail
+        assert frames_succeeded == frames_to_succeed
