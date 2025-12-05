@@ -136,24 +136,25 @@ class StreamEdge(EdgeTransport):
                 except Exception as e:
                     logger.error(f"Failed to subscribe to existing track: {e}")
 
-        # Wait for WebRTC tracks to arrive after subscription
-        if tracks_to_subscribe:
-            await asyncio.sleep(1.0)
+        # Poll for WebRTC tracks to arrive after subscription
+        for participant, track_type_int in tracks_to_subscribe:
+            expected_kind = self._get_webrtc_kind(track_type_int)
+            track_key = (
+                participant.user_id,
+                participant.session_id,
+                track_type_int,
+            )
 
-            # Emit TrackAddedEvent for each track that arrived
-            for participant, track_type_int in tracks_to_subscribe:
-                expected_kind = self._get_webrtc_kind(track_type_int)
-                track_key = (
-                    participant.user_id,
-                    participant.session_id,
-                    track_type_int,
-                )
+            if track_key in self._track_map:
+                continue
 
-                if track_key in self._track_map:
-                    continue
+            # Poll for WebRTC track ID with timeout (same pattern as _on_track_published)
+            track_id = None
+            timeout = 10.0
+            poll_interval = 0.01
+            elapsed = 0.0
 
-                # Find the WebRTC track ID from pending tracks
-                track_id = None
+            while elapsed < timeout:
                 for tid, (pending_user, pending_session, pending_kind) in list(
                     self._pending_tracks.items()
                 ):
@@ -167,26 +168,32 @@ class StreamEdge(EdgeTransport):
                         break
 
                 if track_id:
-                    self._track_map[track_key] = {
-                        "track_id": track_id,
-                        "published": True,
-                    }
-                    sfu_participant = SfuParticipant.from_proto(participant)
+                    break
 
-                    self.events.send(
-                        events.TrackAddedEvent(
-                            plugin_name="getstream",
-                            track_id=track_id,
-                            track_type=track_type_int,
-                            user=sfu_participant,
-                            participant=sfu_participant,
-                        )
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+
+            if track_id:
+                self._track_map[track_key] = {
+                    "track_id": track_id,
+                    "published": True,
+                }
+                sfu_participant = SfuParticipant.from_proto(participant)
+
+                self.events.send(
+                    events.TrackAddedEvent(
+                        plugin_name="getstream",
+                        track_id=track_id,
+                        track_type=track_type_int,
+                        user=sfu_participant,
+                        participant=sfu_participant,
                     )
-                else:
-                    logger.warning(
-                        f"No pending track for existing participant: "
-                        f"user={participant.user_id}, type={TrackType.Name(track_type_int)}"
-                    )
+                )
+            else:
+                logger.warning(
+                    f"No pending track for existing participant: "
+                    f"user={participant.user_id}, type={TrackType.Name(track_type_int)}"
+                )
 
     async def _on_track_published(self, event: sfu_events.TrackPublishedEvent):
         """Handle track published events from SFU - spawn TrackAddedEvent with correct type."""
