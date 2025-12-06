@@ -32,7 +32,7 @@ async def create_agent(**kwargs) -> Agent:
         use the get_weather function to fetch current conditions. You can also help with
         simple calculations using the calculate function.""",
         llm=aws.Realtime(
-            model="amazon.nova-sonic-v1:0",
+            model="amazon.nova-2-sonic-v1:0",
             region_name="us-east-1",
         ),
     )
@@ -92,15 +92,11 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("LLM ready")
 
         # Give the agent a moment to connect
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
 
         await agent.llm.simple_response(
             text="What's the weather like in Boulder? Please use the get_weather function."
         )
-
-        # Wait for AWS Nova to process the request and call the function
-        await asyncio.sleep(15)
-
         await agent.finish()  # Run till the call ends
 
 
