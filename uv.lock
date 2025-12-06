@@ -29,6 +29,7 @@ members = [
     "vision-agents-plugins-openrouter",
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-smart-turn",
+    "vision-agents-plugins-twilio",
     "vision-agents-plugins-ultralytics",
     "vision-agents-plugins-vogent",
     "vision-agents-plugins-wizper",
@@ -188,6 +189,18 @@ wheels = [
 ]
 
 [[package]]
+name = "aiohttp-retry"
+version = "2.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/61/ebda4d8e3d8cfa1fd3db0fb428db2dd7461d5742cea35178277ad180b033/aiohttp_retry-2.9.1.tar.gz", hash = "sha256:8eb75e904ed4ee5c2ec242fefe85bf04240f685391c4879d8f541d6028ff01f1", size = 13608, upload-time = "2024-11-06T10:44:54.574Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/99/84ba7273339d0f3dfa57901b846489d2e5c2cd731470167757f1935fffbd/aiohttp_retry-2.9.1-py3-none-any.whl", hash = "sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6be6dc54", size = 9981, upload-time = "2024-11-06T10:44:52.917Z" },
+]
+
+[[package]]
 name = "aioice"
 version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
@@ -261,6 +274,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl", hash = "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e", size = 7490, upload-time = "2025-07-03T22:54:42.156Z" },
+]
+
+[[package]]
+name = "annotated-doc"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/ba/046ceea27344560984e26a590f90bc7f4a75b06701f653222458922b558c/annotated_doc-0.0.4.tar.gz", hash = "sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4", size = 7288, upload-time = "2025-11-10T22:07:42.062Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl", hash = "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320", size = 5303, upload-time = "2025-11-10T22:07:40.673Z" },
 ]
 
 [[package]]
@@ -1339,6 +1361,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/21/6a199b0e5933a93ecb69ca919aa58e62682ff4619e5cdf9e5b17becebeeb/fal_client-0.8.1.tar.gz", hash = "sha256:2c12cb0b0a327f4aa9c24fc7952722acf7aa059a1421a1c53283466f3bc07353", size = 15795, upload-time = "2025-10-15T19:33:09.608Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/45/dc/0012b95c05448264329ba71ad568e440f12b7f5acdf2ddc09fa1aec42e0d/fal_client-0.8.1-py3-none-any.whl", hash = "sha256:ab37063f2b35ca6fad06f75fe45b05b72c774ad7590e0f93d47a8f6ad5e1f9db", size = 10912, upload-time = "2025-10-15T19:33:07.797Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.123.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/ff/e01087de891010089f1620c916c0c13130f3898177955c13e2b02d22ec4a/fastapi-0.123.10.tar.gz", hash = "sha256:624d384d7cda7c096449c889fc776a0571948ba14c3c929fa8e9a78cd0b0a6a8", size = 356360, upload-time = "2025-12-05T21:27:46.237Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/f0/7cb92c4a720def85240fd63fbbcf147ce19e7a731c8e1032376bb5a486ac/fastapi-0.123.10-py3-none-any.whl", hash = "sha256:0503b7b7bc71bc98f7c90c9117d21fdf6147c0d74703011b87936becc86985c1", size = 111774, upload-time = "2025-12-05T21:27:44.78Z" },
 ]
 
 [[package]]
@@ -5886,6 +5923,21 @@ wheels = [
 ]
 
 [[package]]
+name = "twilio"
+version = "9.8.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "aiohttp-retry" },
+    { name = "pyjwt" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/16/c3/1d923bef66f48c8d139177c61b315dc376e9b6a669d0f383e09bb2acad42/twilio-9.8.8.tar.gz", hash = "sha256:b4d35cf5f7eceb39eeec243f740a8909c7dcdc67b9fa0840ee3718a71836df91", size = 946667, upload-time = "2025-12-03T11:26:40.646Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/a1/803ac455b0d9d08da5621f87fd26b8eb788b7c4975e6e5974cb04344e5fa/twilio-9.8.8-py2.py3-none-any.whl", hash = "sha256:fcbfff12633995dc56f5396747c6f3b45fd63cbb3f616949367aa7676b1614d5", size = 1843262, upload-time = "2025-12-03T11:26:39.176Z" },
+]
+
+[[package]]
 name = "twine"
 version = "6.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6747,6 +6799,37 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.20.1" },
     { name = "transformers", specifier = ">=4.48.2" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-twilio"
+version = "0.1.0"
+source = { editable = "plugins/twilio" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "numpy" },
+    { name = "twilio" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.100.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "twilio", specifier = ">=9.0.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

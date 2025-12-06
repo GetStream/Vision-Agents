@@ -1,7 +1,7 @@
 [project]
 name = "vision-agents-golf"
 version = "0.0.0"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 
 # put only what this example needs
 dependencies = [

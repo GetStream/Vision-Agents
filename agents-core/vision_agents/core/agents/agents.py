@@ -567,6 +567,7 @@ class Agent:
         if self.participants is None:
             return
 
+
         participant_joined = asyncio.Event()
 
         def on_participants(participants):
