@@ -144,9 +144,7 @@ class TestBedrockRealtime:
         assert len(events) > 0
 
 
-
 class TestNova2Realtime:
-
     @pytest.fixture
     async def realtime(self):
         """Create and manage Realtime connection lifecycle"""

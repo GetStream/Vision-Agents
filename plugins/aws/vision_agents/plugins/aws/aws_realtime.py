@@ -39,7 +39,7 @@ FORCE_RECONNECT_IN_MINUTES = 7.0
 
 class RealtimeConnection:
     """Encapsulates a single AWS Bedrock bidirectional stream connection.
-    
+
     This class manages the lifecycle of a single connection, including sending
     events and receiving responses. It can be replaced to enable reconnection.
     """
@@ -58,13 +58,13 @@ class RealtimeConnection:
 
     async def send_event(self, event_data: Dict[str, Any]) -> None:
         """Send an event to AWS Nova.
-        
+
         Args:
             event_data: Dictionary containing the event data to send
         """
         if not self.stream:
             raise RuntimeError("Connection not initialized. Call connect() first.")
-        
+
         event_json = json.dumps(event_data)
         event = InvokeModelWithBidirectionalStreamInputChunk(
             value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
@@ -161,7 +161,7 @@ class Realtime(realtime.Realtime):
         model: str = DEFAULT_MODEL,
         region_name: str = "us-east-1",
         voice_id: str = "matthew",
-        reconnect_after_minutes = 5.0, # Attempt to reconnect during silence after 5 minutes. Reconnect is forced after 7 minutes
+        reconnect_after_minutes=5.0,  # Attempt to reconnect during silence after 5 minutes. Reconnect is forced after 7 minutes
         **kwargs,
     ) -> None:
         """ """
@@ -239,14 +239,16 @@ class Realtime(realtime.Realtime):
         logger.info("Connecting to AWS Bedrock for model %s", self.model)
         self.connection = RealtimeConnection(self.client, self.model)
         await self.connection.connect()
-        
+
         self.last_connected_at = datetime.datetime.now()
 
         # Start listener task
         self._handle_event_task = asyncio.create_task(self._handle_events())
-        
+
         # Start reconnection check task
-        self._reconnection_check_task = asyncio.create_task(self._reconnection_check_loop())
+        self._reconnection_check_task = asyncio.create_task(
+            self._reconnection_check_loop()
+        )
 
         # send start and prompt event
         event = self._create_session_start_event()
@@ -272,23 +274,23 @@ class Realtime(realtime.Realtime):
 
     async def reconnect(self):
         """Reconnect to AWS Bedrock with a new connection.
-        
+
         Creates a new connection, sets it up, then closes the old one.
         This allows seamless transition without dropping the conversation.
         """
         if self._reconnecting:
             logger.warning("Reconnection already in progress, skipping")
             return
-            
+
         self._reconnecting = True
         reconnect_succeeded = False
         try:
             logger.info("Reconnecting to AWS Bedrock")
-            
+
             # Create and initialize new connection
             new_connection = RealtimeConnection(self.client, self.model)
             await new_connection.connect()
-            
+
             # Send session start and prompt start events on NEW connection before swapping
             session_start_event = self._create_session_start_event()
             await new_connection.send_event(session_start_event)
@@ -306,17 +308,17 @@ class Realtime(realtime.Realtime):
                 self._handle_event_task.cancel()
             # create the new one
             self._handle_event_task = asyncio.create_task(self._handle_events())
-            
+
             # Resend system instructions
             if self._instructions:
                 await self.content_input(self._instructions, "SYSTEM")
 
             # TODO: Resend summary of conversation history if needed
-            
+
             # Close old connection
             if old_connection:
                 await old_connection.close()
-            
+
             reconnect_succeeded = True
             logger.info("Reconnection successful")
         finally:
@@ -337,7 +339,7 @@ class Realtime(realtime.Realtime):
         # Don't reconnect if already in progress
         if self._reconnecting:
             return False
-            
+
         if not self.last_connected_at:
             return False
 
@@ -357,13 +359,18 @@ class Realtime(realtime.Realtime):
         elif running_minutes > FORCE_RECONNECT_IN_MINUTES:
             should_reconnect = True
 
-        logger.info("Connection is %.2f seconds old. Silence: %s, should reconnect is %s", running.total_seconds(), has_silence, should_reconnect)
+        logger.info(
+            "Connection is %.2f seconds old. Silence: %s, should reconnect is %s",
+            running.total_seconds(),
+            has_silence,
+            should_reconnect,
+        )
 
         return should_reconnect
 
     async def _reconnection_check_loop(self):
         """Periodic task that checks if reconnection is needed.
-        
+
         Runs every second to check if the connection should be reconnected
         based on runtime and silence detection.
         """
@@ -471,9 +478,9 @@ class Realtime(realtime.Realtime):
 
     def _create_session_start_event(self) -> Dict[str, Any]:
         """Create a session start event.
-        
+
         Subclass this to customize the session start configuration.
-        
+
         Returns:
             Event dictionary for session start
         """
@@ -483,12 +490,10 @@ class Realtime(realtime.Realtime):
                     "inferenceConfiguration": {
                         "maxTokens": 1024,
                         "topP": 0.9,
-                        "temperature": 0.7
+                        "temperature": 0.7,
                     }
                 },
-                "turnDetectionConfiguration": {
-                    "endpointingSensitivity": "MEDIUM"
-                }
+                "turnDetectionConfiguration": {"endpointingSensitivity": "MEDIUM"},
             }
         }
 
@@ -501,7 +506,7 @@ class Realtime(realtime.Realtime):
 
     def _create_prompt_start_event(self) -> Dict[str, Any]:
         """Create a prompt start event.
-        
+
         Returns:
             Event dictionary for prompt start
         """
@@ -524,7 +529,7 @@ class Realtime(realtime.Realtime):
                         "voiceId": self.voice_id,
                         "encoding": "base64",
                         "audioType": "SPEECH",
-                    }
+                    },
                 }
             }
         }
@@ -541,7 +546,7 @@ class Realtime(realtime.Realtime):
 
     async def start_prompt(self, connection: Optional[RealtimeConnection] = None):
         """Send a prompt start event.
-        
+
         Args:
             connection: Optional connection to send on. Uses self.connection if not provided.
         """
@@ -562,9 +567,7 @@ class Realtime(realtime.Realtime):
                     "type": "TEXT",
                     "role": role,
                     "interactive": interactive,
-                    "textInputConfiguration": {
-                        "mediaType": "text/plain"
-                    }
+                    "textInputConfiguration": {"mediaType": "text/plain"},
                 }
             }
         }
@@ -718,9 +721,7 @@ class Realtime(realtime.Realtime):
             tool_use_id: The tool use ID from AWS
             tool_use_content: Full tool use content from AWS
         """
-        logger.debug(
-            f"Starting tool call execution: {tool_name} (id: {tool_use_id})"
-        )
+        logger.debug(f"Starting tool call execution: {tool_name} (id: {tool_use_id})")
 
         # Extract tool input from the tool use content (matching working example)
         tool_input = {}
@@ -781,7 +782,7 @@ class Realtime(realtime.Realtime):
 
         if self._handle_event_task:
             self._handle_event_task.cancel()
-            
+
         if self._reconnection_check_task:
             self._reconnection_check_task.cancel()
 
@@ -804,7 +805,10 @@ class Realtime(realtime.Realtime):
                         # Handle different response types
                         if "event" in json_data:
                             # Log all non audio events
-                            if "audioOutput" not in json_data["event"] and "usageEvent" not in json_data["event"]:
+                            if (
+                                "audioOutput" not in json_data["event"]
+                                and "usageEvent" not in json_data["event"]
+                            ):
                                 logger.info(f"Received event: {json_data}")
 
                             if "contentStart" in json_data["event"]:
@@ -848,9 +852,7 @@ class Realtime(realtime.Realtime):
                                     "content"
                                 ]
                                 audio_bytes = base64.b64decode(audio_content)
-                                pcm = PcmData.from_bytes(
-                                    audio_bytes, self.sample_rate
-                                )
+                                pcm = PcmData.from_bytes(audio_bytes, self.sample_rate)
                                 self._emit_audio_output_event(
                                     audio_data=pcm,
                                 )
@@ -927,9 +929,7 @@ class Realtime(realtime.Realtime):
                             elif "usageEvent" in json_data["event"]:
                                 pass
                             else:
-                                logger.warning(
-                                    f"Unhandled event: {json_data['event']}"
-                                )
+                                logger.warning(f"Unhandled event: {json_data['event']}")
 
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse JSON response: {e}")
