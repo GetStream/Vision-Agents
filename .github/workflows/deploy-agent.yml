@@ -1,0 +1,67 @@
+name: Deploy Vision Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'examples/01_simple_agent_example/**'
+      - 'agents-core/**'
+      - 'plugins/**'
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: us-central1
+  IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/vision-agents/simple-agent
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # For Workload Identity Federation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Authenticate to GCP using Workload Identity Federation (keyless)
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Configure Docker to push to Artifact Registry
+      - run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      # Build and push
+      - name: Build and push Docker image
+        run: |
+          docker build \
+            -f examples/01_simple_agent_example/Dockerfile \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            .
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      # Deploy to Nomad
+      - name: Deploy to Nomad
+        env:
+          NOMAD_ADDR: ${{ secrets.NOMAD_ADDR }}
+          NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
+        run: |
+          # Install Nomad CLI
+          curl -fsSL https://releases.hashicorp.com/nomad/1.7.6/nomad_1.7.6_linux_amd64.zip -o nomad.zip
+          unzip nomad.zip && sudo mv nomad /usr/local/bin/
+
+          # Substitute image tag in job spec
+          cd examples/01_simple_agent_example/nomad
+          sed -e "s|\${artifact_registry}|${{ env.IMAGE }}|g" \
+              -e "s|:latest|:${{ github.sha }}|g" \
+              agent.nomad.hcl > job.hcl
+
+          # Deploy
+          nomad job run job.hcl
+

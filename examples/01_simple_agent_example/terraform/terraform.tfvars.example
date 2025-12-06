@@ -1,0 +1,14 @@
+project_id   = "your-gcp-project-id"
+region       = "us-central1"
+zone         = "us-central1-a"
+machine_type = "e2-small"
+
+# Restrict Nomad UI access to your IP (get yours: curl ifconfig.me)
+allowed_ips = ["YOUR_IP/32"]
+
+# GitHub repo for CI/CD OIDC auth
+github_repo = "your-org/Vision-Agents"
+
+# API keys are stored in Nomad variables, not Terraform
+# See nomad/deploy.sh secrets
+

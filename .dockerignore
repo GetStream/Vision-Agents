@@ -1,0 +1,53 @@
+# Git
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.cursor/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation (not needed at runtime)
+docs/
+*.md
+!examples/01_simple_agent_example/instructions.md
+
+# Other examples (not needed for example 01)
+examples/02_golf_coach_example/
+examples/03_phone_and_rag_example/
+examples/other_examples/
+
+# Assets
+assets/
+
+# Model files (large, typically mounted or downloaded)
+*.pt
+
+# Lock files for other examples
+examples/02_golf_coach_example/uv.lock
+examples/03_phone_and_rag_example/uv.lock
+examples/other_examples/**/uv.lock
+
