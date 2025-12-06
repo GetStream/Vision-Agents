@@ -1,7 +1,8 @@
 """
-AWS Bedrock Realtime Nova Example
+AWS Bedrock Nova Sonic 2 Example
 
-This example demonstrates using AWS Bedrock Realtime with the Nova model.
+- Shows how to use Nova 2 in realtime mode
+- With function calling
 """
 
 import asyncio
@@ -20,32 +21,26 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create the agent with AWS Bedrock Realtime."""
+    llm = aws.Realtime()
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Story Teller AI", id="agent"),
         instructions="Tell a story suitable for a 7 year old about a dragon and a princess",
-        llm=aws.Realtime(),
+        llm=llm,
     )
+
     return agent
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    """Join the call and start the agent."""
-    # Ensure the agent user is created
-    await agent.create_user()
-    # Create a call
     call = await agent.create_call(call_type, call_id)
-
-    logger.info("🤖 Starting AWS Realtime Nova Agent...")
 
     # Have the agent join the call/room
     with await agent.join(call):
-        logger.info("Joining call")
-        logger.info("LLM ready")
-
         await asyncio.sleep(5)
-        await agent.llm.simple_response(text="Say hi and start the story")
+        await agent.llm.simple_response(
+            text="Tell me a short story about a dragon and a princess"
+        )
 
         await agent.finish()  # Run till the call ends
 
