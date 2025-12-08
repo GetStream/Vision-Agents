@@ -83,12 +83,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # Have the agent join the call/room
     with await agent.join(call):
         # Greet the user
-        await agent.simple_response(
-            "Hello! I'm your security camera AI with face recognition. I can detect and recognize unique individuals, "
-            "tracking when they arrive and how many times they've been seen. You can ask me about visitors in the last 30 minutes!"
-        )
-
-        # Run until the call ends
         await agent.finish()
 
 
