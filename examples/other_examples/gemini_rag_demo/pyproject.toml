@@ -1,0 +1,15 @@
+[project]
+name = "gemini-rag-demo"
+version = "0.0.0"
+requires-python = ">=3.13"
+
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents-plugins-gemini",
+  "vision-agents",
+]
+
+[tool.uv.sources]
+"vision-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}
+

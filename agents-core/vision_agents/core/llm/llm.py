@@ -23,6 +23,7 @@ from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
 if TYPE_CHECKING:
     from vision_agents.core.agents import Agent
     from vision_agents.core.agents.conversation import Conversation
+    from vision_agents.core.rag import RAGProvider
 
 from getstream.video.rtc import PcmData
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
@@ -62,6 +63,10 @@ class LLM(abc.ABC):
         # LLM instructions. Provided by the Agent via `set_instructions` method
         self._instructions: str = ""
         self._conversation: Optional[Conversation] = None
+        # RAG provider for retrieval-augmented generation
+        self._rag_provider: Optional[RAGProvider] = None
+        self._rag_top_k: int = 5
+        self._rag_include_citations: bool = True
 
     async def warmup(self) -> None:
         """
@@ -191,6 +196,59 @@ class LLM(abc.ABC):
             raise TypeError(
                 f"Invalid instructions type {type(instructions)}, expected str or Instructions"
             )
+
+    def set_rag_provider(
+        self,
+        provider: RAGProvider,
+        top_k: int = 5,
+        include_citations: bool = True,
+    ) -> None:
+        """Attach a RAG provider to this LLM for retrieval-augmented generation.
+
+        When a RAG provider is attached, queries will automatically be augmented
+        with relevant context retrieved from the knowledge base.
+
+        Args:
+            provider: The RAG provider to use for retrieval.
+            top_k: Number of results to retrieve per query.
+            include_citations: Whether to include citations in the context.
+        """
+        self._rag_provider = provider
+        self._rag_top_k = top_k
+        self._rag_include_citations = include_citations
+
+    @property
+    def rag_provider(self) -> Optional[RAGProvider]:
+        """Get the attached RAG provider, if any."""
+        return self._rag_provider
+
+    async def _augment_with_rag(self, text: str) -> str:
+        """Augment a query with RAG context if a provider is attached.
+
+        Args:
+            text: The original query text.
+
+        Returns:
+            The query augmented with retrieved context, or the original
+            text if no RAG provider is attached or no results found.
+        """
+        if self._rag_provider is None:
+            return text
+
+        results = await self._rag_provider.search_with_events(
+            query=text,
+            top_k=self._rag_top_k,
+        )
+
+        if not results:
+            return text
+
+        context = self._rag_provider.build_context_prompt(
+            results,
+            include_citations=self._rag_include_citations,
+        )
+
+        return f"{context}\n\nUser question: {text}"
 
     def register_function(
         self, name: Optional[str] = None, description: Optional[str] = None

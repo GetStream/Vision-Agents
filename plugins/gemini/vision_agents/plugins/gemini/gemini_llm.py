@@ -155,7 +155,9 @@ class GeminiLLM(LLM):
 
             llm.simple_response("say hi to the user, be mean")
         """
-        return await self.send_message(message=text)
+        # Augment with RAG context if a provider is attached
+        augmented_text = await self._augment_with_rag(text)
+        return await self.send_message(message=augmented_text)
 
     async def send_message(self, *args, **kwargs):
         """
