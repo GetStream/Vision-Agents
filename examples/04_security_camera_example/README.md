@@ -57,7 +57,7 @@ The AI assistant has access to:
 
 1. Navigate to this directory:
 ```bash
-cd examples/03_security_camera_example
+cd examples/04_security_camera_example
 ```
 
 2. Install dependencies using uv:
