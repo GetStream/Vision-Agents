@@ -38,3 +38,4 @@ nomad job run /tmp/agent.nomad.hcl
 
 echo "Done! Check status: nomad job status vision-agent"
 
+
