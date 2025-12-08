@@ -1,12 +1,13 @@
 [project]
-name = "openai-rag-demo"
+name = "local-rag-demo"
 version = "0.1.0"
-description = "Demo of OpenAI Vector Store RAG with Vision Agents"
+description = "Demo of Local RAG with pluggable components"
 requires-python = ">=3.11"
 dependencies = [
     "vision-agents",
     "vision-agents-plugins-openai",
     "python-dotenv",
+    "aiofiles",
 ]
 
 [tool.uv.sources]
