@@ -394,6 +394,7 @@ class SecurityCameraProcessor(
             return []
 
         image = Image.fromarray(frame_rgb)
+        height, width = frame_rgb.shape[:2]
         all_detections = []
 
         for object_type in self.package_detect_objects:
@@ -408,12 +409,36 @@ class SecurityCameraProcessor(
                     obj, object_type, self.package_conf_threshold
                 )
                 if detection:
-                    # Convert bbox from [x_min, y_min, x_max, y_max] to (x, y, w, h)
-                    x_min, y_min, x_max, y_max = detection["bbox"]
+                    # Get bbox in [x_min, y_min, x_max, y_max] format
+                    bbox_raw = detection["bbox"]
+                    x_min, y_min, x_max, y_max = bbox_raw
+
+                    # Check if normalized coordinates (between 0 and 1)
+                    if x_min <= 1.0 and y_min <= 1.0 and x_max <= 1.0 and y_max <= 1.0:
+                        # Convert normalized to pixel coordinates
+                        x_min = int(x_min * width)
+                        y_min = int(y_min * height)
+                        x_max = int(x_max * width)
+                        y_max = int(y_max * height)
+                    else:
+                        # Already pixel coordinates, convert to int
+                        x_min = int(x_min)
+                        y_min = int(y_min)
+                        x_max = int(x_max)
+                        y_max = int(y_max)
+
+                    # Ensure coordinates are within frame bounds
+                    x_min = max(0, min(x_min, width - 1))
+                    y_min = max(0, min(y_min, height - 1))
+                    x_max = max(x_min + 1, min(x_max, width))
+                    y_max = max(y_min + 1, min(y_max, height))
+
+                    # Convert to (x, y, w, h) format
                     x = x_min
                     y = y_min
                     w = x_max - x_min
                     h = y_max - y_min
+
                     detection["bbox"] = (x, y, w, h)
                     all_detections.append(detection)
 
@@ -453,6 +478,13 @@ class SecurityCameraProcessor(
         for package_data in detected_packages:
             x, y, w, h = package_data["bbox"]
             confidence = package_data["confidence"]
+
+            # Ensure coordinates are integers and within frame bounds
+            height, width = frame_bgr.shape[:2]
+            x = int(max(0, min(x, width - 1)))
+            y = int(max(0, min(y, height - 1)))
+            w = int(max(1, min(w, width - x)))
+            h = int(max(1, min(h, height - y)))
 
             # Extract package thumbnail
             package_roi = frame_bgr[y : y + h, x : x + w]
@@ -530,14 +562,21 @@ class SecurityCameraProcessor(
         # Draw package bounding boxes on the frame
         for package in self._detected_packages.values():
             x, y, w, h = package.bbox
+            # Ensure coordinates are integers
+            x, y, w, h = int(x), int(y), int(w), int(h)
+            # Ensure coordinates are within bounds
+            x = max(0, min(x, width - 1))
+            y = max(0, min(y, height - 1))
+            x2 = min(x + w, width)
+            y2 = min(y + h, height)
             # Draw blue rectangle for packages
-            cv2.rectangle(frame_with_overlay, (x, y), (x + w, y + h), (255, 0, 0), 2)
+            cv2.rectangle(frame_with_overlay, (x, y), (x2, y2), (255, 0, 0), 2)
             # Draw package label
             label_text = f"Package {package.confidence:.2f}"
             cv2.putText(
                 frame_with_overlay,
                 label_text,
-                (x, y - 5),
+                (x, max(10, y - 5)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.4,
                 (255, 0, 0),
