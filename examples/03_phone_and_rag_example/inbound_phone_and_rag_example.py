@@ -28,7 +28,7 @@ from fastapi import Depends, FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import getstream, gemini, twilio, elevenlabs, deepgram
+from vision_agents.plugins import getstream, gemini, twilio, elevenlabs, deepgram, turbopuffer
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -111,7 +111,7 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
         call_registry.remove(call_id)
 
 
-async def create_rag_knowledge():
+async def create_rag_from_directory():
     """Initialize the RAG backend based on RAG_BACKEND environment variable."""
     global file_search_store, rag
 
@@ -120,74 +120,38 @@ async def create_rag_knowledge():
         return
 
     if RAG_BACKEND == "turbopuffer":
-        await _init_turbopuffer_rag()
+        logger.info(f"📚 Initializing TurboPuffer RAG from {KNOWLEDGE_DIR}")
+        rag = await turbopuffer.create_rag(
+            namespace="stream-product-knowledge-gemini",
+            knowledge_dir=KNOWLEDGE_DIR,
+            extensions=[".md"],
+        )
+        logger.info(f"✅ TurboPuffer RAG ready with {len(rag._indexed_files)} documents indexed")
     else:
-        await _init_gemini_rag()
-
-
-async def _init_gemini_rag():
-    """Initialize Gemini File Search RAG."""
-    global file_search_store
-
-    logger.info(f"📚 Initializing Gemini File Search from {KNOWLEDGE_DIR}")
-    file_search_store = await gemini.create_file_search_store(
-        name="stream-product-knowledge",
-        knowledge_dir=KNOWLEDGE_DIR,
-        extensions=[".md"],
-    )
-    logger.info(f"✅ Gemini RAG ready with {len(file_search_store._uploaded_files)} documents")
-
-
-async def _init_turbopuffer_rag():
-    """Initialize TurboPuffer + LangChain RAG."""
-    global rag
-
-    from rag_turbopuffer import create_rag
-
-    logger.info(f"📚 Initializing TurboPuffer RAG from {KNOWLEDGE_DIR}")
-    rag = await create_rag(
-        namespace="stream-product-knowledge-gemini",
-        knowledge_dir=KNOWLEDGE_DIR,
-        extensions=[".md"],
-    )
-    logger.info(f"✅ TurboPuffer RAG ready with {len(rag._indexed_files)} documents indexed")
+        logger.info(f"📚 Initializing Gemini File Search from {KNOWLEDGE_DIR}")
+        file_search_store = await gemini.create_file_search_store(
+            name="stream-product-knowledge",
+            knowledge_dir=KNOWLEDGE_DIR,
+            extensions=[".md"],
+        )
+        logger.info(f"✅ Gemini RAG ready with {len(file_search_store._uploaded_files)} documents")
 
 
 
-async def create_agent(**kwargs) -> Agent:
+async def create_agent() -> Agent:
     """Create an agent with RAG capabilities."""
+    instructions = """Read the instructions in @instructions.md"""
+
     if RAG_BACKEND == "turbopuffer":
-        return await _create_agent_turbopuffer()
+        llm = gemini.LLM("gemini-2.5-flash-lite")
+
+        @llm.register_function(
+            description="Search Stream's product knowledge base for detailed information about Chat, Video, Feeds, and Moderation APIs."
+        )
+        async def search_knowledge(query: str) -> str:
+            return await rag.search(query, top_k=3)
     else:
-        return await _create_agent_gemini()
-
-
-async def _create_agent_gemini() -> Agent:
-    """Create agent with Gemini File Search RAG."""
-    instructions = """Read the instructions in @instructions.md"""
-
-    return Agent(
-        edge=getstream.Edge(),
-        agent_user=User(id="ai-agent", name="AI"),
-        instructions=instructions,
-        tts=elevenlabs.TTS(voice_id="FGY2WhTYpPnrIDTdsKH5"),
-        stt=deepgram.STT(eager_turn_detection=True),
-        llm=gemini.LLM("gemini-2.5-flash-lite", file_search_store=file_search_store),
-    )
-
-
-async def _create_agent_turbopuffer() -> Agent:
-    """Create agent with TurboPuffer RAG via function calling."""
-    instructions = """Read the instructions in @instructions.md"""
-
-    llm = gemini.LLM("gemini-2.5-flash-lite")
-
-    # Register RAG search as a callable function
-    @llm.register_function(
-        description="Search Stream's product knowledge base for detailed information about Chat, Video, Feeds, and Moderation APIs."
-    )
-    async def search_knowledge(query: str) -> str:
-        return await rag.search(query, top_k=3)
+        llm = gemini.LLM("gemini-2.5-flash-lite", file_search_store=file_search_store)
 
     return Agent(
         edge=getstream.Edge(),
@@ -200,6 +164,6 @@ async def _create_agent_turbopuffer() -> Agent:
 
 
 if __name__ == "__main__":
-    asyncio.run(create_rag_knowledge())
+    asyncio.run(create_rag_from_directory())
     logger.info(f"Starting with RAG_BACKEND={RAG_BACKEND}")
     uvicorn.run(app, host="localhost", port=8000)

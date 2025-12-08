@@ -1,6 +1,6 @@
 from .gemini_llm import GeminiLLM as LLM
 from .gemini_realtime import GeminiRealtime as Realtime
-from .file_search import FileSearchStore, create_file_search_store
+from .file_search import GeminiFilesearchRAG, FileSearchStore, create_file_search_store
 from google.genai.types import ThinkingLevel, MediaResolution
 
 __all__ = [
@@ -8,6 +8,7 @@ __all__ = [
     "LLM",
     "ThinkingLevel",
     "MediaResolution",
-    "FileSearchStore",
+    "GeminiFilesearchRAG",
+    "FileSearchStore",  # Backwards compatibility alias
     "create_file_search_store",
 ]

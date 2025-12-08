@@ -12,18 +12,18 @@ Results are combined using Reciprocal Rank Fusion (RRF) for better retrieval qua
 See: https://turbopuffer.com/docs/hybrid
 
 Usage:
-    from rag_turbopuffer import TurboPufferRAG
+    from vision_agents.plugins import turbopuffer
 
     # Initialize with knowledge directory
-    rag = TurboPufferRAG(namespace="my-knowledge")
-    await rag.index_directory("./knowledge")
-    
+    rag = turbopuffer.TurboPufferRAG(namespace="my-knowledge")
+    await rag.add_directory("./knowledge")
+
     # Hybrid search (vector + BM25)
     results = await rag.search("How does the chat API work?")
-    
+
     # Vector-only search
     results = await rag.search("How does the chat API work?", mode="vector")
-    
+
     # BM25-only search
     results = await rag.search("chat API pricing", mode="bm25")
 
@@ -41,11 +41,13 @@ import logging
 import os
 from collections import defaultdict
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
-from turbopuffer import AsyncTurbopuffer
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from turbopuffer import AsyncTurbopuffer
+
+from vision_agents.core.rag import RAG, Document
 
 logger = logging.getLogger(__name__)
 
@@ -66,36 +68,36 @@ def reciprocal_rank_fusion(
 ) -> list[tuple[str, float]]:
     """
     Combine multiple ranked lists using Reciprocal Rank Fusion (RRF).
-    
+
     RRF is a simple but effective rank fusion algorithm that combines
     results from multiple search strategies.
-    
+
     Args:
         ranked_lists: List of ranked results, each as [(id, score), ...].
         k: RRF constant (default 60, as per original paper).
-        
+
     Returns:
         Fused ranking as [(id, rrf_score), ...] sorted by score descending.
     """
     rrf_scores: dict[str, float] = defaultdict(float)
-    
+
     for ranked_list in ranked_lists:
         for rank, (doc_id, _) in enumerate(ranked_list, start=1):
             rrf_scores[doc_id] += 1.0 / (k + rank)
-    
+
     return sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
 
 
-class TurboPufferRAG:
+class TurboPufferRAG(RAG):
     """
     Hybrid search RAG using TurboPuffer (vector + BM25) and Gemini embeddings.
-    
+
     Combines semantic vector search with BM25 keyword search for better
     retrieval quality. Uses Reciprocal Rank Fusion to merge results.
-    
+
     For hybrid search best practices, see:
     https://turbopuffer.com/docs/hybrid
-    
+
     For embedding model benchmarks, see the MTEB leaderboard:
     https://huggingface.co/spaces/mteb/leaderboard
     """
@@ -110,7 +112,7 @@ class TurboPufferRAG:
     ):
         """
         Initialize the TurboPuffer Hybrid RAG.
-        
+
         Args:
             namespace: TurboPuffer namespace for storing vectors.
             embedding_model: Gemini embedding model (default: gemini-embedding-001).
@@ -119,23 +121,23 @@ class TurboPufferRAG:
             region: TurboPuffer region (default "gcp-us-central1").
         """
         self._namespace_name = namespace
-        
+
         # Initialize async TurboPuffer client
         self._client = AsyncTurbopuffer(
             api_key=os.environ.get("TURBO_PUFFER_KEY"),
             region=region,
         )
-        
+
         # Initialize Gemini embeddings
         self._embeddings = GoogleGenerativeAIEmbeddings(model=embedding_model)
-        
+
         # Initialize text splitter
         self._splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             length_function=len,
         )
-        
+
         self._indexed_files: list[str] = []
         # Cache for retrieved documents (id -> attributes)
         self._doc_cache: dict[str, dict] = {}
@@ -145,64 +147,91 @@ class TurboPufferRAG:
         """List of indexed file names."""
         return self._indexed_files
 
-    async def index_file(self, file_path: str | Path, source_name: Optional[str] = None) -> int:
+    async def add_documents(self, documents: list[Document]) -> int:
         """
-        Index a single file into the vector database with hybrid search support.
-        
+        Add documents to the RAG index.
+
         Args:
-            file_path: Path to the file to index.
-            source_name: Optional name for the source (defaults to filename).
-            
+            documents: List of documents to index.
+
         Returns:
             Number of chunks indexed.
         """
-        file_path = Path(file_path)
-        if not file_path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-        
-        source_name = source_name or file_path.name
-        content = file_path.read_text()
-        
-        # Split into chunks
-        chunks = self._splitter.split_text(content)
-        if not chunks:
-            logger.warning(f"No chunks generated from {file_path}")
+        if not documents:
             return 0
-        
-        # Generate embeddings (run in executor since it's sync)
+
+        all_chunks: list[str] = []
+        chunk_sources: list[tuple[str, int]] = []  # (source, chunk_index)
+
+        for doc in documents:
+            chunks = self._splitter.split_text(doc.text)
+            if not chunks:
+                logger.warning(f"No chunks generated from document: {doc.source}")
+                continue
+            for i, chunk in enumerate(chunks):
+                all_chunks.append(chunk)
+                chunk_sources.append((doc.source, i))
+            self._indexed_files.append(doc.source)
+
+        if not all_chunks:
+            return 0
+
         loop = asyncio.get_event_loop()
         embeddings = await loop.run_in_executor(
-            None, self._embeddings.embed_documents, chunks
+            None, self._embeddings.embed_documents, all_chunks
         )
-        
-        # Prepare rows for TurboPuffer
+
         rows = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            rows.append({
-                "id": f"{source_name}_{i}",
-                "vector": embedding,
-                "text": chunk,
-                "source": source_name,
-                "chunk_index": i,
-            })
-        
-        # Upsert with schema enabling full-text search on text field
+        for chunk, embedding, (source, idx) in zip(
+            all_chunks, embeddings, chunk_sources
+        ):
+            rows.append(
+                {
+                    "id": f"{source}_{idx}",
+                    "vector": embedding,
+                    "text": chunk,
+                    "source": source,
+                    "chunk_index": idx,
+                }
+            )
+
         ns = self._client.namespace(self._namespace_name)
         await ns.write(
             upsert_rows=rows,
             distance_metric="cosine_distance",
             schema=HYBRID_SCHEMA,
         )
-        
-        self._indexed_files.append(source_name)
-        logger.info(f"Indexed {len(chunks)} chunks from {source_name}")
-        
-        return len(chunks)
+
+        logger.info(f"Indexed {len(all_chunks)} chunks from {len(documents)} documents")
+        return len(all_chunks)
+
+    async def add_directory(
+        self,
+        path: str | Path,
+        extensions: list[str] | None = None,
+    ) -> int:
+        """
+        Add all files from a directory to the RAG index.
+
+        Args:
+            path: Path to directory containing files.
+            extensions: File extensions to include (e.g., ['.md', '.txt']).
+
+        Returns:
+            Total number of chunks indexed.
+        """
+        total_chunks = await super().add_directory(path, extensions)
+
+        # Warm cache for low-latency queries
+        if total_chunks > 0:
+            await self.warm_cache()
+
+        return total_chunks
 
     async def warm_cache(self) -> None:
         """
         Hint TurboPuffer to prepare for low-latency requests.
-        
+
         Call this after indexing to ensure fast query responses.
         See: https://turbopuffer.com/docs/warm-cache
         """
@@ -210,75 +239,32 @@ class TurboPufferRAG:
         await ns.hint_cache_warm()
         logger.info(f"Cache warmed for namespace: {self._namespace_name}")
 
-    async def index_directory(
-        self,
-        directory: str | Path,
-        extensions: Optional[list[str]] = None,
-    ) -> int:
-        """
-        Index all files from a directory.
-        
-        Args:
-            directory: Path to directory containing files.
-            extensions: File extensions to include (e.g., ['.md', '.txt']).
-            
-        Returns:
-            Total number of chunks indexed.
-        """
-        directory = Path(directory)
-        if not directory.is_dir():
-            raise NotADirectoryError(f"Not a directory: {directory}")
-        
-        if extensions is None:
-            extensions = [".md", ".txt"]
-        
-        # Normalize extensions
-        extensions = [ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in extensions]
-        
-        files = [f for f in directory.iterdir() if f.is_file() and f.suffix.lower() in extensions]
-        
-        if not files:
-            logger.warning(f"No files found in {directory} with extensions {extensions}")
-            return 0
-        
-        logger.info(f"Indexing {len(files)} files from {directory}")
-        
-        total_chunks = 0
-        for file_path in files:
-            chunks = await self.index_file(file_path)
-            total_chunks += chunks
-        
-        # Warm cache for low-latency queries
-        await self.warm_cache()
-        
-        return total_chunks
-
     async def _vector_search(self, query: str, top_k: int) -> list[tuple[str, float]]:
         """Run vector similarity search."""
         loop = asyncio.get_event_loop()
         query_embedding = await loop.run_in_executor(
             None, self._embeddings.embed_query, query
         )
-        
+
         ns = self._client.namespace(self._namespace_name)
         results = await ns.query(
             rank_by=("vector", "ANN", query_embedding),
             top_k=top_k,
             include_attributes=["text", "source"],
         )
-        
+
         ranked = []
         for row in results.rows:
             doc_id = str(row.id)
             # Cache the document for later retrieval
             self._doc_cache[doc_id] = {
-                "text": row.text if hasattr(row, "text") else "",
-                "source": row.source if hasattr(row, "source") else "unknown",
+                "text": row.text if row.text else "",
+                "source": row.source if row.source else "unknown",
             }
             # Lower distance = better, so we use negative for ranking
-            dist = getattr(row, "$dist", 0)
+            dist = row.dist if row.dist else 0
             ranked.append((doc_id, -dist))
-        
+
         return ranked
 
     async def _bm25_search(self, query: str, top_k: int) -> list[tuple[str, float]]:
@@ -289,19 +275,19 @@ class TurboPufferRAG:
             top_k=top_k,
             include_attributes=["text", "source"],
         )
-        
+
         ranked = []
         for row in results.rows:
             doc_id = str(row.id)
             # Cache the document for later retrieval
             self._doc_cache[doc_id] = {
-                "text": row.text if hasattr(row, "text") else "",
-                "source": row.source if hasattr(row, "source") else "unknown",
+                "text": row.text if row.text else "",
+                "source": row.source if row.source else "unknown",
             }
             # BM25 score (higher = better)
-            score = getattr(row, "$dist", 0)
+            score = row.dist if row.dist else 0
             ranked.append((doc_id, score))
-        
+
         return ranked
 
     async def search(
@@ -312,24 +298,24 @@ class TurboPufferRAG:
     ) -> str:
         """
         Search the knowledge base using hybrid, vector, or BM25 search.
-        
+
         Hybrid search combines vector (semantic) and BM25 (keyword) search
         using Reciprocal Rank Fusion for better retrieval quality.
-        
+
         Args:
             query: Search query.
             top_k: Number of results to return.
             mode: Search mode - "hybrid" (default), "vector", or "bm25".
-            
+
         Returns:
             Formatted string with search results.
         """
         # Clear doc cache for fresh search
         self._doc_cache.clear()
-        
+
         # Fetch more candidates for fusion, then trim to top_k
         fetch_k = top_k * 3
-        
+
         if mode == "vector":
             ranked = await self._vector_search(query, fetch_k)
             final_ids = [doc_id for doc_id, _ in ranked[:top_k]]
@@ -342,14 +328,14 @@ class TurboPufferRAG:
                 self._vector_search(query, fetch_k),
                 self._bm25_search(query, fetch_k),
             )
-            
+
             # Combine using Reciprocal Rank Fusion
             fused = reciprocal_rank_fusion([vector_results, bm25_results])
             final_ids = [doc_id for doc_id, _ in fused[:top_k]]
-        
+
         if not final_ids:
             return "No relevant information found in the knowledge base."
-        
+
         # Format results from cache
         formatted_results = []
         for i, doc_id in enumerate(final_ids, 1):
@@ -357,7 +343,7 @@ class TurboPufferRAG:
             source = doc.get("source", "unknown")
             text = doc.get("text", "")
             formatted_results.append(f"[{i}] From {source}:\n{text}")
-        
+
         return "\n\n".join(formatted_results)
 
     async def clear(self) -> None:
@@ -376,31 +362,31 @@ class TurboPufferRAG:
 async def create_rag(
     namespace: str,
     knowledge_dir: str | Path,
-    extensions: Optional[list[str]] = None,
+    extensions: list[str] | None = None,
     region: str = "gcp-us-central1",
 ) -> TurboPufferRAG:
     """
     Convenience function to create and initialize a TurboPuffer Hybrid RAG.
-    
+
     Args:
         namespace: TurboPuffer namespace name.
         knowledge_dir: Directory containing knowledge files.
         extensions: File extensions to include.
         region: TurboPuffer region.
-        
+
     Returns:
         Initialized TurboPufferRAG with files indexed.
-        
+
     Example:
         rag = await create_rag(
             namespace="product-knowledge",
             knowledge_dir="./knowledge"
         )
-        
+
         @llm.register_function(description="Search knowledge base")
         async def search_knowledge(query: str) -> str:
             return await rag.search(query)  # Uses hybrid search by default
     """
     rag = TurboPufferRAG(namespace=namespace, region=region)
-    await rag.index_directory(knowledge_dir, extensions=extensions)
+    await rag.add_directory(knowledge_dir, extensions=extensions)
     return rag
