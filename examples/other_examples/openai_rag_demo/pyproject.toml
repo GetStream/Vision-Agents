@@ -1,0 +1,15 @@
+[project]
+name = "openai-rag-demo"
+version = "0.1.0"
+description = "Demo of OpenAI Vector Store RAG with Vision Agents"
+requires-python = ">=3.11"
+dependencies = [
+    "vision-agents-core",
+    "vision-agents-openai",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+vision-agents-core = { path = "../../../agents-core" }
+vision-agents-openai = { path = "../../../plugins/openai" }
+
