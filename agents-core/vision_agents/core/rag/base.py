@@ -156,4 +156,3 @@ class RAGProvider(abc.ABC):
         Default implementation does nothing. Override if supported.
         """
         pass
-

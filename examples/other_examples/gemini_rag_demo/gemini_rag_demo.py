@@ -157,7 +157,9 @@ async def main():
 
     @rag.events.subscribe
     async def on_retrieval_complete(event: RAGRetrievalCompleteEvent):
-        print(f"   🔎 Retrieved {event.result_count} results in {event.retrieval_time_ms:.0f}ms")
+        print(
+            f"   🔎 Retrieved {event.result_count} results in {event.retrieval_time_ms:.0f}ms"
+        )
 
     # Create and upload sample files
     print("\n📄 Creating sample documents...")
@@ -196,7 +198,9 @@ async def main():
         # The RAG provider automatically augments the query with relevant context
         response = await llm.simple_response(query)
 
-        print(f"💡 Answer: {response.text[:500]}{'...' if len(response.text) > 500 else ''}")
+        print(
+            f"💡 Answer: {response.text[:500]}{'...' if len(response.text) > 500 else ''}"
+        )
 
     # Cleanup
     print("\n" + "-" * 60)
@@ -215,4 +219,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

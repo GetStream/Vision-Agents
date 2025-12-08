@@ -117,9 +117,7 @@ class TestGeminiFileSearchRAG:
             file_added_events.append(event)
 
         # Create a test file
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
                 "Vision Agents is a framework for building AI agents that can "
                 "process video and audio in real-time. It supports multiple LLM "
@@ -161,9 +159,7 @@ class TestGeminiFileSearchRAG:
             retrieval_events.append(event)
 
         # Create test files
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
                 "Password Reset Instructions:\n"
                 "1. Go to the login page\n"
@@ -174,9 +170,7 @@ class TestGeminiFileSearchRAG:
             )
             password_file = f.name
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
                 "Account Settings:\n"
                 "You can update your profile picture, display name, and "
@@ -251,9 +245,7 @@ class TestGeminiFileSearchRAG:
         llm = LLM(model="gemini-2.0-flash")
 
         # Create a test file with specific information
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
                 "Company Policy Document\n\n"
                 "Vacation Policy:\n"
@@ -295,9 +287,7 @@ class TestGeminiFileSearchRAG:
             rag.get_file_search_tool()
 
         # Create a test file
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Test content for file search tool.")
             temp_path = f.name
 
@@ -360,4 +350,3 @@ class TestRAGProviderBase:
 
         assert "Test passage" in prompt
         assert "[unknown source]" not in prompt
-

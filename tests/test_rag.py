@@ -1,6 +1,5 @@
 """Tests for the core RAG module."""
 
-
 from vision_agents.core.rag import (
     Chunk,
     Document,
@@ -370,4 +369,3 @@ class TestRAGProviderBase:
         # Try to delete again
         deleted_again = await provider.delete_document("test-doc")
         assert deleted_again is False
-

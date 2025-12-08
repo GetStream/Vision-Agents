@@ -86,4 +86,3 @@ class RetrievalResult:
             return f"[doc:{self.document_id[:8]}]"
 
         return "[unknown source]"
-

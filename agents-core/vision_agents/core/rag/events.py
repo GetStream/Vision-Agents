@@ -53,6 +53,3 @@ class RAGFileAddedEvent(BaseEvent):
     file_path: str = ""
     file_id: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-

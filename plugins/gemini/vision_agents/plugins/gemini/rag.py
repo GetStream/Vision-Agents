@@ -226,7 +226,9 @@ class GeminiFileSearchRAG(RAGProvider):
             raise FileNotFoundError(f"File not found: {file_path}")
 
         mime_type = self._get_mime_type(file_path)
-        display_name = metadata.get("display_name", path.name) if metadata else path.name
+        display_name = (
+            metadata.get("display_name", path.name) if metadata else path.name
+        )
 
         # Build custom metadata if provided
         custom_metadata = None
@@ -408,4 +410,3 @@ class GeminiFileSearchRAG(RAGProvider):
                 top_k=top_k or self._top_k,
             )
         )
-
