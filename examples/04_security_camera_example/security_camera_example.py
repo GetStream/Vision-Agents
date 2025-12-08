@@ -74,6 +74,31 @@ async def create_agent(**kwargs) -> Agent:
             "total_unique_visitors": len(details),
         }
 
+    # Register function for getting package count
+    @llm.register_function(
+        description="Get the number of unique packages detected in the last 30 minutes"
+    )
+    async def get_package_count() -> Dict[str, Any]:
+        count = security_processor.get_package_count()
+        state = security_processor.state()
+        return {
+            "unique_packages": count,
+            "total_package_detections": state["total_package_detections"],
+            "time_window": f"{state['time_window_minutes']} minutes",
+            "last_detection": state["last_package_detection_time"],
+        }
+
+    # Register function for getting detailed package information
+    @llm.register_function(
+        description="Get detailed information about all packages including when they were first and last seen, and confidence scores"
+    )
+    async def get_package_details() -> Dict[str, Any]:
+        details = security_processor.get_package_details()
+        return {
+            "packages": details,
+            "total_unique_packages": len(details),
+        }
+
     return agent
 
 
