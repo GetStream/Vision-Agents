@@ -99,7 +99,7 @@ class SecurityCameraProcessor(
         logger.info(f"📊 Time window: {time_window}s ({time_window // 60} minutes)")
         logger.info(f"🖼️ Thumbnail size: {thumbnail_size}x{thumbnail_size}")
 
-    def warmup(self):
+    async def warmup(self):
         """Load OpenCV Haar Cascade face detector."""
         try:
             cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
