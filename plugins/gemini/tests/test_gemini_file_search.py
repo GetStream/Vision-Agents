@@ -27,6 +27,7 @@ async def rag():
     yield rag
     await rag.clear()
 
+
 async def test_basic_upload_and_search(rag: GeminiFilesearchRAG):
     """Upload a document with a unique ID and verify it can be found."""
     # Create a unique identifier to verify we find the right document

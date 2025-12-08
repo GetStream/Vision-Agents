@@ -25,4 +25,3 @@ __all__ = [
     "verify_twilio_signature",
     "TWILIO_SAMPLE_RATE",
 ]
-

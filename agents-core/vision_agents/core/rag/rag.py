@@ -72,9 +72,7 @@ class RAG(abc.ABC):
         if not files:
             return 0
 
-        documents = [
-            Document(text=f.read_text(), source=f.name) for f in files
-        ]
+        documents = [Document(text=f.read_text(), source=f.name) for f in files]
 
         return await self.add_documents(documents)
 

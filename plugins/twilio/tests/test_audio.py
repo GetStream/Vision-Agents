@@ -13,38 +13,262 @@ from vision_agents.plugins.twilio.audio import (
 # Known correct PCM values for each mulaw byte (ITU-T G.711 reference)
 # These are the exact decode values that our MULAW_DECODE_TABLE should match
 REFERENCE_DECODE_VALUES = [
-    -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
-    -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
-    -15996, -15484, -14972, -14460, -13948, -13436, -12924, -12412,
-    -11900, -11388, -10876, -10364, -9852, -9340, -8828, -8316,
-    -7932, -7676, -7420, -7164, -6908, -6652, -6396, -6140,
-    -5884, -5628, -5372, -5116, -4860, -4604, -4348, -4092,
-    -3900, -3772, -3644, -3516, -3388, -3260, -3132, -3004,
-    -2876, -2748, -2620, -2492, -2364, -2236, -2108, -1980,
-    -1884, -1820, -1756, -1692, -1628, -1564, -1500, -1436,
-    -1372, -1308, -1244, -1180, -1116, -1052, -988, -924,
-    -876, -844, -812, -780, -748, -716, -684, -652,
-    -620, -588, -556, -524, -492, -460, -428, -396,
-    -372, -356, -340, -324, -308, -292, -276, -260,
-    -244, -228, -212, -196, -180, -164, -148, -132,
-    -120, -112, -104, -96, -88, -80, -72, -64,
-    -56, -48, -40, -32, -24, -16, -8, 0,
-    32124, 31100, 30076, 29052, 28028, 27004, 25980, 24956,
-    23932, 22908, 21884, 20860, 19836, 18812, 17788, 16764,
-    15996, 15484, 14972, 14460, 13948, 13436, 12924, 12412,
-    11900, 11388, 10876, 10364, 9852, 9340, 8828, 8316,
-    7932, 7676, 7420, 7164, 6908, 6652, 6396, 6140,
-    5884, 5628, 5372, 5116, 4860, 4604, 4348, 4092,
-    3900, 3772, 3644, 3516, 3388, 3260, 3132, 3004,
-    2876, 2748, 2620, 2492, 2364, 2236, 2108, 1980,
-    1884, 1820, 1756, 1692, 1628, 1564, 1500, 1436,
-    1372, 1308, 1244, 1180, 1116, 1052, 988, 924,
-    876, 844, 812, 780, 748, 716, 684, 652,
-    620, 588, 556, 524, 492, 460, 428, 396,
-    372, 356, 340, 324, 308, 292, 276, 260,
-    244, 228, 212, 196, 180, 164, 148, 132,
-    120, 112, 104, 96, 88, 80, 72, 64,
-    56, 48, 40, 32, 24, 16, 8, 0,
+    -32124,
+    -31100,
+    -30076,
+    -29052,
+    -28028,
+    -27004,
+    -25980,
+    -24956,
+    -23932,
+    -22908,
+    -21884,
+    -20860,
+    -19836,
+    -18812,
+    -17788,
+    -16764,
+    -15996,
+    -15484,
+    -14972,
+    -14460,
+    -13948,
+    -13436,
+    -12924,
+    -12412,
+    -11900,
+    -11388,
+    -10876,
+    -10364,
+    -9852,
+    -9340,
+    -8828,
+    -8316,
+    -7932,
+    -7676,
+    -7420,
+    -7164,
+    -6908,
+    -6652,
+    -6396,
+    -6140,
+    -5884,
+    -5628,
+    -5372,
+    -5116,
+    -4860,
+    -4604,
+    -4348,
+    -4092,
+    -3900,
+    -3772,
+    -3644,
+    -3516,
+    -3388,
+    -3260,
+    -3132,
+    -3004,
+    -2876,
+    -2748,
+    -2620,
+    -2492,
+    -2364,
+    -2236,
+    -2108,
+    -1980,
+    -1884,
+    -1820,
+    -1756,
+    -1692,
+    -1628,
+    -1564,
+    -1500,
+    -1436,
+    -1372,
+    -1308,
+    -1244,
+    -1180,
+    -1116,
+    -1052,
+    -988,
+    -924,
+    -876,
+    -844,
+    -812,
+    -780,
+    -748,
+    -716,
+    -684,
+    -652,
+    -620,
+    -588,
+    -556,
+    -524,
+    -492,
+    -460,
+    -428,
+    -396,
+    -372,
+    -356,
+    -340,
+    -324,
+    -308,
+    -292,
+    -276,
+    -260,
+    -244,
+    -228,
+    -212,
+    -196,
+    -180,
+    -164,
+    -148,
+    -132,
+    -120,
+    -112,
+    -104,
+    -96,
+    -88,
+    -80,
+    -72,
+    -64,
+    -56,
+    -48,
+    -40,
+    -32,
+    -24,
+    -16,
+    -8,
+    0,
+    32124,
+    31100,
+    30076,
+    29052,
+    28028,
+    27004,
+    25980,
+    24956,
+    23932,
+    22908,
+    21884,
+    20860,
+    19836,
+    18812,
+    17788,
+    16764,
+    15996,
+    15484,
+    14972,
+    14460,
+    13948,
+    13436,
+    12924,
+    12412,
+    11900,
+    11388,
+    10876,
+    10364,
+    9852,
+    9340,
+    8828,
+    8316,
+    7932,
+    7676,
+    7420,
+    7164,
+    6908,
+    6652,
+    6396,
+    6140,
+    5884,
+    5628,
+    5372,
+    5116,
+    4860,
+    4604,
+    4348,
+    4092,
+    3900,
+    3772,
+    3644,
+    3516,
+    3388,
+    3260,
+    3132,
+    3004,
+    2876,
+    2748,
+    2620,
+    2492,
+    2364,
+    2236,
+    2108,
+    1980,
+    1884,
+    1820,
+    1756,
+    1692,
+    1628,
+    1564,
+    1500,
+    1436,
+    1372,
+    1308,
+    1244,
+    1180,
+    1116,
+    1052,
+    988,
+    924,
+    876,
+    844,
+    812,
+    780,
+    748,
+    716,
+    684,
+    652,
+    620,
+    588,
+    556,
+    524,
+    492,
+    460,
+    428,
+    396,
+    372,
+    356,
+    340,
+    324,
+    308,
+    292,
+    276,
+    260,
+    244,
+    228,
+    212,
+    196,
+    180,
+    164,
+    148,
+    132,
+    120,
+    112,
+    104,
+    96,
+    88,
+    80,
+    72,
+    64,
+    56,
+    48,
+    40,
+    32,
+    24,
+    16,
+    8,
+    0,
 ]
 
 # Known correct mulaw encoding for specific PCM values (verified against audioop)
@@ -168,7 +392,9 @@ class TestRoundTrip:
         """Verify PCM -> mulaw -> PCM round-trip maintains signal quality."""
         # Generate a test signal (440Hz sine wave)
         duration = 0.1  # 100ms
-        t = np.linspace(0, duration, int(TWILIO_SAMPLE_RATE * duration), dtype=np.float32)
+        t = np.linspace(
+            0, duration, int(TWILIO_SAMPLE_RATE * duration), dtype=np.float32
+        )
         sine_wave = (np.sin(2 * np.pi * 440 * t) * 16000).astype(np.int16)
 
         original_pcm = PcmData(
@@ -183,7 +409,10 @@ class TestRoundTrip:
         recovered_pcm = mulaw_to_pcm(mulaw)
 
         # Calculate error
-        error = np.abs(original_pcm.samples.astype(np.int32) - recovered_pcm.samples.astype(np.int32))
+        error = np.abs(
+            original_pcm.samples.astype(np.int32)
+            - recovered_pcm.samples.astype(np.int32)
+        )
         max_error = np.max(error)
         mean_error = np.mean(error)
 
@@ -197,13 +426,13 @@ class TestRoundTrip:
         # Known encode->decode pairs (verified against audioop)
         # PCM -> mulaw -> PCM (decoded value from MULAW_DECODE_TABLE)
         test_cases = [
-            (0, 0),          # Silence stays at 0
+            (0, 0),  # Silence stays at 0
             (32767, 32124),  # Max positive -> decode of 0x80
-            (-32768, -32124),# Max negative -> decode of 0x00
+            (-32768, -32124),  # Max negative -> decode of 0x00
             (16000, 15996),  # Mid-high positive
-            (-16000, -15996),# Mid-high negative
-            (1000, 988),     # Low positive
-            (-1000, -988),   # Low negative
+            (-16000, -15996),  # Mid-high negative
+            (1000, 988),  # Low positive
+            (-1000, -988),  # Low negative
         ]
 
         for original, expected_recovered in test_cases:
@@ -252,10 +481,16 @@ class TestSignalQuality:
 
         # Calculate SNR
         signal_power = np.mean(original.samples.astype(np.float64) ** 2)
-        noise = original.samples.astype(np.float64) - recovered.samples.astype(np.float64)
+        noise = original.samples.astype(np.float64) - recovered.samples.astype(
+            np.float64
+        )
         noise_power = np.mean(noise**2)
 
-        snr_db = 10 * np.log10(signal_power / noise_power) if noise_power > 0 else float("inf")
+        snr_db = (
+            10 * np.log10(signal_power / noise_power)
+            if noise_power > 0
+            else float("inf")
+        )
 
         # Mulaw should achieve at least 35dB SNR for typical voice signals
         assert snr_db > 35, f"SNR too low: {snr_db:.1f} dB"
@@ -284,4 +519,3 @@ class TestSignalQuality:
         assert recovered.samples[1] < 0  # Was -32767
         assert recovered.samples[2] > 0  # Was 32766
         assert recovered.samples[3] > 0  # Was 32767
-

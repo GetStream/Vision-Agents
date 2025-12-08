@@ -129,7 +129,7 @@ class GeminiRealtime(realtime.Realtime):
     ) -> None:
         """
         Initialize Gemini Realtime.
-        
+
         Args:
             model: Model to use for realtime.
             config: Optional LiveConnectConfigDict to customize behavior.
@@ -347,7 +347,9 @@ class GeminiRealtime(realtime.Realtime):
         if tools_spec:
             conv_tools = self._convert_tools_to_provider_format(tools_spec)
             tools.extend(conv_tools)
-            logger.info(f"Adding {len(tools_spec)} function tools to Gemini Live config")
+            logger.info(
+                f"Adding {len(tools_spec)} function tools to Gemini Live config"
+            )
 
         # Add file search tool if configured
         if self.file_search_store and self.file_search_store.is_created:

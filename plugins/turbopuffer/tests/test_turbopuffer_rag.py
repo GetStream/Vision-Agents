@@ -58,7 +58,9 @@ async def test_vector_search_mode(rag: TurboPufferRAG):
 async def test_bm25_search_mode(rag: TurboPufferRAG):
     """Test BM25 keyword search finds exact matches."""
     unique_sku = f"SKU-{uuid.uuid4().hex[:8].upper()}"
-    doc = Document(text=f"Product code: {unique_sku}. High-quality widget.", source="product.txt")
+    doc = Document(
+        text=f"Product code: {unique_sku}. High-quality widget.", source="product.txt"
+    )
     await rag.add_documents([doc])
 
     result = await rag.search(unique_sku, mode="bm25")
@@ -67,7 +69,9 @@ async def test_bm25_search_mode(rag: TurboPufferRAG):
 
 async def test_hybrid_search_mode(rag: TurboPufferRAG):
     """Test hybrid search combines vector and BM25."""
-    doc = Document(text="The API endpoint supports real-time data streaming.", source="api.txt")
+    doc = Document(
+        text="The API endpoint supports real-time data streaming.", source="api.txt"
+    )
     await rag.add_documents([doc])
 
     result = await rag.search("real-time streaming API")

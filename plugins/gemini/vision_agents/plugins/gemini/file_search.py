@@ -167,7 +167,7 @@ class GeminiFilesearchRAG(RAG):
         while not operation.done:
             await asyncio.sleep(1)
             operation = await loop.run_in_executor(
-                None, lambda op=operation: self._client.operations.get(op)
+                None, self._client.operations.get, operation
             )
 
         self._uploaded_files.append(display_name)
@@ -215,7 +215,9 @@ class GeminiFilesearchRAG(RAG):
                 ):
                     uploaded_count += 1
 
-        logger.info(f"Indexed {uploaded_count} documents ({len(documents) - uploaded_count} duplicates skipped)")
+        logger.info(
+            f"Indexed {uploaded_count} documents ({len(documents) - uploaded_count} duplicates skipped)"
+        )
         return uploaded_count
 
     async def add_directory(
@@ -259,7 +261,9 @@ class GeminiFilesearchRAG(RAG):
         ]
 
         if not files:
-            logger.warning(f"No files found in {directory} with extensions {extensions}")
+            logger.warning(
+                f"No files found in {directory} with extensions {extensions}"
+            )
             return 0
 
         logger.info(
@@ -273,7 +277,9 @@ class GeminiFilesearchRAG(RAG):
             results = await asyncio.gather(*[self._upload_file(f) for f in batch])
             uploaded_count += sum(results)
 
-        logger.info(f"Indexed {uploaded_count} files ({len(files) - uploaded_count} duplicates skipped)")
+        logger.info(
+            f"Indexed {uploaded_count} files ({len(files) - uploaded_count} duplicates skipped)"
+        )
         return uploaded_count
 
     async def search(self, query: str, top_k: int = 3) -> str:
@@ -343,9 +349,7 @@ class GeminiFilesearchRAG(RAG):
             raise ValueError("Store not created. Call create() first.")
 
         return types.Tool(
-            file_search=types.FileSearch(
-                file_search_store_names=[self._store_name]
-            )
+            file_search=types.FileSearch(file_search_store_names=[self._store_name])
         )
 
     def get_tool_config(self) -> dict:

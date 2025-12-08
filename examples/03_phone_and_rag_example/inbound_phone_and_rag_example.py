@@ -15,6 +15,7 @@ Flow:
 
 Notes: Twilio uses mulaw audio encoding at 8kHz.
 """
+
 import asyncio
 import logging
 import os
@@ -29,7 +30,14 @@ from fastapi import Depends, FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import getstream, gemini, twilio, elevenlabs, deepgram, turbopuffer
+from vision_agents.plugins import (
+    getstream,
+    gemini,
+    twilio,
+    elevenlabs,
+    deepgram,
+    turbopuffer,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -61,11 +69,13 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.post("/twilio/voice")
 async def twilio_voice_webhook(
-        _: None = Depends(twilio.verify_twilio_signature),
-        data: twilio.CallWebhookInput = Depends(twilio.CallWebhookInput.as_form),
+    _: None = Depends(twilio.verify_twilio_signature),
+    data: twilio.CallWebhookInput = Depends(twilio.CallWebhookInput.as_form),
 ):
     """Twilio call webhook. Validates signature and starts the media stream."""
-    logger.info(f"📞 Call from {data.caller} ({data.caller_city or 'unknown location'})")
+    logger.info(
+        f"📞 Call from {data.caller} ({data.caller_city or 'unknown location'})"
+    )
     call_id = str(uuid.uuid4())
 
     async def prepare_call():
@@ -73,8 +83,15 @@ async def twilio_voice_webhook(
         await agent.create_user()
 
         phone_number = data.from_number or "unknown"
-        sanitized_number = phone_number.replace("+", "").replace(" ", "").replace("(", "").replace(")", "")
-        phone_user = User(name=f"Call from {phone_number}", id=f"phone-{sanitized_number}")
+        sanitized_number = (
+            phone_number.replace("+", "")
+            .replace(" ", "")
+            .replace("(", "")
+            .replace(")", "")
+        )
+        phone_user = User(
+            name=f"Call from {phone_number}", id=f"phone-{sanitized_number}"
+        )
         await agent.edge.create_user(user=phone_user)
 
         stream_call = await agent.create_call("default", call_id=call_id)
@@ -100,7 +117,12 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
     twilio_call.twilio_stream = twilio_stream
 
     try:
-        agent, phone_user, stream_call, agent_session = await twilio_call.await_prepare()
+        (
+            agent,
+            phone_user,
+            stream_call,
+            agent_session,
+        ) = await twilio_call.await_prepare()
         twilio_call.stream_call = stream_call
 
         await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
@@ -129,7 +151,9 @@ async def create_rag_from_directory():
             knowledge_dir=KNOWLEDGE_DIR,
             extensions=[".md"],
         )
-        logger.info(f"✅ TurboPuffer RAG ready with {len(rag._indexed_files)} documents indexed")
+        logger.info(
+            f"✅ TurboPuffer RAG ready with {len(rag._indexed_files)} documents indexed"
+        )
     else:
         logger.info(f"📚 Initializing Gemini File Search from {KNOWLEDGE_DIR}")
         file_search_store = await gemini.create_file_search_store(
@@ -137,8 +161,9 @@ async def create_rag_from_directory():
             knowledge_dir=KNOWLEDGE_DIR,
             extensions=[".md"],
         )
-        logger.info(f"✅ Gemini RAG ready with {len(file_search_store._uploaded_files)} documents")
-
+        logger.info(
+            f"✅ Gemini RAG ready with {len(file_search_store._uploaded_files)} documents"
+        )
 
 
 async def create_agent() -> Agent:

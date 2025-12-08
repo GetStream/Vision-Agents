@@ -34,7 +34,9 @@ async def create_agent() -> Agent:
 
 async def initiate_outbound_call(from_number: str, to_number: str) -> str:
     """Initiate an outbound call via Twilio. Returns the call_id."""
-    twilio_client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
+    twilio_client = Client(
+        os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"]
+    )
 
     call_id = str(uuid.uuid4())
 
@@ -52,7 +54,9 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
 
     twilio_call = call_registry.create(call_id, prepare=prepare_call)
     url = f"wss://{NGROK_URL}/twilio/media/{call_id}/{twilio_call.token}"
-    logger.info(f"Forwarding to media url: {url} \n %s", twilio.create_media_stream_twiml(url))
+    logger.info(
+        f"Forwarding to media url: {url} \n %s", twilio.create_media_stream_twiml(url)
+    )
 
     twilio_client.calls.create(
         twiml=twilio.create_media_stream_twiml(url),
@@ -74,7 +78,12 @@ async def media_stream(websocket: WebSocket, call_sid: str, token: str):
     twilio_call.twilio_stream = twilio_stream
 
     try:
-        agent, phone_user, stream_call, agent_session = await twilio_call.await_prepare()
+        (
+            agent,
+            phone_user,
+            stream_call,
+            agent_session,
+        ) = await twilio_call.await_prepare()
         twilio_call.stream_call = stream_call
 
         await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
@@ -110,10 +119,17 @@ async def run_with_server(from_number: str, to_number: str):
 
 
 @click.command()
-@click.option("--from", "from_number", required=True, help="The phone number to call from. Needs to be active in your Twilio account")
+@click.option(
+    "--from",
+    "from_number",
+    required=True,
+    help="The phone number to call from. Needs to be active in your Twilio account",
+)
 @click.option("--to", "to_number", required=True, help="The phone number to call")
 def main(from_number: str, to_number: str):
-    logger.info("Starting outbound example. Note that latency is higher in dev. Deploy to US east for low latency")
+    logger.info(
+        "Starting outbound example. Note that latency is higher in dev. Deploy to US east for low latency"
+    )
     asyncio.run(run_with_server(from_number, to_number))
 
 

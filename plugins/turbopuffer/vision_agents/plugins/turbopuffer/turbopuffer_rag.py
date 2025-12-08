@@ -199,7 +199,7 @@ class TurboPufferRAG(RAG):
         await ns.write(
             upsert_rows=rows,
             distance_metric="cosine_distance",
-            schema=HYBRID_SCHEMA,
+            schema=HYBRID_SCHEMA,  # type: ignore[arg-type]
         )
 
         logger.info(f"Indexed {len(all_chunks)} chunks from {len(documents)} documents")
@@ -257,7 +257,7 @@ class TurboPufferRAG(RAG):
             return []
 
         ranked = []
-        for row in results.rows:
+        for row in results.rows or []:
             doc_id = str(row.id)
             # Cache the document for later retrieval
             self._doc_cache[doc_id] = {
@@ -283,7 +283,7 @@ class TurboPufferRAG(RAG):
             return []
 
         ranked = []
-        for row in results.rows:
+        for row in results.rows or []:
             doc_id = str(row.id)
             # Cache the document for later retrieval
             self._doc_cache[doc_id] = {
