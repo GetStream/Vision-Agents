@@ -6,6 +6,14 @@ from .chat_completions.chat_completions_vlm import (
 )
 from .openai_llm import OpenAILLM as LLM
 from .openai_realtime import Realtime
+from .rag import OpenAIVectorStoreRAG
 from .tts import TTS
 
-__all__ = ["Realtime", "LLM", "TTS", "ChatCompletionsLLM", "ChatCompletionsVLM"]
+__all__ = [
+    "Realtime",
+    "LLM",
+    "TTS",
+    "ChatCompletionsLLM",
+    "ChatCompletionsVLM",
+    "OpenAIVectorStoreRAG",
+]

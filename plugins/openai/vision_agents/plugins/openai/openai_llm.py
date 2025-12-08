@@ -101,9 +101,11 @@ class OpenAILLM(LLM):
 
             llm.simple_response("say hi to the user, be mean")
         """
+        # Augment with RAG context if a provider is attached
+        augmented_text = await self._augment_with_rag(text)
 
         return await self.create_response(
-            input=text,
+            input=augmented_text,
             instructions=self._instructions,
         )
 
