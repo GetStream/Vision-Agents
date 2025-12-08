@@ -45,7 +45,7 @@ from typing import Literal
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from turbopuffer import AsyncTurbopuffer
+from turbopuffer import AsyncTurbopuffer, NotFoundError
 
 from vision_agents.core.rag import RAG, Document
 
@@ -247,22 +247,25 @@ class TurboPufferRAG(RAG):
         )
 
         ns = self._client.namespace(self._namespace_name)
-        results = await ns.query(
-            rank_by=("vector", "ANN", query_embedding),
-            top_k=top_k,
-            include_attributes=["text", "source"],
-        )
+        try:
+            results = await ns.query(
+                rank_by=("vector", "ANN", query_embedding),
+                top_k=top_k,
+                include_attributes=["text", "source"],
+            )
+        except NotFoundError:
+            return []
 
         ranked = []
         for row in results.rows:
             doc_id = str(row.id)
             # Cache the document for later retrieval
             self._doc_cache[doc_id] = {
-                "text": row.text if row.text else "",
-                "source": row.source if row.source else "unknown",
+                "text": row["text"] or "",
+                "source": row["source"] or "unknown",
             }
             # Lower distance = better, so we use negative for ranking
-            dist = row.dist if row.dist else 0
+            dist = row["$dist"] or 0
             ranked.append((doc_id, -dist))
 
         return ranked
@@ -270,22 +273,25 @@ class TurboPufferRAG(RAG):
     async def _bm25_search(self, query: str, top_k: int) -> list[tuple[str, float]]:
         """Run BM25 full-text search."""
         ns = self._client.namespace(self._namespace_name)
-        results = await ns.query(
-            rank_by=("text", "BM25", query),
-            top_k=top_k,
-            include_attributes=["text", "source"],
-        )
+        try:
+            results = await ns.query(
+                rank_by=("text", "BM25", query),
+                top_k=top_k,
+                include_attributes=["text", "source"],
+            )
+        except NotFoundError:
+            return []
 
         ranked = []
         for row in results.rows:
             doc_id = str(row.id)
             # Cache the document for later retrieval
             self._doc_cache[doc_id] = {
-                "text": row.text if row.text else "",
-                "source": row.source if row.source else "unknown",
+                "text": row["text"] or "",
+                "source": row["source"] or "unknown",
             }
             # BM25 score (higher = better)
-            score = row.dist if row.dist else 0
+            score = row["$dist"] or 0
             ranked.append((doc_id, score))
 
         return ranked
@@ -349,7 +355,10 @@ class TurboPufferRAG(RAG):
     async def clear(self) -> None:
         """Clear all vectors from the namespace."""
         ns = self._client.namespace(self._namespace_name)
-        await ns.delete_all()
+        try:
+            await ns.delete_all()
+        except NotFoundError:
+            pass  # Namespace doesn't exist, nothing to clear
         self._indexed_files = []
         self._doc_cache.clear()
         logger.info(f"Cleared namespace: {self._namespace_name}")
