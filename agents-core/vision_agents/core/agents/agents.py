@@ -99,6 +99,8 @@ class Agent:
     - Small methods so its easy to subclass/change behaviour
     """
 
+    options: AgentOptions
+
     def __init__(
         self,
         # edge network for video & audio

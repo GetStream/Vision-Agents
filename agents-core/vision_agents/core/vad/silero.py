@@ -38,6 +38,7 @@ class SileroVAD:
 
     def predict_speech(self, pcm: PcmData):
         # convert from pcm to the right format for silero
+
         chunks = pcm.resample(16000, 1).to_float32().chunks(SILERO_CHUNK, pad_last=True)
         scores = [self._predict_speech(c.samples) for c in chunks]
         return max(scores)

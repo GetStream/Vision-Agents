@@ -106,7 +106,7 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 
 | **Plugin Name** | **Description** | **Docs Link** |
 |-------------|-------------|-----------|
-| AWS Polly | TTS plugin using Amazon's cloud-based service with natural-sounding voices and neural engine support | [AWS Polly](https://visionagents.ai/integrations/aws-polly) |
+| AWS | AWS (Bedrock) integration with support for standard LLM (Qwen, Claude with vision), realtime with Nova 2 Sonic, and TTS with AWS Polly | [AWS](https://visionagents.ai/integrations/aws) |
 | Cartesia | TTS plugin for realistic voice synthesis in real-time voice applications | [Cartesia](https://visionagents.ai/integrations/cartesia) |
 | Decart | Real-time video restyling capabilities using generative AI models | [Decart](https://visionagents.ai/integrations/decart) |
 | Deepgram | STT plugin for fast, accurate real-time transcription with speaker diarization | [Deepgram](https://visionagents.ai/integrations/deepgram) |
@@ -225,7 +225,7 @@ While building the integrations, here are the limitations we've noticed (Dec 202
 * Longer videos can cause the AI to lose context. For instance if it's watching a soccer match it will get confused after 30 seconds
 * Most applications require a combination of small specialized models like Yolo/Roboflow/Moondream, API calls to get more context and larger models like gemini/openAI
 * Image size & FPS need to stay relatively low due to performance constraints
-* Video doesn’t trigger responses in realtime models. You always need to send audio/text to trigger a response. 
+* Video doesn’t trigger responses in realtime models. You always need to send audio/text to trigger a response.
 
 ## Star History
 
