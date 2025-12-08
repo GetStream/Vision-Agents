@@ -23,6 +23,7 @@ import uuid
 from pathlib import Path
 
 import uvicorn
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
@@ -47,6 +48,8 @@ file_search_store: gemini.FileSearchStore | None = None  # For Gemini
 rag = None  # For TurboPuffer
 
 app = FastAPI()
+# Trust proxy headers from ngrok so Twilio signature validation works (https vs http)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 call_registry = twilio.TwilioCallRegistry()
 
 
@@ -150,6 +153,7 @@ async def create_agent() -> Agent:
         )
         async def search_knowledge(query: str) -> str:
             return await rag.search(query, top_k=3)
+
     else:
         llm = gemini.LLM("gemini-2.5-flash-lite", file_search_store=file_search_store)
 

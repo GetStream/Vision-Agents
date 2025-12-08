@@ -7,21 +7,25 @@ See: https://ai.google.dev/gemini-api/docs/file-search
 """
 
 import asyncio
+import hashlib
 import logging
 import tempfile
 from pathlib import Path
 
-from google.genai import Client
+from google.genai import Client, types
 from google.genai.types import (
     CreateFileSearchStoreConfig,
-    FileSearch,
     GenerateContentConfig,
-    Tool,
 )
 
 from vision_agents.core.rag import RAG, Document
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_hash(content: str) -> str:
+    """Compute SHA-256 hash of content."""
+    return hashlib.sha256(content.encode()).hexdigest()
 
 
 class GeminiFilesearchRAG(RAG):
@@ -48,7 +52,7 @@ class GeminiFilesearchRAG(RAG):
         name: str,
         client: Client | None = None,
         api_key: str | None = None,
-        model: str = "gemini-2.0-flash",
+        model: str = "gemini-2.5-flash",
     ):
         """
         Initialize a GeminiFilesearchRAG.
@@ -62,6 +66,7 @@ class GeminiFilesearchRAG(RAG):
         self.name = name
         self._store_name: str | None = None
         self._uploaded_files: list[str] = []
+        self._uploaded_hashes: set[str] = set()
         self._model = model
 
         if client is not None:
@@ -78,6 +83,11 @@ class GeminiFilesearchRAG(RAG):
     def is_created(self) -> bool:
         """Check if the store has been created."""
         return self._store_name is not None
+
+    @property
+    def uploaded_hashes(self) -> set[str]:
+        """Set of content hashes for uploaded documents."""
+        return self._uploaded_hashes
 
     async def create(self) -> str:
         """
@@ -105,9 +115,22 @@ class GeminiFilesearchRAG(RAG):
         return self._store_name
 
     async def _upload_file(
-        self, file_path: str | Path, display_name: str | None = None
-    ) -> None:
-        """Upload a single file to the file search store."""
+        self,
+        file_path: str | Path,
+        display_name: str | None = None,
+        content_hash: str | None = None,
+    ) -> bool:
+        """
+        Upload a single file to the file search store.
+
+        Args:
+            file_path: Path to the file to upload.
+            display_name: Optional display name (defaults to filename).
+            content_hash: Optional hash of file content for deduplication.
+
+        Returns:
+            True if file was uploaded, False if skipped (duplicate).
+        """
         if not self._store_name:
             raise ValueError("Store not created. Call create() first.")
 
@@ -116,6 +139,15 @@ class GeminiFilesearchRAG(RAG):
         file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Compute hash if not provided
+        if content_hash is None:
+            content_hash = _compute_hash(file_path.read_text())
+
+        # Skip if already uploaded
+        if content_hash in self._uploaded_hashes:
+            logger.info(f"Skipping duplicate: {display_name or file_path.name}")
+            return False
 
         display_name = display_name or file_path.name
 
@@ -135,24 +167,26 @@ class GeminiFilesearchRAG(RAG):
         while not operation.done:
             await asyncio.sleep(1)
             operation = await loop.run_in_executor(
-                None, lambda: self._client.operations.get(operation)
+                None, lambda op=operation: self._client.operations.get(op)
             )
 
         self._uploaded_files.append(display_name)
+        self._uploaded_hashes.add(content_hash)
         logger.info(f"Uploaded and indexed: {display_name}")
+        return True
 
     async def add_documents(self, documents: list[Document]) -> int:
         """
         Add documents to the RAG index.
 
         Documents are written to temporary files and uploaded to Gemini's
-        File Search store.
+        File Search store. Duplicate documents (same content hash) are skipped.
 
         Args:
             documents: List of documents to index.
 
         Returns:
-            Number of documents indexed.
+            Number of documents indexed (excluding duplicates).
         """
         if not self._store_name:
             raise ValueError("Store not created. Call create() first.")
@@ -160,20 +194,29 @@ class GeminiFilesearchRAG(RAG):
         if not documents:
             return 0
 
+        uploaded_count = 0
+
         # Write documents to temp files and upload
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
             for doc in documents:
+                # Compute hash for deduplication
+                content_hash = _compute_hash(doc.text)
+
                 # Use source as filename, default to .txt extension
                 filename = doc.source
                 if not Path(filename).suffix:
                     filename = f"{filename}.txt"
                 filepath = tmppath / filename
                 filepath.write_text(doc.text)
-                await self._upload_file(filepath, display_name=doc.source)
 
-        logger.info(f"Indexed {len(documents)} documents")
-        return len(documents)
+                if await self._upload_file(
+                    filepath, display_name=doc.source, content_hash=content_hash
+                ):
+                    uploaded_count += 1
+
+        logger.info(f"Indexed {uploaded_count} documents ({len(documents) - uploaded_count} duplicates skipped)")
+        return uploaded_count
 
     async def add_directory(
         self,
@@ -224,11 +267,14 @@ class GeminiFilesearchRAG(RAG):
         )
 
         # Upload files in batches concurrently
+        uploaded_count = 0
         for i in range(0, len(files), batch_size):
             batch = files[i : i + batch_size]
-            await asyncio.gather(*[self._upload_file(f) for f in batch])
+            results = await asyncio.gather(*[self._upload_file(f) for f in batch])
+            uploaded_count += sum(results)
 
-        return len(files)
+        logger.info(f"Indexed {uploaded_count} files ({len(files) - uploaded_count} duplicates skipped)")
+        return uploaded_count
 
     async def search(self, query: str, top_k: int = 3) -> str:
         """
@@ -268,19 +314,25 @@ class GeminiFilesearchRAG(RAG):
             return
 
         loop = asyncio.get_event_loop()
+        store_name = self._store_name
+
+        # Delete the store with force=True to also delete all documents
         await loop.run_in_executor(
             None,
-            lambda: self._client.file_search_stores.delete(name=self._store_name),
+            lambda: self._client.file_search_stores.delete(
+                name=store_name, config={"force": True}
+            ),
         )
-        logger.info(f"Deleted GeminiFilesearchRAG: {self._store_name}")
+        logger.info(f"Deleted GeminiFilesearchRAG: {store_name}")
         self._store_name = None
         self._uploaded_files = []
+        self._uploaded_hashes = set()
 
     async def close(self) -> None:
         """Close resources. Note: does not delete the store."""
         pass
 
-    def get_tool(self) -> Tool:
+    def get_tool(self) -> types.Tool:
         """
         Get the File Search tool configuration for use with Gemini LLM.
 
@@ -290,7 +342,11 @@ class GeminiFilesearchRAG(RAG):
         if not self._store_name:
             raise ValueError("Store not created. Call create() first.")
 
-        return Tool(file_search=FileSearch(file_search_store_names=[self._store_name]))
+        return types.Tool(
+            file_search=types.FileSearch(
+                file_search_store_names=[self._store_name]
+            )
+        )
 
     def get_tool_config(self) -> dict:
         """
