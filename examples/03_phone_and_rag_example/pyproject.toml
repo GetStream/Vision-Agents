@@ -13,6 +13,7 @@ dependencies = [
   "vision-agents-plugins-elevenlabs",
   "vision-agents-plugins-openai",
   "vision-agents-plugins-deepgram",
+  "vision-agents-plugins-turbopuffer",
   "fastapi",
   "uvicorn",
   "audioop-lts>=0.2.2",
@@ -33,3 +34,4 @@ dependencies = [
 "vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
 "vision-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
 "vision-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
+"vision-agents-plugins-turbopuffer" = {path = "../../plugins/turbopuffer", editable=true}
