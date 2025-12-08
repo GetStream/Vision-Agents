@@ -42,6 +42,8 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         )
     """
 
+    name = "heygen_avatar"
+
     def __init__(
         self,
         avatar_id: str = "default",

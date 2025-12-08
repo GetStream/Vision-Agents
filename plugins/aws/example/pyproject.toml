@@ -1,19 +1,14 @@
 [project]
 name = "aws-bedrock-realtime-example"
 version = "0.0.0"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 
 # put only what this example needs
 dependencies = [
   "python-dotenv>=1.0",
+  "vision-agents",
   "vision-agents-plugins-aws",
   "vision-agents-plugins-getstream",
-  "vision-agents",
-  "boto3>=1.26.0",
-  "opentelemetry-exporter-otlp>=1.37.0",
-  "opentelemetry-exporter-prometheus>=0.58b0",
-  "prometheus-client>=0.23.1",
-  "opentelemetry-sdk>=1.37.0",
 ]
 
 [tool.uv.sources]

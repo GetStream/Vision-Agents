@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 
 
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
-from vision_agents.core.instructions import Instructions
 
 from vision_agents.plugins.gemini.gemini_llm import GeminiLLM
 from vision_agents.core.llm.events import (
@@ -85,7 +84,7 @@ class TestGeminiLLM:
         llm = GeminiLLM(model="gemini-2.0-flash-exp")
         llm.set_conversation(InMemoryConversation("be friendly", []))
 
-        llm.set_instructions(Instructions("only reply in 2 letter country shortcuts"))
+        llm.set_instructions("only reply in 2 letter country shortcuts")
 
         response = await llm.simple_response(
             text="Which country is rainy, protected from water with dikes and below sea level?",

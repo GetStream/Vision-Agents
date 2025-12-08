@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "decart",
+    "decart==0.0.8",
 ]
 
 [project.urls]

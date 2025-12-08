@@ -77,7 +77,7 @@ def format():
 def lint():
     """Run ruff linting (check only)."""
     click.echo("Running ruff lint...")
-    run("uv run ruff check .")
+    run("uv run ruff format --check .")
 
 
 @cli.command()
@@ -103,7 +103,8 @@ def check():
 
     # Run ruff
     click.echo("\n=== 1. Ruff Linting ===")
-    run("uv run ruff check . --fix")
+    run("uv run ruff format")
+    run("uv run ruff format --check .")
 
     # Run mypy on main package
     click.echo("\n=== 2. MyPy Type Checking ===")

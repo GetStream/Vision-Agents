@@ -1,82 +1,60 @@
-# Cartesia Text-to-Speech Plugin
+# Cartesia
 
-High-quality **Text-to-Speech** (TTS) plugin for [GetStream](https://getstream.io/) backed by the
-[Cartesia](https://github.com/cartesia-ai/cartesia-python) Sonic model. It lets a Python
-process speak PCM audio into a Stream call.
+[Cartesia](https://cartesia.ai) is a service that provides Speech-to-Text (STT) and Text-to-Speech (TTS) capabilities. It's designed for real-time voice applications, making it ideal for voice AI agents, transcription pipelines, and conversational interfaces.
+
+The Cartesia plugin for the Stream Python AI SDK allows you to add TTS functionality to your project.
 
 ## Installation
 
-Install from PyPI (installs both `getstream` and the Cartesia SDK):
+Install the Stream Cartesia plugin with
 
-```bash
-pip install "getstream-plugins-cartesia[webrtc"]"
+```sh  theme={null}
+uv add vision-agents[cartesia]
 ```
 
-If you already have the Stream SDK in your project just add the Cartesia plugin:
+## Examples
 
-```bash
-pip install cartesia getstream-plugins-cartesia
-```
+Read on for some key details and check out our [Cartesia examples](https://github.com/GetStream/vision-agents/tree/main/examples/other_examples/plugins_examples/tts_cartesia) to see working code samples:
 
-## Usage
+- in [tts.py](https://github.com/GetStream/vision-agents/tree/main/examples/other_examples/plugins_examples/tts_cartesia/tts.py) we see a simple bot greeting users upon joining a call
+- in [narrator-example.py](https://github.com/GetStream/vision-agents/tree/main/examples/other_examples/plugins_examples/tts_cartesia/narrator-example.py) we see a well-prompted combination of a STT -> LLM -> TTS flow that leverages the powers of Cartesia's Sonic 3 model to narrate a creative story from the user's input
+
+
+
+## Initialisation
+
+The Cartesia plugin for Stream exists in the form of the `TTS` class:
 
 ```python
-from getstream.plugins.cartesia import CartesiaTTS
-from getstream.video.rtc.audio_track import AudioStreamTrack
 
-async def speak():
-    # Option A: read key from env var (CARTESIA_API_KEY)
-    tts = CartesiaTTS()
+from vision_agents.plugins import cartesia
 
-    # Option B: pass explicitly
-    # tts = CartesiaTTS(api_key="<your key>")
-
-    # Audio MUST be 16-kHz, 16-bit PCM (matches Cartesia Sonic model)
-    track = AudioStreamTrack(framerate=16000)
-    tts.set_output_track(track)
-
-    # Listen for every raw PCM chunk that gets produced
-    @tts.on("audio")
-    def _on_audio(chunk: bytes, user):
-        print("🔊 got", len(chunk), "bytes of audio")
-
-    await tts.send("Hello from Cartesia!")
-
-# Run inside an event-loop, e.g. `asyncio.run(speak())`
+tts = cartesia.TTS()
 ```
 
-## Configuration Options
+<Warning>
+  To initialise without passing in the API key, make sure the `CARTESIA_API_KEY` is available as an environment variable.
+  You can do this either by defining it in a `.env` file or exporting it directly in your terminal.
+</Warning>
 
-- `api_key` (str, optional) – Cartesia API key (falls back to `CARTESIA_API_KEY`).
-- `model_id` (str) – Which model to hit (`"sonic-2"` by default).
-- `voice_id` (str | None) – Cartesia voice to use (pass `None` for model default).
-- `sample_rate` (int) – Target sample-rate in Hz. Must match the
-  `AudioStreamTrack.framerate` you attach (defaults to `16000`). If they don't match a
-  `TypeError` is raised early so you don't get distorted audio on the call.
+## Parameters
 
-Events emitted:
+These are the parameters available in the CartesiaTTS plugin for you to customise:
 
-• `audio` – each raw PCM chunk, arguments: `chunk: bytes`, `user: dict | None`
+| Name          | Type            | Default                                  | Description                                                                                                   |
+| ------------- | --------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `api_key`     | `str` or `None` | `None`                                   | Your Cartesia API key. If not provided, the plugin will look for the `CARTESIA_API_KEY` environment variable. |
+| `model_id`    | `str`           | `"sonic-3"`                              | ID of the Cartesia STT or TTS model to use. Defaults to the recently released Sonic-3                         |
+| `voice_id`    | `str` or `None` | `"f9836c6e-a0bd-460e-9d3c-f7299fa60f94"` | ID of the voice to use for TTS responses.                                                                     |
+| `sample_rate` | `int`           | `16000`                                  | Sample rate (in Hz) used for audio processing.                                                                |
 
-• `error` – any exception raised during synthesis
+## Functionality
 
-## Requirements
+### Send text to convert to speech
 
-- Python 3.10+
-- `cartesia>=2.0.5` (automatically installed)
+The `send()` method sends the text passed in for the service to synthesize.
+The resulting audio is then played through the configured output track.
 
-## Testing
-
-Run the offline unit-tests:
-
-```bash
-pytest -q getstream/plugins/cartesia/tests
+```python  theme={null}
+tts.send("Demo text you want AI voice to say")
 ```
-
-To additionally exercise the live Cartesia API set `CARTESIA_API_KEY` in your
-environment; the integration test will be executed automatically.
-
----
-
-💡 See `examples/tts_cartesia/` for a fully-working bot that joins a Stream call
-and greets participants using this plugin.

@@ -176,8 +176,21 @@ class LLM(abc.ABC):
         """
         self._conversation = conversation
 
-    def set_instructions(self, instructions: Instructions):
-        self._instructions = instructions.full_reference
+    def set_instructions(self, instructions: Instructions | str) -> None:
+        """
+        Set instructions for LLM.
+
+        Args:
+            instructions: instructions object. Can be either `str` or `Instructions`.
+        """
+        if isinstance(instructions, str):
+            self._instructions = instructions
+        elif isinstance(instructions, Instructions):
+            self._instructions = instructions.full_reference
+        else:
+            raise TypeError(
+                f"Invalid instructions type {type(instructions)}, expected str or Instructions"
+            )
 
     def register_function(
         self, name: Optional[str] = None, description: Optional[str] = None

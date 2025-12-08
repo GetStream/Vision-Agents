@@ -71,4 +71,4 @@ class TTS(tts.TTS):
         Returns:
             None
         """
-        logger.info("🎤 ElevenLabs TTS stop requested (no-op)")
+        pass

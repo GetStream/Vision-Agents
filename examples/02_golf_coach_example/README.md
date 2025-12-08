@@ -21,12 +21,17 @@ This approach combines a fast object detection model (YOLO) with a full realtime
 
 ## Installation
 
-1. Install dependencies using uv:
+1. Go to the example's directory
+    ```bash
+    cd examples/02_golf_coach_example
+    ```
+   
+2. Install dependencies using uv:
    ```bash
    uv sync
    ```
 
-2. Create a `.env` file with your API keys:
+3. Create a `.env` file with your API keys:
    ```
    GEMINI_API_KEY=your_gemini_key
    STREAM_API_KEY=your_stream_key

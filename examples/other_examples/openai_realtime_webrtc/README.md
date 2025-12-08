@@ -1,4 +1,4 @@
-# OpenAI Speech-to-Speech (STS) Example
+# OpenAI Realtime WebRTC Example
 
 This example demonstrates how to use OpenAI's Realtime API for speech-to-speech conversation through WebRTC.
 
@@ -18,24 +18,27 @@ The OpenAI Realtime API enables real-time, bidirectional audio conversations wit
 3. Python 3.12 or higher
 
 ## Setup
+1. Go to the example's directory
+    ```bash
+    cd examples/other_examples/openai_realtime_webrtc
+    ```
 
-1. Install dependencies:
-```bash
-cd examples/07_openai_sts_example
-uv sync
-```
+2. Install dependencies:
+    ```bash
+    uv sync
+    ```
 
-2. Create a `.env` file with your credentials:
-```env
-OPENAI_API_KEY=your_openai_api_key
-STREAM_API_KEY=your_stream_api_key
-STREAM_API_SECRET=your_stream_api_secret
-```
+3. Create a `.env` file with your credentials:
+    ```env
+    OPENAI_API_KEY=your_openai_api_key
+    STREAM_API_KEY=your_stream_api_key
+    STREAM_API_SECRET=your_stream_api_secret
+    ```
 
 ## Running the Example
 
 ```bash
-uv run python openai_sts_example.py
+uv run python openai_realtime_example.py
 ```
 
 The script will:

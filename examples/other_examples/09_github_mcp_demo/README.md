@@ -38,18 +38,39 @@ export GITHUB_PAT=your_github_personal_access_token_here
 ```
 
 ## Running the Demo
+
+1. Go to the example's directory
+    ```bash
+    cd examples/other_examples/09_github_mcp_demo
+    ```
+
+2. Install dependencies using uv:
+   ```bash
+   uv sync
+   ```
+
+3. Run the agent
 ```bash
-cd examples/09_github_mcp_demo
 uv run python github_mcp_demo.py
 ```
 
-### Gemini Realtime Version (New)
+### Gemini Realtime Version
 ```bash
-cd examples/09_github_mcp_demo
+cd examples/other_examples/09_github_mcp_demo
 uv run python gemini_realtime_github_mcp_demo.py
 ```
 
 **Note**: The Gemini Realtime version requires `GOOGLE_API_KEY` in your `.env` file in addition to `GITHUB_PAT`.
+
+
+### OpenAI Realtime Version
+
+```bash
+cd examples/other_examples/09_github_mcp_demo
+uv run python openai_realtime_github_mcp_demo.py
+```
+
+**Note**: The OpenAI Realtime version requires `OPENAI_API_KEY` in your `.env` file in addition to `GITHUB_PAT`.
 
 ## What the Demo Does
 

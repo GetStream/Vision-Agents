@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional, TYPE_CHECKING, Callable, Awaitable, Union, cast
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional, Union, cast
 
 if TYPE_CHECKING:
     from .agents import Agent
@@ -100,13 +100,11 @@ class AgentLauncher:
                 warmup_tasks.append(agent.turn_detection.warmup())
 
             # Warmup processors
-            if agent.processors and hasattr(agent.processors, "warmup"):
+            if agent.processors:
                 logger.debug("Warming up processors")
                 for processor in agent.processors:
                     if hasattr(processor, "warmup"):
-                        logger.debug(
-                            "Warming up processor: %s", processor.__class__.__name__
-                        )
+                        logger.debug("Warming up processor: %s", processor.name)
                         warmup_tasks.append(processor.warmup())
 
             # Run all warmups in parallel

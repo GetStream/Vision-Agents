@@ -12,12 +12,12 @@ from transformers import WhisperFeatureExtractor
 from vision_agents.core.agents import Conversation
 from vision_agents.core.agents.agent_types import default_agent_options, AgentOptions
 from vision_agents.core.edge.types import Participant
-
 from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
 )
 from vision_agents.core.utils.utils import ensure_model
+from vision_agents.core.vad.silero import prepare_silero_vad
 
 import logging
 
@@ -28,9 +28,6 @@ SMART_TURN_ONNX_FILENAME = "smart-turn-v3.0.onnx"
 SMART_TURN_ONNX_URL = (
     "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.0.onnx"
 )
-
-SILERO_ONNX_FILENAME = "silero_vad.onnx"
-SILERO_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
 
 # Audio processing constants
 CHUNK = 512  # Samples per chunk for VAD processing
@@ -143,12 +140,7 @@ class SmartTurnDetection(TurnDetector):
         self.smart_turn = await asyncio.to_thread(self._build_smart_turn_session)
 
     async def _prepare_silero_vad(self):
-        path = os.path.join(self.options.model_dir, SILERO_ONNX_FILENAME)
-        await ensure_model(path, SILERO_ONNX_URL)
-        # Initialize VAD in thread pool to avoid blocking event loop
-        self.vad = await asyncio.to_thread(
-            SileroVAD, path, reset_interval_seconds=self.vad_reset_interval_seconds
-        )
+        self.vad = await prepare_silero_vad(self.options.model_dir)
 
     async def process_audio(
         self,
@@ -234,8 +226,8 @@ class SmartTurnDetection(TurnDetector):
 
         # detect speech in small 512 chunks, gather to larger audio segments with speech
         for chunk in audio_chunks[:-1]:
-            # predict if this segment has speech
-            speech_probability = await self.vad.predict_speech(chunk.samples)
+            # predict if this segment has speech (run in thread to avoid blocking)
+            speech_probability = await asyncio.to_thread(self.vad.predict_speech, chunk)
             is_speech = speech_probability > self.speech_probability_threshold
 
             if self._active_segment is not None:
@@ -395,80 +387,3 @@ class SmartTurnDetection(TurnDetector):
 
         # Load from memory instead of file path
         return ort.InferenceSession(model_bytes, sess_options=so)
-
-
-class SileroVAD:
-    """Minimal Silero VAD ONNX wrapper for 16 kHz, mono, chunk=512."""
-
-    def __init__(
-        self,
-        model_path: str,
-        model_bytes: Optional[bytes] = None,
-        reset_interval_seconds: float = 5.0,
-    ):
-        """
-        Initialize Silero VAD.
-
-        Args:
-            model_path: Path to the ONNX model file (used only if model_bytes is None)
-            model_bytes: Optional pre-loaded model file contents to avoid blocking I/O
-            reset_interval_seconds: Reset internal state every N seconds to prevent drift
-        """
-        # Load model into memory to avoid multi-worker file access issues
-        if model_bytes is None:
-            with open(model_path, "rb") as f:
-                model_bytes = f.read()
-
-        opts = ort.SessionOptions()
-        opts.inter_op_num_threads = 1
-
-        # Load from memory instead of file path
-        self.session = ort.InferenceSession(model_bytes, sess_options=opts)
-        self.context_size = 64  # Silero uses 64-sample context at 16 kHz
-        self.reset_interval_seconds = reset_interval_seconds
-        self._state: np.ndarray = np.zeros((2, 1, 128), dtype=np.float32)  # (2, B, 128)
-        self._context: np.ndarray = np.zeros((1, 64), dtype=np.float32)
-        self._init_states()
-
-    def _init_states(self):
-        self._state = np.zeros((2, 1, 128), dtype=np.float32)  # (2, B, 128)
-        self._context = np.zeros((1, self.context_size), dtype=np.float32)
-        self._last_reset_time = time.time()
-
-    def maybe_reset(self):
-        if (time.time() - self._last_reset_time) >= self.reset_interval_seconds:
-            self._init_states()
-
-    async def predict_speech(self, chunk_f32: np.ndarray) -> float:
-        return await asyncio.to_thread(self._predict_speech, chunk_f32=chunk_f32)
-
-    def _predict_speech(self, chunk_f32: np.ndarray) -> float:
-        """
-        Compute speech probability for one chunk of length 512 (float32, mono).
-        Returns a scalar float.
-        """
-        # Ensure shape (1, 512) and concat context
-        x = np.reshape(chunk_f32, (1, -1))
-        if x.shape[1] != CHUNK:
-            # Raise on incorrect usage
-            raise ValueError(
-                "incorrect usage for predict speech. only send audio data in chunks of 512. got %d",
-                x.shape[1],
-            )
-        x = np.concatenate((self._context, x), axis=1)
-
-        # Run ONNX
-        ort_inputs = {
-            "input": x.astype(np.float32),
-            "state": self._state,
-            "sr": np.array(16000, dtype=np.int64),
-        }
-        outputs = self.session.run(None, ort_inputs)
-        out, self._state = outputs
-
-        # Update context (keep last 64 samples)
-        self._context = x[:, -self.context_size :]
-        self.maybe_reset()
-
-        # out shape is (1, 1) -> return scalar
-        return float(out[0][0])

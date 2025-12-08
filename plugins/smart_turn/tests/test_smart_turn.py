@@ -1,4 +1,3 @@
-import os
 import tempfile
 
 import pytest
@@ -7,13 +6,8 @@ from conftest import skip_blockbuster
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import TurnStartedEvent, TurnEndedEvent
-from vision_agents.plugins.smart_turn.smart_turn_detection import (
-    SileroVAD,
-    SmartTurnDetection,
-    SILERO_ONNX_URL,
-    SILERO_ONNX_FILENAME,
-)
-from vision_agents.core.utils.utils import ensure_model
+from vision_agents.core.vad.silero import prepare_silero_vad
+from vision_agents.plugins.smart_turn.smart_turn_detection import SmartTurnDetection
 
 import logging
 
@@ -29,20 +23,12 @@ class TestSmartTurn:
         yield td
 
     async def test_silero_predict(self, mia_audio_16khz):
-        import asyncio
-
-        path = os.path.join(tempfile.gettempdir(), SILERO_ONNX_FILENAME)
-        await ensure_model(path, SILERO_ONNX_URL)
-        # Load model file asynchronously to avoid blocking I/O
-        model_bytes = await asyncio.to_thread(open(path, "rb").read)
-        vad = SileroVAD(path, model_bytes)
+        vad = await prepare_silero_vad(tempfile.gettempdir())
 
         for pcm_chunk in mia_audio_16khz.chunks(chunk_size=512):
             if len(pcm_chunk.samples) != 512:
                 continue
-            result = await vad.predict_speech(
-                pcm_chunk.resample(target_sample_rate=16000).to_float32().samples
-            )
+            result = vad.predict_speech(pcm_chunk)
             assert 1.0 > result > 0.0
 
     async def test_turn_detection_chunks(self, td, mia_audio_16khz):

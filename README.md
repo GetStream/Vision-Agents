@@ -12,9 +12,8 @@
 
 ## Build Real-Time Vision AI Agents
 
-<a href="https://youtu.be/Hpl5EcCpLw8">
-  <img src="assets/demo_thumbnail.png" alt="Watch the demo" style="width:100%; max-width:900px;">
-</a>
+https://github.com/user-attachments/assets/d9778ab9-938d-4101-8605-ff879c29b0e4
+
 
 ### Multi-modal AI agents that watch, listen, and understand video.
 
@@ -28,11 +27,15 @@ Vision Agents give you the building blocks to create intelligent, low-latency vi
 - **Native APIs:** Native SDK methods from OpenAI (`create response`), Gemini (`generate`), and Claude (`create message`) — always access the latest LLM capabilities.
 - **SDKs:** SDKs for React, Android, iOS, Flutter, React Native, and Unity, powered by Stream's ultra-low-latency network.
 
+https://github.com/user-attachments/assets/d66587ea-7af4-40c4-9966-5c04fbcf467c
+
 ---
 
 ## See It In Action
 
 ### Sports Coaching
+
+https://github.com/user-attachments/assets/9527ab03-0541-493b-97b1-e17ff1b20e21
 
 This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
@@ -53,10 +56,6 @@ agent = Agent(
 This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
 For example: Drone fire detection. Sports/video game coaching. Physical therapy. Workout coaching, Just dance style games etc.
-
-<a href="https://x.com/nash0x7e2/status/1950341779745599769">
-  <img src="assets/golf_example_tweet.png" alt="Golf Example" style="width:100%; max-width:800px;">
-</a>
 
 ### Cluely style Invisible Assistant (coming soon)
 
@@ -107,7 +106,7 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 
 | **Plugin Name** | **Description** | **Docs Link** |
 |-------------|-------------|-----------|
-| AWS Polly | TTS plugin using Amazon's cloud-based service with natural-sounding voices and neural engine support | [AWS Polly](https://visionagents.ai/integrations/aws-polly) |
+| AWS | AWS (Bedrock) integration with support for standard LLM (Qwen, Claude with vision), realtime with Nova 2 Sonic, and TTS with AWS Polly | [AWS](https://visionagents.ai/integrations/aws) |
 | Cartesia | TTS plugin for realistic voice synthesis in real-time voice applications | [Cartesia](https://visionagents.ai/integrations/cartesia) |
 | Decart | Real-time video restyling capabilities using generative AI models | [Decart](https://visionagents.ai/integrations/decart) |
 | Deepgram | STT plugin for fast, accurate real-time transcription with speaker diarization | [Deepgram](https://visionagents.ai/integrations/deepgram) |
@@ -145,6 +144,16 @@ Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai
 **Quickstart:** [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
 **Tutorial:** [Building real-time sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
 **Tutorial:** [Building a real-time meeting assistant](https://github.com/GetStream/Vision-Agents#)
+
+## Examples
+
+| 🔮 Demo Applications | |
+|:-----|---------|
+|  <br><h3>Cartesia</h3>Using Cartesia's Sonic 3 model to visually look at what's in the frame and tell a story with emotion.<br><br>• Real-time visual understanding<br>• Emotional storytelling<br>• Frame-by-frame analysis<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example) | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Cartesia Demo"> |
+|  <br><h3>Realtime Stable Diffusion</h3>Realtime stable diffusion using Vision Agents and Decart's Mirage 2 model to create interactive scenes and stories.<br><br>• Real-time video restyling<br>• Interactive scene generation<br>• Stable diffusion integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/decart/example) | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Mirage Demo"> |
+|  <br><h3>Golf Coach</h3>Using Gemini Live together with Vision Agents and Ultralytics YOLO, we're able to track the user's pose and provide realtime actionable feedback on their golf game.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• YOLO pose detection<br>• Gemini Live integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example) | <img src="assets/demo_gifs/golf.gif" width="320" alt="Golf Coach Demo"> |
+|  <br><h3>GeoGuesser</h3>Together with OpenAI Realtime and Vision Agents, we can take GeoGuesser to the next level by asking it to identify places in our real world surroundings.<br><br>• Real-world location identification<br>• OpenAI Realtime integration<br>• Visual scene understanding<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/other_examples/openai_realtime_webrtc)| <img src="assets/demo_gifs/geoguesser.gif" width="320" alt="GeoGuesser Demo"> |
+
 
 ## Development
 
@@ -192,20 +201,40 @@ Our favorite people & projects to follow for vision AI
 
 ### 0.2 - Simplification - Nov
 
-- Simplify the library & improved code quality
+- Simplified the library & improved code quality
 - Deepgram Nova 3, Elevenlabs Scribe 2, Fish, Moondream, QWen3, Smart turn, Vogent, Inworld, Heygen, AWS and more
 - Improved openAI & Gemini realtime performance
 - Audio & Video utilities
 
-### 0.3 - Demos - Nov/Dec
+### 0.3 - Demos - Early Dec
 
-### 0.4 - Deploys
+- Mirage, Roboflow, Facial recognition. Nicer demos
+- Deepgram Flux & Elevenlabs Scribe improvements
+
+### 0.4 - Deploys - December
 
 - Tips on deploying agents at scale, monitoring them etc.
+- Guides on SIP & RAG
 
-### Later
+## Vision AI limitations
 
-[ ] Buffered video capture (for "catch the moment" scenarios)
+Video AI is the frontier of AI. The state of the art is changing daily to help models understand live video.
+While building the integrations, here are the limitations we've noticed (Dec 2025)
+
+* Video AI struggles with small text. If you want the AI to read the score in a game it will often get it wrong and hallucinate
+* Longer videos can cause the AI to lose context. For instance if it's watching a soccer match it will get confused after 30 seconds
+* Most applications require a combination of small specialized models like Yolo/Roboflow/Moondream, API calls to get more context and larger models like gemini/openAI
+* Image size & FPS need to stay relatively low due to performance constraints
+* Video doesn’t trigger responses in realtime models. You always need to send audio/text to trigger a response.
+
+
+## We are hiring
+
+We've recently closed a [\$38 million Series B funding round](https://techcrunch.com/2021/03/04/stream-raises-38m-as-its-chat-and-activity-feed-apis-power-communications-for-1b-users/) and we keep actively growing.
+Our APIs are used by more than a billion end-users, and you'll have a chance to make a huge impact on the product within a team of the strongest engineers all over the world.
+
+Check out our current openings and apply via [Stream's website](https://getstream.io/team/#jobs).
+
 
 ## Star History
 

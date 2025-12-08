@@ -106,7 +106,8 @@ class GeminiLLM(LLM):
         Build GenerateContentConfig with Gemini 3 features.
 
         Args:
-            system_instruction: Optional system instruction to include
+            system_instruction: Optional system instruction to include. If not provided,
+                uses self._instructions to ensure instructions are always passed.
             base_config: Optional base config to extend (takes precedence over self._base_config)
 
         Returns:
@@ -119,8 +120,13 @@ class GeminiLLM(LLM):
         else:
             config = GenerateContentConfig()
 
-        if system_instruction:
-            config.system_instruction = system_instruction
+        # Always include system instruction - passing any config to send_message_stream
+        # overrides the chat-level system instruction, so we must include it every time
+        effective_instruction = (
+            system_instruction if system_instruction else self._instructions
+        )
+        if effective_instruction:
+            config.system_instruction = effective_instruction
 
         if self.thinking_level:
             from google.genai.types import ThinkingConfig
@@ -176,14 +182,17 @@ class GeminiLLM(LLM):
                 cfg = self._build_config(base_config=cfg)
             cfg.tools = conv_tools  # type: ignore[assignment]
             kwargs["config"] = cfg
-        else:
+        elif self.thinking_level or self.media_resolution:
+            # Only pass config if we need to set thinking_level or media_resolution
+            # Don't pass an empty config as it overrides the system_instruction from chat creation
             cfg = kwargs.get("config")
             if cfg is None or not isinstance(cfg, GenerateContentConfig):
                 cfg = self._build_config()
-                kwargs["config"] = cfg
-            elif self.thinking_level or self.media_resolution:
+            else:
                 cfg = self._build_config(base_config=cfg)
-                kwargs["config"] = cfg
+            kwargs["config"] = cfg
+        # If no tools and no thinking/media config needed, don't pass config
+        # This preserves the system_instruction set during chat creation
 
         # Generate content using the client
         iterator: AsyncIterator[
