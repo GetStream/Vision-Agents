@@ -9,6 +9,7 @@ dependencies = [
   "vision-agents-plugins-elevenlabs",
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-gemini",
+  "vision-agents-plugins-moondream",
   "vision-agents",
   "opencv-python>=4.8.0",
   "google-genai>=1.33.0",
@@ -20,4 +21,5 @@ dependencies = [
 "vision-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
 "vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
 "vision-agents-plugins-gemini" = {path = "../../plugins/gemini", editable=true}
+"vision-agents-plugins-moondream" = {path = "../../plugins/moondream", editable=true}
 "vision-agents" = {path = "../../agents-core", editable=true}
