@@ -322,6 +322,7 @@ class StreamEdge(EdgeTransport):
         connection.on("participant_left", self.events.send)
         connection.on("track_published", self.events.send)
         connection.on("track_unpublished", self.events.send)
+        connection.on("call_ended", self.events.send)
 
         # Start the connection
         await connection.__aenter__()
