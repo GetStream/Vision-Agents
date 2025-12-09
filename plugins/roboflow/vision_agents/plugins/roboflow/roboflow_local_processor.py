@@ -301,32 +301,34 @@ class RoboflowLocalDetectionProcessor(
                     and detections.class_id is not None
                     and detections.class_id.size > 0
                 ):
-        img_height, img_width = image.shape[0:2]
-        detected_objects = [
-            DetectedObject(
+                    img_height, img_width = image.shape[0:2]
+                    detected_objects = [
+                        DetectedObject(
                             label=self._model.class_names[class_id],
                             x1=x1,
                             y1=y1,
                             x2=x2,
                             y2=y2,
-            )
-            for class_id, (x1, y1, x2, y2) in zip(
-                detections.class_id, detections.xyxy.astype(float)
-            )
-        ]
-        self.events.send(
-            DetectionCompletedEvent(
-                objects=detected_objects,
-                raw_detections=detections,
-                image_width=img_width,
-                image_height=img_height,
-            )
-        )
+                        )
+                        for class_id, (x1, y1, x2, y2) in zip(
+                            detections.class_id, detections.xyxy.astype(float)
+                        )
+                    ]
+                    self.events.send(
+                        DetectionCompletedEvent(
+                            objects=detected_objects,
+                            raw_detections=detections,
+                            image_width=img_width,
+                            image_height=img_height,
+                        )
+                    )
                     logger.debug(
                         f"🔍 Detection complete: {len(detected_objects)} objects"
                     )
             else:
-                logger.debug("🔍 Detection complete but discarded (newer result exists)")
+                logger.debug(
+                    "🔍 Detection complete but discarded (newer result exists)"
+                )
         except Exception as e:
             logger.warning(f"⚠️ Background detection failed: {e}")
 
