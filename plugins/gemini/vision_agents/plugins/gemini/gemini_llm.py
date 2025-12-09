@@ -149,12 +149,16 @@ class GeminiLLM(LLM):
 
         # Add built-in tools if configured
         if self._builtin_tools:
-            builtin_tool_objects = [tool.to_tool() for tool in self._builtin_tools]
+            builtin_tool_objects: list[types.Tool] = [
+                tool.to_tool() for tool in self._builtin_tools
+            ]
             if config.tools is None:
-                config.tools = builtin_tool_objects
+                config.tools = builtin_tool_objects  # type: ignore[assignment]
             else:
                 # Append to existing tools
-                config.tools = list(config.tools) + builtin_tool_objects
+                existing_tools = list(config.tools)
+                existing_tools.extend(builtin_tool_objects)
+                config.tools = existing_tools  # type: ignore[assignment]
 
         return config
 
