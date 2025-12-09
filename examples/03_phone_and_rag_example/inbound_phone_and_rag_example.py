@@ -180,7 +180,10 @@ async def create_agent() -> Agent:
             return await rag.search(query, top_k=3)
 
     else:
-        llm = gemini.LLM("gemini-2.5-flash-lite", file_search_store=file_search_store)
+        llm = gemini.LLM(
+            "gemini-2.5-flash-lite",
+            tools=[gemini.tools.FileSearch(file_search_store)],
+        )
 
     return Agent(
         edge=getstream.Edge(),
