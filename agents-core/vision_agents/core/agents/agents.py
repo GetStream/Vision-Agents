@@ -62,12 +62,11 @@ from opentelemetry.trace.propagation import Span, Context
 from opentelemetry import trace, context as otel_context
 from opentelemetry.trace import Tracer
 from opentelemetry.context import Token
+from .agent_session import AgentSessionContextManager
 
 
 if TYPE_CHECKING:
     from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
-
-    from .agent_session import AgentSessionContextManager
 
 logger = logging.getLogger(__name__)
 
@@ -547,7 +546,6 @@ class Agent:
                 await self.edge.publish_tracks(audio_track, video_track)
 
 
-        from .agent_session import AgentSessionContextManager
 
         # wait for conversation creation coro at the very end of the join flow
         self.conversation = await create_conversation_coro

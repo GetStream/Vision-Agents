@@ -1,7 +1,9 @@
 import asyncio
 import contextvars
+import typing
 
-from vision_agents.core.agents import Agent
+if typing.TYPE_CHECKING:
+    from .agents import Agent
 
 
 class AgentSessionContextManager:
@@ -27,7 +29,7 @@ class AgentSessionContextManager:
             returned by the edge transport (kept open during the context).
     """
 
-    def __init__(self, agent: Agent, connection_cm=None):
+    def __init__(self, agent: "Agent", connection_cm=None):
         self.agent = agent
         self._connection_cm = connection_cm
 
