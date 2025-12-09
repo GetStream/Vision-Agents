@@ -1,0 +1,95 @@
+name: Check Dependencies
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.VISION_AGENTS_GITHUB_TOKEN }}
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      
+      - name: Install Cursor CLI
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.cursor/bin" >> $GITHUB_PATH
+      
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Check and update dependencies with Cursor Agent
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          GH_TOKEN: ${{ secrets.VISION_AGENTS_GITHUB_TOKEN }}
+        run: |
+          cursor-agent -p "You are a dependency update bot. Your task is to check for outdated Python dependencies and create PRs to update them.
+
+          ## Step 1: Discover pyproject.toml files
+          Find all pyproject.toml files in this repository, excluding .venv directories.
+
+          ## Step 2: Check for outdated dependencies  
+          For each pyproject.toml, extract dependencies from:
+          - [project].dependencies
+          - [project].optional-dependencies
+          - [dependency-groups]
+
+          Skip packages that are workspace packages (listed in [tool.uv.sources] with workspace = true or path references like vision-agents-*, etc.).
+
+          For each external package, query PyPI (https://pypi.org/pypi/{package}/json) to get the latest version.
+          
+          Categorize updates into:
+          - PATCH/MINOR: e.g., 1.2.0 -> 1.2.5 or 1.2.0 -> 1.3.0
+          - MAJOR: e.g., 1.2.0 -> 2.0.0
+
+          ## Step 3: Create PR for patch/minor updates
+          If there are patch/minor updates:
+          1. Create branch: deps/patch-minor-YYYYMMDD
+          2. Update pyproject.toml files with patch/minor version bumps only
+          3. Preserve exact formatting, extras, and markers
+          4. Respect override-dependencies in root pyproject.toml
+          5. Commit with message: 'chore: update dependencies (patch/minor)'
+          6. Push and create PR with:
+             - Title: 'chore: update dependencies (patch/minor)'
+             - Body: Table of updated packages with old -> new versions
+             - Labels: dependencies, automated
+
+          ## Step 4: Create separate PR for major updates
+          If there are major updates:
+          1. Reset to main branch
+          2. Create branch: deps/major-YYYYMMDD  
+          3. Update pyproject.toml files with major version bumps only
+          4. Preserve exact formatting, extras, and markers
+          5. Commit with message: 'chore: update dependencies (major) - BREAKING'
+          6. Push and create PR with:
+             - Title: 'chore: update dependencies (major) ⚠️ BREAKING'
+             - Body: Table of updated packages with old -> new versions, note that these are major updates requiring manual review
+             - Labels: dependencies, automated, breaking
+
+          ## Step 5: Summary
+          Print a summary of what was done:
+          - Number of patch/minor updates (and PR link if created)
+          - Number of major updates (and PR link if created)
+          - Any packages that were skipped and why
+
+          If no updates needed, print 'All dependencies are up to date'." --model gpt-4o
