@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -12,10 +11,8 @@ import av
 import cv2
 import face_recognition
 import numpy as np
-from PIL import Image
 
-import moondream as md
-from vision_agents.plugins.moondream.moondream_utils import parse_detection_bbox
+from pathlib import Path
 
 from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
@@ -63,7 +60,7 @@ class SecurityCameraProcessor(
     This processor:
     - Detects faces in real-time using OpenCV
     - Uses face_recognition library to identify unique individuals
-    - Detects packages using Moondream vision model
+    - Detects packages using YOLO object detection model
     - Prevents duplicate entries for the same person/package
     - Maintains a 30-minute sliding window of unique visitors and packages
     - Displays visitor count, package count, and thumbnails in a grid overlay
@@ -75,7 +72,8 @@ class SecurityCameraProcessor(
         thumbnail_size: Size of face/package thumbnails in overlay (default: 80)
         detection_interval: Minimum seconds between face detections (default: 2)
         face_match_tolerance: Face recognition tolerance (default: 0.6, lower = stricter)
-        moondream_api_key: API key for Moondream Cloud API (default: None, reads from env)
+        model_path: Path to YOLO model file (default: "yolo11n.pt")
+        device: Device to run YOLO model on (default: "cpu")
         package_detection_interval: Minimum seconds between package detections (default: 3)
         package_fps: FPS for package detection (default: 1)
         package_conf_threshold: Confidence threshold for package detection (default: 0.3)
@@ -91,7 +89,8 @@ class SecurityCameraProcessor(
         thumbnail_size: int = 80,
         detection_interval: float = 2.0,
         face_match_tolerance: float = 0.6,
-        moondream_api_key: Optional[str] = None,
+        model_path: str = "weights.pt",
+        device: str = "cpu",
         package_detection_interval: float = 3.0,
         package_fps: int = 1,
         package_conf_threshold: float = 0.3,
@@ -128,12 +127,17 @@ class SecurityCameraProcessor(
         # Load OpenCV face detector
         self._face_cascade = None
 
-        # Initialize Moondream model for package detection
-        self.moondream_api_key = moondream_api_key or os.getenv("MOONDREAM_API_KEY")
-        self.moondream_model: Optional[Any] = None
-        self.package_detect_objects = ["package", "box", "parcel"]
-
-        self.warmup()
+        # Initialize YOLO model for package detection
+        self.model_path = model_path
+        self.device = device
+        self.yolo_model: Optional[Any] = None
+        self.package_detect_classes = [
+            "package",
+            "box",
+            "parcel",
+            "suitcase",
+            "backpack",
+        ]
 
         logger.info("🎥 Security Camera Processor initialized")
         logger.info(f"📊 Time window: {time_window}s ({time_window // 60} minutes)")
@@ -143,7 +147,7 @@ class SecurityCameraProcessor(
         )
 
     async def warmup(self):
-        """Load OpenCV Haar Cascade face detector and Moondream model."""
+        """Load OpenCV Haar Cascade face detector and YOLO model."""
         try:
             cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             self._face_cascade = cv2.CascadeClassifier(cascade_path)
@@ -152,16 +156,27 @@ class SecurityCameraProcessor(
             logger.exception(f"❌ Failed to load face detector: {e}")
             raise
 
-        if self.moondream_api_key:
-            try:
-                self.moondream_model = md.vl(api_key=self.moondream_api_key)
-                logger.info("✅ Moondream model loaded for package detection")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to load Moondream model: {e}")
-                logger.warning("⚠️ Package detection will be disabled")
-                self.moondream_model = None
-        else:
-            logger.warning("⚠️ MOONDREAM_API_KEY not set, package detection disabled")
+        try:
+            from ultralytics import YOLO
+
+            loop = asyncio.get_event_loop()
+
+            def load_yolo_model():
+                if not Path(self.model_path).exists():
+                    logger.warning(
+                        f"Model file {self.model_path} not found. YOLO will download it automatically."
+                    )
+                logger.debug("Loading model file...")
+                model = YOLO(self.model_path)
+                model.to(self.device)
+                return model
+
+            self.yolo_model = await loop.run_in_executor(self.executor, load_yolo_model)
+            logger.info(f"✅ YOLO model loaded: {self.model_path} on {self.device}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load YOLO model: {e}")
+            logger.warning("⚠️ Package detection will be disabled")
+            self.yolo_model = None
 
     def _cleanup_old_faces(self, current_time: float):
         cutoff_time = current_time - self.time_window
@@ -382,7 +397,7 @@ class SecurityCameraProcessor(
         return new_faces
 
     def _detect_packages_sync(self, frame_rgb: np.ndarray) -> List[Dict[str, Any]]:
-        """Run Moondream package detection synchronously.
+        """Run YOLO package detection synchronously.
 
         Args:
             frame_rgb: Frame in RGB format
@@ -390,57 +405,62 @@ class SecurityCameraProcessor(
         Returns:
             List of detection dicts with bbox and confidence
         """
-        if not self.moondream_model:
+        if not self.yolo_model:
             return []
 
-        image = Image.fromarray(frame_rgb)
         height, width = frame_rgb.shape[:2]
         all_detections = []
 
-        for object_type in self.package_detect_objects:
-            try:
-                result = self.moondream_model.detect(image, object_type)
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to detect '{object_type}': {e}")
-                continue
+        try:
+            results = self.yolo_model(
+                frame_rgb,
+                verbose=False,
+                conf=self.package_conf_threshold,
+                device=self.device,
+            )
 
-            for obj in result.get("objects", []):
-                detection = parse_detection_bbox(
-                    obj, object_type, self.package_conf_threshold
-                )
-                if detection:
-                    # Get bbox in [x_min, y_min, x_max, y_max] format
-                    bbox_raw = detection["bbox"]
-                    x_min, y_min, x_max, y_max = bbox_raw
+            if not results:
+                return []
 
-                    # Check if normalized coordinates (between 0 and 1)
-                    if x_min <= 1.0 and y_min <= 1.0 and x_max <= 1.0 and y_max <= 1.0:
-                        # Convert normalized to pixel coordinates
-                        x_min = int(x_min * width)
-                        y_min = int(y_min * height)
-                        x_max = int(x_max * width)
-                        y_max = int(y_max * height)
-                    else:
-                        # Already pixel coordinates, convert to int
-                        x_min = int(x_min)
-                        y_min = int(y_min)
-                        x_max = int(x_max)
-                        y_max = int(y_max)
+            result = results[0]
 
-                    # Ensure coordinates are within frame bounds
-                    x_min = max(0, min(x_min, width - 1))
-                    y_min = max(0, min(y_min, height - 1))
-                    x_max = max(x_min + 1, min(x_max, width))
-                    y_max = max(y_min + 1, min(y_max, height))
+            if result.boxes is None or len(result.boxes) == 0:
+                return []
 
-                    # Convert to (x, y, w, h) format
+            boxes = result.boxes.xyxy.cpu().numpy()
+            confidences = result.boxes.conf.cpu().numpy()
+            class_ids = result.boxes.cls.cpu().numpy().astype(int)
+            class_names = result.names
+
+            for box, conf, cls_id in zip(boxes, confidences, class_ids):
+                class_name = class_names[cls_id].lower()
+
+                if any(
+                    detect_class in class_name
+                    for detect_class in self.package_detect_classes
+                ):
+                    x_min, y_min, x_max, y_max = box
+
+                    x_min = int(max(0, min(x_min, width - 1)))
+                    y_min = int(max(0, min(y_min, height - 1)))
+                    x_max = int(max(x_min + 1, min(x_max, width)))
+                    y_max = int(max(y_min + 1, min(y_max, height)))
+
                     x = x_min
                     y = y_min
                     w = x_max - x_min
                     h = y_max - y_min
 
-                    detection["bbox"] = (x, y, w, h)
-                    all_detections.append(detection)
+                    all_detections.append(
+                        {
+                            "bbox": (x, y, w, h),
+                            "confidence": float(conf),
+                            "label": class_name,
+                        }
+                    )
+
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to detect packages with YOLO: {e}")
 
         return all_detections
 
@@ -453,7 +473,7 @@ class SecurityCameraProcessor(
         Returns:
             Number of new unique packages detected
         """
-        if not self.moondream_model:
+        if not self.yolo_model:
             return 0
 
         # Check if enough time has passed since last detection
