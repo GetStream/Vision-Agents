@@ -7,7 +7,12 @@ import asyncio
 from unittest.mock import Mock, AsyncMock
 from dotenv import load_dotenv
 
-from getstream.models import MessageRequest, ChannelInput, MessagePaginationParams
+from getstream.models import (
+    Message,
+    MessageRequest,
+    ChannelInput,
+    MessagePaginationParams,
+)
 from getstream import AsyncStream
 
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
@@ -48,7 +53,7 @@ class TestStreamConversation:
     def stream_conversation(self, mock_channel):
         """Create a StreamConversation instance with mocked dependencies."""
         instructions = "You are a helpful assistant."
-        messages = []
+        messages: list[Message] = []
         conversation = StreamConversation(
             instructions=instructions, messages=messages, channel=mock_channel
         )
