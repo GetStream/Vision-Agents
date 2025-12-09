@@ -21,8 +21,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.skip_blockbuster]
 @pytest.fixture
 async def rag():
     """Create a RAG instance for testing, clean up after."""
-    # Use unique name to avoid conflicts
-    rag = GeminiFilesearchRAG(name="test-rag-123")
+    # Use unique name to avoid conflicts with store reuse
+    unique_name = f"test-rag-{uuid.uuid4().hex[:8]}"
+    rag = GeminiFilesearchRAG(name=unique_name)
     await rag.create()
     yield rag
     await rag.clear()
