@@ -545,8 +545,6 @@ class Agent:
             with self.span("edge.publish_tracks"):
                 await self.edge.publish_tracks(audio_track, video_track)
 
-
-
         # wait for conversation creation coro at the very end of the join flow
         self.conversation = await create_conversation_coro
         # Provide conversation to the LLM so it can access the chat history.
