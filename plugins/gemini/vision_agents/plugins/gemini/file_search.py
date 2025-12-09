@@ -41,7 +41,7 @@ class GeminiFilesearchRAG(RAG):
     Usage:
         rag = GeminiFilesearchRAG(name="my-knowledge-base")
         await rag.create()  # Reuses existing store if found
-        await rag.add_directory("./knowledge") 
+        await rag.add_directory("./knowledge")
 
         # Search
         results = await rag.search("How does the API work?")
@@ -113,9 +113,7 @@ class GeminiFilesearchRAG(RAG):
         loop = asyncio.get_event_loop()
 
         # Check if a store with this name already exists
-        existing_store = await loop.run_in_executor(
-            None, self._find_existing_store
-        )
+        existing_store = await loop.run_in_executor(None, self._find_existing_store)
 
         if existing_store:
             self._store_name = existing_store
