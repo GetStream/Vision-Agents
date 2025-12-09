@@ -546,15 +546,6 @@ class Agent:
             with self.span("edge.publish_tracks"):
                 await self.edge.publish_tracks(audio_track, video_track)
 
-        connection._connection._coordinator_ws_client.on_wildcard(
-            "*",
-            lambda event_name, event: self.events.send(event),
-        )
-
-        connection._connection._ws_client.on_wildcard(
-            "*",
-            lambda event_name, event: self.events.send(event),
-        )
 
         from .agent_session import AgentSessionContextManager
 
