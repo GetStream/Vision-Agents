@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
@@ -51,6 +52,7 @@ from ..utils.logging import (
     set_call_context,
 )
 from ..utils.video_forwarder import VideoForwarder
+from ..utils.video_track import VideoFileTrack
 from . import events
 from .conversation import Conversation
 from .transcript_buffer import TranscriptBuffer
@@ -60,6 +62,7 @@ from opentelemetry.trace.propagation import Span, Context
 from opentelemetry import trace, context as otel_context
 from opentelemetry.trace import Tracer
 from opentelemetry.context import Token
+
 
 if TYPE_CHECKING:
     from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
@@ -204,11 +207,16 @@ class Agent:
         self._interval_task = None
         self._callback_executed = False
         self._track_tasks: Dict[str, asyncio.Task] = {}
+
         # Track metadata: track_id -> TrackInfo
         self._active_video_tracks: Dict[str, TrackInfo] = {}
         self._video_forwarders: List[VideoForwarder] = []
         self._current_video_track_id: Optional[str] = None
         self._connection: Optional[Connection] = None
+
+        # Optional local video track override for debugging.
+        # This track will play instead of any incoming video track.
+        self._video_track_override_path: Optional[str | Path] = None
 
         # the outgoing audio track
         self._audio_track: Optional[OutputAudioTrack] = None
@@ -868,6 +876,16 @@ class Agent:
                 completed=True,
             )
 
+    def set_video_track_override_path(self, path: str):
+        if not path or not self.publish_video:
+            return
+
+        self.logger.warning(
+            f'🎥 The video will be played from "{path}" instead of the call'
+        )
+        # Store the local video track.
+        self._video_track_override_path = path
+
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from the queue."""
         interval_seconds = 0.02  # 20ms target interval
@@ -964,6 +982,8 @@ class Agent:
     ):
         track = self._active_video_tracks.pop(track_id, None)
         if track is not None:
+            await track.forwarder.stop()
+            track.track.stop()
             await self._on_track_change(track_id)
 
     async def _on_track_change(self, track_id: str):
@@ -1011,11 +1031,17 @@ class Agent:
         ):
             return
 
-        # Subscribe to the video track, we watch all tracks by default
-        track = self.edge.add_track_subscriber(track_id)
-        if not track:
-            self.logger.error(f"Failed to subscribe to {track_id}")
-            return
+        if self._video_track_override_path is not None:
+            # If local video track is set, we override all other video tracks with it.
+            # We override tracks instead of simply playing one in order to keep the same lifecycle within the call.
+            # Otherwise, we'd have a video going on without anybody on the call.
+            track = await self._get_video_track_override()
+        else:
+            # Subscribe to the video track, we watch all tracks by default
+            track = self.edge.add_track_subscriber(track_id)
+            if not track:
+                self.logger.error(f"Failed to subscribe to {track_id}")
+                return
 
         # Store track metadata
         forwarder = VideoForwarder(
@@ -1325,6 +1351,18 @@ class Agent:
         if len(obj_str) > max_length:
             obj_str = obj_str[:max_length] + "... (truncated)"
         return obj_str
+
+    async def _get_video_track_override(self) -> VideoFileTrack:
+        """
+        Create a video track override in async way if the path is set.
+
+        Returns: `VideoFileTrack`
+        """
+        if not self._video_track_override_path:
+            raise ValueError("video_track_override_path is not set")
+        return await asyncio.to_thread(
+            lambda p: VideoFileTrack(p), self._video_track_override_path
+        )
 
 
 def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:
