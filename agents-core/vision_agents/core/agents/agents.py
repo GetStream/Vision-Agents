@@ -339,25 +339,9 @@ class Agent:
         async def on_error(event: STTErrorEvent):
             self.logger.error("stt error event %s", event)
 
-        @self.events.subscribe
-        async def on_stt_transcript_event_sync_conversation(event: STTTranscriptEvent):
-            if self.conversation is None:
-                return
-
-            user_id = event.user_id()
-            if user_id is None:
-                raise ValueError("missing user_id")
-
-            with self.span("agent.on_stt_transcript_event_sync_conversation"):
-                await self.conversation.upsert_message(
-                    message_id=str(uuid.uuid4()),
-                    role="user",
-                    user_id=user_id,
-                    content=event.text or "",
-                    completed=True,
-                    replace=True,  # Replace any partial transcripts
-                    original=event,
-                )
+        # Note: STTTranscriptEvent chat sync is handled in _on_turn_event to ensure
+        # partial transcripts are also synced when no final transcript arrives.
+        # See _sync_user_transcript_to_chat() for the implementation.
 
         @self.events.subscribe
         async def on_realtime_user_speech_transcription(
@@ -460,6 +444,27 @@ class Agent:
         """
         if _is_audio_llm(self.llm):
             await self.llm.simple_audio_response(pcm, participant)
+
+    async def _sync_user_transcript_to_chat(
+        self, transcript: str, user_id: str
+    ) -> None:
+        """Sync user transcript to chat conversation.
+
+        Called when a turn ends to ensure the user's message is recorded in chat,
+        whether it came from final STTTranscriptEvent or only partial transcripts.
+        """
+        if self.conversation is None or not transcript:
+            return
+
+        with self.span("agent._sync_user_transcript_to_chat"):
+            await self.conversation.upsert_message(
+                message_id=str(uuid.uuid4()),
+                role="user",
+                user_id=user_id,
+                content=transcript,
+                completed=True,
+                replace=True,
+            )
 
     def subscribe(self, function):
         """Subscribe a callback to the agent-wide event bus.
@@ -1098,6 +1103,11 @@ class Agent:
                 buffer.reset()
 
             if transcript.strip():
+                # Sync user transcript to chat (handles both final and partial-only cases)
+                await self._sync_user_transcript_to_chat(
+                    transcript, event.participant.user_id
+                )
+
                 # cancel the old task if the text changed in the meantime
 
                 if (
