@@ -70,12 +70,16 @@ class RoboflowCloudDetectionProcessor(
             Example: ["person", "sports ball"]
             Verify that the classes a supported by the given model.
             Default - None (all classes are detected).
+        client: optional custom instance of `inference_sdk.InferenceHTTPClient`.
         annotate: if True, annotate the detected objects with boxes and labels.
             Default - True.
         dim_background_factor: how much to dim the background around detected objects from 0 to 1.0.
             Effective only when annotate=True.
             Default - 0.0 (no dimming).
-        client: optional custom instance of `inference_sdk.InferenceHTTPClient`.
+        annotate_text_scale: annontation text scale. Default - 0.75.
+        annotate_text_padding: annotation text padding. Default - 1.0.
+        annotate_box_thickness: annotation box thickness. Default - 2.
+        annotate_text_position: annotation text position. Default - `sv.Position.TOP_CENTER`.
 
     Examples:
         Example usage:
@@ -104,10 +108,14 @@ class RoboflowCloudDetectionProcessor(
         api_url: Optional[str] = None,
         conf_threshold: float = 0.5,
         fps: int = 5,
-        annotate: bool = True,
         classes: Optional[list[str]] = None,
-        dim_background_factor: float = 0.0,
         client: Optional[InferenceHTTPClient] = None,
+        annotate: bool = True,
+        dim_background_factor: float = 0.0,
+        annotate_text_scale: float = 0.75,
+        annotate_text_padding: int = 1,
+        annotate_box_thickness: int = 2,
+        annotate_text_position: sv.Position = sv.Position.TOP_CENTER,
     ):
         super().__init__(interval=0, receive_audio=False, receive_video=True)
 
@@ -139,6 +147,10 @@ class RoboflowCloudDetectionProcessor(
         self.fps = fps
         self.dim_background_factor = max(0.0, dim_background_factor)
         self.annotate = annotate
+        self._annotate_text_scale = annotate_text_scale
+        self._annotate_text_padding = annotate_text_padding
+        self._annotate_box_thickness = annotate_box_thickness
+        self._annotate_text_position = annotate_text_position
 
         self._events: Optional[EventManager] = None
         self._client.configure(
@@ -237,7 +249,14 @@ class RoboflowCloudDetectionProcessor(
         if self.annotate:
             # Annotate frame with detections
             annotated_image = annotate_image(
-                image, detections, classes, dim_factor=self.dim_background_factor
+                image,
+                detections,
+                classes,
+                dim_factor=self.dim_background_factor,
+                text_scale=self._annotate_text_scale,
+                text_position=self._annotate_text_position,
+                text_padding=self._annotate_text_padding,
+                box_thickness=self._annotate_box_thickness,
             )
 
             # Convert back to av.VideoFrame

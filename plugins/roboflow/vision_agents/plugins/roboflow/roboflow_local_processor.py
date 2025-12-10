@@ -89,13 +89,17 @@ class RoboflowLocalDetectionProcessor(
             Example: ["person", "sports ball"]
             Verify that the classes a supported by the given model.
             Default - None (all classes are detected).
+        model: optional instance of `RFDETRModel` to be used for detections.
+            Use it provide a model of choosing with custom parameters.
         annotate: if True, annotate the detected objects with boxes and labels.
             Default - True.
         dim_background_factor: how much to dim the background around detected objects from 0 to 1.0.
             Effective only when annotate=True.
             Default - 0.0 (no dimming).
-        model: optional instance of `RFDETRModel` to be used for detections.
-            Use it provide a model of choosing with custom parameters.
+        annotate_text_scale: annontation text scale. Default - 0.75.
+        annotate_text_padding: annotation text padding. Default - 1.0.
+        annotate_box_thickness: annotation box thickness. Default - 2.
+        annotate_text_position: annotation text position. Default - `sv.Position.TOP_CENTER`.
     """
 
     name = "roboflow_local"
@@ -106,9 +110,13 @@ class RoboflowLocalDetectionProcessor(
         conf_threshold: float = 0.5,
         fps: int = 10,
         classes: Optional[list[str]] = None,
+        model: Optional[RFDETR] = None,
         annotate: bool = True,
         dim_background_factor: float = 0.0,
-        model: Optional[RFDETR] = None,
+        annotate_text_scale: float = 0.75,
+        annotate_text_padding: int = 1,
+        annotate_box_thickness: int = 2,
+        annotate_text_position: sv.Position = sv.Position.TOP_CENTER,
     ):
         super().__init__(interval=0, receive_audio=False, receive_video=True)
 
@@ -153,6 +161,10 @@ class RoboflowLocalDetectionProcessor(
             fps=self.fps,
             max_queue_size=self.fps,  # Buffer 1s of the video
         )
+        self._annotate_text_scale = annotate_text_scale
+        self._annotate_text_padding = annotate_text_padding
+        self._annotate_box_thickness = annotate_box_thickness
+        self._annotate_text_position = annotate_text_position
 
     async def process_video(
         self,
@@ -267,6 +279,10 @@ class RoboflowLocalDetectionProcessor(
                 detections,
                 classes=self._model.class_names,
                 dim_factor=self.dim_background_factor,
+                text_scale=self._annotate_text_scale,
+                text_position=self._annotate_text_position,
+                text_padding=self._annotate_text_padding,
+                box_thickness=self._annotate_box_thickness,
             )
             # Convert back to av.VideoFrame
             annotated_frame = av.VideoFrame.from_ndarray(annotated_image)
