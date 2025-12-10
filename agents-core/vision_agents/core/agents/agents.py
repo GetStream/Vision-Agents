@@ -980,6 +980,8 @@ class Agent:
     ):
         track = self._active_video_tracks.pop(track_id, None)
         if track is not None:
+            await track.forwarder.stop()
+            track.track.stop()
             await self._on_track_change(track_id)
 
     async def _on_track_change(self, track_id: str):
