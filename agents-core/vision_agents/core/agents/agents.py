@@ -63,6 +63,7 @@ from opentelemetry import trace, context as otel_context
 from opentelemetry.trace import Tracer
 from opentelemetry.context import Token
 
+
 if TYPE_CHECKING:
     from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
 
@@ -216,13 +217,14 @@ class Agent:
 
         # Optional local video track override for debugging.
         # This track will play instead of any incoming video track.
-        self._video_track_override: Optional[VideoFileTrack] = None
+        self._video_track_override_path: Optional[str | Path] = None
+
         if video_track_override_path:
-            logger.warning(
+            self.logger.warning(
                 f'🎥 The video will be played from "{video_track_override_path}" instead of the call'
             )
             # Store the local video track.
-            self._video_track_override = VideoFileTrack(video_track_override_path)
+            self._video_track_override_path = video_track_override_path
 
         # the outgoing audio track
         self._audio_track: Optional[OutputAudioTrack] = None
@@ -1025,11 +1027,11 @@ class Agent:
         ):
             return
 
-        if self._video_track_override is not None:
+        if self._video_track_override_path is not None:
             # If local video track is set, we override all other video tracks with it.
             # We override tracks instead of simply playing one in order to keep the same lifecycle within the call.
             # Otherwise, we'd have a video going on without anybody on the call.
-            track = self._video_track_override
+            track = await self._get_video_track_override()
         else:
             # Subscribe to the video track, we watch all tracks by default
             track = self.edge.add_track_subscriber(track_id)
@@ -1345,6 +1347,18 @@ class Agent:
         if len(obj_str) > max_length:
             obj_str = obj_str[:max_length] + "... (truncated)"
         return obj_str
+
+    async def _get_video_track_override(self) -> VideoFileTrack:
+        """
+        Create a video track override in async way if the path is set.
+
+        Returns: `VideoFileTrack`
+        """
+        if not self._video_track_override_path:
+            raise ValueError("video_track_override_path is not set")
+        return await asyncio.to_thread(
+            lambda: VideoFileTrack(self._video_track_override_path)
+        )
 
 
 def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:
