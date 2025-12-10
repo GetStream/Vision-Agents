@@ -101,7 +101,7 @@ class ChatCompletionsVLM(VideoLLM):
         Args:
             text: The text to respond to.
             processors: list of processors (which contain state) about the video/voice AI.
-            participant: the Participant object, optional. If not provided, the message will be sent with the "system" role.
+            participant: the Participant object, optional. If not provided, the message will be sent with the "user" role.
 
         Examples:
 
@@ -119,7 +119,7 @@ class ChatCompletionsVLM(VideoLLM):
         # assuming it's an initial prompt.
         if participant is None:
             await self._conversation.send_message(
-                role="system", user_id="system", content=text
+                role="user", user_id="user", content=text
             )
 
         messages = await self._build_model_request()
