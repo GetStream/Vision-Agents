@@ -1359,7 +1359,7 @@ class Agent:
         if not self._video_track_override_path:
             raise ValueError("video_track_override_path is not set")
         return await asyncio.to_thread(
-            lambda: VideoFileTrack(self._video_track_override_path)
+            lambda p: VideoFileTrack(p), self._video_track_override_path
         )
 
 
