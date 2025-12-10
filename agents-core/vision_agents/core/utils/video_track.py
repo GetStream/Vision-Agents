@@ -111,7 +111,12 @@ class VideoFileTrack(VideoStreamTrack):
         self.path = Path(path)
 
         self._stopped = False
+        self._frame_interval = 1.0 / self.fps
         self._container = av.open(path)
+
+        if not self._container.streams.video:
+            raise ValueError(f"No video streams found in file: {path}")
+
         self._stream = self._container.streams.video[0]
         if self._stream.time_base is None:
             raise ValueError("Cannot determine time_base for the video stream")
@@ -183,7 +188,10 @@ class VideoFileTrack(VideoStreamTrack):
                 time.sleep(0.001)
                 continue
             except Exception:
-                logger.exception("Failed to read a frame from video file")
+                logger.exception(
+                    f'Failed to read a video frame from file "{self.path}"'
+                )
+                time.sleep(0.001)
                 continue
 
         # Convert the filtered video frame to RGB for aiortc
@@ -200,13 +208,16 @@ class VideoFileTrack(VideoStreamTrack):
             raise VideoTrackClosedError("Track stopped")
         loop = asyncio.get_running_loop()
         frame = await loop.run_in_executor(self._executor, self._next_frame)
-        # Sleep between frames to let other coroutines to run
-        await asyncio.sleep(float(frame.time_base))
+
+        # Sleep between frames to simulate real-time playback
+        await asyncio.sleep(self._frame_interval)
         return frame
 
     def stop(self) -> None:
         self._stopped = True
         self._executor.shutdown(wait=False)
+        self._container.close()
+        super(VideoFileTrack, self).stop()
 
     def __repr__(self):
         return f'<{self.__class__.__name__} path="{self.path}" fps={self.fps}>'
