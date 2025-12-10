@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
@@ -51,6 +52,7 @@ from ..utils.logging import (
     set_call_context,
 )
 from ..utils.video_forwarder import VideoForwarder
+from ..utils.video_track import VideoFileTrack
 from . import events
 from .conversation import Conversation
 from .transcript_buffer import TranscriptBuffer
@@ -125,6 +127,7 @@ class Agent:
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
+        video_track_override_path: Optional[str | Path] = None,
     ):
         self._pending_turn: Optional[LLMTurn] = None
         self.participants: Optional[ParticipantsState] = None
@@ -204,11 +207,22 @@ class Agent:
         self._interval_task = None
         self._callback_executed = False
         self._track_tasks: Dict[str, asyncio.Task] = {}
+
         # Track metadata: track_id -> TrackInfo
         self._active_video_tracks: Dict[str, TrackInfo] = {}
         self._video_forwarders: List[VideoForwarder] = []
         self._current_video_track_id: Optional[str] = None
         self._connection: Optional[Connection] = None
+
+        # Optional local video track override for debugging.
+        # This track will play instead of any incoming video track.
+        self._video_track_override: Optional[VideoFileTrack] = None
+        if video_track_override_path:
+            logger.warning(
+                f'🎥 The video will be played from "{video_track_override_path}" instead of the call'
+            )
+            # Store the local video track.
+            self._video_track_override = VideoFileTrack(video_track_override_path)
 
         # the outgoing audio track
         self._audio_track: Optional[OutputAudioTrack] = None
@@ -1011,11 +1025,17 @@ class Agent:
         ):
             return
 
-        # Subscribe to the video track, we watch all tracks by default
-        track = self.edge.add_track_subscriber(track_id)
-        if not track:
-            self.logger.error(f"Failed to subscribe to {track_id}")
-            return
+        if self._video_track_override is not None:
+            # If local video track is set, we override all other video tracks with it.
+            # We override tracks instead of simply playing one in order to keep the same lifecycle within the call.
+            # Otherwise, we'd have a video going on without anybody on the call.
+            track = self._video_track_override
+        else:
+            # Subscribe to the video track, we watch all tracks by default
+            track = self.edge.add_track_subscriber(track_id)
+            if not track:
+                self.logger.error(f"Failed to subscribe to {track_id}")
+                return
 
         # Store track metadata
         forwarder = VideoForwarder(
