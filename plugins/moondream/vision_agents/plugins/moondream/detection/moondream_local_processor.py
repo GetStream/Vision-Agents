@@ -24,9 +24,7 @@ from vision_agents.plugins.moondream.moondream_utils import (
     annotate_detections,
     handle_device,
 )
-from vision_agents.plugins.moondream.detection.moondream_video_track import (
-    MoondreamVideoTrack,
-)
+from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +37,9 @@ class LocalDetectionProcessor(
     This processor downloads and runs the moondream3-preview model locally from Hugging Face,
     providing the same functionality as the cloud API version without requiring an API key.
 
+    Detection runs asynchronously in the background while frames pass through at
+    full FPS. The last known detection results are overlaid on each frame.
+
     Note: The moondream3-preview model is gated and requires authentication:
     - Request access at https://huggingface.co/moondream/moondream3-preview
     - Once approved, authenticate using one of:
@@ -50,9 +51,10 @@ class LocalDetectionProcessor(
         detect_objects: Object(s) to detect. Moondream uses zero-shot detection,
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
-        fps: Frame processing rate (default: 30)
+        detection_fps: Rate at which to run detection (default: 10.0).
+                      Lower values reduce CPU/GPU load while maintaining smooth video.
         interval: Processing interval in seconds (default: 0)
-        max_workers: Number of worker threads for CPU-intensive operations (default: 10)
+        max_workers: Number of worker threads for CPU-intensive operations (default: 2)
         force_cpu: If True, force CPU usage even if CUDA/MPS is available (default: False).
                   Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU. We recommend running on CUDA for best performance.
         model_name: Hugging Face model identifier (default: "moondream/moondream3-preview")
@@ -66,9 +68,9 @@ class LocalDetectionProcessor(
         self,
         conf_threshold: float = 0.3,
         detect_objects: Union[str, List[str]] = "person",
-        fps: int = 30,
+        detection_fps: float = 10.0,
         interval: int = 0,
-        max_workers: int = 10,
+        max_workers: int = 2,
         force_cpu: bool = False,
         model_name: str = "moondream/moondream3-preview",
         options: Optional[AgentOptions] = None,
@@ -81,7 +83,7 @@ class LocalDetectionProcessor(
             self.options = options
         self.model_name = model_name
         self.conf_threshold = conf_threshold
-        self.fps = fps
+        self.detection_fps = detection_fps
         self.max_workers = max_workers
         self._shutdown = False
 
@@ -90,9 +92,10 @@ class LocalDetectionProcessor(
         else:
             self._device, self._dtype = handle_device()
 
-        self._last_results: Dict[str, Any] = {}
-        self._last_frame_time: Optional[float] = None
-        self._last_frame_pil: Optional[Image.Image] = None
+        # Parallel detection state - track when results were requested to handle out-of-order completion
+        self._last_detection_time: float = 0.0
+        self._last_result_time: float = 0.0
+        self._cached_results: Dict[str, Any] = {"detections": []}
 
         # Font configuration constants for drawing efficiency
         self._font = cv2.FONT_HERSHEY_SIMPLEX
@@ -113,8 +116,8 @@ class LocalDetectionProcessor(
             max_workers=max_workers, thread_name_prefix="moondream_local_processor"
         )
 
-        # Video track for publishing (if used as video publisher)
-        self._video_track: MoondreamVideoTrack = MoondreamVideoTrack()
+        # Video track for publishing at 30 FPS with minimal buffering
+        self._video_track: QueuedVideoTrack = QueuedVideoTrack(fps=30, max_queue_size=5)
         self._video_forwarder: Optional[VideoForwarder] = None
 
         # Model will be loaded in start() method
@@ -123,6 +126,7 @@ class LocalDetectionProcessor(
         logger.info("🌙 Moondream Local Processor initialized")
         logger.info(f"🎯 Detection configured for objects: {self.detect_objects}")
         logger.info(f"🔧 Device: {self.device}")
+        logger.info(f"📹 Detection FPS: {detection_fps}")
 
     @property
     def device(self) -> str:
@@ -228,18 +232,17 @@ class LocalDetectionProcessor(
             await self._prepare_moondream()
 
         if shared_forwarder is not None:
+            # Use the shared forwarder at its native FPS
             self._video_forwarder = shared_forwarder
-            logger.info(
-                f"🎥 Moondream subscribing to shared VideoForwarder at {self.fps} FPS"
-            )
+            logger.info("🎥 Moondream subscribing to shared VideoForwarder")
             self._video_forwarder.add_frame_handler(
-                self._process_and_add_frame, fps=float(self.fps), name="moondream_local"
+                self._process_and_add_frame, name="moondream_local"
             )
         else:
+            # Create our own VideoForwarder at default FPS with minimal buffering
             self._video_forwarder = VideoForwarder(
                 incoming_track,  # type: ignore[arg-type]
-                max_buffer=30,  # 1 second at 30fps
-                fps=self.fps,
+                max_buffer=5,
                 name="moondream_local_forwarder",
             )
 
@@ -303,18 +306,29 @@ class LocalDetectionProcessor(
         return all_detections
 
     async def _process_and_add_frame(self, frame: av.VideoFrame):
+        """Process frame: pass through immediately, run detection asynchronously."""
         try:
             frame_array = frame.to_ndarray(format="rgb24")
-            results = await self._run_inference(frame_array)
+            now = asyncio.get_event_loop().time()
 
-            self._last_results = results
-            self._last_frame_time = asyncio.get_event_loop().time()
-            self._last_frame_pil = Image.fromarray(frame_array)
+            # Check if we should start a new detection based on detection_fps
+            detection_interval = (
+                1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
+            )
+            should_detect = (now - self._last_detection_time) >= detection_interval
 
-            if results.get("detections"):
+            if should_detect:
+                # Start detection in background (don't await) - runs in parallel
+                self._last_detection_time = now
+                asyncio.create_task(
+                    self._run_detection_background(frame_array.copy(), now)
+                )
+
+            # Annotate frame with cached detections
+            if self._cached_results.get("detections"):
                 frame_array = annotate_detections(
                     frame_array,
-                    results,
+                    self._cached_results,
                     font=self._font,
                     font_scale=self._font_scale,
                     font_thickness=self._font_thickness,
@@ -322,12 +336,31 @@ class LocalDetectionProcessor(
                     text_color=self._text_color,
                 )
 
+            # Convert back to av.VideoFrame and publish immediately
             processed_frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
             await self._video_track.add_frame(processed_frame)
 
         except Exception as e:
             logger.exception(f"❌ Frame processing failed: {e}")
             await self._video_track.add_frame(frame)
+
+    async def _run_detection_background(
+        self, frame_array: np.ndarray, request_time: float
+    ):
+        """Run detection in background and update cached results if newer."""
+        try:
+            results = await self._run_inference(frame_array)
+            # Only update cache if this result is newer than current cached result
+            if request_time > self._last_result_time:
+                self._cached_results = results
+                self._last_result_time = request_time
+                logger.debug(
+                    f"🔍 Detection complete: {len(results.get('detections', []))} objects"
+                )
+            else:
+                logger.debug("🔍 Detection complete but discarded (newer result exists)")
+        except Exception as e:
+            logger.warning(f"⚠️ Background detection failed: {e}")
 
     def close(self):
         """Clean up resources."""

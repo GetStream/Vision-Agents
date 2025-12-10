@@ -22,41 +22,24 @@ from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WIDTH = 640
-DEFAULT_HEIGHT = 480
-DEFAULT_WIDTH = 1920
-DEFAULT_HEIGHT = 1080
-
-"""
-TODO: video track & Queuing need more testing/ thought
-
-- Process video track not image
-- Use ND array
-- Fix bugs
-
-"""
-
-
-class YOLOPoseVideoTrack(QueuedVideoTrack):
-    """
-    The track has a async recv() method which is called repeatedly.
-    The recv method should wait for FPS interval before providing the next frame...
-
-    Queuing behaviour is where it gets a little tricky.
-
-    Ideally we'd do frame.to_ndarray -> process -> from.from_ndarray and skip image conversion
-    """
-
-    pass
-
 
 class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
-    """
-    Yolo pose detection processor.
+    """YOLO pose detection processor.
 
-    - It receives the images via process_image
-    - Converts it to an ND array
+    Detection runs asynchronously in the background while frames pass through at
+    full FPS. The last known pose results are overlaid on each frame.
 
+    Args:
+        model_path: Path to YOLO pose model (default: "yolo11n-pose.pt")
+        conf_threshold: Confidence threshold for detections (default: 0.5)
+        imgsz: Image size for inference (default: 512)
+        device: Device to run inference on (default: "cpu")
+        max_workers: Number of worker threads (default: 2)
+        detection_fps: Rate at which to run pose detection (default: 15.0).
+                      Lower values reduce CPU/GPU load while maintaining smooth video.
+        interval: Processing interval in seconds (default: 0)
+        enable_hand_tracking: Enable hand keypoint tracking (default: True)
+        enable_wrist_highlights: Enable wrist position highlights (default: True)
     """
 
     name = "yolo_pose"
@@ -67,8 +50,8 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         conf_threshold: float = 0.5,
         imgsz: int = 512,
         device: str = "cpu",
-        max_workers: int = 24,
-        fps: int = 30,
+        max_workers: int = 2,
+        detection_fps: float = 15.0,
         interval: int = 0,
         enable_hand_tracking: bool = True,
         enable_wrist_highlights: bool = True,
@@ -78,14 +61,18 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         super().__init__(interval=interval, receive_audio=False, receive_video=True)
 
         self.model_path = model_path
-        self.fps = fps
+        self.detection_fps = detection_fps
         self.conf_threshold = conf_threshold
         self.imgsz = imgsz
         self.device = device
         self.enable_hand_tracking = enable_hand_tracking
         self.enable_wrist_highlights = enable_wrist_highlights
-        self._last_frame: Optional[Image.Image] = None
         self._video_forwarder: Optional[VideoForwarder] = None
+
+        # Parallel detection state - track when results were requested to handle out-of-order completion
+        self._last_detection_time: float = 0.0
+        self._last_result_time: float = 0.0
+        self._cached_pose_data: Dict[str, Any] = {"persons": []}
 
         # Initialize YOLO model
         self._load_model()
@@ -96,10 +83,11 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         )
         self._shutdown = False
 
-        # Video track for publishing (if used as video publisher)
-        self._video_track: YOLOPoseVideoTrack = YOLOPoseVideoTrack()
+        # Video track for publishing at 30 FPS with minimal buffering
+        self._video_track: QueuedVideoTrack = QueuedVideoTrack(fps=30, max_queue_size=5)
 
         logger.info(f"🤖 YOLO Pose Processor initialized with model: {model_path}")
+        logger.info(f"📹 Detection FPS: {detection_fps}")
 
     def _load_model(self):
         from ultralytics import YOLO
@@ -120,14 +108,131 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         participant: Any,
         shared_forwarder=None,
     ):
-        # Use the shared forwarder
+        # Use the shared forwarder at its native FPS
         self._video_forwarder = shared_forwarder
-        logger.info(f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS")
+        logger.info("🎥 YOLO subscribing to shared VideoForwarder")
         self._video_forwarder.add_frame_handler(
-            self._add_pose_and_add_frame, fps=float(self.fps), name="yolo"
+            self._process_and_add_frame, name="yolo"
         )
 
+    async def _process_and_add_frame(self, frame: av.VideoFrame):
+        """Process frame: pass through immediately, run detection asynchronously."""
+        try:
+            frame_array = frame.to_ndarray(format="rgb24")
+            now = asyncio.get_event_loop().time()
+
+            # Check if we should start a new detection based on detection_fps
+            detection_interval = (
+                1.0 / self.detection_fps if self.detection_fps > 0 else float("inf")
+            )
+            should_detect = (now - self._last_detection_time) >= detection_interval
+
+            if should_detect:
+                # Start detection in background (don't await) - runs in parallel
+                self._last_detection_time = now
+                asyncio.create_task(
+                    self._run_detection_background(frame_array.copy(), now)
+                )
+
+            # Apply cached pose annotations to current frame
+            if self._cached_pose_data.get("persons"):
+                frame_array = self._apply_pose_annotations(
+                    frame_array, self._cached_pose_data
+                )
+
+            # Convert back to av.VideoFrame and publish immediately
+            processed_frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
+            await self._video_track.add_frame(processed_frame)
+
+        except Exception as e:
+            logger.exception(f"❌ Frame processing failed: {e}")
+            await self._video_track.add_frame(frame)
+
+    async def _run_detection_background(
+        self, frame_array: np.ndarray, request_time: float
+    ):
+        """Run pose detection in background and update cached results if newer."""
+        try:
+            pose_data = await self._detect_pose_async(frame_array)
+            # Only update cache if this result is newer than current cached result
+            if request_time > self._last_result_time:
+                self._cached_pose_data = pose_data
+                self._last_result_time = request_time
+                logger.debug(
+                    f"🔍 Pose detection complete: {len(pose_data.get('persons', []))} persons"
+                )
+            else:
+                logger.debug("🔍 Pose detection complete but discarded (newer result exists)")
+        except Exception as e:
+            logger.warning(f"⚠️ Background pose detection failed: {e}")
+
+    async def _detect_pose_async(self, frame_array: np.ndarray) -> Dict[str, Any]:
+        """Run pose detection without annotation (for background detection)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self.executor, self._detect_pose_sync, frame_array
+        )
+
+    def _detect_pose_sync(self, frame_array: np.ndarray) -> Dict[str, Any]:
+        """Run YOLO pose detection and return pose data only (no annotation)."""
+        if self._shutdown:
+            return {}
+
+        pose_results = self.pose_model(
+            frame_array,
+            verbose=False,
+            conf=self.conf_threshold,
+            device=self.device,
+        )
+
+        if not pose_results:
+            return {}
+
+        pose_data: Dict[str, Any] = {"persons": []}
+
+        for person_idx, result in enumerate(pose_results):
+            if not result.keypoints:
+                continue
+
+            keypoints = result.keypoints
+            if keypoints is not None and len(keypoints.data) > 0:
+                kpts = keypoints.data[0].cpu().numpy()
+                person_data = {
+                    "person_id": person_idx,
+                    "keypoints": kpts.tolist(),
+                    "confidence": float(np.mean(kpts[:, 2])),
+                }
+                pose_data["persons"].append(person_data)
+
+        return pose_data
+
+    def _apply_pose_annotations(
+        self, frame_array: np.ndarray, pose_data: Dict[str, Any]
+    ) -> np.ndarray:
+        """Apply cached pose annotations to a frame."""
+        annotated_frame = frame_array.copy()
+
+        for person_data in pose_data.get("persons", []):
+            kpts = np.array(person_data.get("keypoints", []))
+            if len(kpts) == 0:
+                continue
+
+            # Draw keypoints
+            for i, (x, y, conf) in enumerate(kpts):
+                if conf > self.conf_threshold:
+                    cv2.circle(annotated_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
+
+            # Draw skeleton connections
+            self._draw_skeleton_connections(annotated_frame, kpts)
+
+            # Highlight wrist positions if enabled
+            if self.enable_wrist_highlights:
+                self._highlight_wrists(annotated_frame, kpts)
+
+        return annotated_frame
+
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
+        """Legacy method for backward compatibility."""
         frame_with_pose = await self.add_pose_to_frame(frame)
         if frame_with_pose is None:
             logger.info(

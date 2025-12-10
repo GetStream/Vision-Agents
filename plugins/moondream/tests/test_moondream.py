@@ -21,8 +21,8 @@ from PIL import Image
 
 from vision_agents.plugins.moondream import (
     CloudDetectionProcessor,
-    MoondreamVideoTrack,
 )
+from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.plugins.moondream.moondream_utils import annotate_detections
 
 
@@ -48,7 +48,7 @@ def test_processor_initialization():
 @pytest.mark.asyncio
 async def test_video_track_frame_queuing(sample_frame):
     """Test that video track can queue and receive frames."""
-    track = MoondreamVideoTrack()
+    track = QueuedVideoTrack(fps=30, max_queue_size=5)
     await track.add_frame(sample_frame)
     received_frame = await track.recv()
     assert received_frame is not None
@@ -58,10 +58,10 @@ async def test_video_track_frame_queuing(sample_frame):
 
 
 def test_processor_publishes_track():
-    """Test that processor publishes a MoondreamVideoTrack."""
+    """Test that processor publishes a QueuedVideoTrack."""
     processor = CloudDetectionProcessor(api_key="test_key")
     track = processor.publish_video_track()
-    assert isinstance(track, MoondreamVideoTrack)
+    assert isinstance(track, QueuedVideoTrack)
     processor.close()
 
 
@@ -231,9 +231,9 @@ async def test_process_and_add_frame(sample_frame):
     # Process a frame
     await processor._process_and_add_frame(sample_frame)
 
-    # Verify results were stored
-    assert hasattr(processor, "_last_results")
-    assert "detections" in processor._last_results
+    # Verify cached results were stored
+    assert hasattr(processor, "_cached_results")
+    assert "detections" in processor._cached_results
     processor.close()
 
 
