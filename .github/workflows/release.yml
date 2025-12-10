@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - uses: ./.github/actions/python-uv-setup
+      - uses: astral-sh/setup-uv@v7
 
       - name: Clean dist directory
         run: |
@@ -52,7 +52,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - uses: ./.github/actions/python-uv-setup
+      - uses: astral-sh/setup-uv@v7
 
       - name: Install core PyPI using uv
         run: |
