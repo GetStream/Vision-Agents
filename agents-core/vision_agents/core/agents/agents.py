@@ -128,7 +128,6 @@ class Agent:
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
-        video_track_override_path: Optional[str | Path] = None,
     ):
         self._pending_turn: Optional[LLMTurn] = None
         self.participants: Optional[ParticipantsState] = None
@@ -218,13 +217,6 @@ class Agent:
         # Optional local video track override for debugging.
         # This track will play instead of any incoming video track.
         self._video_track_override_path: Optional[str | Path] = None
-
-        if video_track_override_path:
-            self.logger.warning(
-                f'🎥 The video will be played from "{video_track_override_path}" instead of the call'
-            )
-            # Store the local video track.
-            self._video_track_override_path = video_track_override_path
 
         # the outgoing audio track
         self._audio_track: Optional[OutputAudioTrack] = None
@@ -883,6 +875,16 @@ class Agent:
                 content=text,
                 completed=True,
             )
+
+    def set_video_track_override_path(self, path: str):
+        if not path or not self.publish_video:
+            return
+
+        self.logger.warning(
+            f'🎥 The video will be played from "{path}" instead of the call'
+        )
+        # Store the local video track.
+        self._video_track_override_path = path
 
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from the queue."""

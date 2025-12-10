@@ -67,12 +67,20 @@ def cli(launcher: "AgentLauncher") -> None:
         default=False,
         help="Disable opening the demo UI",
     )
+    @click.option(
+        "--video-track-override",
+        type=click.Path(dir_okay=False, exists=True, resolve_path=True),
+        default=None,
+        help="Optional local video track override for debugging. "
+        "This track will play instead of any incoming video track.",
+    )
     def run_agent(
         call_type: str,
         call_id: Optional[str],
         debug: bool,
         log_level: str,
         no_demo: bool,
+        video_track_override: Optional[str],
     ) -> None:
         """Run the agent with the specified configuration."""
         # Configure logging
@@ -95,6 +103,9 @@ def cli(launcher: "AgentLauncher") -> None:
             try:
                 # Launch agent with warmup
                 agent = await launcher.launch(call_type=call_type, call_id=call_id)
+                if video_track_override:
+                    agent.set_video_track_override_path(video_track_override)
+
                 logger.info("✅ Agent warmed up and ready")
 
                 # Open demo UI by default
