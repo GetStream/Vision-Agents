@@ -76,7 +76,7 @@ class RoboflowCloudDetectionProcessor(
         dim_background_factor: how much to dim the background around detected objects from 0 to 1.0.
             Effective only when annotate=True.
             Default - 0.0 (no dimming).
-        annotate_text_scale: annontation text scale. Default - 0.75.
+        annotate_text_scale: annotation text scale. Default - 0.75.
         annotate_text_padding: annotation text padding. Default - 1.
         annotate_box_thickness: annotation box thickness. Default - 2.
         annotate_text_position: annotation text position. Default - `sv.Position.TOP_CENTER`.
