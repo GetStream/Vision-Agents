@@ -11,9 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "openai>=2.7.2",
     "numpy",
-    "soundfile",
     "websockets>=15.0.1",
 ]
 
