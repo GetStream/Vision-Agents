@@ -401,6 +401,12 @@ class Agent:
             if self.conversation is None or not event.text:
                 return
 
+            # Skip syncing to conversation in Realtime mode - LLMResponseCompletedEvent
+            # already handles this via on_llm_response_sync_conversation. The agent speech
+            # transcription would create a duplicate message with the same content.
+            if _is_audio_llm(self.llm):
+                return
+
             with self.span("agent.on_realtime_agent_speech_transcription"):
                 await self.conversation.upsert_message(
                     message_id=str(uuid.uuid4()),
