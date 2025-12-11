@@ -6700,8 +6700,6 @@ name = "vision-agents-plugins-qwen"
 source = { editable = "plugins/qwen" }
 dependencies = [
     { name = "numpy" },
-    { name = "openai" },
-    { name = "soundfile" },
     { name = "vision-agents" },
     { name = "websockets" },
 ]
@@ -6715,8 +6713,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy" },
-    { name = "openai", specifier = ">=2.7.2" },
-    { name = "soundfile" },
     { name = "vision-agents", editable = "agents-core" },
     { name = "websockets", specifier = ">=15.0.1" },
 ]
