@@ -146,8 +146,7 @@ class Qwen3Realtime(Realtime):
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
         """
-        Start sending video frames to Gemini using VideoForwarder.
-        We follow the on_track from Stream. If video is turned on or off this gets forwarded.
+        Start sending video frames using VideoForwarder.
 
         Args:
             track: Video track to watch
