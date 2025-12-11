@@ -43,7 +43,7 @@ class Qwen3Realtime(Realtime):
         vad_prefix_padding_ms: int = 500,
         vad_silence_duration_ms: int = 900,
     ):
-        super().__init__()
+        super().__init__(fps=fps)
         self.model = model
         self.voice = voice
         self.session_id = str(uuid.uuid4())
@@ -55,7 +55,6 @@ class Qwen3Realtime(Realtime):
         if not self._api_key:
             raise ValueError("api_key is required")
 
-        self._fps = fps
         self._video_forwarder: Optional[VideoForwarder] = None
         self._include_video = include_video
         self._real_client: Optional[Qwen3RealtimeClient] = None
