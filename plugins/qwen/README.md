@@ -1,14 +1,15 @@
-# Qwen Omni Plugin for Vision Agents
+# Qwen Realtime Plugin for Vision Agents
 
-Qwen Omni LLM integration for Vision Agents framework with native audio output using the Chat Completions API.
+Qwen3 Realtime LLM integration for Vision Agents framework with native audio output and built-in speech recognition using WebSocket-based realtime communication.
 
 ## Features
 
 - **Native audio output**: No TTS service needed - audio comes directly from the model
-- **STT compatible**: Works with any STT service (Deepgram, etc.) for speech input
-- **Video understanding**: Optional video frame support (as base64 images)
-- Streaming text and audio responses
-- Compatible with OpenAI Chat Completions API format
+- **Built-in STT**: Integrated speech-to-text using `gummy-realtime-v1` - no external STT service required
+- **Server-side VAD**: Automatic turn detection with configurable silence thresholds
+- **Video understanding**: Optional video frame support for multimodal interactions
+- **Real-time streaming**: WebSocket-based bidirectional communication for low-latency responses
+- **Interruption handling**: Automatic cancellation when user starts speaking
 
 ## Installation
 
@@ -20,18 +21,18 @@ uv add vision-agents[qwen]
 
 ```python
 from vision_agents.core import User, Agent
-from vision_agents.plugins import getstream, qwen, deepgram
+from vision_agents.plugins import getstream, qwen
 
 agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Qwen Assistant"),
     instructions="Be helpful and friendly",
-    llm=qwen.QwenOmni(
-        model="qwen3-omni-flash",
+    llm=qwen.Realtime(
+        model="qwen3-omni-flash-realtime",
         voice="Cherry",
+        fps=1,
     ),
-    stt=deepgram.STT(),  # STT required for speech input
-    # No TTS needed - Qwen provides native audio output
+    # No STT or TTS needed - Qwen Realtime provides both
 )
 ```
 
@@ -39,18 +40,30 @@ agent = Agent(
 
 | Parameter | Description | Default | Accepted Values |
 |-----------|-------------|---------|----------------|
-| `model` | Qwen Omni model identifier | `"qwen3-omni-flash"` | Model name string |
+| `model` | Qwen Realtime model identifier | `"qwen3-omni-flash-realtime"` | Model name string |
 | `api_key` | DashScope API key | `None` (from env) | String or `None` |
-| `base_url` | API base URL | `"https://dashscope-intl.aliyuncs.com/compatible-mode/v1"` | URL string |
+| `base_url` | WebSocket API base URL | `"wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"` | URL string |
 | `voice` | Voice for audio output | `"Cherry"` | Voice name string |
-| `audio_format` | Audio format for output | `"wav"` | `"wav"` |
 | `fps` | Video frames per second | `1` | Integer |
 | `include_video` | Include video frames in requests | `False` | Boolean |
-| `client` | Custom AsyncOpenAI client | `None` | `AsyncOpenAI` or `None` |
+| `video_width` | Video frame width | `1280` | Integer |
+| `video_height` | Video frame height | `720` | Integer |
+
+## Environment Variables
+
+Set `DASHSCOPE_API_KEY` in your environment or `.env` file:
+
+```bash
+DASHSCOPE_API_KEY=your_dashscope_api_key_here
+```
+
+## Example
+
+See `plugins/qwen/example/qwen_realtime_example.py` for a complete working example.
 
 ## Dependencies
 
 - vision-agents
-- openai>=2.7.2
-- numpy
-- soundfile
+- websockets
+- aiortc
+- av
