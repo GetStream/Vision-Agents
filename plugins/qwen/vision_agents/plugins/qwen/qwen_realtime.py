@@ -8,7 +8,6 @@ from typing import Any, Optional, cast
 
 import aiortc
 import av
-import websockets
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
@@ -39,6 +38,10 @@ class Qwen3Realtime(Realtime):
         include_video: bool = False,
         video_width: int = 1280,
         video_height: int = 720,
+        audio_transcription_model: str = "gummy-realtime-v1",
+        vad_threshold: float = 0.1,
+        vad_prefix_padding_ms: int = 500,
+        vad_silence_duration_ms: int = 900,
     ):
         super().__init__()
         self.model = model
@@ -67,6 +70,10 @@ class Qwen3Realtime(Realtime):
         self._current_participant: Optional[Participant] = None
         # The model requires us not to send any video frames until the audio is sent
         self._audio_emitted_once = False
+        self._audio_transcription_model = audio_transcription_model
+        self._vad_threshold = vad_threshold
+        self._vad_prefix_padding_ms = vad_prefix_padding_ms
+        self._vad_silence_duration_ms = vad_silence_duration_ms
 
     async def connect(self):
         # Stop the processing task first in case we're reconnecting
@@ -79,18 +86,21 @@ class Qwen3Realtime(Realtime):
             "instructions": self._instructions,
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm24",
-            # TODO: Move it to init
-            "input_audio_transcription": {"model": "gummy-realtime-v1"},
+            "input_audio_transcription": {"model": self._audio_transcription_model},
             "turn_detection": {
                 "type": "server_vad",
-                "threshold": 0.1,
-                "prefix_padding_ms": 500,
-                "silence_duration_ms": 900,
+                "threshold": self._vad_threshold,
+                "prefix_padding_ms": self._vad_prefix_padding_ms,
+                "silence_duration_ms": self._vad_silence_duration_ms,
             },
         }
-        self._real_client = await Qwen3RealtimeClient(
-            api_key=self._api_key, base_url=self._base_url, model=self.model
-        ).connect(config=session_config)
+        self._real_client = Qwen3RealtimeClient(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            model=self.model,
+            config=session_config,
+        )
+        await self._real_client.connect()
         self.connected = True
         logger.debug(f"Started Qwen3Realtime session at {self._base_url}")
 
@@ -118,6 +128,7 @@ class Qwen3Realtime(Realtime):
         return LLMResponseEvent(text="", original=None)
 
     async def close(self):
+        self.connected = False
         await self._stop_watching_video_track()
         if self._processing_task is not None:
             self._processing_task.cancel()
@@ -126,12 +137,8 @@ class Qwen3Realtime(Realtime):
         self._executor.shutdown(wait=False)
 
         if self._real_client is not None:
-            try:
-                await self._real_client.close()
-            except Exception as e:
-                logger.warning(f"Error closing session: {e}")
-            finally:
-                self._real_client = None
+            await self._real_client.close()
+            self._real_client = None
 
     async def watch_video_track(
         self,
@@ -205,20 +212,7 @@ class Qwen3Realtime(Realtime):
     async def _processing_loop(self) -> None:
         logger.debug("Start processing events by Qwen3Realtime")
         try:
-            while self.connected:
-                try:
-                    await self._process_events()
-
-                except websockets.ConnectionClosedError:
-                    raise
-                # TODO: Reconnection handling
-                #     if not _should_reconnect(e):
-                #         raise e
-                #     # Reconnect here for some errors
-                #     await self.connect()
-                except Exception:
-                    logger.exception("Error while processing events from Qwen3Realtime")
-
+            await self._process_events()
         except asyncio.CancelledError:
             logger.debug("Stop processing events by Qwen3Realtime")
 
