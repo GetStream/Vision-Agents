@@ -54,7 +54,7 @@ class Qwen3Realtime(Realtime):
         api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
         if not api_key:
             raise ValueError("api_key is required")
-        self._api_key = api_key
+        self._api_key = cast(str, api_key)
 
         self._video_forwarder: Optional[VideoForwarder] = None
         self._include_video = include_video
@@ -252,7 +252,11 @@ class Qwen3Realtime(Realtime):
                 if self._is_responding:
                     await self._on_interruption()
             elif event_type == "response.text.delta":
-                self.events.send(LLMResponseChunkEvent(delta=str(event["delta"])))
+                self.events.send(
+                    LLMResponseChunkEvent(
+                        plugin_name=PLUGIN_NAME, delta=str(event["delta"])
+                    )
+                )
             elif event_type == "response.audio.delta":
                 audio_bytes = base64.b64decode(event["delta"])
                 pcm = PcmData.from_bytes(audio_bytes, 24000)
