@@ -4,24 +4,19 @@ from dotenv import load_dotenv
 from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.core.events import CallSessionParticipantJoinedEvent
-from vision_agents.plugins import getstream, qwen, deepgram
+from vision_agents.plugins import getstream, qwen
 
 load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = qwen.QwenOmni(
-        model="qwen3-omni-flash",
-        voice="Cherry",
-        include_video=True,
-    )
+    llm = qwen.Realtime(fps=1)
 
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Qwen Assistant", id="agent"),
         instructions="You are a helpful AI assistant. Be friendly and conversational.",
         llm=llm,
-        stt=deepgram.STT(),  # Required for speech-to-text
     )
     return agent
 

@@ -7,7 +7,6 @@ dependencies = [
     "vision-agents",
     "vision-agents-plugins-qwen",
     "vision-agents-plugins-getstream",
-    "vision-agents-plugins-deepgram",
     "python-dotenv",
 ]
 
@@ -15,4 +14,3 @@ dependencies = [
 vision-agents = { workspace = true }
 vision-agents-plugins-qwen = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
-vision-agents-plugins-deepgram = { workspace = true }
