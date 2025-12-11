@@ -161,7 +161,7 @@ class Qwen3Realtime(Realtime):
         )
 
         # Add frame handler (starts automatically)
-        self._video_forwarder.add_frame_handler(self._send_video_frame)
+        self._video_forwarder.add_frame_handler(self._send_video_frame, fps=self.fps)
         logger.info(f"Started video forwarding with {self.fps} FPS")
 
     async def _send_video_frame(self, frame: av.VideoFrame) -> None:
