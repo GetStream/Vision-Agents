@@ -139,6 +139,44 @@ def get_assets_dir():
     return os.path.join(os.path.dirname(__file__), "tests", "test_assets")
 
 
+def _mp3_to_pcm(path: str, target_rate: int) -> PcmData:
+    # Load audio file using PyAV
+    container = av.open(path)
+    audio_stream = container.streams.audio[0]
+    original_sample_rate = audio_stream.sample_rate
+
+    # Create resampler if needed
+    resampler = None
+    if original_sample_rate != target_rate:
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
+
+    # Read all audio frames
+    samples = []
+    for frame in container.decode(audio_stream):
+        # Resample if needed
+        if resampler:
+            frame = resampler.resample(frame)[0]
+
+        # Convert to numpy array
+        frame_array = frame.to_ndarray()
+        if len(frame_array.shape) > 1:
+            # Convert stereo to mono
+            frame_array = np.mean(frame_array, axis=0)
+        samples.append(frame_array)
+
+    # Concatenate all samples
+    samples = np.concatenate(samples)
+
+    # Convert to int16
+    samples = samples.astype(np.int16)
+    container.close()
+
+    # Create PCM data
+    pcm = PcmData(samples=samples, sample_rate=target_rate, format=AudioFormat.S16)
+
+    return pcm
+
+
 @pytest.fixture(scope="session")
 def assets_dir():
     """Fixture providing the test assets directory path."""
@@ -155,42 +193,15 @@ def participant():
 def mia_audio_16khz():
     """Load mia.mp3 and convert to 16kHz PCM data."""
     audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
+    pcm = _mp3_to_pcm(audio_file_path, 16000)
+    return pcm
 
-    # Load audio file using PyAV
-    container = av.open(audio_file_path)
-    audio_stream = container.streams.audio[0]
-    original_sample_rate = audio_stream.sample_rate
-    target_rate = 16000
 
-    # Create resampler if needed
-    resampler = None
-    if original_sample_rate != target_rate:
-        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
-
-    # Read all audio frames
-    samples = []
-    for frame in container.decode(audio_stream):
-        # Resample if needed
-        if resampler:
-            frame = resampler.resample(frame)[0]
-
-        # Convert to numpy array
-        frame_array = frame.to_ndarray()
-        if len(frame_array.shape) > 1:
-            # Convert stereo to mono
-            frame_array = np.mean(frame_array, axis=0)
-        samples.append(frame_array)
-
-    # Concatenate all samples
-    samples = np.concatenate(samples)
-
-    # Convert to int16
-    samples = samples.astype(np.int16)
-    container.close()
-
-    # Create PCM data
-    pcm = PcmData(samples=samples, sample_rate=target_rate, format=AudioFormat.S16)
-
+@pytest.fixture
+def describe_what_you_see_audio_16khz():
+    """Load describe_what_you_see.mp3 and convert to 16kHz PCM data."""
+    audio_file_path = os.path.join(get_assets_dir(), "describe_what_you_see.mp3")
+    pcm = _mp3_to_pcm(audio_file_path, 16000)
     return pcm
 
 
@@ -198,42 +209,7 @@ def mia_audio_16khz():
 def mia_audio_48khz():
     """Load mia.mp3 and convert to 48kHz PCM data."""
     audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
-
-    # Load audio file using PyAV
-    container = av.open(audio_file_path)
-    audio_stream = container.streams.audio[0]
-    original_sample_rate = audio_stream.sample_rate
-    target_rate = 48000
-
-    # Create resampler if needed
-    resampler = None
-    if original_sample_rate != target_rate:
-        resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
-
-    # Read all audio frames
-    samples = []
-    for frame in container.decode(audio_stream):
-        # Resample if needed
-        if resampler:
-            frame = resampler.resample(frame)[0]
-
-        # Convert to numpy array
-        frame_array = frame.to_ndarray()
-        if len(frame_array.shape) > 1:
-            # Convert stereo to mono
-            frame_array = np.mean(frame_array, axis=0)
-        samples.append(frame_array)
-
-    # Concatenate all samples
-    samples = np.concatenate(samples)
-
-    # Convert to int16
-    samples = samples.astype(np.int16)
-    container.close()
-
-    # Create PCM data
-    pcm = PcmData(samples=samples, sample_rate=target_rate, format=AudioFormat.S16)
-
+    pcm = _mp3_to_pcm(audio_file_path, 48000)
     return pcm
 
 
@@ -248,6 +224,20 @@ def silence_2s_48khz():
 
     # Create silence (zeros) as int16
     samples = np.zeros(num_samples, dtype=np.int16)
+
+    # Create PCM data
+    pcm = PcmData(samples=samples, sample_rate=sample_rate, format=AudioFormat.S16)
+
+    return pcm
+
+
+@pytest.fixture
+def silence_1s_16khz():
+    """Generate 1 seconds of silence at 16kHz PCM data."""
+    sample_rate = 16000
+
+    # Create silence (zeros) as int16
+    samples = np.zeros(sample_rate, dtype=np.int16)
 
     # Create PCM data
     pcm = PcmData(samples=samples, sample_rate=sample_rate, format=AudioFormat.S16)

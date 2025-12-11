@@ -27,6 +27,7 @@ members = [
     "vision-agents-plugins-moondream",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-openrouter",
+    "vision-agents-plugins-qwen",
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-smart-turn",
     "vision-agents-plugins-ultralytics",
@@ -6686,6 +6687,34 @@ dev = [
 requires-dist = [
     { name = "vision-agents", editable = "agents-core" },
     { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-qwen"
+source = { editable = "plugins/qwen" }
+dependencies = [
+    { name = "numpy" },
+    { name = "vision-agents" },
+    { name = "websockets" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy" },
+    { name = "vision-agents", editable = "agents-core" },
+    { name = "websockets", specifier = ">=15.0.1" },
 ]
 
 [package.metadata.requires-dev]
