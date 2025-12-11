@@ -1184,6 +1184,12 @@ class Agent:
         """
         if self.tts is not None or _is_audio_llm(self.llm):
             return True
+        # Check if LLM provides audio output (e.g., QwenOmni emits RealtimeAudioOutputEvent)
+        if (
+            hasattr(self.llm, "provides_audio_output")
+            and self.llm.provides_audio_output
+        ):
+            return True
         # Also publish audio if there are audio publishers (e.g., HeyGen avatar)
         if self.audio_publishers:
             return True
