@@ -1,9 +1,11 @@
-import asyncio
+# This is a basic example using Qwen Realtime with Vision Agents
+# To run this example, you must have DASHSCOPE_API_KEY set in your env.
+# Do note that the model is hosted in Singapore so depending on your location, the latency may vary.
+# This model also does not support text input so once you join the call, simply start speaking to the agent.
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.core.events import CallSessionParticipantJoinedEvent
 from vision_agents.plugins import getstream, qwen
 
 load_dotenv()
@@ -24,14 +26,6 @@ async def create_agent(**kwargs) -> Agent:
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     await agent.create_user()
     call = await agent.create_call(call_type, call_id)
-
-    @agent.events.subscribe
-    async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
-        if event.participant.user.id != "agent":
-            await asyncio.sleep(5)
-            await agent.simple_response(
-                "Tell me a joke, make it extra funny and sarcastic"
-            )
 
     with await agent.join(call):
         await agent.edge.open_demo(call)
