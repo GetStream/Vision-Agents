@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -1584,7 +1584,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.16"
+version = "2.5.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1599,7 +1599,7 @@ dependencies = [
     { name = "twirp" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/b6/0bbb435bc4bb8f8da2bc85a26afa203bf74a08bb55acc15db74cf2dc6ad6/getstream-2.5.16-py3-none-any.whl", hash = "sha256:b51629a2bc838d4f596c46e153d5601600f2bc3259432f1877af8abe9a2ab76b", size = 247581, upload-time = "2025-11-14T19:20:18.281Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/04/184b3c72f9c99dc1cf2ae56aca3ba2286637fdd576905c196d7c08832791/getstream-2.5.18-py3-none-any.whl", hash = "sha256:def4763c666494825eb893d55d0d222cd4db2ff03e7aa1d42ce8ee3c9cc8bd77", size = 247981, upload-time = "2025-12-12T14:20:00.031Z" },
 ]
 
 [package.optional-dependencies]
@@ -6494,7 +6494,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.0" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.18" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
