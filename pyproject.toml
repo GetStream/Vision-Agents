@@ -18,6 +18,7 @@ vision-agents-plugins-openrouter = { workspace = true }
 vision-agents-plugins-qwen = { workspace = true }
 vision-agents-plugins-xai = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
+vision-agents-plugins-huggingface = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
@@ -52,6 +53,7 @@ members = [
     "plugins/qwen",
     "plugins/xai",
     "plugins/getstream",
+    "plugins/huggingface",
     "plugins/ultralytics",
     "plugins/smart_turn",
     "plugins/wizper",
