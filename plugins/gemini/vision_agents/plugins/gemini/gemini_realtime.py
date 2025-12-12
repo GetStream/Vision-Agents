@@ -45,7 +45,7 @@ from vision_agents.core.utils.video_utils import frame_to_png_bytes
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
+DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 
 DEFAULT_CONFIG = LiveConnectConfigDict(
     response_modalities=[Modality.AUDIO],
