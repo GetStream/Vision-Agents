@@ -102,10 +102,6 @@ class Realtime(realtime.Realtime):
             self.realtime_session["audio"]["output"] = RealtimeAudioConfigOutputParam()
         self.realtime_session["audio"]["output"]["voice"] = self.voice
 
-        # Map conversation item_id to participant to handle multi-user scenarios
-        self._item_to_participant: Dict[str, Participant] = {}
-        self._pending_participant: Optional[Participant] = None
-
         # Track pending tool calls: item_id -> {call_id, name, argument_parts: []}
         # We accumulate argument deltas until response.output_item.done
         self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}
@@ -196,8 +192,8 @@ class Realtime(realtime.Realtime):
             audio: PCM audio frame to forward upstream.
             participant: Optional participant information for the audio source.
         """
-        # Track pending participant for the next conversation item
-        self._pending_participant = participant
+        # Track current participant for user speech transcription events
+        self._current_participant = participant
         await self.rtc.send_audio_pcm(audio)
 
     async def close(self):
@@ -246,15 +242,9 @@ class Realtime(realtime.Realtime):
                 conversation_item_id=transcript_event.item_id,
             )
         elif et == "conversation.item.created":
-            # When OpenAI creates a conversation item, map it to the participant who sent the audio
-            item = event.get("item", {})
-            if item.get("type") == "message" and item.get("role") == "user":
-                item_id = item.get("id")
-                if item_id and self._pending_participant:
-                    self._item_to_participant[item_id] = self._pending_participant
-                    logger.debug(
-                        f"Mapped item {item_id} to participant {self._pending_participant.user_id if self._pending_participant else 'None'}"
-                    )
+            # Conversation item created - no action needed
+            # Participant tracking is handled via _current_participant in simple_audio_response
+            pass
         elif et == "conversation.item.added":
             # Conversation item was added to the conversation
             pass
@@ -266,22 +256,11 @@ class Realtime(realtime.Realtime):
             user_transcript_event: ConversationItemInputAudioTranscriptionCompletedEvent = ConversationItemInputAudioTranscriptionCompletedEvent.model_validate(
                 event
             )
-            item_id = user_transcript_event.item_id
-
-            # Look up the correct participant for this transcription
-            participant = self._item_to_participant.get(item_id)
-
-            # Temporarily set the correct participant for this specific transcription
-            original_participant = self._current_participant
-            self._current_participant = participant
+            # _current_participant is kept up-to-date in simple_audio_response
+            # so it will be used by _emit_user_speech_transcription
             self._emit_user_speech_transcription(
                 text=user_transcript_event.transcript, original=event
             )
-            self._current_participant = original_participant
-
-            # Clean up the mapping to avoid memory leaks
-            if item_id:
-                self._item_to_participant.pop(item_id, None)
         elif et == "input_audio_buffer.speech_started":
             # Validate event but don't need to store it
             InputAudioBufferSpeechStartedEvent.model_validate(event)
