@@ -37,7 +37,7 @@ class TestGeminiRealtimeFunctionCalling:
             pytest.skip(f"Required Google packages not available: {e}")
 
         realtime = gemini.Realtime(
-            model="gemini-2.5-flash-native-audio-preview-09-2025", api_key=api_key
+            model="gemini-2.5-flash-native-audio-preview-12-2025", api_key=api_key
         )
 
         try:

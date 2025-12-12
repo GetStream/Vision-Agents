@@ -31,7 +31,7 @@ async def create_agent(**kwargs) -> Agent:
             "Keep responses conversational and natural. "
             "Be friendly and engaging."
         ),
-        llm=gemini.Realtime(model="gemini-2.5-flash-native-audio-preview-09-2025"),
+        llm=gemini.Realtime(model="gemini-2.5-flash-native-audio-preview-12-2025"),
         processors=[
             heygen.AvatarPublisher(
                 avatar_id="default",
