@@ -25,7 +25,7 @@ from vision_agents.plugins import huggingface
 
 llm = huggingface.LLM(
     model="meta-llama/Meta-Llama-3-8B-Instruct",
-    provider="together",  # optional: auto-selects if omitted
+    provider="together",  # optional: auto-selects if omitted. You can also pass "fastest" and "cheapest" here if interested in throughput-efficiency or cost-efficiency
 )
 
 response = await llm.simple_response("Hello, how are you?")
@@ -72,7 +72,6 @@ HuggingFace's Inference Providers API supports multiple backends:
 - Cerebras
 - Replicate
 - Fireworks
-- HF Inference (default)
 - And more
 
 Specify a provider explicitly or let HuggingFace auto-select:
