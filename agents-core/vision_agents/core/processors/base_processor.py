@@ -14,8 +14,6 @@ class Processor(abc.ABC):
     A base class for all audio and video processors.
     """
 
-    name: str
-
     @property
     @abc.abstractmethod
     def name(self) -> str:
