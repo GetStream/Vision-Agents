@@ -1,57 +1,90 @@
 import abc
-import asyncio
 import logging
-from pathlib import Path
-from typing import Protocol, Any, List, Optional
-from enum import Enum
+from typing import Optional
 
 import aiortc
-from PIL import Image
 from getstream.video.rtc import PcmData
-from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
-
-"""
-TODO:
-- simple audio test
-- simple video test
-- properly forward to image processors from agent (easy)
-- figure out aysncio flow for video track recv() loop
-
-"""
-
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 logger = logging.getLogger(__name__)
 
 
-class ProcessorType(Enum):
-    """Enum for different processor types based on mixins."""
+class Processor(abc.ABC):
+    """
+    A base class for all audio and video processors.
+    """
 
-    AUDIO = "process_audio"
-    VIDEO = "process_video"
-    IMAGE = "process_image"
-    VIDEO_PUBLISHER = "publish_video_track"
-    AUDIO_PUBLISHER = "publish_audio_track"
-
-
-class Processor(Protocol):
     name: str
 
-    def state(self) -> Any:
-        pass
+    @property
+    @abc.abstractmethod
+    def name(self) -> str:
+        """
+        Processor name.
+        """
 
-    def input(self) -> Any:
-        pass
-
-    def close(self):
-        pass
-
-
-class IntervalProcessor(Processor):
-    # TODO: add interval loop
-    pass
+    @abc.abstractmethod
+    def close(self) -> None:
+        """
+        Close the processor and clean up resources when the application exits.
+        """
+        # TODO: This must be async for everyone
 
 
-class AudioProcessorMixin(abc.ABC):
+class VideoPublisher(Processor, metaclass=abc.ABCMeta):
+    """
+    Base class for video processors that publish outgoing video tracks.
+    Example: avatar plugin generating video on the fly.
+    """
+
+    @abc.abstractmethod
+    def publish_video_track(self) -> aiortc.VideoStreamTrack:
+        """
+        Returns a video track with the processed frames.
+        """
+
+
+class VideoProcessor(Processor, metaclass=abc.ABCMeta):
+    """
+    Base class for video processors that process incoming video tracks.
+    Example: a plugin that logs video frames for analysis.
+    """
+
+    @abc.abstractmethod
+    async def process_video(
+        self,
+        track: aiortc.VideoStreamTrack,
+        participant_id: Optional[str],
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        """
+        A method to start processing a video track.
+        It's called by the Agent every time a new track is published.
+        """
+
+
+class VideoProcessorPublisher(VideoProcessor, VideoPublisher, metaclass=abc.ABCMeta):
+    """
+    Base class for video processors that process incoming video tracks and publish the video
+    back to the call.
+    Example: object detection plugin that annontates video frames with detection results.
+    """
+
+
+class AudioPublisher(Processor, metaclass=abc.ABCMeta):
+    """
+    Base class for audio processors that publish outgoing audio tracks.
+    """
+
+    @abc.abstractmethod
+    def publish_audio_track(self) -> aiortc.AudioStreamTrack: ...
+
+
+class AudioProcessor(Processor, metaclass=abc.ABCMeta):
+    """
+    Base class for all audio processors that process incoming audio tracks.
+    """
+
     @abc.abstractmethod
     async def process_audio(self, audio_data: PcmData) -> None:
         """Process audio data. Override this method to implement audio processing.
@@ -60,148 +93,9 @@ class AudioProcessorMixin(abc.ABC):
             audio_data: PcmData containing audio samples and metadata.
                        The participant is stored in audio_data.participant.
         """
-        pass
 
 
-class VideoProcessorMixin(abc.ABC):
-    @abc.abstractmethod
-    async def process_video(
-        self,
-        track: aiortc.MediaStreamTrack,
-        participant: models_pb2.Participant,
-    ):
-        pass
-
-
-class ImageProcessorMixin(abc.ABC):
-    @abc.abstractmethod
-    async def process_image(
-        self, image: Image.Image, participant: models_pb2.Participant
-    ):
-        pass
-
-
-class VideoPublisherMixin:
-    def publish_video_track(self):
-        return aiortc.VideoStreamTrack()
-
-
-class AudioPublisherMixin:
-    def publish_audio_track(self):
-        return aiortc.AudioStreamTrack()
-
-
-def filter_processors(
-    processors: List[Processor], processor_type: ProcessorType
-) -> List[Processor]:
+class AudioProcessorPublisher(AudioPublisher, AudioProcessor, metaclass=abc.ABCMeta):
     """
-    Filter processors based on the processor type using hasattr checks.
-
-    Args:
-        processors: List of processor instances to filter
-        processor_type: ProcessorType enum value to filter by
-
-    Returns:
-        List of processors that have the required method/attribute for the given type
+    Base class for audio processors the both process incoming audio tracks and publish the audio back to the call.
     """
-    filtered = []
-    method_name = processor_type.value
-
-    for processor in processors:
-        if hasattr(processor, method_name):
-            filtered.append(processor)
-
-    return filtered
-
-
-class AudioVideoProcessor(Processor):
-    def __init__(
-        self,
-        interval: int = 3,
-        receive_audio: bool = False,
-        receive_video: bool = True,
-        *args,
-        **kwargs,
-    ):
-        self.interval = interval
-        self.last_process_time = 0
-
-        if hasattr(self, "create_audio_track"):
-            self.audio_track = self.create_audio_track()
-
-        if hasattr(self, "create_video_track"):
-            self.video_track = self.create_video_track()
-
-    def state(self):
-        # Returns relevant data for the conversation with the LLM
-        pass
-
-    def should_process(self) -> bool:
-        """Check if it's time to process based on the interval."""
-        current_time = asyncio.get_event_loop().time()
-
-        if current_time - self.last_process_time >= self.interval:
-            self.last_process_time = int(current_time)
-            return True
-        return False
-
-
-class AudioLogger(AudioVideoProcessor, AudioProcessorMixin):
-    def __init__(self, interval: int = 2):
-        super().__init__(interval, receive_audio=True, receive_video=False)
-        self.audio_count = 0
-        self.last_audio_time = 0
-
-    async def process_audio(self, audio_data: PcmData) -> None:
-        """Log audio data information."""
-        asyncio.get_event_loop().time()
-
-        if self.should_process():
-            self.audio_count += 1
-            user_id = getattr(audio_data.participant, "user_id", "unknown")
-            audio_bytes = audio_data.to_bytes()
-
-            logger.info(
-                f"🎵 Audio #{self.audio_count} from {user_id}: {len(audio_bytes)} bytes"
-            )
-
-
-class ImageCapture(AudioVideoProcessor, ImageProcessorMixin):
-    """Handles video frame capture and storage at regular intervals."""
-
-    def __init__(
-        self, output_dir: str = "captured_frames", interval: int = 3, *args, **kwargs
-    ):
-        super().__init__(interval=interval, receive_audio=False, receive_video=True)
-        self.output_dir = Path(output_dir)
-        self.frame_count = 0
-
-        # Create output directory
-        self.output_dir.mkdir(exist_ok=True)
-        logger.info(f"📁 Saving captured frames to: {self.output_dir.absolute()}")
-
-    async def process_image(
-        self,
-        image: Image.Image,
-        user_id: str,
-        metadata: Optional[dict[Any, Any]] = None,
-    ):
-        # Check if enough time has passed since last capture
-        if not self.should_process():
-            return None
-
-        logger.info(f"📸 ImageCapture running process_image for user {user_id}")
-
-        timestamp = int(asyncio.get_event_loop().time())
-        filename = f"frame_{user_id}_{timestamp}_{self.frame_count:04d}.jpg"
-        filepath = self.output_dir / filename
-
-        # Save the frame as JPG
-        image.save(filepath, "JPEG", quality=90)
-
-        self.frame_count += 1
-        logger.info(
-            f"📸 Captured frame {self.frame_count}: {filename} ({image.width}x{image.height})"
-        )
-
-        return str(filepath)

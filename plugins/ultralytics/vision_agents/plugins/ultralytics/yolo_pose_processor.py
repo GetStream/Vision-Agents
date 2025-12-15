@@ -1,56 +1,27 @@
 import asyncio
-import time
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import aiortc
-import numpy as np
-import cv2
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, Any
-from PIL import Image
 import av
+import cv2
+import numpy as np
 from numpy import ndarray
-
-from vision_agents.core.processors.base_processor import (
-    VideoProcessorMixin,
-    VideoPublisherMixin,
-    AudioVideoProcessor,
-)
+from PIL import Image
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WIDTH = 640
-DEFAULT_HEIGHT = 480
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
 
-"""
-TODO: video track & Queuing need more testing/ thought
 
-- Process video track not image
-- Use ND array
-- Fix bugs
-
-"""
-
-
-class YOLOPoseVideoTrack(QueuedVideoTrack):
-    """
-    The track has a async recv() method which is called repeatedly.
-    The recv method should wait for FPS interval before providing the next frame...
-
-    Queuing behaviour is where it gets a little tricky.
-
-    Ideally we'd do frame.to_ndarray -> process -> from.from_ndarray and skip image conversion
-    """
-
-    pass
-
-
-class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
+class YOLOPoseProcessor(VideoProcessorPublisher):
     """
     Yolo pose detection processor.
 
@@ -69,14 +40,9 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         device: str = "cpu",
         max_workers: int = 24,
         fps: int = 30,
-        interval: int = 0,
         enable_hand_tracking: bool = True,
         enable_wrist_highlights: bool = True,
-        *args,
-        **kwargs,
     ):
-        super().__init__(interval=interval, receive_audio=False, receive_video=True)
-
         self.model_path = model_path
         self.fps = fps
         self.conf_threshold = conf_threshold
@@ -97,7 +63,7 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
         self._shutdown = False
 
         # Video track for publishing (if used as video publisher)
-        self._video_track: YOLOPoseVideoTrack = YOLOPoseVideoTrack()
+        self._video_track = QueuedVideoTrack()
 
         logger.info(f"🤖 YOLO Pose Processor initialized with model: {model_path}")
 
@@ -116,9 +82,9 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
 
     async def process_video(
         self,
-        incoming_track: aiortc.mediastreams.MediaStreamTrack,
-        participant: Any,
-        shared_forwarder=None,
+        incoming_track: aiortc.VideoStreamTrack,
+        participant_id: Optional[str],
+        shared_forwarder: Optional[VideoForwarder] = None,
     ):
         # Use the shared forwarder
         self._video_forwarder = shared_forwarder
@@ -437,5 +403,4 @@ class YOLOPoseProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisher
     def close(self):
         """Clean up resources."""
         self._shutdown = True
-        if hasattr(self, "executor"):
-            self.executor.shutdown(wait=False)
+        self.executor.shutdown(wait=False)

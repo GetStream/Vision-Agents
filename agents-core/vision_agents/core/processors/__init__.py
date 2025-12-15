@@ -6,29 +6,21 @@ in Stream Agents applications.
 """
 
 from .base_processor import (
+    AudioProcessorPublisher,
+    AudioPublisher,
+    AudioProcessor,
     Processor,
-    AudioVideoProcessor,
-    AudioProcessorMixin,
-    VideoProcessorMixin,
-    ImageProcessorMixin,
-    VideoPublisherMixin,
-    AudioPublisherMixin,
-    ProcessorType,
-    filter_processors,
-    AudioLogger,
-    ImageCapture,
+    VideoProcessorPublisher,
+    VideoPublisher,
+    VideoProcessor,
 )
 
 __all__ = [
     "Processor",
-    "AudioVideoProcessor",
-    "AudioProcessorMixin",
-    "VideoProcessorMixin",
-    "ImageProcessorMixin",
-    "VideoPublisherMixin",
-    "AudioPublisherMixin",
-    "ProcessorType",
-    "filter_processors",
-    "AudioLogger",
-    "ImageCapture",
+    "VideoPublisher",
+    "AudioPublisher",
+    "VideoProcessor",
+    "AudioProcessor",
+    "AudioProcessorPublisher",
+    "VideoProcessorPublisher",
 ]

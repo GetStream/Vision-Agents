@@ -7,24 +7,18 @@ from typing import Any, Dict, List, Optional, Union
 import aiortc
 import av
 import cv2
+import moondream as md
 import numpy as np
 from PIL import Image
-
-from vision_agents.core.processors.base_processor import (
-    VideoProcessorMixin,
-    VideoPublisherMixin,
-    AudioVideoProcessor,
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
+from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.plugins.moondream.detection.moondream_video_track import (
+    MoondreamVideoTrack,
 )
 from vision_agents.plugins.moondream.moondream_utils import (
     annotate_detections,
     parse_detection_bbox,
 )
-from vision_agents.plugins.moondream.detection.moondream_video_track import (
-    MoondreamVideoTrack,
-)
-from vision_agents.core.utils.video_forwarder import VideoForwarder
-import moondream as md
-
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +26,10 @@ DEFAULT_WIDTH = 640
 DEFAULT_HEIGHT = 480
 
 
-class CloudDetectionProcessor(
-    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
-):
+class CloudDetectionProcessor(VideoProcessorPublisher):
     """Performs real-time object detection on video streams using Moondream Cloud API.
 
-    By default the Moondream Cloud API has a 2 RPS (requests per second) rate limit,
+    By default, the Moondream Cloud API has a 2 RPS (requests per second) rate limit,
     which can be increased by contacting the Moondream team. If you are deploying
     to your own infrastructure, consider using LocalDetectionProcessor instead.
 
@@ -49,7 +41,6 @@ class CloudDetectionProcessor(
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
         fps: Frame processing rate (default: 30)
-        interval: Processing interval in seconds (default: 0)
         max_workers: Number of worker threads for CPU-intensive operations (default: 10)
     """
 
@@ -61,11 +52,8 @@ class CloudDetectionProcessor(
         conf_threshold: float = 0.3,
         detect_objects: Union[str, List[str]] = "person",
         fps: int = 30,
-        interval: int = 0,
         max_workers: int = 10,
     ):
-        super().__init__(interval=interval, receive_audio=False, receive_video=True)
-
         self.api_key = api_key or os.getenv("MOONDREAM_API_KEY")
         self.conf_threshold = conf_threshold
         self.fps = fps
@@ -113,9 +101,9 @@ class CloudDetectionProcessor(
 
     async def process_video(
         self,
-        incoming_track: aiortc.mediastreams.MediaStreamTrack,
-        participant: Any,
-        shared_forwarder=None,
+        incoming_track: aiortc.VideoStreamTrack,
+        participant_id: Optional[str],
+        shared_forwarder: Optional[VideoForwarder] = None,
     ):
         """
         Process incoming video track.
@@ -246,6 +234,5 @@ class CloudDetectionProcessor(
     def close(self):
         """Clean up resources."""
         self._shutdown = True
-        if hasattr(self, "executor"):
-            self.executor.shutdown(wait=False)
+        self.executor.shutdown(wait=False)
         logger.info("🛑 Moondream Processor closed")

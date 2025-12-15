@@ -13,38 +13,48 @@ from uuid import uuid4
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
-
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
-from .agent_types import AgentOptions, default_agent_options, LLMTurn, TrackInfo
+from opentelemetry import context as otel_context
+from opentelemetry import trace
+from opentelemetry.context import Token
+from opentelemetry.trace import Tracer, set_span_in_context
+from opentelemetry.trace.propagation import Context, Span
 
 from ..edge import sfu_events
 from ..edge.events import (
     AudioReceivedEvent,
+    CallEndedEvent,
     TrackAddedEvent,
     TrackRemovedEvent,
-    CallEndedEvent,
 )
-from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
+from ..edge.types import Connection, OutputAudioTrack, Participant, PcmData, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
 from ..llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
-    RealtimeUserSpeechTranscriptionEvent,
     RealtimeAgentSpeechTranscriptionEvent,
     RealtimeAudioOutputEvent,
+    RealtimeUserSpeechTranscriptionEvent,
 )
-from ..llm.llm import AudioLLM, LLM, VideoLLM
+from ..llm.llm import LLM, AudioLLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..mcp import MCPBaseServer, MCPManager
-from ..processors.base_processor import Processor, ProcessorType, filter_processors
-from ..stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
+from ..processors.base_processor import (
+    AudioProcessor,
+    AudioPublisher,
+    Processor,
+    VideoProcessor,
+    VideoPublisher,
+)
+from ..profiling import Profiler
+from ..stt.events import STTErrorEvent, STTPartialTranscriptEvent, STTTranscriptEvent
 from ..stt.stt import STT
-from ..tts.tts import TTS
 from ..tts.events import TTSAudioEvent
-from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
+from ..tts.tts import TTS
+from ..turn_detection import TurnDetector, TurnEndedEvent, TurnStartedEvent
 from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
@@ -54,16 +64,10 @@ from ..utils.logging import (
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
 from . import events
+from .agent_session import AgentSessionContextManager
+from .agent_types import AgentOptions, LLMTurn, TrackInfo, default_agent_options
 from .conversation import Conversation
 from .transcript_buffer import TranscriptBuffer
-from ..profiling import Profiler
-from opentelemetry.trace import set_span_in_context
-from opentelemetry.trace.propagation import Span, Context
-from opentelemetry import trace, context as otel_context
-from opentelemetry.trace import Tracer
-from opentelemetry.context import Token
-from .agent_session import AgentSessionContextManager
-
 
 if TYPE_CHECKING:
     from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
@@ -944,26 +948,6 @@ class Agent:
                     f"Error in video processor {type(processor).__name__}: {e}"
                 )
 
-    async def _image_to_video_processors(self, track_id: str, track_type: int):
-        """
-        Send the current image to the image processors
-        """
-        track_info = self._active_video_tracks.get(track_id)
-        if not track_info:
-            return
-
-        for processor in self.image_processors:
-            try:
-                pass
-                # TODO: run this better
-                # await processor.process_image(
-                #    img, track_info.participant.user_id, track_id=track_id, track_type=track_type
-                # )
-            except Exception as e:
-                self.logger.error(
-                    f"Error in image processor {type(processor).__name__}: {e}"
-                )
-
     async def _on_track_removed(
         self, track_id: str, track_type: int, participant: Participant
     ):
@@ -999,7 +983,6 @@ class Agent:
 
         # See if we have a processed track. If so forward that to LLM
         # TODO: this should run in a loop and handle multiple forwarders
-        # self._image_to_video_processors()
 
         # If Realtime provider supports video, switch to this new track
         if _is_video_llm(self.llm):
@@ -1211,49 +1194,40 @@ class Agent:
         return needs_audio or needs_video
 
     @property
-    def audio_processors(self) -> List[Any]:
+    def audio_processors(self) -> list[AudioProcessor]:
         """Get processors that can process audio.
 
         Returns:
             List of processors that implement `process_audio(pcm_data: PcmData)`.
         """
-        return filter_processors(self.processors, ProcessorType.AUDIO)
+        return [p for p in self.processors if isinstance(p, AudioProcessor)]
 
     @property
-    def video_processors(self) -> List[Any]:
+    def video_processors(self) -> list[VideoProcessor]:
         """Get processors that can process video.
 
         Returns:
             List of processors that implement `process_video(track, user_id)`.
         """
-        return filter_processors(self.processors, ProcessorType.VIDEO)
+        return [p for p in self.processors if isinstance(p, VideoProcessor)]
 
     @property
-    def video_publishers(self) -> List[Any]:
+    def video_publishers(self) -> list[VideoPublisher]:
         """Get processors capable of publishing a video track.
 
         Returns:
             List of processors that implement `create_video_track()`.
         """
-        return filter_processors(self.processors, ProcessorType.VIDEO_PUBLISHER)
+        return [p for p in self.processors if isinstance(p, VideoPublisher)]
 
     @property
-    def audio_publishers(self) -> List[Any]:
+    def audio_publishers(self) -> list[AudioPublisher]:
         """Get processors capable of publishing an audio track.
 
         Returns:
             List of processors that implement `create_audio_track()`.
         """
-        return filter_processors(self.processors, ProcessorType.AUDIO_PUBLISHER)
-
-    @property
-    def image_processors(self) -> List[Any]:
-        """Get processors that can process images.
-
-        Returns:
-            List of processors that implement `process_image()`.
-        """
-        return filter_processors(self.processors, ProcessorType.IMAGE)
+        return [p for p in self.processors if isinstance(p, AudioPublisher)]
 
     def _validate_configuration(self):
         """Validate the agent configuration."""
@@ -1272,11 +1246,8 @@ class Agent:
                 )
         else:
             # Traditional mode - check if we have audio processing or just video processing
-            has_audio_processing = self.stt or self.tts or self.turn_detection
-            has_video_processing = any(
-                hasattr(p, "process_video") or hasattr(p, "process_image")
-                for p in self.processors
-            )
+            has_audio_processing = bool(self.stt or self.tts or self.turn_detection)
+            has_video_processing = bool(self.video_processors)
 
             if has_audio_processing and not self.llm:
                 raise ValueError(

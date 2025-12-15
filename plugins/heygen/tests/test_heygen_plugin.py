@@ -102,21 +102,3 @@ class TestAvatarPublisher:
             track = publisher.publish_video_track()
 
             assert isinstance(track, HeyGenVideoTrack)
-
-    def test_state(self):
-        """Test state method."""
-        with patch.object(HeyGenRTCManager, "__init__", return_value=None):
-            publisher = AvatarPublisher(
-                avatar_id="test_avatar",
-                quality=VideoQuality.MEDIUM,
-                api_key="test_key",
-            )
-            # Mock the _connected attribute on the RTC manager
-            publisher.rtc_manager._connected = False
-
-            state = publisher.state()
-
-            assert state["avatar_id"] == "test_avatar"
-            assert state["quality"] == VideoQuality.MEDIUM
-            assert "connected" in state
-            assert "rtc_connected" in state

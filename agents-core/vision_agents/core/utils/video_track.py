@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class VideoTrackClosedError(Exception): ...
 
 
+
 class QueuedVideoTrack(VideoStreamTrack):
     """
     QueuedVideoTrack is an implementation of VideoStreamTrack that allows you to write video frames to it.
