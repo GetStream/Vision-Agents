@@ -1207,7 +1207,7 @@ class Agent:
         """Get processors that can process video.
 
         Returns:
-            List of processors that implement `process_video(track, user_id)`.
+            List of processors that implement `process_video(track, participant_id, shared_forwarder)`.
         """
         return [p for p in self.processors if isinstance(p, VideoProcessor)]
 
@@ -1216,7 +1216,7 @@ class Agent:
         """Get processors capable of publishing a video track.
 
         Returns:
-            List of processors that implement `create_video_track()`.
+            List of processors that implement `publish_video_track()`.
         """
         return [p for p in self.processors if isinstance(p, VideoPublisher)]
 
@@ -1225,7 +1225,7 @@ class Agent:
         """Get processors capable of publishing an audio track.
 
         Returns:
-            List of processors that implement `create_audio_track()`.
+            List of processors that implement `publish_audio_track()`.
         """
         return [p for p in self.processors if isinstance(p, AudioPublisher)]
 
