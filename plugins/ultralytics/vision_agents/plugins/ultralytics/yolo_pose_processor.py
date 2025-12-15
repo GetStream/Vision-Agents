@@ -110,6 +110,9 @@ class YOLOPoseProcessor(VideoProcessorPublisher):
         )
 
     async def _add_pose_and_add_frame(self, frame: av.VideoFrame):
+        # Exit early if the processor is already closing
+        if self._shutdown:
+            return
         frame_with_pose = await self.add_pose_to_frame(frame)
         if frame_with_pose is None:
             logger.info(
