@@ -214,7 +214,7 @@ class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
             raise ValueError("Agent is not attached to the processor yet")
         return self._events
 
-    def _attach_agent(self, agent: Agent):
+    def attach_agent(self, agent: Agent):
         self._events = agent.events
         self._events.register(DetectionCompletedEvent)
 

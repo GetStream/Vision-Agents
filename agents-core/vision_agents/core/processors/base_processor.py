@@ -1,10 +1,14 @@
 import abc
 import logging
+import typing
 from typing import Optional
 
 import aiortc
 from getstream.video.rtc import PcmData
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+
+if typing.TYPE_CHECKING:
+    from vision_agents.core import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,16 @@ class Processor(abc.ABC):
         """
         Close the processor and clean up resources when the application exits.
         """
+
+    def attach_agent(self, agent: "Agent") -> None:
+        """
+        A method to perform action with an Agent inside the processor (e.g. register custom events).
+
+        Args:
+            agent: Agent instance.
+        Returns: None
+        """
+        ...
 
 
 class VideoPublisher(Processor, metaclass=abc.ABCMeta):

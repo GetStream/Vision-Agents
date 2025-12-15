@@ -213,7 +213,7 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher):
             loop = asyncio.get_running_loop()
             self._model = await loop.run_in_executor(self._executor, self._load_model)
 
-    def _attach_agent(self, agent: Agent):
+    def attach_agent(self, agent: Agent):
         self._events = agent.events
         self._events.register(DetectionCompletedEvent)
 

@@ -168,7 +168,7 @@ class Agent:
         self.stt = stt
         self.tts = tts
         self.turn_detection = turn_detection
-        self.processors = processors or []
+        self.processors: list[Processor] = processors or []
         self.mcp_servers = mcp_servers or []
         self._call_context_token: CallContextToken | None = None
         self._context_token: Token[Context] | None = None
@@ -200,8 +200,7 @@ class Agent:
 
         # Attach processors that need agent reference
         for processor in self.processors:
-            if hasattr(processor, "_attach_agent"):
-                processor._attach_agent(self)
+            processor.attach_agent(self)
 
         self.events.subscribe(self._on_agent_say)
         # Initialize state variables

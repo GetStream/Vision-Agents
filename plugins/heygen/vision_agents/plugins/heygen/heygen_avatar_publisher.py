@@ -105,7 +105,7 @@ class AvatarPublisher(AudioPublisher, VideoPublisher):
         """
         return self._audio_track
 
-    def _attach_agent(self, agent: Any) -> None:
+    def attach_agent(self, agent: Any) -> None:
         """Attach the agent reference for event subscription.
 
         This is called automatically by the Agent during initialization.
