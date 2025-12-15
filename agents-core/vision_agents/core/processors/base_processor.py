@@ -64,7 +64,7 @@ class VideoProcessorPublisher(VideoProcessor, VideoPublisher, metaclass=abc.ABCM
     """
     Base class for video processors that process incoming video tracks and publish the video
     back to the call.
-    Example: object detection plugin that annontates video frames with detection results.
+    Example: object detection plugin that annotates video frames with detection results.
     """
 
 
