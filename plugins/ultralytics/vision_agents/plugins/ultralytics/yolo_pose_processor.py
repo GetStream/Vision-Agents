@@ -86,9 +86,25 @@ class YOLOPoseProcessor(VideoProcessorPublisher):
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
-        # Use the shared forwarder
-        self._video_forwarder = shared_forwarder
-        logger.info(f"🎥 YOLO subscribing to shared VideoForwarder at {self.fps} FPS")
+        if self._video_forwarder is not None:
+            logger.info(
+                "🎥 Stopping the ongoing YOLO video processing because the new video track is published"
+            )
+            await self._video_forwarder.remove_frame_handler(
+                self._add_pose_and_add_frame
+            )
+
+        logger.info(f"🎥 Starting YOLO video processing at {self.fps} FPS")
+        self._video_forwarder = (
+            shared_forwarder
+            if shared_forwarder
+            else VideoForwarder(
+                incoming_track,
+                max_buffer=self.fps,  # 1 second
+                fps=self.fps,
+                name="yolo_forwarder",
+            )
+        )
         self._video_forwarder.add_frame_handler(
             self._add_pose_and_add_frame, fps=float(self.fps), name="yolo"
         )
