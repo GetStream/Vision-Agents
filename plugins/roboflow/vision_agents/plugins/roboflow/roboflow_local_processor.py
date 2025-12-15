@@ -20,11 +20,7 @@ from rfdetr.detr import (
 from supervision import Detections
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
-from vision_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    VideoProcessorMixin,
-    VideoPublisherMixin,
-)
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
@@ -53,9 +49,7 @@ _RFDETR_MODELS: dict[str, Type[RFDETR]] = {
 }
 
 
-class RoboflowLocalDetectionProcessor(
-    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
-):
+class RoboflowLocalDetectionProcessor(VideoProcessorPublisher):
     """
     A VideoProcessor for real-time object detection with Roboflow's RF-DETR models.
     This processor downloads pre-trained models from Roboflow and runs them locally.
@@ -118,8 +112,6 @@ class RoboflowLocalDetectionProcessor(
         annotate_box_thickness: int = 2,
         annotate_text_position: sv.Position = sv.Position.TOP_CENTER,
     ):
-        super().__init__(interval=0, receive_audio=False, receive_video=True)
-
         if not 0 <= conf_threshold <= 1.0:
             raise ValueError("Confidence threshold must be between 0 and 1.")
 
@@ -168,7 +160,7 @@ class RoboflowLocalDetectionProcessor(
 
     async def process_video(
         self,
-        incoming_track: aiortc.MediaStreamTrack,
+        incoming_track: aiortc.VideoStreamTrack,
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
@@ -187,7 +179,7 @@ class RoboflowLocalDetectionProcessor(
             shared_forwarder
             if shared_forwarder
             else VideoForwarder(
-                cast(aiortc.VideoStreamTrack, incoming_track),
+                incoming_track,
                 max_buffer=self.fps,  # 1 second
                 fps=self.fps,
                 name="roboflow_forwarder",
@@ -221,7 +213,7 @@ class RoboflowLocalDetectionProcessor(
             loop = asyncio.get_running_loop()
             self._model = await loop.run_in_executor(self._executor, self._load_model)
 
-    def _attach_agent(self, agent: Agent):
+    def attach_agent(self, agent: Agent):
         self._events = agent.events
         self._events.register(DetectionCompletedEvent)
 

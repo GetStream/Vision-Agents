@@ -1,7 +1,7 @@
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, cast
+from typing import Optional
 
 import aiortc
 import av
@@ -10,11 +10,7 @@ import supervision as sv
 from inference_sdk import InferenceConfiguration, InferenceHTTPClient
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
-from vision_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    VideoProcessorMixin,
-    VideoPublisherMixin,
-)
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.plugins.roboflow.events import (
@@ -26,9 +22,7 @@ from vision_agents.plugins.roboflow.utils import annotate_image
 logger = logging.getLogger(__name__)
 
 
-class RoboflowCloudDetectionProcessor(
-    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
-):
+class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
     """
     A VideoProcessor for real-time object detection with Roboflow's models.
     This processor uses models from Roboflow Universe, and calls Roboflow's serverless API for inference.
@@ -117,8 +111,6 @@ class RoboflowCloudDetectionProcessor(
         annotate_box_thickness: int = 2,
         annotate_text_position: sv.Position = sv.Position.TOP_CENTER,
     ):
-        super().__init__(interval=0, receive_audio=False, receive_video=True)
-
         if not model_id:
             raise ValueError("model_id is required")
 
@@ -177,7 +169,7 @@ class RoboflowCloudDetectionProcessor(
 
     async def process_video(
         self,
-        incoming_track: aiortc.MediaStreamTrack,
+        incoming_track: aiortc.VideoStreamTrack,
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
@@ -193,7 +185,7 @@ class RoboflowCloudDetectionProcessor(
             shared_forwarder
             if shared_forwarder
             else VideoForwarder(
-                cast(aiortc.VideoStreamTrack, incoming_track),
+                incoming_track,
                 max_buffer=self.fps,  # 1 second
                 fps=self.fps,
                 name="roboflow_forwarder",
@@ -222,7 +214,7 @@ class RoboflowCloudDetectionProcessor(
             raise ValueError("Agent is not attached to the processor yet")
         return self._events
 
-    def _attach_agent(self, agent: Agent):
+    def attach_agent(self, agent: Agent):
         self._events = agent.events
         self._events.register(DetectionCompletedEvent)
 

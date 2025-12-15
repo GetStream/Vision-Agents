@@ -2,23 +2,18 @@ import asyncio
 import logging
 import os
 from asyncio import CancelledError
-from typing import Any, Optional, cast
+from typing import Optional, cast
 
 import aiortc
 import av
 import websockets
 from aiortc import MediaStreamTrack, VideoStreamTrack
-from decart import DecartClient, models
-from decart import DecartSDKError
+from decart import DecartClient, DecartSDKError, models
+from decart.models import RealTimeModels
 from decart.realtime import RealtimeClient, RealtimeConnectOptions
 from decart.types import ModelState, Prompt
-from decart.models import RealTimeModels
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 
-from vision_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    VideoProcessorMixin,
-    VideoPublisherMixin,
-)
 from .decart_video_track import DecartVideoTrack
 
 logger = logging.getLogger(__name__)
@@ -40,7 +35,7 @@ def _should_reconnect(exc: Exception) -> bool:
     return False
 
 
-class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin):
+class RestylingProcessor(VideoProcessorPublisher):
     """Decart Realtime restyling processor for transforming user video tracks.
 
     This processor accepts the user's local video track, sends it to Decart's
@@ -87,12 +82,6 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             height: Output video height (default: 720).
             **kwargs: Additional arguments passed to parent class.
         """
-        super().__init__(
-            interval=0,
-            receive_audio=False,
-            receive_video=True,
-            **kwargs,
-        )
 
         self.api_key = api_key or os.getenv("DECART_API_KEY")
         if not self.api_key:
@@ -125,12 +114,7 @@ class RestylingProcessor(AudioVideoProcessor, VideoProcessorMixin, VideoPublishe
             f"Decart RestylingProcessor initialized (model: {self.model_name}, prompt: {self.initial_prompt[:50]}...)"
         )
 
-    async def process_video(
-        self,
-        incoming_track: aiortc.mediastreams.MediaStreamTrack,
-        participant: Any,
-        shared_forwarder=None,
-    ):
+    async def process_video(self, incoming_track: aiortc.VideoStreamTrack, *_):
         logger.info("Processing video track, connecting to Decart")
         self._current_track = incoming_track
         if not self._connected and not self._connecting:
