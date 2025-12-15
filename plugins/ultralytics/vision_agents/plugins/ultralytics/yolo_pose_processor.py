@@ -400,7 +400,7 @@ class YOLOPoseProcessor(VideoProcessorPublisher):
                         1,
                     )
 
-    def close(self):
+    async def close(self):
         """Clean up resources."""
         self._shutdown = True
         self.executor.shutdown(wait=False)

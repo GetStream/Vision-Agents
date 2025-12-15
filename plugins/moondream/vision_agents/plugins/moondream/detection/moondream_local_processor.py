@@ -318,7 +318,7 @@ class LocalDetectionProcessor(VideoProcessorPublisher):
             logger.exception(f"❌ Frame processing failed: {e}")
             await self._video_track.add_frame(frame)
 
-    def close(self):
+    async def close(self):
         """Clean up resources."""
         self._shutdown = True
         self.executor.shutdown(wait=False)

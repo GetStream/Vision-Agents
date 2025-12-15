@@ -24,11 +24,10 @@ class Processor(abc.ABC):
         """
 
     @abc.abstractmethod
-    def close(self) -> None:
+    async def close(self) -> None:
         """
         Close the processor and clean up resources when the application exits.
         """
-        # TODO: This must be async for everyone
 
 
 class VideoPublisher(Processor, metaclass=abc.ABCMeta):
