@@ -94,5 +94,5 @@ class AudioProcessor(Processor, metaclass=abc.ABCMeta):
 
 class AudioProcessorPublisher(AudioPublisher, AudioProcessor, metaclass=abc.ABCMeta):
     """
-    Base class for audio processors the both process incoming audio tracks and publish the audio back to the call.
+    Base class for audio processors that both process incoming audio tracks and publish the audio back to the call.
     """
