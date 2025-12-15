@@ -1,7 +1,7 @@
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, cast
+from typing import Optional
 
 import aiortc
 import av
@@ -185,7 +185,7 @@ class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
             shared_forwarder
             if shared_forwarder
             else VideoForwarder(
-                cast(aiortc.VideoStreamTrack, incoming_track),
+                incoming_track,
                 max_buffer=self.fps,  # 1 second
                 fps=self.fps,
                 name="roboflow_forwarder",
