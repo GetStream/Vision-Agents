@@ -53,7 +53,7 @@ class HuggingFaceLLM(LLM):
         Args:
             model: The HuggingFace model ID to use.
             api_key: HuggingFace API token. Defaults to HF_TOKEN environment variable.
-            provider: Inference provider (e.g., "together", "groq"). Auto-selects if omitted.
+            provider: Inference provider (e.g., "cheapest" ,"fastest" ,"together", "groq"). Auto-selects if omitted.
             client: Optional AsyncInferenceClient instance for dependency injection.
         """
         super().__init__()
