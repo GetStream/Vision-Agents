@@ -7,7 +7,7 @@ class Debouncer:
     """
 
     def __init__(self, interval: float):
-        self.last_called = 0
+        self.last_called = 0.0
         self.interval = interval
 
     def __bool__(self):
