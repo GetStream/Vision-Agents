@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "huggingface_hub>=1.2.3",
+    "huggingface_hub<1.0",
 ]
 
 [project.urls]
