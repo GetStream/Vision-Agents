@@ -35,9 +35,9 @@ https://github.com/user-attachments/assets/d66587ea-7af4-40c4-9966-5c04fbcf467c
 
 ### Sports Coaching
 
-https://github.com/user-attachments/assets/9527ab03-0541-493b-97b1-e17ff1b20e21
+https://github.com/user-attachments/assets/d1258ac2-ca98-4019-80e4-41ec5530117e
 
-This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
+This example shows you how to build golf coaching AI with YOLO and Gemini Live.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
 For example: Drone fire detection, sports/video game coaching, physical therapy, workout coaching, just dance style games etc.
 
@@ -47,15 +47,12 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=agent_user,
     instructions="Read @golf_coach.md",
-    llm=openai.Realtime(fps=10),
-    #llm=gemini.Realtime(fps=1), # Careful with FPS can get expensive
-    processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")],
+    llm=gemini.Realtime(fps=10),
+    #llm=openai.Realtime(fps=1), # Careful with FPS can get expensive
+    processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt", device="cuda")],
 )
 ```
 
-This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
-Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
-For example: Drone fire detection. Sports/video game coaching. Physical therapy. Workout coaching, Just dance style games etc.
 
 ### Cluely style Invisible Assistant (coming soon)
 
