@@ -8,26 +8,15 @@ import aiofiles
 import PIL.Image
 import pytest
 from av import VideoFrame
-
-try:
-    from rfdetr import RFDETRSegPreview
-    from vision_agents.plugins.roboflow import (
-        DetectionCompletedEvent,
-        RoboflowCloudDetectionProcessor,
-        RoboflowLocalDetectionProcessor,
-    )
-
-    RFDETR_AVAILABLE = True
-except ImportError:
-    RFDETR_AVAILABLE = False
-    RFDETRSegPreview = None
-    DetectionCompletedEvent = None
-    RoboflowCloudDetectionProcessor = None
-    RoboflowLocalDetectionProcessor = None
-
+from rfdetr import RFDETRSegPreview
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
 from vision_agents.core.utils.video_track import QueuedVideoTrack
+from vision_agents.plugins.roboflow import (
+    DetectionCompletedEvent,
+    RoboflowCloudDetectionProcessor,
+    RoboflowLocalDetectionProcessor,
+)
 
 
 @pytest.fixture()
@@ -55,10 +44,6 @@ def agent_mock(events_manager: EventManager) -> Agent:
     return agent
 
 
-@pytest.mark.skipif(
-    not RFDETR_AVAILABLE,
-    reason="rfdetr not available (transformers compatibility issue)",
-)
 class TestRoboflowLocalDetectionProcessor:
     def test_init_prebuilt_model(self, assets_dir: pathlib.Path):
         RoboflowLocalDetectionProcessor(model_id="rfdetr-seg-preview")
@@ -186,10 +171,6 @@ class TestRoboflowLocalDetectionProcessor:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(
-    not RFDETR_AVAILABLE,
-    reason="rfdetr not available (transformers compatibility issue)",
-)
 @pytest.mark.skipif(
     not os.getenv("ROBOFLOW_API_KEY"),
     reason="ROBOFLOW_API_KEY environment variable not set (required for cloud inference testing)",

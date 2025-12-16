@@ -8,6 +8,9 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform != 'win32'",
 ]
 
+[options]
+prerelease-mode = "allow"
+
 [manifest]
 members = [
     "vision-agents",
@@ -6809,7 +6812,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.20.1" },
-    { name = "transformers", specifier = ">=4.40.0" },
+    { name = "transformers", specifier = ">=4.48.2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
