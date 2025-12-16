@@ -1,10 +1,12 @@
 import logging
+import random
 
 from dotenv import load_dotenv
-
-from vision_agents.core import User, Agent, cli
+from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import getstream, roboflow, openai
+from vision_agents.plugins import getstream, openai, roboflow
+
+from .utils import Debouncer
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +30,32 @@ async def create_agent(**kwargs) -> Agent:
         llm=llm,
     )
 
+    # A list of questions to pick from when pinging the model
+    questions = [
+        "Provide an update on the situation on the football field.",
+        "What has just happened?",
+        "What is happenning on the field right now?",
+    ]
+
+    # Call LLM once in 4s max
+    debouncer = Debouncer(4)
+
     @agent.events.subscribe
     async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
-        # React on detected objects here
-        ...
+        """
+        Trigger an action when Roboflow detected objects on the video.
+
+        This function will be called for every detection,
+        so we use previously created Debouncer object to avoid calling the LLM too often.
+        """
+
+        ball_detected = bool(
+            [obj for obj in event.objects if obj["label"] == "sports ball"]
+        )
+        # Ping LLM for a commentary only when the ball is detected and the call is not debounced.
+        if ball_detected and debouncer:
+            # Pick a question randomly from the list
+            await agent.simple_response(random.choice(questions))
 
     return agent
 
