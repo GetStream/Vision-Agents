@@ -29,6 +29,17 @@ jobs:
       - name: Run Ruff formatter
         run: uv run ruff format --check .
 
+  validate-core-pyproject:
+    name: Validate extra dependencies in "agents-core/pyproject.toml"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
+      - name: Run validation script
+        run: uv run dev.py validate-extras
+
   mypy:
     name: Mypy
     runs-on: ubuntu-latest
@@ -53,17 +64,6 @@ jobs:
         with:
           path: .mypy_cache
           key: mypy-cache-${{ hashFiles('pyproject.toml') }}
-
-  validate-pyproject:
-    name: Validate extra dependencies in "agents-core/pyproject.toml"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-      - name: Install dependencies
-        uses: ./.github/actions/python-uv-setup
-      - name: Run validation script
-        run: uv run scripts/validate_core_extras
 
   test:
     name: Test "${{ inputs.marker }}"
