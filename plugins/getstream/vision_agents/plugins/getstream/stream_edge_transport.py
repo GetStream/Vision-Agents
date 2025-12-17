@@ -417,10 +417,10 @@ class StreamEdge(EdgeTransport):
                         # TODO: get rid of this when codegen for stream-py is fixed, these fields are meaningless
                         banned=False,
                         channel_role="",
-                        created_at=datetime.datetime.now(datetime.UTC),
+                        created_at=datetime.datetime.now(datetime.timezone.utc),
                         notifications_muted=False,
                         shadow_banned=False,
-                        updated_at=datetime.datetime.now(datetime.UTC),
+                        updated_at=datetime.datetime.now(datetime.timezone.utc),
                         custom={},
                     )
                 ]
