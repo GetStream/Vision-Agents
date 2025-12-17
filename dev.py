@@ -115,7 +115,7 @@ def _cwd_is_root():
 
 
 def _get_plugin_package_name(plugin: str) -> str:
-    with open(PLUGINS_DIR / Path(plugin) / "pyproject.toml", "r") as f:
+    with open(Path(PLUGINS_DIR) / Path(plugin) / "pyproject.toml", "r") as f:
         pyproject = toml.load(f)
     return pyproject["project"]["name"]
 
