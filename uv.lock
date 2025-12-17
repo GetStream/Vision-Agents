@@ -57,6 +57,7 @@ dev = [
     { name = "python-dotenv" },
     { name = "ruff" },
     { name = "scalene", specifier = ">=1.5.54" },
+    { name = "toml", specifier = ">=0.10.2" },
 ]
 
 [[package]]
@@ -5700,6 +5701,15 @@ wheels = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.10.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/ba/1f744cdc819428fc6b5084ec34d9b30660f6f9daaf70eead706e3203ec3c/toml-0.10.2.tar.gz", hash = "sha256:b3bda1d108d5dd99f4a20d24d9c348e91c4db7ab1b749200bded2f839ccbe68f", size = 22253, upload-time = "2020-11-01T01:40:22.204Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/6f/7120676b6d73228c96e17f1f794d8ab046fc910d781c8d151120c3f1569e/toml-0.10.2-py2.py3-none-any.whl", hash = "sha256:806143ae5bfb6a3c6e736a764057db0e6a0e05e338b5630894a5f779cabb4f9b", size = 16588, upload-time = "2020-11-01T01:40:20.672Z" },
+]
+
+[[package]]
 name = "tomli-w"
 version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6118,27 +6128,42 @@ dependencies = [
 [package.optional-dependencies]
 all-plugins = [
     { name = "vision-agents-plugins-anthropic" },
+    { name = "vision-agents-plugins-aws" },
     { name = "vision-agents-plugins-cartesia" },
+    { name = "vision-agents-plugins-decart" },
     { name = "vision-agents-plugins-deepgram" },
     { name = "vision-agents-plugins-elevenlabs" },
+    { name = "vision-agents-plugins-fast-whisper" },
+    { name = "vision-agents-plugins-fish" },
     { name = "vision-agents-plugins-gemini" },
     { name = "vision-agents-plugins-getstream" },
     { name = "vision-agents-plugins-heygen" },
+    { name = "vision-agents-plugins-huggingface" },
     { name = "vision-agents-plugins-inworld" },
     { name = "vision-agents-plugins-kokoro" },
+    { name = "vision-agents-plugins-moondream" },
     { name = "vision-agents-plugins-moonshine" },
     { name = "vision-agents-plugins-openai" },
+    { name = "vision-agents-plugins-openrouter" },
+    { name = "vision-agents-plugins-qwen" },
     { name = "vision-agents-plugins-roboflow" },
     { name = "vision-agents-plugins-smart-turn" },
     { name = "vision-agents-plugins-ultralytics" },
+    { name = "vision-agents-plugins-vogent" },
     { name = "vision-agents-plugins-wizper" },
     { name = "vision-agents-plugins-xai" },
 ]
 anthropic = [
     { name = "vision-agents-plugins-anthropic" },
 ]
+aws = [
+    { name = "vision-agents-plugins-aws" },
+]
 cartesia = [
     { name = "vision-agents-plugins-cartesia" },
+]
+decart = [
+    { name = "vision-agents-plugins-decart" },
 ]
 deepgram = [
     { name = "vision-agents-plugins-deepgram" },
@@ -6152,6 +6177,12 @@ dev = [
 elevenlabs = [
     { name = "vision-agents-plugins-elevenlabs" },
 ]
+fast-whisper = [
+    { name = "vision-agents-plugins-fast-whisper" },
+]
+fish = [
+    { name = "vision-agents-plugins-fish" },
+]
 gemini = [
     { name = "vision-agents-plugins-gemini" },
 ]
@@ -6161,17 +6192,29 @@ getstream = [
 heygen = [
     { name = "vision-agents-plugins-heygen" },
 ]
+huggingface = [
+    { name = "vision-agents-plugins-huggingface" },
+]
 inworld = [
     { name = "vision-agents-plugins-inworld" },
 ]
 kokoro = [
     { name = "vision-agents-plugins-kokoro" },
 ]
+moondream = [
+    { name = "vision-agents-plugins-moondream" },
+]
 moonshine = [
     { name = "vision-agents-plugins-moonshine" },
 ]
 openai = [
     { name = "vision-agents-plugins-openai" },
+]
+openrouter = [
+    { name = "vision-agents-plugins-openrouter" },
+]
+qwen = [
+    { name = "vision-agents-plugins-qwen" },
 ]
 roboflow = [
     { name = "vision-agents-plugins-roboflow" },
@@ -6181,6 +6224,9 @@ smart-turn = [
 ]
 ultralytics = [
     { name = "vision-agents-plugins-ultralytics" },
+]
+vogent = [
+    { name = "vision-agents-plugins-vogent" },
 ]
 wizper = [
     { name = "vision-agents-plugins-wizper" },
@@ -6203,38 +6249,56 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'all-plugins'", editable = "plugins/anthropic" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "plugins/anthropic" },
+    { name = "vision-agents-plugins-aws", marker = "extra == 'all-plugins'", editable = "plugins/aws" },
+    { name = "vision-agents-plugins-aws", marker = "extra == 'aws'", editable = "plugins/aws" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'all-plugins'", editable = "plugins/cartesia" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'cartesia'", editable = "plugins/cartesia" },
+    { name = "vision-agents-plugins-decart", marker = "extra == 'all-plugins'", editable = "plugins/decart" },
+    { name = "vision-agents-plugins-decart", marker = "extra == 'decart'", editable = "plugins/decart" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'deepgram'", editable = "plugins/deepgram" },
     { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "plugins/elevenlabs" },
     { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "plugins/elevenlabs" },
+    { name = "vision-agents-plugins-fast-whisper", marker = "extra == 'all-plugins'", editable = "plugins/fast_whisper" },
+    { name = "vision-agents-plugins-fast-whisper", marker = "extra == 'fast-whisper'", editable = "plugins/fast_whisper" },
+    { name = "vision-agents-plugins-fish", marker = "extra == 'all-plugins'", editable = "plugins/fish" },
+    { name = "vision-agents-plugins-fish", marker = "extra == 'fish'", editable = "plugins/fish" },
     { name = "vision-agents-plugins-gemini", marker = "extra == 'all-plugins'", editable = "plugins/gemini" },
     { name = "vision-agents-plugins-gemini", marker = "extra == 'gemini'", editable = "plugins/gemini" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'all-plugins'", editable = "plugins/getstream" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'getstream'", editable = "plugins/getstream" },
     { name = "vision-agents-plugins-heygen", marker = "extra == 'all-plugins'", editable = "plugins/heygen" },
     { name = "vision-agents-plugins-heygen", marker = "extra == 'heygen'", editable = "plugins/heygen" },
+    { name = "vision-agents-plugins-huggingface", marker = "extra == 'all-plugins'", editable = "plugins/huggingface" },
+    { name = "vision-agents-plugins-huggingface", marker = "extra == 'huggingface'", editable = "plugins/huggingface" },
     { name = "vision-agents-plugins-inworld", marker = "extra == 'all-plugins'", editable = "plugins/inworld" },
     { name = "vision-agents-plugins-inworld", marker = "extra == 'inworld'", editable = "plugins/inworld" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'all-plugins'", editable = "plugins/kokoro" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'kokoro'", editable = "plugins/kokoro" },
+    { name = "vision-agents-plugins-moondream", marker = "extra == 'all-plugins'", editable = "plugins/moondream" },
+    { name = "vision-agents-plugins-moondream", marker = "extra == 'moondream'", editable = "plugins/moondream" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'all-plugins'" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
+    { name = "vision-agents-plugins-openrouter", marker = "extra == 'all-plugins'", editable = "plugins/openrouter" },
+    { name = "vision-agents-plugins-openrouter", marker = "extra == 'openrouter'", editable = "plugins/openrouter" },
+    { name = "vision-agents-plugins-qwen", marker = "extra == 'all-plugins'", editable = "plugins/qwen" },
+    { name = "vision-agents-plugins-qwen", marker = "extra == 'qwen'", editable = "plugins/qwen" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'all-plugins'", editable = "plugins/roboflow" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'roboflow'", editable = "plugins/roboflow" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'all-plugins'", editable = "plugins/ultralytics" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'ultralytics'", editable = "plugins/ultralytics" },
+    { name = "vision-agents-plugins-vogent", marker = "extra == 'all-plugins'", editable = "plugins/vogent" },
+    { name = "vision-agents-plugins-vogent", marker = "extra == 'vogent'", editable = "plugins/vogent" },
     { name = "vision-agents-plugins-wizper", marker = "extra == 'all-plugins'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "heygen", "inworld", "kokoro", "moonshine", "openai", "roboflow", "smart-turn", "ultralytics", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
