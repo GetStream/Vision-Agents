@@ -97,6 +97,7 @@ dev = [
     "blockbuster>=1.5.5,<1.6",
     "aiofiles>=25.1.0",
     "pyinstrument>=5.1.1",
+    "toml>=0.10.2",
 ]
 
 [tool.mypy]

@@ -6,7 +6,7 @@ on:
         description: 'pytest -m expression (e.g., `not integration` or `integration`)'
         required: true
         type: string
-    secrets: {}
+    secrets: { }
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -53,6 +53,17 @@ jobs:
         with:
           path: .mypy_cache
           key: mypy-cache-${{ hashFiles('pyproject.toml') }}
+
+  validate-pyproject:
+    name: Validate extra dependencies in "agents-core/pyproject.toml"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
+      - name: Run validation script
+        run: uv run scripts/validate_core_extras
 
   test:
     name: Test "${{ inputs.marker }}"
