@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from dotenv import load_dotenv
 
@@ -7,7 +7,11 @@ from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
 
-from security_camera_processor import SecurityCameraProcessor
+from security_camera_processor import (
+    SecurityCameraProcessor,
+    PersonDetectedEvent,
+    PackageDetectedEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,25 +53,28 @@ async def create_agent(**kwargs) -> Agent:
         stt=deepgram.STT(eager_turn_detection=True),
     )
 
+    # Merge processor events with agent events so subscriptions work
+    agent.events.merge(security_processor.events)
+
     # Register function for getting visitor count
     @llm.register_function(
-        description="Get the number of unique visitors detected in the last 30 minutes"
+        description="Get the number of unique visitors detected in the last 30 minutes. Always pass include_details=false for a quick count."
     )
-    async def get_visitor_count() -> Dict[str, Any]:
+    async def get_visitor_count(include_details: Optional[bool] = False) -> Dict[str, Any]:
         count = security_processor.get_visitor_count()
         state = security_processor.state()
         return {
             "unique_visitors": count,
-            "total_detections": state["total_detections"],
+            "total_detections": state["total_face_detections"],
             "time_window": f"{state['time_window_minutes']} minutes",
-            "last_detection": state["last_detection_time"],
+            "last_detection": state["last_face_detection_time"],
         }
 
     # Register function for getting detailed visitor information
     @llm.register_function(
-        description="Get detailed information about all visitors including when they were first and last seen"
+        description="Get detailed information about all visitors including when they were first and last seen. Always pass include_timestamps=true."
     )
-    async def get_visitor_details() -> Dict[str, Any]:
+    async def get_visitor_details(include_timestamps: Optional[bool] = True) -> Dict[str, Any]:
         details = security_processor.get_visitor_details()
         return {
             "visitors": details,
@@ -76,9 +83,9 @@ async def create_agent(**kwargs) -> Agent:
 
     # Register function for getting package count
     @llm.register_function(
-        description="Get the number of unique packages detected in the last 30 minutes"
+        description="Get the number of unique packages detected in the last 30 minutes. Always pass include_details=false for a quick count."
     )
-    async def get_package_count() -> Dict[str, Any]:
+    async def get_package_count(include_details: Optional[bool] = False) -> Dict[str, Any]:
         count = security_processor.get_package_count()
         state = security_processor.state()
         return {
@@ -90,14 +97,29 @@ async def create_agent(**kwargs) -> Agent:
 
     # Register function for getting detailed package information
     @llm.register_function(
-        description="Get detailed information about all packages including when they were first and last seen, and confidence scores"
+        description="Get detailed information about all packages including when they were first and last seen, and confidence scores. Always pass include_confidence=true."
     )
-    async def get_package_details() -> Dict[str, Any]:
+    async def get_package_details(include_confidence: Optional[bool] = True) -> Dict[str, Any]:
         details = security_processor.get_package_details()
         return {
             "packages": details,
             "total_unique_packages": len(details),
         }
+
+    # Subscribe to detection events via the agent's merged event system
+    @agent.events.subscribe
+    async def on_person_detected(event: PersonDetectedEvent):
+        if event.is_new:
+            agent.logger.info(f"🚨 NEW PERSON ALERT: {event.face_id} detected!")
+        else:
+            agent.logger.info(f"👤 Returning visitor: {event.face_id} (seen {event.detection_count}x)")
+
+    @agent.events.subscribe
+    async def on_package_detected(event: PackageDetectedEvent):
+        if event.is_new:
+            agent.logger.info(f"📦 NEW PACKAGE ALERT: {event.package_id} detected! (confidence: {event.confidence:.2f})")
+        else:
+            agent.logger.info(f"📦 Package still there: {event.package_id} (seen {event.detection_count}x)")
 
     return agent
 
