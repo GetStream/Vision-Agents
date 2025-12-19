@@ -3,7 +3,7 @@ import logging
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import aiortc
@@ -14,6 +14,8 @@ import numpy as np
 
 from pathlib import Path
 
+from vision_agents.core.events.base import PluginBaseEvent
+from vision_agents.core.events.manager import EventManager
 from vision_agents.core.processors.base_processor import (
     AudioVideoProcessor,
     VideoProcessorMixin,
@@ -23,6 +25,31 @@ from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PersonDetectedEvent(PluginBaseEvent):
+    """Event emitted when a person/face is detected."""
+
+    type: str = field(default="security.person_detected", init=False)
+    face_id: str = ""
+    is_new: bool = False
+    detection_count: int = 1
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+
+
+@dataclass
+class PackageDetectedEvent(PluginBaseEvent):
+    """Event emitted when a package is detected."""
+
+    type: str = field(default="security.package_detected", init=False)
+    package_id: str = ""
+    is_new: bool = False
+    detection_count: int = 1
+    confidence: float = 0.0
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
 
 
 @dataclass
@@ -138,6 +165,11 @@ class SecurityCameraProcessor(
             "suitcase",
             "backpack",
         ]
+
+        # Event manager for detection events
+        self.events = EventManager()
+        self.events.register(PersonDetectedEvent)
+        self.events.register(PackageDetectedEvent)
 
         logger.info("🎥 Security Camera Processor initialized")
         logger.info(f"📊 Time window: {time_window}s ({time_window // 60} minutes)")
@@ -371,6 +403,21 @@ class SecurityCameraProcessor(
                     f"🔄 Updated existing face {matching_face_id[:8]} "
                     f"(seen {face_detection.detection_count} times)"
                 )
+                # Emit event for returning visitor
+                self.events.send(
+                    PersonDetectedEvent(
+                        plugin_name="security_camera",
+                        face_id=matching_face_id[:8],
+                        is_new=False,
+                        detection_count=face_detection.detection_count,
+                        first_seen=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(face_detection.first_seen)
+                        ),
+                        last_seen=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                        ),
+                    )
+                )
             else:
                 # New unique face
                 face_id = str(uuid.uuid4())
@@ -386,6 +433,21 @@ class SecurityCameraProcessor(
                 self._detected_faces[face_id] = detection
                 new_faces += 1
                 logger.info(f"👤 New unique visitor detected: {face_id[:8]}")
+                # Emit event for new visitor
+                self.events.send(
+                    PersonDetectedEvent(
+                        plugin_name="security_camera",
+                        face_id=face_id[:8],
+                        is_new=True,
+                        detection_count=1,
+                        first_seen=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                        ),
+                        last_seen=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                        ),
+                    )
+                )
 
         if new_faces > 0 or updated_faces > 0:
             self._last_detection_time = current_time
@@ -533,6 +595,22 @@ class SecurityCameraProcessor(
                     f"🔄 Updated existing package {matching_package_id[:8]} "
                     f"(seen {package_detection.detection_count} times)"
                 )
+                # Emit event for returning package
+                self.events.send(
+                    PackageDetectedEvent(
+                        plugin_name="security_camera",
+                        package_id=matching_package_id[:8],
+                        is_new=False,
+                        detection_count=package_detection.detection_count,
+                        confidence=package_detection.confidence,
+                        first_seen=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(package_detection.first_seen)
+                        ),
+                        last_seen=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                        ),
+                    )
+                )
             else:
                 # New unique package
                 package_id = str(uuid.uuid4())
@@ -548,6 +626,22 @@ class SecurityCameraProcessor(
                 self._detected_packages[package_id] = detection
                 new_packages += 1
                 logger.info(f"📦 New unique package detected: {package_id[:8]}")
+                # Emit event for new package
+                self.events.send(
+                    PackageDetectedEvent(
+                        plugin_name="security_camera",
+                        package_id=package_id[:8],
+                        is_new=True,
+                        detection_count=1,
+                        confidence=confidence,
+                        first_seen=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                        ),
+                        last_seen=time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                        ),
+                    )
+                )
 
         if new_packages > 0 or updated_packages > 0:
             self._last_package_detection_time = current_time
