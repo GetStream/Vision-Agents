@@ -10,14 +10,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AgentProcess:
-    """
-    Add info here about the thread/process. Enabling warm up to work well in a multiprocess env
-    """
-
-    pass
-
-
 class AgentLauncher:
     """
     Agent launcher that handles warmup and lifecycle management.
