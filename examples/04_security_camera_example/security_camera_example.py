@@ -106,6 +106,36 @@ async def create_agent(**kwargs) -> Agent:
             "total_unique_packages": len(details),
         }
 
+    # Register function for getting activity log
+    @llm.register_function(
+        description="Get the recent activity log showing what happened (people arriving, packages detected, etc.). Use this to answer questions like 'what happened?' or 'did anyone come by?'. Pass limit to control how many entries to return."
+    )
+    async def get_activity_log(limit: Optional[int] = 20) -> Dict[str, Any]:
+        log = security_processor.get_activity_log(limit=limit or 20)
+        return {
+            "activity_log": log,
+            "total_entries": len(log),
+        }
+
+    # Register function for remembering a face
+    @llm.register_function(
+        description="Register the current person's face with a name so they can be recognized in the future. Use when user says things like 'remember me as [name]' or 'my name is [name]'. Pass the name to remember."
+    )
+    async def remember_my_face(name: str) -> Dict[str, Any]:
+        result = security_processor.register_current_face_as(name)
+        return result
+
+    # Register function for listing known faces
+    @llm.register_function(
+        description="Get a list of all registered/known faces that can be recognized by name. Pass include_timestamps=true to see when each face was registered."
+    )
+    async def get_known_faces(include_timestamps: Optional[bool] = True) -> Dict[str, Any]:
+        faces = security_processor.get_known_faces()
+        return {
+            "known_faces": faces,
+            "total_known": len(faces),
+        }
+
     # Subscribe to detection events via the agent's merged event system
     @agent.events.subscribe
     async def on_person_detected(event: PersonDetectedEvent):
