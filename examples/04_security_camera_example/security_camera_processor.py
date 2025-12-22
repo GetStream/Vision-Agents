@@ -63,6 +63,7 @@ class FaceDetection:
     last_seen: float
     bbox: tuple
     detection_count: int = 1
+    name: Optional[str] = None  # Name if this is a known face
 
 
 @dataclass
@@ -76,6 +77,25 @@ class PackageDetection:
     bbox: tuple
     confidence: float
     detection_count: int = 1
+
+
+@dataclass
+class KnownFace:
+    """Represents a known/registered face."""
+
+    name: str
+    face_encoding: np.ndarray
+    registered_at: float
+
+
+@dataclass
+class ActivityLogEntry:
+    """Represents an entry in the activity log."""
+
+    timestamp: float
+    event_type: str  # "person_detected", "package_detected", "person_left", etc.
+    description: str
+    details: Dict[str, Any] = field(default_factory=dict)
 
 
 class SecurityCameraProcessor(
@@ -141,6 +161,13 @@ class SecurityCameraProcessor(
         # Storage for unique detected packages (keyed by package_id)
         self._detected_packages: Dict[str, PackageDetection] = {}
         self._last_package_detection_time = 0.0
+
+        # Known faces database for named recognition
+        self._known_faces: Dict[str, KnownFace] = {}
+
+        # Activity log for event history
+        self._activity_log: List[ActivityLogEntry] = []
+        self._max_activity_log_entries = 100  # Keep last 100 events
 
         # Thread pool for CPU-intensive operations
         self.executor = ThreadPoolExecutor(
@@ -243,6 +270,68 @@ class SecurityCameraProcessor(
         removed = len(packages_to_remove)
         if removed > 0:
             logger.debug(f"🧹 Cleaned up {removed} old package(s)")
+
+    def _check_for_picked_up_packages(self, current_time: float):
+        """Check if any packages have disappeared (picked up).
+        
+        A package is considered "picked up" if it hasn't been seen for 15 seconds
+        but was detected within the last 5 minutes.
+        """
+        pickup_threshold = 15.0  # seconds without seeing = picked up
+        max_age = 300.0  # only consider packages from last 5 minutes
+        
+        packages_picked_up = []
+        
+        for package_id, package in list(self._detected_packages.items()):
+            time_since_seen = current_time - package.last_seen
+            package_age = current_time - package.first_seen
+            
+            # Package disappeared recently (not seen for 15s, but was active recently)
+            if pickup_threshold < time_since_seen < max_age and package_age < max_age:
+                # Check if already marked as picked up
+                if not package_id.startswith("picked_"):
+                    packages_picked_up.append(package)
+        
+        for package in packages_picked_up:
+            # Find who was present when the package disappeared
+            picker = self._find_person_present_at(package.last_seen)
+            picker_name = picker.name if picker and picker.name else (picker.face_id[:8] if picker else "unknown person")
+            
+            logger.info(f"📦 Package {package.package_id[:8]} was picked up by {picker_name}")
+            
+            # Log activity
+            self._log_activity(
+                event_type="package_picked_up",
+                description=f"Package picked up by {picker_name}",
+                details={
+                    "package_id": package.package_id[:8],
+                    "picked_up_by": picker_name,
+                    "picker_face_id": picker.face_id[:8] if picker else None,
+                    "picker_is_known": picker.name is not None if picker else False,
+                },
+            )
+            
+            # Remove the package from tracking
+            del self._detected_packages[package.package_id]
+
+    def _find_person_present_at(self, timestamp: float) -> Optional[FaceDetection]:
+        """Find who was present around a given timestamp.
+        
+        Returns the person who was most recently seen around that time.
+        """
+        window = 10.0  # Look within 10 seconds of the timestamp
+        
+        candidates = []
+        for face in self._detected_faces.values():
+            # Check if person was seen around that time
+            if abs(face.last_seen - timestamp) < window:
+                candidates.append(face)
+        
+        if not candidates:
+            return None
+        
+        # Return the most recently seen person
+        return max(candidates, key=lambda f: f.last_seen)
 
     def _calculate_iou(self, bbox1: tuple, bbox2: tuple) -> float:
         """Calculate Intersection over Union (IoU) between two bounding boxes.
@@ -352,6 +441,45 @@ class SecurityCameraProcessor(
 
         return None
 
+    def _find_known_face_name(self, face_encoding: np.ndarray) -> Optional[str]:
+        """Check if face matches any known/registered face and return the name."""
+        if not self._known_faces:
+            return None
+
+        known_names = list(self._known_faces.keys())
+        known_encodings = [
+            self._known_faces[name].face_encoding for name in known_names
+        ]
+
+        matches = face_recognition.compare_faces(
+            known_encodings, face_encoding, tolerance=self.face_match_tolerance
+        )
+
+        for i, is_match in enumerate(matches):
+            if is_match:
+                return known_names[i]
+
+        return None
+
+    def _log_activity(
+        self,
+        event_type: str,
+        description: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add an entry to the activity log."""
+        entry = ActivityLogEntry(
+            timestamp=time.time(),
+            event_type=event_type,
+            description=description,
+            details=details or {},
+        )
+        self._activity_log.append(entry)
+
+        # Trim log if too long
+        if len(self._activity_log) > self._max_activity_log_entries:
+            self._activity_log = self._activity_log[-self._max_activity_log_entries :]
+
     async def _detect_and_store_faces(
         self, frame_bgr: np.ndarray, current_time: float
     ) -> int:
@@ -387,7 +515,10 @@ class SecurityCameraProcessor(
                 face_roi, (self.thumbnail_size, self.thumbnail_size)
             )
 
-            # Check if this face matches any existing face
+            # Check if this is a known/registered face
+            known_name = self._find_known_face_name(face_encoding)
+
+            # Check if this face matches any existing face in current session
             matching_face_id = self._find_matching_face(face_encoding)
 
             if matching_face_id:
@@ -398,16 +529,21 @@ class SecurityCameraProcessor(
                 face_detection.bbox = (x, y, w, h)
                 # Update thumbnail to latest image
                 face_detection.face_image = face_thumbnail
+                # Update name if we now recognize them
+                if known_name and not face_detection.name:
+                    face_detection.name = known_name
                 updated_faces += 1
+
+                display_name = face_detection.name or matching_face_id[:8]
                 logger.debug(
-                    f"🔄 Updated existing face {matching_face_id[:8]} "
+                    f"🔄 Updated existing face {display_name} "
                     f"(seen {face_detection.detection_count} times)"
                 )
                 # Emit event for returning visitor
                 self.events.send(
                     PersonDetectedEvent(
                         plugin_name="security_camera",
-                        face_id=matching_face_id[:8],
+                        face_id=display_name,
                         is_new=False,
                         detection_count=face_detection.detection_count,
                         first_seen=time.strftime(
@@ -429,15 +565,30 @@ class SecurityCameraProcessor(
                     last_seen=current_time,
                     bbox=(x, y, w, h),
                     detection_count=1,
+                    name=known_name,  # Will be None if not recognized
                 )
                 self._detected_faces[face_id] = detection
                 new_faces += 1
-                logger.info(f"👤 New unique visitor detected: {face_id[:8]}")
+
+                display_name = known_name or face_id[:8]
+                logger.info(f"👤 New unique visitor detected: {display_name}")
+
+                # Log activity
+                self._log_activity(
+                    event_type="person_arrived",
+                    description=f"New person arrived: {display_name}",
+                    details={
+                        "face_id": face_id[:8],
+                        "name": known_name,
+                        "is_known": known_name is not None,
+                    },
+                )
+
                 # Emit event for new visitor
                 self.events.send(
                     PersonDetectedEvent(
                         plugin_name="security_camera",
-                        face_id=face_id[:8],
+                        face_id=display_name,
                         is_new=True,
                         detection_count=1,
                         first_seen=time.strftime(
@@ -626,6 +777,17 @@ class SecurityCameraProcessor(
                 self._detected_packages[package_id] = detection
                 new_packages += 1
                 logger.info(f"📦 New unique package detected: {package_id[:8]}")
+
+                # Log activity
+                self._log_activity(
+                    event_type="package_arrived",
+                    description=f"New package detected (confidence: {confidence:.2f})",
+                    details={
+                        "package_id": package_id[:8],
+                        "confidence": confidence,
+                    },
+                )
+
                 # Emit event for new package
                 self.events.send(
                     PackageDetectedEvent(
@@ -835,6 +997,9 @@ class SecurityCameraProcessor(
             self._cleanup_old_faces(current_time)
             self._cleanup_old_packages(current_time)
 
+            # Check if any packages were picked up
+            self._check_for_picked_up_packages(current_time)
+
             # Detect and store new faces
             await self._detect_and_store_faces(frame_bgr, current_time)
 
@@ -969,6 +1134,8 @@ class SecurityCameraProcessor(
             visitors.append(
                 {
                     "face_id": face.face_id[:8],  # Shortened ID
+                    "name": face.name,  # Will be None if unknown
+                    "is_known": face.name is not None,
                     "first_seen": time.strftime(
                         "%Y-%m-%d %H:%M:%S", time.localtime(face.first_seen)
                     ),
@@ -1023,6 +1190,108 @@ class SecurityCameraProcessor(
             )
 
         return packages
+
+    def get_activity_log(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        Get recent activity log entries.
+
+        Args:
+            limit: Maximum number of entries to return (default: 20)
+
+        Returns:
+            List of activity log entries, most recent first
+        """
+        entries = []
+        for entry in reversed(self._activity_log[-limit:]):
+            entries.append(
+                {
+                    "timestamp": time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(entry.timestamp)
+                    ),
+                    "event_type": entry.event_type,
+                    "description": entry.description,
+                    "details": entry.details,
+                }
+            )
+        return entries
+
+    def register_known_face(self, name: str, face_encoding: np.ndarray) -> bool:
+        """
+        Register a face encoding with a name for future recognition.
+
+        Args:
+            name: Name to associate with the face
+            face_encoding: 128-dimensional face encoding from face_recognition
+
+        Returns:
+            True if registered successfully
+        """
+        self._known_faces[name] = KnownFace(
+            name=name,
+            face_encoding=face_encoding,
+            registered_at=time.time(),
+        )
+        logger.info(f"✅ Registered known face: {name}")
+
+        # Log activity
+        self._log_activity(
+            event_type="face_registered",
+            description=f"Registered new known face: {name}",
+            details={"name": name},
+        )
+
+        return True
+
+    def register_current_face_as(self, name: str) -> Dict[str, Any]:
+        """
+        Register the most recently detected face with a name.
+        Useful for "remember me as [name]" functionality.
+
+        Args:
+            name: Name to associate with the face
+
+        Returns:
+            Dict with success status and message
+        """
+        if not self._detected_faces:
+            return {
+                "success": False,
+                "message": "No faces currently detected. Please make sure your face is visible.",
+            }
+
+        # Get the most recently seen face
+        most_recent_face = max(
+            self._detected_faces.values(), key=lambda f: f.last_seen
+        )
+
+        # Register the face encoding
+        self.register_known_face(name, most_recent_face.face_encoding)
+
+        # Update the face detection with the name
+        most_recent_face.name = name
+
+        return {
+            "success": True,
+            "message": f"I'll remember you as {name}! Next time I see you, I'll recognize you.",
+            "face_id": most_recent_face.face_id[:8],
+        }
+
+    def get_known_faces(self) -> List[Dict[str, Any]]:
+        """
+        Get list of all registered known faces.
+
+        Returns:
+            List of known face info
+        """
+        return [
+            {
+                "name": face.name,
+                "registered_at": time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(face.registered_at)
+                ),
+            }
+            for face in self._known_faces.values()
+        ]
 
     def close(self):
         """Clean up resources."""
