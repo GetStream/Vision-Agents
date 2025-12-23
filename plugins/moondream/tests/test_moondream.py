@@ -45,7 +45,6 @@ async def test_processor_initialization():
     await processor.close()
 
 
-@pytest.mark.asyncio
 async def test_video_track_frame_queuing(sample_frame):
     """Test that video track can queue and receive frames."""
     track = MoondreamVideoTrack()
@@ -65,7 +64,6 @@ async def test_processor_publishes_track():
     await processor.close()
 
 
-@pytest.mark.asyncio
 async def test_cloud_inference_structure(sample_image):
     """Test that cloud inference returns proper structure."""
     processor = CloudDetectionProcessor(api_key="test_key")
@@ -239,7 +237,6 @@ async def test_process_and_add_frame(sample_frame):
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-@pytest.mark.asyncio
 async def test_live_detection_api():
     """Test live detection API with real Moondream service."""
     processor = CloudDetectionProcessor(
@@ -280,7 +277,6 @@ async def test_live_detection_api():
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-@pytest.mark.asyncio
 async def test_live_detection_with_annotation():
     """Test that detection results are properly annotated on frames."""
     processor = CloudDetectionProcessor(api_key=os.getenv("MOONDREAM_API_KEY"))
@@ -386,7 +382,6 @@ def test_detect_objects_invalid_list_contents():
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-@pytest.mark.asyncio
 async def test_custom_object_detection():
     """Test detection with custom object type (not 'person')."""
     processor = CloudDetectionProcessor(
@@ -428,7 +423,6 @@ async def test_custom_object_detection():
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-@pytest.mark.asyncio
 async def test_multiple_object_detection():
     """Test detection with multiple object types."""
     processor = CloudDetectionProcessor(
