@@ -1,15 +1,13 @@
-import tempfile
+import logging
 
 import pytest
-
-from conftest import skip_blockbuster
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.turn_detection import TurnStartedEvent, TurnEndedEvent
+from vision_agents.core.turn_detection import TurnEndedEvent, TurnStartedEvent
 from vision_agents.core.vad.silero import prepare_silero_vad
 from vision_agents.plugins.smart_turn.smart_turn_detection import SmartTurnDetection
 
-import logging
+from conftest import skip_blockbuster
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +20,8 @@ class TestSmartTurn:
         await td.start()
         yield td
 
-    async def test_silero_predict(self, mia_audio_16khz):
-        vad = await prepare_silero_vad(tempfile.gettempdir())
+    async def test_silero_predict(self, mia_audio_16khz, tmp_path):
+        vad = await prepare_silero_vad(tmp_path.as_posix())
 
         for pcm_chunk in mia_audio_16khz.chunks(chunk_size=512):
             if len(pcm_chunk.samples) != 512:

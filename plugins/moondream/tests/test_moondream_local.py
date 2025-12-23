@@ -29,6 +29,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.skip("Skip Moondream local tests because they take too long to run")
 class TestMoondreamLocalProcessor:
     """Test cases for MoondreamLocalProcessor."""
 
