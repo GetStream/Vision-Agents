@@ -12,6 +12,7 @@ from aiortc import VideoStreamTrack
 from av import VideoFrame
 from PIL import Image
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
+from vision_agents.core.utils.video_utils import ensure_even_dimensions
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +48,11 @@ class QueuedVideoTrack(VideoStreamTrack):
         self._stopped = False
 
     async def add_frame(self, frame: av.VideoFrame):
-        # Resize the image and stick it on the queue
         if self._stopped:
             return
 
-        # TODO: where do we resize? do we need to resize?...
-        # Ensure the image is the correct size
-        # if image.size != (self.width, self.height):
-        #    image = image.resize(
-        #        (self.width, self.height), Image.Resampling.BILINEAR
-        #    )
+        # Ensure even dimensions for H.264 compatibility (screen shares often have odd dimensions)
+        frame = ensure_even_dimensions(frame)
 
         self.frame_queue.put_latest_nowait(frame)
 
@@ -208,6 +204,9 @@ class VideoFileTrack(VideoStreamTrack):
             raise VideoTrackClosedError("Track stopped")
         loop = asyncio.get_running_loop()
         frame = await loop.run_in_executor(self._executor, self._next_frame)
+
+        # Ensure even dimensions for H.264 compatibility
+        frame = ensure_even_dimensions(frame)
 
         # Sleep between frames to simulate real-time playback
         await asyncio.sleep(self._frame_interval)

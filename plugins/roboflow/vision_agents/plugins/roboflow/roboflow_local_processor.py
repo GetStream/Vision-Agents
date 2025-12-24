@@ -160,10 +160,10 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher):
 
     async def process_video(
         self,
-        incoming_track: aiortc.VideoStreamTrack,
+        track: aiortc.VideoStreamTrack,
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
-    ):
+    ) -> None:
         """
         Process incoming video track with Roboflow detection.
         """
@@ -179,7 +179,7 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher):
             shared_forwarder
             if shared_forwarder
             else VideoForwarder(
-                incoming_track,
+                track,
                 max_buffer=self.fps,  # 1 second
                 fps=self.fps,
                 name="roboflow_forwarder",
@@ -280,7 +280,6 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher):
             annotated_frame = av.VideoFrame.from_ndarray(annotated_image)
             annotated_frame.pts = frame.pts
             annotated_frame.time_base = frame.time_base
-            # Send the annotated frame to the output video track
             await self._video_track.add_frame(annotated_frame)
         else:
             # Forward original frame
