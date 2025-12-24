@@ -971,6 +971,15 @@ class Agent:
         # assign the tracks that we last used so we can notify of changes...
         self._active_source_track_id = source_track.id
 
+        source_type = (
+            "SCREEN_SHARE"
+            if source_track.type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            else "VIDEO"
+        )
+        logger.info(
+            f"📺 Source track selected: {source_type} (priority={source_track.priority})"
+        )
+
         await self._track_to_video_processors(source_track)
 
         processed_track = sorted(
@@ -985,7 +994,6 @@ class Agent:
 
         # If Realtime provider supports video, switch to this new track
         if _is_video_llm(self.llm):
-            logger.info("watch video called with track %s", processed_track)
             await self.llm.watch_video_track(
                 processed_track.track, shared_forwarder=processed_track.forwarder
             )
@@ -999,6 +1007,14 @@ class Agent:
             TrackType.TRACK_TYPE_SCREEN_SHARE,
         ):
             return
+
+        track_type_name = (
+            "SCREEN_SHARE"
+            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            else "VIDEO"
+        )
+        user_id = participant.user_id if participant else "unknown"
+        self.logger.info(f"📺 Track added: {track_type_name} from {user_id}")
 
         if self._video_track_override_path is not None:
             # If local video track is set, we override all other video tracks with it.
