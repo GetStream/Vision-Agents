@@ -42,6 +42,8 @@ from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_png_bytes
 
+from .file_search import FileSearchStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,11 +124,26 @@ class GeminiRealtime(realtime.Realtime):
         http_options: Optional[HttpOptions] = None,
         client: Optional[genai.Client] = None,
         api_key: Optional[str] = None,
+        file_search_store: Optional[FileSearchStore] = None,
         **kwargs,
     ) -> None:
+        """
+        Initialize Gemini Realtime.
+
+        Args:
+            model: Model to use for realtime.
+            config: Optional LiveConnectConfigDict to customize behavior.
+            http_options: Optional HTTP options.
+            client: Optional Gemini client.
+            api_key: Optional API key.
+            file_search_store: Optional FileSearchStore for RAG functionality.
+                See: https://ai.google.dev/gemini-api/docs/file-search
+            **kwargs: Additional arguments passed to parent class.
+        """
         super().__init__(**kwargs)
         self.model = model
         self.connected: bool = False
+        self.file_search_store = file_search_store
 
         http_options = http_options or HttpOptions(api_version="v1alpha")
 
@@ -311,7 +328,7 @@ class GeminiRealtime(realtime.Realtime):
     def get_config(self) -> LiveConnectConfigDict:
         """
         Get Gemini Live config with additional runtime parameters like instructions, tools config,
-        and session resumption id.
+        file search, and session resumption id.
         """
         config = self._base_config.copy()
 
@@ -322,16 +339,28 @@ class GeminiRealtime(realtime.Realtime):
         # set the instructions
         config["system_instruction"] = self._instructions
 
-        # Add tools if available - Gemini Live uses similar format to regular Gemini
+        # Initialize tools list
+        tools: list[dict] = []
+
+        # Add function calling tools if available
         tools_spec = self.get_available_functions()
         if tools_spec:
             conv_tools = self._convert_tools_to_provider_format(tools_spec)
-            # Add tools to the live config
-            # Note: The exact key name may need adjustment based on Gemini Live API documentation
-            config["tools"] = conv_tools  # type: ignore[typeddict-item]
-            logger.info(f"Adding {len(tools_spec)} tools to Gemini Live config")
+            tools.extend(conv_tools)
+            logger.info(
+                f"Adding {len(tools_spec)} function tools to Gemini Live config"
+            )
+
+        # Add file search tool if configured
+        if self.file_search_store and self.file_search_store.is_created:
+            file_search_config = self.file_search_store.get_tool_config()
+            tools.append(file_search_config)
+            logger.info("Adding file search tool to Gemini Live config")
+
+        if tools:
+            config["tools"] = tools  # type: ignore[typeddict-item]
         else:
-            logger.debug("No tools available - function calling will not work")
+            logger.debug("No tools available")
 
         return config
 
