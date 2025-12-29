@@ -225,7 +225,7 @@ class SmartTurnDetection(
         - Or do we share historical + length of new segment to 8 seconds. (this seems better)
         """
         if self._vad_session is None:
-            raise ValueError("VAD model is not initialized")
+            raise ValueError("VAD model is not initialized, call warmup() first")
 
         # ensure audio is in the right format
         audio_data = audio_data.resample(16000).to_float32()
@@ -371,10 +371,10 @@ class SmartTurnDetection(
         """
 
         if self._whisper_extractor is None:
-            raise ValueError("Whisper extractor not initialized")
+            raise ValueError("Whisper extractor not initialized, call warmup() first")
 
         if self._smart_turn is None:
-            raise ValueError("Smart turn not initialized")
+            raise ValueError("Smart turn not initialized, call warmup() first")
 
         # Truncate to 8 seconds (keeping the end) or pad to 8 seconds
         audio_array = pcm.tail(8.0)

@@ -234,7 +234,7 @@ class VogentTurnDetection(
             conversation: Conversation history for context
         """
         if self._vad_session is None:
-            raise ValueError("The VAD model is not initialized.")
+            raise ValueError("The VAD model is not initialized, call warmup() first")
 
         # Ensure audio is in the right format: 16kHz, float32
         audio_data = audio_data.resample(RATE).to_float32()
@@ -359,7 +359,7 @@ class VogentTurnDetection(
 
         def _transcribe():
             if self._whisper is None:
-                return ""
+                raise ValueError("Whisper model is not initialized, call warmup() first")
 
             # All CPU-intensive work runs in thread pool
             audio_array = pcm.resample(16000).to_float32().samples
@@ -395,7 +395,7 @@ class VogentTurnDetection(
 
         def _predict():
             if self._vogent is None:
-                raise ValueError("Vogent is not initialized")
+                raise ValueError("Vogent is not initialized, call warmup() first")
 
             # All CPU-intensive work runs in thread pool
             audio_array = pcm.resample(16000).to_float32().tail(8, False).samples

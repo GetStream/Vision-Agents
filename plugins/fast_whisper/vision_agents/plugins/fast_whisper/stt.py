@@ -110,7 +110,7 @@ class STT(stt.STT, Warmable[Optional[WhisperModel]]):
             return
 
         if self.whisper is None:
-            raise ValueError("Whisper model not loaded, call load() first")
+            raise ValueError("Whisper model not loaded, call warmup() first")
 
         # Check for empty audio
         if pcm_data.samples.size == 0:
@@ -227,7 +227,7 @@ class STT(stt.STT, Warmable[Optional[WhisperModel]]):
         self, audio_array: NDArray
     ) -> tuple[list[Segment], TranscriptionInfo]:
         if self.whisper is None:
-            raise ValueError("Whisper model not loaded, call load() first")
+            raise ValueError("Whisper model not loaded, call warmup() first")
 
         whisper = self.whisper  # Type narrowing for closure
 
