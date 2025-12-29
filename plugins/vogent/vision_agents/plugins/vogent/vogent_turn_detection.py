@@ -158,11 +158,10 @@ class VogentTurnDetection(
         """
         Start the Vogent turn detection process after joining the call.
         """
+        await super().start()
+
         # Start background processing task
         self._processing_task = asyncio.create_task(self._process_audio_loop())
-
-        # Call parent start method
-        await super().start()
 
     async def stop(self):
         """Stop turn detection and cleanup background task."""

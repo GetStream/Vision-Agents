@@ -71,10 +71,10 @@ class TurnDetector(ABC):
             conversation: Transcription/ chat history, sometimes useful for turn detection
         """
 
-    ...
-
     async def start(self) -> None:
         """Some turn detection systems want to run warmup etc here"""
+        if self.is_active:
+            raise ValueError(f"start() has already been called for {self}")
         self.is_active = True
 
     async def stop(self) -> None:

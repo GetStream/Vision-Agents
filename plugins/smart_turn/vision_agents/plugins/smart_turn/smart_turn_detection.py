@@ -154,11 +154,10 @@ class SmartTurnDetection(
         self._smart_turn = smart_turn
 
     async def start(self):
+        await super().start()
         # Start background processing task
         self._processing_task = asyncio.create_task(self._process_audio_loop())
 
-        # Call parent start method
-        await super().start()
 
     async def process_audio(
         self,
