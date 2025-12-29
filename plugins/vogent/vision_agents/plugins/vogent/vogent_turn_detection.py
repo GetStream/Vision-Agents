@@ -152,7 +152,7 @@ class VogentTurnDetection(
         self, resources: tuple[SileroVADSessionPool, WhisperModel, VogentDetector]
     ) -> None:
         vad_pool, self._whisper, self._vogent = resources
-        self._vad_session = vad_pool.session()
+        self._vad_session = vad_pool.session(self.vad_reset_interval_seconds)
 
     async def start(self):
         """

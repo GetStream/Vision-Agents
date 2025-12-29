@@ -149,7 +149,7 @@ class SmartTurnDetection(
         ],
     ) -> None:
         vad_pool, whisper_extractor, smart_turn = resource
-        self._vad_session = vad_pool.session()
+        self._vad_session = vad_pool.session(self.vad_reset_interval_seconds)
         self._whisper_extractor = whisper_extractor
         self._smart_turn = smart_turn
 
