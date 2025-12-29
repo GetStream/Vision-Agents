@@ -273,32 +273,38 @@ class SecurityCameraProcessor(
 
     def _check_for_picked_up_packages(self, current_time: float):
         """Check if any packages have disappeared (picked up).
-        
+
         A package is considered "picked up" if it hasn't been seen for 15 seconds
         but was detected within the last 5 minutes.
         """
         pickup_threshold = 15.0  # seconds without seeing = picked up
         max_age = 300.0  # only consider packages from last 5 minutes
-        
+
         packages_picked_up = []
-        
+
         for package_id, package in list(self._detected_packages.items()):
             time_since_seen = current_time - package.last_seen
             package_age = current_time - package.first_seen
-            
+
             # Package disappeared recently (not seen for 15s, but was active recently)
             if pickup_threshold < time_since_seen < max_age and package_age < max_age:
                 # Check if already marked as picked up
                 if not package_id.startswith("picked_"):
                     packages_picked_up.append(package)
-        
+
         for package in packages_picked_up:
             # Find who was present when the package disappeared
             picker = self._find_person_present_at(package.last_seen)
-            picker_name = picker.name if picker and picker.name else (picker.face_id[:8] if picker else "unknown person")
-            
-            logger.info(f"📦 Package {package.package_id[:8]} was picked up by {picker_name}")
-            
+            picker_name = (
+                picker.name
+                if picker and picker.name
+                else (picker.face_id[:8] if picker else "unknown person")
+            )
+
+            logger.info(
+                f"📦 Package {package.package_id[:8]} was picked up by {picker_name}"
+            )
+
             # Log activity
             self._log_activity(
                 event_type="package_picked_up",
@@ -310,26 +316,26 @@ class SecurityCameraProcessor(
                     "picker_is_known": picker.name is not None if picker else False,
                 },
             )
-            
+
             # Remove the package from tracking
             del self._detected_packages[package.package_id]
 
     def _find_person_present_at(self, timestamp: float) -> Optional[FaceDetection]:
         """Find who was present around a given timestamp.
-        
+
         Returns the person who was most recently seen around that time.
         """
         window = 10.0  # Look within 10 seconds of the timestamp
-        
+
         candidates = []
         for face in self._detected_faces.values():
             # Check if person was seen around that time
             if abs(face.last_seen - timestamp) < window:
                 candidates.append(face)
-        
+
         if not candidates:
             return None
-        
+
         # Return the most recently seen person
         return max(candidates, key=lambda f: f.last_seen)
 
@@ -547,7 +553,8 @@ class SecurityCameraProcessor(
                         is_new=False,
                         detection_count=face_detection.detection_count,
                         first_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(face_detection.first_seen)
+                            "%Y-%m-%d %H:%M:%S",
+                            time.localtime(face_detection.first_seen),
                         ),
                         last_seen=time.strftime(
                             "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
@@ -755,7 +762,8 @@ class SecurityCameraProcessor(
                         detection_count=package_detection.detection_count,
                         confidence=package_detection.confidence,
                         first_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(package_detection.first_seen)
+                            "%Y-%m-%d %H:%M:%S",
+                            time.localtime(package_detection.first_seen),
                         ),
                         last_seen=time.strftime(
                             "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
@@ -1260,9 +1268,7 @@ class SecurityCameraProcessor(
             }
 
         # Get the most recently seen face
-        most_recent_face = max(
-            self._detected_faces.values(), key=lambda f: f.last_seen
-        )
+        most_recent_face = max(self._detected_faces.values(), key=lambda f: f.last_seen)
 
         # Register the face encoding
         self.register_known_face(name, most_recent_face.face_encoding)

@@ -60,7 +60,9 @@ async def create_agent(**kwargs) -> Agent:
     @llm.register_function(
         description="Get the number of unique visitors detected in the last 30 minutes. Always pass include_details=false for a quick count."
     )
-    async def get_visitor_count(include_details: Optional[bool] = False) -> Dict[str, Any]:
+    async def get_visitor_count(
+        include_details: Optional[bool] = False,
+    ) -> Dict[str, Any]:
         count = security_processor.get_visitor_count()
         state = security_processor.state()
         return {
@@ -74,7 +76,9 @@ async def create_agent(**kwargs) -> Agent:
     @llm.register_function(
         description="Get detailed information about all visitors including when they were first and last seen. Always pass include_timestamps=true."
     )
-    async def get_visitor_details(include_timestamps: Optional[bool] = True) -> Dict[str, Any]:
+    async def get_visitor_details(
+        include_timestamps: Optional[bool] = True,
+    ) -> Dict[str, Any]:
         details = security_processor.get_visitor_details()
         return {
             "visitors": details,
@@ -85,7 +89,9 @@ async def create_agent(**kwargs) -> Agent:
     @llm.register_function(
         description="Get the number of unique packages detected in the last 30 minutes. Always pass include_details=false for a quick count."
     )
-    async def get_package_count(include_details: Optional[bool] = False) -> Dict[str, Any]:
+    async def get_package_count(
+        include_details: Optional[bool] = False,
+    ) -> Dict[str, Any]:
         count = security_processor.get_package_count()
         state = security_processor.state()
         return {
@@ -99,7 +105,9 @@ async def create_agent(**kwargs) -> Agent:
     @llm.register_function(
         description="Get detailed information about all packages including when they were first and last seen, and confidence scores. Always pass include_confidence=true."
     )
-    async def get_package_details(include_confidence: Optional[bool] = True) -> Dict[str, Any]:
+    async def get_package_details(
+        include_confidence: Optional[bool] = True,
+    ) -> Dict[str, Any]:
         details = security_processor.get_package_details()
         return {
             "packages": details,
@@ -129,7 +137,9 @@ async def create_agent(**kwargs) -> Agent:
     @llm.register_function(
         description="Get a list of all registered/known faces that can be recognized by name. Pass include_timestamps=true to see when each face was registered."
     )
-    async def get_known_faces(include_timestamps: Optional[bool] = True) -> Dict[str, Any]:
+    async def get_known_faces(
+        include_timestamps: Optional[bool] = True,
+    ) -> Dict[str, Any]:
         faces = security_processor.get_known_faces()
         return {
             "known_faces": faces,
@@ -142,14 +152,20 @@ async def create_agent(**kwargs) -> Agent:
         if event.is_new:
             agent.logger.info(f"🚨 NEW PERSON ALERT: {event.face_id} detected!")
         else:
-            agent.logger.info(f"👤 Returning visitor: {event.face_id} (seen {event.detection_count}x)")
+            agent.logger.info(
+                f"👤 Returning visitor: {event.face_id} (seen {event.detection_count}x)"
+            )
 
     @agent.events.subscribe
     async def on_package_detected(event: PackageDetectedEvent):
         if event.is_new:
-            agent.logger.info(f"📦 NEW PACKAGE ALERT: {event.package_id} detected! (confidence: {event.confidence:.2f})")
+            agent.logger.info(
+                f"📦 NEW PACKAGE ALERT: {event.package_id} detected! (confidence: {event.confidence:.2f})"
+            )
         else:
-            agent.logger.info(f"📦 Package still there: {event.package_id} (seen {event.detection_count}x)")
+            agent.logger.info(
+                f"📦 Package still there: {event.package_id} (seen {event.detection_count}x)"
+            )
 
     return agent
 
