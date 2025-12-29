@@ -57,7 +57,7 @@ class TestMoondreamLocalProcessor:
     async def test_model_loads_correctly(
         self, moondream_processor: LocalDetectionProcessor
     ):
-        """Test that start() successfully loads the model."""
+        """Test that load() successfully loads the model."""
         # Model should be None initially
         assert moondream_processor.model is None
 

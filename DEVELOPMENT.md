@@ -497,6 +497,61 @@ You can open the generated HTML file in a browser to view the performance profil
 - When using frame.to_ndarray(format="rgb24") specify the format. Typically you want rgb24 when connecting/sending to Yolo etc
 - QueuedVideoTrack is a writable/queued video track implementation which is useful when forwarding video
 
+
+### Loading Resources in Plugins (aka "warmup")
+Some plugins require to download and use external resources like models to work.  
+
+For example:
+
+- `TurnDetection` plugins using a Silero VAD model to detect voice activity in the audio track.
+- Video processors using `YOLO` models
+
+In order to standardise how these resources are loaded and to make it performant, the framework provides a special ABC
+`vision_agents.core.warmup.Warmable`.  
+
+To use it, simply subclass it and define the required methods.  
+Note that `Warmable` supports generics to leverage type checking.
+
+**Example:**
+
+```python
+from typing import Optional
+
+from faster_whisper import WhisperModel
+
+from vision_agents.core.stt import STT
+from vision_agents.core.warmup import Warmable
+
+
+# Add `Warmable[WhisperModel]` to the list of base classes.
+# Here `WhisperModel` is the type returned by `on_warmup()` and cached by the global warmup cache.
+class FasterWhisperSTT(STT, Warmable[WhisperModel]):
+    """
+    Faster-Whisper Speech-to-Text implementation.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._whisper_model: Optional[WhisperModel] = None
+
+    async def on_warmup(self) -> WhisperModel:
+        # Initialize the model here and return it
+        # This method will be called once when the application starts.
+        # The `whisper` object will be shared between all instances of `FasterWhisperSTT` in this app.
+        whisper = WhisperModel("tiny")
+        return whisper
+
+    def on_warmed_up(self, whisper: WhisperModel) -> None:
+        # Receive the warmed up instance and store it to the object.
+        # This method will be called every time a new agent is initialized.
+        # The warmup process is now complete.
+        self._whisper_model = whisper
+    
+    ...
+```
+
+
+
 ## Onboarding Plan for new contributors
 
 **Audio Formats**

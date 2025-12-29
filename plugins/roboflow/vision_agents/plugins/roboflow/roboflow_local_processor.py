@@ -23,6 +23,7 @@ from vision_agents.core.events import EventManager
 from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
+from vision_agents.core.warmup import Warmable
 
 from .events import DetectedObject, DetectionCompletedEvent
 from .utils import annotate_image
@@ -49,7 +50,7 @@ _RFDETR_MODELS: dict[str, Type[RFDETR]] = {
 }
 
 
-class RoboflowLocalDetectionProcessor(VideoProcessorPublisher):
+class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR]):
     """
     A VideoProcessor for real-time object detection with Roboflow's RF-DETR models.
     This processor downloads pre-trained models from Roboflow and runs them locally.
@@ -208,10 +209,12 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher):
             raise ValueError("Agent is not attached to the processor yet")
         return self._events
 
-    async def warmup(self):
-        if self._model is None:
-            loop = asyncio.get_running_loop()
-            self._model = await loop.run_in_executor(self._executor, self._load_model)
+    async def on_warmup(self) -> RFDETR:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, self._load_model)
+
+    def on_warmed_up(self, resource: RFDETR) -> None:
+        self._model = resource
 
     def attach_agent(self, agent: Agent):
         self._events = agent.events

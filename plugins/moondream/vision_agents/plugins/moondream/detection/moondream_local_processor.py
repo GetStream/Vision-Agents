@@ -14,6 +14,7 @@ from transformers import AutoModelForCausalLM
 from vision_agents.core.agents.agent_types import AgentOptions, default_agent_options
 from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.warmup import Warmable
 from vision_agents.plugins.moondream.detection.moondream_video_track import (
     MoondreamVideoTrack,
 )
@@ -26,7 +27,7 @@ from vision_agents.plugins.moondream.moondream_utils import (
 logger = logging.getLogger(__name__)
 
 
-class LocalDetectionProcessor(VideoProcessorPublisher):
+class LocalDetectionProcessor(VideoProcessorPublisher, Warmable):
     """Performs real-time object detection on video streams using local Moondream 3 model.
 
     This processor downloads and runs the moondream3-preview model locally from Hugging Face,
@@ -118,21 +119,20 @@ class LocalDetectionProcessor(VideoProcessorPublisher):
         """Return the device type as a string (e.g., 'cuda', 'cpu')."""
         return str(self._device)
 
-    async def warmup(self):
-        # Prepare model asynchronously
-        await self._prepare_moondream()
-
-    async def _prepare_moondream(self):
-        """Load the Moondream model from Hugging Face."""
+    async def on_warmup(self):
         logger.info(f"Loading Moondream model: {self.model_name}")
         logger.info(f"Device: {self._device}")
 
         # Load model in thread pool to avoid blocking event loop
         # Transformers handles downloading and caching automatically via Hugging Face Hub
-        self.model = await asyncio.to_thread(  # type: ignore[func-returns-value]
+        model = await asyncio.to_thread(  # type: ignore[func-returns-value]
             lambda: self._load_model_sync()
         )
         logger.info("✅ Moondream model loaded")
+        return model
+
+    def on_warmed_up(self, model) -> None:
+        self.model = model
 
     def _load_model_sync(self):
         """Synchronous model loading function run in thread pool."""
@@ -214,7 +214,7 @@ class LocalDetectionProcessor(VideoProcessorPublisher):
 
         # Ensure model is loaded
         if self.model is None:
-            await self._prepare_moondream()
+            raise ValueError("The Moondream model is not loaded")
 
         if shared_forwarder is not None:
             self._video_forwarder = shared_forwarder

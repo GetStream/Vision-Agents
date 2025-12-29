@@ -1,25 +1,24 @@
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Any, Optional
 
-from getstream.video.rtc.track_util import PcmData, AudioFormat
 import numpy as np
 import onnxruntime as ort
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from transformers import WhisperFeatureExtractor
-
 from vision_agents.core.agents import Conversation
-from vision_agents.core.agents.agent_types import default_agent_options, AgentOptions
+from vision_agents.core.agents.agent_types import AgentOptions, default_agent_options
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
 )
 from vision_agents.core.utils.utils import ensure_model
-from vision_agents.core.vad.silero import prepare_silero_vad
-
-import logging
+from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
+from vision_agents.core.warmup import Warmable
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,12 @@ class Silence:
     speaking_chunks: int = 0
 
 
-class SmartTurnDetection(TurnDetector):
+class SmartTurnDetection(
+    TurnDetector,
+    Warmable[
+        tuple[SileroVADSessionPool, WhisperFeatureExtractor, ort.InferenceSession]
+    ],
+):
     """
     Daily's pipecat project did a really nice job with turn detection
     This package implements smart turn v3 as documented here
@@ -114,33 +118,45 @@ class SmartTurnDetection(TurnDetector):
         else:
             self.options = options
 
-    async def start(self):
+        self._vad_session: SileroVADSession | None = None
+        self._whisper_extractor: WhisperFeatureExtractor | None = None
+        self._smart_turn: ort.InferenceSession | None = None
+
+    async def on_warmup(
+        self,
+    ) -> tuple[SileroVADSessionPool, WhisperFeatureExtractor, ort.InferenceSession]:
         # Ensure model directory exists (use asyncio.to_thread for blocking I/O)
         await asyncio.to_thread(os.makedirs, self.options.model_dir, exist_ok=True)
 
-        # Prepare both models in parallel
-        await asyncio.gather(
-            self._prepare_smart_turn(),
-            self._prepare_silero_vad(),
-        )
+        # Load VAD model
+        vad_pool = await SileroVADSessionPool.load(self.options.model_dir)
 
-        # Start background processing task
-        self._processing_task = asyncio.create_task(self._process_audio_loop())
+        smart_turn_path = os.path.join(self.options.model_dir, SMART_TURN_ONNX_FILENAME)
+        await ensure_model(smart_turn_path, SMART_TURN_ONNX_URL)
 
-        # Call parent start method
-        await super().start()
-
-    async def _prepare_smart_turn(self):
-        path = os.path.join(self.options.model_dir, SMART_TURN_ONNX_FILENAME)
-        await ensure_model(path, SMART_TURN_ONNX_URL)
-        self._whisper_extractor = await asyncio.to_thread(
+        # Init feature extractor in a thread
+        whisper_extractor = await asyncio.to_thread(
             WhisperFeatureExtractor, chunk_length=8
         )
         # Load ONNX session in thread pool to avoid blocking event loop
-        self.smart_turn = await asyncio.to_thread(self._build_smart_turn_session)
+        smart_turn = await asyncio.to_thread(self._build_smart_turn_session)
+        return vad_pool, whisper_extractor, smart_turn
 
-    async def _prepare_silero_vad(self):
-        self.vad = await prepare_silero_vad(self.options.model_dir)
+    def on_warmed_up(
+        self,
+        resource: tuple[
+            SileroVADSessionPool, WhisperFeatureExtractor, ort.InferenceSession
+        ],
+    ) -> None:
+        vad_pool, whisper_extractor, smart_turn = resource
+        self._vad_session = vad_pool.session(self.vad_reset_interval_seconds)
+        self._whisper_extractor = whisper_extractor
+        self._smart_turn = smart_turn
+
+    async def start(self):
+        await super().start()
+        # Start background processing task
+        self._processing_task = asyncio.create_task(self._process_audio_loop())
 
     async def process_audio(
         self,
@@ -206,6 +222,8 @@ class SmartTurnDetection(TurnDetector):
         - Do we share silence + the end (like it's shown in example record and predict?)
         - Or do we share historical + length of new segment to 8 seconds. (this seems better)
         """
+        if self._vad_session is None:
+            raise ValueError("VAD model is not initialized, call warmup() first")
 
         # ensure audio is in the right format
         audio_data = audio_data.resample(16000).to_float32()
@@ -227,7 +245,9 @@ class SmartTurnDetection(TurnDetector):
         # detect speech in small 512 chunks, gather to larger audio segments with speech
         for chunk in audio_chunks[:-1]:
             # predict if this segment has speech (run in thread to avoid blocking)
-            speech_probability = await asyncio.to_thread(self.vad.predict_speech, chunk)
+            speech_probability = await asyncio.to_thread(
+                self._vad_session.predict_speech, chunk
+            )
             is_speech = speech_probability > self.speech_probability_threshold
 
             if self._active_segment is not None:
@@ -347,6 +367,13 @@ class SmartTurnDetection(TurnDetector):
         Returns:
             - probability: Probability of completion (sigmoid output)
         """
+
+        if self._whisper_extractor is None:
+            raise ValueError("Whisper extractor not initialized, call warmup() first")
+
+        if self._smart_turn is None:
+            raise ValueError("Smart turn not initialized, call warmup() first")
+
         # Truncate to 8 seconds (keeping the end) or pad to 8 seconds
         audio_array = pcm.tail(8.0)
 
@@ -366,7 +393,7 @@ class SmartTurnDetection(TurnDetector):
         input_features = np.expand_dims(input_features, axis=0)  # Add batch dimension
 
         # Run ONNX inference
-        outputs = self.smart_turn.run(None, {"input_features": input_features})
+        outputs = self._smart_turn.run(None, {"input_features": input_features})
 
         # Extract probability (ONNX model returns sigmoid probabilities)
         probability = outputs[0][0].item()

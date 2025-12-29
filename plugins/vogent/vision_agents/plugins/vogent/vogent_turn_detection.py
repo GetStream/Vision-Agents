@@ -1,22 +1,21 @@
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Any, Literal, Optional
 
-from getstream.video.rtc.track_util import PcmData, AudioFormat
-from vogent_turn import TurnDetector as VogentDetector
-
+from faster_whisper import WhisperModel
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.agents import Conversation
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import (
     TurnDetector,
     TurnStartedEvent,
 )
-from vision_agents.core.vad.silero import prepare_silero_vad, SileroVAD
-from vision_agents.plugins import fast_whisper
-
-import logging
+from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
+from vision_agents.core.warmup import Warmable
+from vogent_turn import TurnDetector as VogentDetector
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,9 @@ class Silence:
     speaking_chunks: int = 0
 
 
-class VogentTurnDetection(TurnDetector):
+class VogentTurnDetection(
+    TurnDetector, Warmable[tuple[SileroVADSessionPool, WhisperModel, VogentDetector]]
+):
     """
     Vogent Turn Detection combines audio intonation and text context for accurate turn detection.
 
@@ -49,7 +50,9 @@ class VogentTurnDetection(TurnDetector):
 
     def __init__(
         self,
-        whisper_model_size: str = "tiny",
+        whisper_model_size: Literal[
+            "tiny", "base", "small", "medium", "large"
+        ] = "tiny",
         vad_reset_interval_seconds: float = 5.0,
         speech_probability_threshold: float = 0.5,
         pre_speech_buffer_ms: int = 200,
@@ -99,50 +102,40 @@ class VogentTurnDetection(TurnDetector):
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown_event = asyncio.Event()
 
-        # Model instances (initialized in start())
-        self.vad: Optional[SileroVAD] = None
-        self.whisper_stt = fast_whisper.STT(
-            model_size=whisper_model_size,
-            device="cpu",
-            language="en",
-        )
-        self.whisper = None  # Will be set after warmup
-        self.vogent = None
+        # Whisper model parameters
+        self._whisper_model_size = whisper_model_size
+        self._whisper_device = "cpu"
+        self._whisper_language = "en"
+        self._whisper_compute_type = "int8"
 
-    async def start(self):
+        # Will be set after warmup()
+        self._whisper: WhisperModel | None = None
+        self._vogent: VogentDetector | None = None
+        self._vad_session: Optional[SileroVADSession] = None
+
+    async def on_warmup(
+        self,
+    ) -> tuple[SileroVADSessionPool, WhisperModel, VogentDetector]:
         """Initialize models and prepare for turn detection."""
-        # Ensure model directory exists
-        os.makedirs(self.model_dir, exist_ok=True)
+        # Ensure that model directory exists
+        await asyncio.to_thread(os.makedirs, self.model_dir, exist_ok=True)
 
-        # Prepare models in parallel
-        await asyncio.gather(
-            self._prepare_silero_vad(),
-            self._prepare_whisper(),
-            self._prepare_vogent(),
+        # Load Silero VAD model
+        vad_pool = await SileroVADSessionPool.load(self.model_dir)
+
+        logger.info(f"Loading faster-whisper model: {self._whisper_model_size}")
+        whisper_model = await asyncio.to_thread(
+            lambda: WhisperModel(
+                self._whisper_model_size,
+                device=self._whisper_device,
+                compute_type=self._whisper_compute_type,
+            )
         )
+        logger.info("Faster-whisper model loaded")
 
-        # Start background processing task
-        self._processing_task = asyncio.create_task(self._process_audio_loop())
-
-        # Call parent start method
-        await super().start()
-
-    async def _prepare_silero_vad(self) -> None:
-        """Load Silero VAD model for speech detection."""
-        self.vad = await prepare_silero_vad(self.model_dir)
-
-    async def _prepare_whisper(self) -> None:
-        """Load faster-whisper model for transcription."""
-        # warmup() logs loading progress internally
-        await self.whisper_stt.warmup()
-        self.whisper = self.whisper_stt.whisper
-
-    async def _prepare_vogent(self) -> None:
-        """Load Vogent turn detection model."""
         logger.info("Loading Vogent turn detection model")
-        # Load vogent in thread pool to avoid blocking event loop
         # Note: compile_model=False to avoid torch.compile issues with edge cases
-        self.vogent = await asyncio.to_thread(  # type: ignore[func-returns-value]
+        vogent = await asyncio.to_thread(
             lambda: VogentDetector(
                 compile_model=True,
                 warmup=True,
@@ -152,6 +145,36 @@ class VogentTurnDetection(TurnDetector):
             )
         )
         logger.info("Vogent turn detection model loaded")
+
+        return vad_pool, whisper_model, vogent
+
+    def on_warmed_up(
+        self, resources: tuple[SileroVADSessionPool, WhisperModel, VogentDetector]
+    ) -> None:
+        vad_pool, self._whisper, self._vogent = resources
+        self._vad_session = vad_pool.session(self.vad_reset_interval_seconds)
+
+    async def start(self):
+        """
+        Start the Vogent turn detection process after joining the call.
+        """
+        await super().start()
+
+        # Start background processing task
+        self._processing_task = asyncio.create_task(self._process_audio_loop())
+
+    async def stop(self):
+        """Stop turn detection and cleanup background task."""
+        await super().stop()
+
+        if self._processing_task:
+            self._shutdown_event.set()
+            self._processing_task.cancel()
+            try:
+                await self._processing_task
+            except asyncio.CancelledError:
+                pass
+            self._processing_task = None
 
     async def process_audio(
         self,
@@ -209,6 +232,9 @@ class VogentTurnDetection(TurnDetector):
             participant: Participant that's speaking
             conversation: Conversation history for context
         """
+        if self._vad_session is None:
+            raise ValueError("The VAD model is not initialized, call warmup() first")
+
         # Ensure audio is in the right format: 16kHz, float32
         audio_data = audio_data.resample(RATE).to_float32()
         self._audio_buffer = self._audio_buffer.append(audio_data)
@@ -228,11 +254,10 @@ class VogentTurnDetection(TurnDetector):
         # Detect speech in small 512 chunks, gather to larger audio segments with speech
         for chunk in audio_chunks[:-1]:
             # Predict if this segment has speech
-            if self.vad is None:
-                continue
-
             # Run VAD in thread pool to avoid blocking event loop
-            speech_probability = await asyncio.to_thread(self.vad.predict_speech, chunk)
+            speech_probability = await asyncio.to_thread(
+                self._vad_session.predict_speech, chunk
+            )
             is_speech = speech_probability > self.speech_probability_threshold
 
             if self._active_segment is not None:
@@ -320,21 +345,6 @@ class VogentTurnDetection(TurnDetector):
         # Give a small buffer for the processing to complete
         await asyncio.sleep(0.1)
 
-    async def stop(self):
-        """Stop turn detection and cleanup background task."""
-        await super().stop()
-
-        if self._processing_task:
-            self._shutdown_event.set()
-            self._processing_task.cancel()
-            try:
-                await self._processing_task
-            except asyncio.CancelledError:
-                pass
-            self._processing_task = None
-        if self.whisper_stt:
-            await self.whisper_stt.close()
-
     async def _transcribe_segment(self, pcm: PcmData) -> str:
         """
         Transcribe audio segment using faster-whisper.
@@ -345,15 +355,18 @@ class VogentTurnDetection(TurnDetector):
         Returns:
             Transcribed text
         """
-        if self.whisper is None:
-            return ""
 
         def _transcribe():
+            if self._whisper is None:
+                raise ValueError(
+                    "Whisper model is not initialized, call warmup() first"
+                )
+
             # All CPU-intensive work runs in thread pool
             audio_array = pcm.resample(16000).to_float32().samples
-            segments, _ = self.whisper.transcribe(
+            segments, _ = self._whisper.transcribe(
                 audio_array,
-                language="en",
+                language=self._whisper_language,
                 beam_size=1,
                 vad_filter=False,  # We already did VAD
             )
@@ -380,13 +393,14 @@ class VogentTurnDetection(TurnDetector):
         Returns:
             Tuple of (is_complete, confidence) where confidence is the probability
         """
-        if self.vogent is None:
-            return False, 0.0
 
         def _predict():
+            if self._vogent is None:
+                raise ValueError("Vogent is not initialized, call warmup() first")
+
             # All CPU-intensive work runs in thread pool
             audio_array = pcm.resample(16000).to_float32().tail(8, False).samples
-            return self.vogent.predict(
+            return self._vogent.predict(
                 audio_array,
                 prev_line=prev_line,
                 curr_line=curr_line,

@@ -1,34 +1,33 @@
 import asyncio
 import logging
 import os
-from typing import Optional, List, Literal
 from concurrent.futures import ThreadPoolExecutor
+from typing import List, Literal, Optional
 
 import aiortc
 import av
 import torch
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from PIL import Image
 from transformers import AutoModelForCausalLM
-
 from vision_agents.core import llm
 from vision_agents.core.agents.agent_types import AgentOptions, default_agent_options
-from vision_agents.core.stt.events import STTTranscriptEvent
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.processors import Processor
+from vision_agents.core.stt.events import STTTranscriptEvent
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-
+from vision_agents.core.warmup import Warmable
 from vision_agents.plugins.moondream.moondream_utils import handle_device
 
 logger = logging.getLogger(__name__)
 
 
-class LocalVLM(llm.VideoLLM):
+class LocalVLM(llm.VideoLLM, Warmable):
     """Local VLM using Moondream model for captioning or visual queries.
 
     This VLM downloads and runs the moondream3-preview model locally from Hugging Face,
@@ -97,20 +96,21 @@ class LocalVLM(llm.VideoLLM):
         logger.info(f"🔧 Device: {self.device}")
         logger.info(f"📝 Mode: {self.mode}")
 
-    async def warmup(self) -> None:
-        """Initialize and load the model."""
-        if self.model is None:
-            await self._prepare_moondream()
-
-    async def _prepare_moondream(self):
-        """Load the Moondream model from Hugging Face."""
+    async def on_warmup(self):
+        """
+        Load the Moondream model from Hugging Face.
+        """
         logger.info(f"Loading Moondream model: {self.model_name}")
         logger.info(f"Device: {self.device}")
 
-        self.model = await asyncio.to_thread(  # type: ignore[func-returns-value]
+        model = await asyncio.to_thread(  # type: ignore[func-returns-value]
             lambda: self._load_model_sync()
         )
         logger.info("✅ Moondream model loaded")
+        return model
+
+    def on_warmed_up(self, model) -> None:
+        self.model = model
 
     def _load_model_sync(self):
         """Synchronous model loading function run in thread pool."""
@@ -186,7 +186,7 @@ class LocalVLM(llm.VideoLLM):
             await self._stop_watching_video_track()
 
         if self.model is None:
-            await self._prepare_moondream()
+            raise ValueError("The model is not loaded yet")
 
         if shared_forwarder is not None:
             self._video_forwarder = shared_forwarder

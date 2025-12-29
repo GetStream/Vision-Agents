@@ -1,20 +1,19 @@
 import numpy as np
 import pytest
-from getstream.video.rtc import PcmData, AudioFormat
-
-from vision_agents.core.vad.silero import prepare_silero_vad, SILERO_CHUNK
-from conftest import skip_blockbuster
+from getstream.video.rtc import AudioFormat, PcmData
+from vision_agents.core.vad.silero import SILERO_CHUNK, SileroVADSessionPool
 
 
 @pytest.mark.integration
-@skip_blockbuster
+@pytest.mark.skip_blockbuster
 class TestSileroVAD:
     """Integration tests for SileroVAD."""
 
     async def test_silence_not_detected_as_speech(self, tmp_path):
         """Test that silence returns low speech probability."""
         tmpdir = str(tmp_path)
-        vad = await prepare_silero_vad(tmpdir)
+        vad_pool = await SileroVADSessionPool.load(tmpdir)
+        vad = vad_pool.session()
 
         # Create silence (all zeros)
         samples = np.zeros(SILERO_CHUNK * 2, dtype=np.float32)
@@ -30,7 +29,8 @@ class TestSileroVAD:
     async def test_mia_audio_detected_as_speech(self, tmp_path, mia_audio_16khz):
         """Test that real speech audio returns high speech probability."""
         tmpdir = str(tmp_path)
-        vad = await prepare_silero_vad(tmpdir)
+        vad_pool = await SileroVADSessionPool.load(tmpdir)
+        vad = vad_pool.session()
 
         score = vad.predict_speech(mia_audio_16khz)
 

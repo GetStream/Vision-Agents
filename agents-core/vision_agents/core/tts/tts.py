@@ -70,16 +70,6 @@ class TTS(abc.ABC):
         self._resampler_input_rate: Optional[int] = None
         self._resampler_input_channels: Optional[int] = None
 
-    async def warmup(self) -> None:
-        """
-        Warm up the TTS service.
-
-        This method can be overridden by implementations to perform
-        model loading, connection establishment, or other initialization
-        that should happen before the first synthesis request.
-        """
-        pass
-
     def set_output_format(
         self,
         sample_rate: int,

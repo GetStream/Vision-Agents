@@ -101,8 +101,11 @@ def cli(launcher: "AgentLauncher") -> None:
             logger.info("🚀 Launching agent...")
 
             try:
-                # Launch agent with warmup
-                agent = await launcher.launch(call_type=call_type, call_id=call_id)
+                # Warmup the agent's dependencies
+                await launcher.warmup()
+
+                # Create the agent
+                agent = await launcher.launch()
                 if video_track_override:
                     agent.set_video_track_override_path(video_track_override)
 

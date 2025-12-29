@@ -20,7 +20,7 @@ class TestBedrockRealtime:
     """Integration tests for AWS Bedrock Realtime connect flow"""
 
     @pytest.fixture
-    async def realtime(self):
+    async def realtime(self, tmp_path):
         """Create and manage Realtime connection lifecycle"""
         # Using AWS Nova Sonic model for testing
         realtime = Realtime(
@@ -28,7 +28,7 @@ class TestBedrockRealtime:
             region_name="us-east-1",
         )
 
-        realtime.options = AgentOptions(model_dir="/tmp")
+        realtime.options = AgentOptions(model_dir=tmp_path.as_posix())
         await realtime.warmup()
         realtime.set_instructions(
             Instructions("you're a kind assistant, always be friendly please.")
@@ -146,7 +146,7 @@ class TestBedrockRealtime:
 
 class TestNova2Realtime:
     @pytest.fixture
-    async def realtime(self):
+    async def realtime(self, tmp_path):
         """Create and manage Realtime connection lifecycle"""
         # Using AWS Nova Sonic model for testing
         realtime = Realtime(
@@ -154,6 +154,8 @@ class TestNova2Realtime:
             region_name="us-east-1",
         )
 
+        realtime.options = AgentOptions(model_dir=tmp_path.as_posix())
+        await realtime.warmup()
         realtime.set_instructions("you're a kind assistant, always be friendly please.")
         try:
             yield realtime

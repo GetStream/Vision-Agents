@@ -1,8 +1,9 @@
-"""Agent launcher with warmup support."""
-
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional, Union, cast
+from typing import TYPE_CHECKING, Awaitable, Callable
+
+from vision_agents.core.utils.utils import await_or_run
+from vision_agents.core.warmup import WarmupCache, Warmable
 
 if TYPE_CHECKING:
     from .agents import Agent
@@ -20,8 +21,8 @@ class AgentLauncher:
 
     def __init__(
         self,
-        create_agent: Callable[..., Union["Agent", Awaitable["Agent"]]],
-        join_call: Optional[Callable[..., Union[None, Awaitable[None]]]] = None,
+        create_agent: Callable[..., "Agent" | Awaitable["Agent"]],
+        join_call: Callable[..., None | Awaitable[None]] | None = None,
     ):
         """
         Initialize the agent launcher.
@@ -32,92 +33,76 @@ class AgentLauncher:
         """
         self.create_agent = create_agent
         self.join_call = join_call
-        self._agent: Optional["Agent"] = None
-        self._warmed_up = False
         self._warmup_lock = asyncio.Lock()
+        self._warmup_cache = WarmupCache()
 
-    async def warmup(self, **kwargs) -> None:
+    async def warmup(self) -> None:
         """
         Warm up all agent components.
 
-        This method creates the agent and calls warmup on LLM, TTS, STT,
-        and turn detection components if they exist. It ensures warmup is
-        only called once.
-
-        Args:
-            **kwargs: Additional keyword arguments to pass to create_agent
+        This method creates the agent and calls warmup() on LLM, TTS, STT,
+        and turn detection components if they exist.
         """
         async with self._warmup_lock:
-            if self._warmed_up:
-                logger.debug("Agent already warmed up, skipping")
-                return
-
             logger.info("Creating agent...")
 
-            # Create the agent
-            result = self.create_agent(**kwargs)
-            if asyncio.iscoroutine(result):
-                agent: "Agent" = await result
-            else:
-                agent = cast("Agent", result)
-
-            self._agent = agent
-
+            # Create a dry-run Agent instance and warmup its components for the first time.
+            agent: "Agent" = await await_or_run(self.create_agent)
             logger.info("Warming up agent components...")
+            await self._warmup_agent(agent)
 
-            # Warmup tasks to run in parallel
-            warmup_tasks = []
-
-            # Warmup LLM (including Realtime)
-            if agent.llm and hasattr(agent.llm, "warmup"):
-                logger.debug("Warming up LLM: %s", agent.llm.__class__.__name__)
-                warmup_tasks.append(agent.llm.warmup())
-
-            # Warmup TTS
-            if agent.tts and hasattr(agent.tts, "warmup"):
-                logger.debug("Warming up TTS: %s", agent.tts.__class__.__name__)
-                warmup_tasks.append(agent.tts.warmup())
-
-            # Warmup STT
-            if agent.stt and hasattr(agent.stt, "warmup"):
-                logger.debug("Warming up STT: %s", agent.stt.__class__.__name__)
-                warmup_tasks.append(agent.stt.warmup())
-
-            # Warmup turn detection
-            if agent.turn_detection and hasattr(agent.turn_detection, "warmup"):
-                logger.debug(
-                    "Warming up turn detection: %s",
-                    agent.turn_detection.__class__.__name__,
-                )
-                warmup_tasks.append(agent.turn_detection.warmup())
-
-            # Warmup processors
-            if agent.processors:
-                logger.debug("Warming up processors")
-                for processor in agent.processors:
-                    if hasattr(processor, "warmup"):
-                        logger.debug("Warming up processor: %s", processor.name)
-                        warmup_tasks.append(processor.warmup())
-
-            # Run all warmups in parallel
-            if warmup_tasks:
-                await asyncio.gather(*warmup_tasks)
-
-            self._warmed_up = True
             logger.info("Agent warmup completed")
 
     async def launch(self, **kwargs) -> "Agent":
         """
-        Launch the agent with warmup.
-
-        This ensures warmup is called before returning the agent.
+        Launch the agent.
 
         Args:
             **kwargs: Additional keyword arguments to pass to create_agent
 
         Returns:
-            The warmed-up agent instance
+            The Agent instance
         """
-        await self.warmup(**kwargs)
-        assert self._agent is not None, "Agent should be created during warmup"
-        return self._agent
+        agent: "Agent" = await await_or_run(self.create_agent, **kwargs)
+        await self._warmup_agent(agent)
+        return agent
+
+    async def _warmup_agent(self, agent: "Agent") -> None:
+        """
+        Go over the Agent's dependencies and trigger `.warmup()` on them.
+
+        It is safe to call `._warmup_agent()` multiple times.
+
+        Args:
+            agent: Agent to be warmed up
+
+        Returns:
+
+        """
+        # Warmup tasks to run in parallel
+        warmup_tasks = []
+
+        # Warmup LLM (including Realtime)
+        if agent.llm and isinstance(agent.llm, Warmable):
+            warmup_tasks.append(agent.llm.warmup(self._warmup_cache))
+
+        # Warmup TTS
+        if agent.tts and isinstance(agent.tts, Warmable):
+            warmup_tasks.append(agent.tts.warmup(self._warmup_cache))
+
+        # Warmup STT
+        if agent.stt and isinstance(agent.stt, Warmable):
+            warmup_tasks.append(agent.stt.warmup(self._warmup_cache))
+
+        # Warmup turn detection
+        if agent.turn_detection and isinstance(agent.turn_detection, Warmable):
+            warmup_tasks.append(agent.turn_detection.warmup(self._warmup_cache))
+
+        # Warmup processors
+        if agent.processors:
+            for processor in agent.processors:
+                if isinstance(processor, Warmable):
+                    warmup_tasks.append(processor.warmup(self._warmup_cache))
+
+        if warmup_tasks:
+            await asyncio.gather(*warmup_tasks)
