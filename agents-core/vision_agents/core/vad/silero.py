@@ -1,7 +1,7 @@
 import asyncio
 import os
 import time
-from typing import Self
+from typing_extensions import Self
 
 import numpy as np
 import onnxruntime as ort
