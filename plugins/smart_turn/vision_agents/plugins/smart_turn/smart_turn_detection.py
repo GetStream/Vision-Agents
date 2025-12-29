@@ -158,7 +158,6 @@ class SmartTurnDetection(
         # Start background processing task
         self._processing_task = asyncio.create_task(self._process_audio_loop())
 
-
     async def process_audio(
         self,
         audio_data: PcmData,
