@@ -205,9 +205,6 @@ class VideoFileTrack(VideoStreamTrack):
         loop = asyncio.get_running_loop()
         frame = await loop.run_in_executor(self._executor, self._next_frame)
 
-        # Ensure even dimensions for H.264 compatibility
-        frame = ensure_even_dimensions(frame)
-
         # Sleep between frames to simulate real-time playback
         await asyncio.sleep(self._frame_interval)
         return frame

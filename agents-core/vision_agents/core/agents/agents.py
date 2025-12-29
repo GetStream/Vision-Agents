@@ -950,6 +950,14 @@ class Agent:
     async def _on_track_removed(
         self, track_id: str, track_type: int, participant: Participant
     ):
+        track_type_name = (
+            "SCREEN_SHARE"
+            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            else "VIDEO"
+        )
+        user_id = participant.user_id if participant else "unknown"
+        self.logger.info(f"📺 Track removed: {track_type_name} from {user_id}")
+
         track = self._active_video_tracks.pop(track_id, None)
         if track is not None:
             await track.forwarder.stop()
@@ -970,15 +978,6 @@ class Agent:
         )[0]
         # assign the tracks that we last used so we can notify of changes...
         self._active_source_track_id = source_track.id
-
-        source_type = (
-            "SCREEN_SHARE"
-            if source_track.type == TrackType.TRACK_TYPE_SCREEN_SHARE
-            else "VIDEO"
-        )
-        logger.info(
-            f"📺 Source track selected: {source_type} (priority={source_track.priority})"
-        )
 
         await self._track_to_video_processors(source_track)
 
