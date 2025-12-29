@@ -71,6 +71,8 @@ def blockbuster(request) -> Iterator[BlockBuster | None]:
             # Allow Python's standard logging which is inherently synchronous.
             if "io.TextIOWrapper.write" in bb.functions:
                 bb.functions["io.TextIOWrapper.write"].deactivate()
+            if "io.BufferedWriter.write" in bb.functions:
+                bb.functions["io.BufferedWriter.write"].deactivate()
 
             yield bb
 
