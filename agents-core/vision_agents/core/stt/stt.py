@@ -41,16 +41,6 @@ class STT(abc.ABC):
         self.events.register(TurnStartedEvent)
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
-    async def warmup(self) -> None:
-        """
-        Warm up the STT service.
-
-        This method can be overridden by implementations to perform
-        model loading, connection establishment, or other initialization
-        that should happen before the first transcription request.
-        """
-        pass
-
     def _emit_transcript_event(
         self,
         text: str,

@@ -30,16 +30,6 @@ class TurnDetector(ABC):
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
 
-    async def warmup(self) -> None:
-        """
-        Warm up the turn detection service.
-
-        This method can be overridden by implementations to perform
-        model loading, connection establishment, or other initialization
-        that should happen before the first audio processing.
-        """
-        pass
-
     def _emit_start_turn_event(self, event: TurnStartedEvent) -> None:
         event.session_id = self.session_id
         event.plugin_name = self.provider_name

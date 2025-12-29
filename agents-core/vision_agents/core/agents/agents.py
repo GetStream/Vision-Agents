@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import datetime
-import inspect
 import logging
 import time
 import uuid
@@ -61,6 +60,7 @@ from ..utils.logging import (
     clear_call_context,
     set_call_context,
 )
+from ..utils.utils import await_or_run
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
 from . import events
@@ -636,11 +636,7 @@ class Agent:
                 func = getattr(subclass, function_name)
                 if func is not None:
                     try:
-                        if inspect.iscoroutinefunction(func):
-                            await func(*args, **kwargs)
-                        else:
-                            func(*args, **kwargs)
-
+                        await await_or_run(func, *args, **kwargs)
                     except Exception as e:
                         self.logger.exception(
                             f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
