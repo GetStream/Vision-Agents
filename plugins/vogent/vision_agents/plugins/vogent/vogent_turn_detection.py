@@ -359,7 +359,9 @@ class VogentTurnDetection(
 
         def _transcribe():
             if self._whisper is None:
-                raise ValueError("Whisper model is not initialized, call warmup() first")
+                raise ValueError(
+                    "Whisper model is not initialized, call warmup() first"
+                )
 
             # All CPU-intensive work runs in thread pool
             audio_array = pcm.resample(16000).to_float32().samples
