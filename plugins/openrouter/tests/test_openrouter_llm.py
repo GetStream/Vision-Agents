@@ -56,7 +56,15 @@ class TestOpenRouterLLM:
         """Non-OpenAI models should have strict mode enabled for tools with required params."""
         llm = LLM(model="google/gemini-2.0-flash-001")
         tools = [
-            {"name": "test_tool", "description": "A test", "parameters": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}}
+            {
+                "name": "test_tool",
+                "description": "A test",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"foo": {"type": "string"}},
+                    "required": ["foo"],
+                },
+            }
         ]
         converted = llm._convert_tools_to_chat_completions_format(tools)
         func = converted[0]["function"]
@@ -67,7 +75,15 @@ class TestOpenRouterLLM:
         """OpenAI models should NOT have strict mode (breaks with optional params)."""
         llm = LLM(model="openai/gpt-4o")
         tools = [
-            {"name": "test_tool", "description": "A test", "parameters": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}}
+            {
+                "name": "test_tool",
+                "description": "A test",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"foo": {"type": "string"}},
+                    "required": ["foo"],
+                },
+            }
         ]
         converted = llm._convert_tools_to_chat_completions_format(tools)
         func = converted[0]["function"]
