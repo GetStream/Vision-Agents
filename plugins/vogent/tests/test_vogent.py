@@ -22,6 +22,7 @@ async def vogent_turn_detection():
 
 
 @pytest.mark.skip_blockbuster
+@pytest.mark.integration
 class TestVogentTurnDetection:
     async def test_turn_detection(
         self, vogent_turn_detection, mia_audio_16khz, silence_2s_48khz
