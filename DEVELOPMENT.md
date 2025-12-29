@@ -506,7 +506,7 @@ For example:
 - `TurnDetection` plugins using a Silero VAD model to detect voice activity in the audio track.
 - Video processors using `YOLO` models
 
-In order to standartise how these resources are loaded and to make it performant, the framework provides a special ABC
+In order to standardise how these resources are loaded and to make it performant, the framework provides a special ABC
 `vision_agents.core.warmup.Warmable`.  
 
 To use it, simply subclass it and define the required methods.  
