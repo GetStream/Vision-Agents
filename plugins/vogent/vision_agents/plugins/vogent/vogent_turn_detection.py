@@ -356,10 +356,11 @@ class VogentTurnDetection(
         Returns:
             Transcribed text
         """
-        if self._whisper is None:
-            return ""
 
         def _transcribe():
+            if self._whisper is None:
+                return ""
+
             # All CPU-intensive work runs in thread pool
             audio_array = pcm.resample(16000).to_float32().samples
             segments, _ = self._whisper.transcribe(
@@ -391,10 +392,11 @@ class VogentTurnDetection(
         Returns:
             Tuple of (is_complete, confidence) where confidence is the probability
         """
-        if self._vogent is None:
-            return False, 0.0
 
         def _predict():
+            if self._vogent is None:
+                raise ValueError("Vogent is not initialized")
+
             # All CPU-intensive work runs in thread pool
             audio_array = pcm.resample(16000).to_float32().tail(8, False).samples
             return self._vogent.predict(

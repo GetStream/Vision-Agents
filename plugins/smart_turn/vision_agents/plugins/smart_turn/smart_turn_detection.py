@@ -224,6 +224,8 @@ class SmartTurnDetection(
         - Do we share silence + the end (like it's shown in example record and predict?)
         - Or do we share historical + length of new segment to 8 seconds. (this seems better)
         """
+        if self._vad_session is None:
+            raise ValueError("VAD model is not initialized")
 
         # ensure audio is in the right format
         audio_data = audio_data.resample(16000).to_float32()
