@@ -25,6 +25,7 @@ from aiortc.mediastreams import MediaStreamTrack
 
 from vision_agents.core.utils.audio_forwarder import AudioForwarder
 from vision_agents.core.utils.audio_track import QueuedAudioTrack
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,16 @@ class RTCManager:
                 self._send_video_frame
             )
             logger.debug("Removed old video frame handler from previous forwarder")
+
+        # Create a VideoForwarder if one wasn't provided
+        if shared_forwarder is None:
+            shared_forwarder = VideoForwarder(
+                input_track=stream_video_track,  # type: ignore[arg-type]
+                max_buffer=10,
+                fps=float(fps),
+                name="openai_rtc_forwarder",
+            )
+            logger.info("Created new VideoForwarder for OpenAI RTC")
 
         # Store reference to new forwarder and add handler
         self._current_video_forwarder = shared_forwarder
