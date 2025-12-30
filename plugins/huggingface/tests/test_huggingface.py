@@ -254,7 +254,6 @@ class TestHuggingFaceLLM:
         llm = LLM(
             api_key=api_key,
             model="meta-llama/Meta-Llama-3-8B-Instruct",
-            provider="fastest",
         )
         llm.set_conversation(conversation)
 
