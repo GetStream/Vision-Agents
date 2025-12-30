@@ -946,6 +946,14 @@ class Agent:
     async def _on_track_removed(
         self, track_id: str, track_type: int, participant: Participant
     ):
+        track_type_name = (
+            "SCREEN_SHARE"
+            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            else "VIDEO"
+        )
+        user_id = participant.user_id if participant else "unknown"
+        self.logger.info(f"📺 Track removed: {track_type_name} from {user_id}")
+
         track = self._active_video_tracks.pop(track_id, None)
         if track is not None:
             await track.forwarder.stop()
@@ -981,7 +989,6 @@ class Agent:
 
         # If Realtime provider supports video, switch to this new track
         if _is_video_llm(self.llm):
-            logger.info("watch video called with track %s", processed_track)
             await self.llm.watch_video_track(
                 processed_track.track, shared_forwarder=processed_track.forwarder
             )
@@ -995,6 +1002,14 @@ class Agent:
             TrackType.TRACK_TYPE_SCREEN_SHARE,
         ):
             return
+
+        track_type_name = (
+            "SCREEN_SHARE"
+            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            else "VIDEO"
+        )
+        user_id = participant.user_id if participant else "unknown"
+        self.logger.info(f"📺 Track added: {track_type_name} from {user_id}")
 
         if self._video_track_override_path is not None:
             # If local video track is set, we override all other video tracks with it.

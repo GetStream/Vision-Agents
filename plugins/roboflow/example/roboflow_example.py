@@ -6,7 +6,7 @@ from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, openai, roboflow
 
-from .utils import Debouncer
+from utils import Debouncer
 
 logger = logging.getLogger(__name__)
 
