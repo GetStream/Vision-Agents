@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import dotenv
 import pytest
@@ -12,7 +13,9 @@ dotenv.load_dotenv()
 
 @pytest.fixture()
 async def llm():
-    """Create and manage Realtime connection lifecycle"""
+    """Create and manage Realtime connection lifecycle."""
+    if not os.getenv("DASHSCOPE_API_KEY"):
+        pytest.skip("DASHSCOPE_API_KEY not set")
     realtime = Realtime(
         fps=1, vad_silence_duration_ms=0, vad_prefix_padding_ms=0, vad_threshold=0.1
     )
