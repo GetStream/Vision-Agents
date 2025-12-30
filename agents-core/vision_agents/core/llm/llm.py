@@ -399,7 +399,7 @@ class LLM(abc.ABC):
         """
         if isinstance(value, str):
             s = value
-        elif isinstance(value, BaseException):
+        elif isinstance(value, Exception):
             s = f"Error: {type(value).__name__}: {value}"
         else:
             s = json.dumps(value)
