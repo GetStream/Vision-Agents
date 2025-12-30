@@ -38,7 +38,7 @@ async def create_agent(**kwargs) -> Agent:
     ]
 
     # Call LLM once in 4s max
-    debouncer = Debouncer(4)
+    debouncer = Debouncer(8)
 
     @agent.events.subscribe
     async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
