@@ -2,6 +2,7 @@
 
 import asyncio
 import pytest
+from conftest import skip_blockbuster
 from dotenv import load_dotenv
 
 from vision_agents.core.agents.agent_types import AgentOptions
@@ -16,6 +17,7 @@ from getstream.video.rtc import PcmData, AudioFormat
 load_dotenv()
 
 
+@skip_blockbuster
 class TestBedrockRealtime:
     """Integration tests for AWS Bedrock Realtime connect flow"""
 
@@ -144,6 +146,7 @@ class TestBedrockRealtime:
         assert len(events) > 0
 
 
+@skip_blockbuster
 class TestNova2Realtime:
     @pytest.fixture
     async def realtime(self, tmp_path):

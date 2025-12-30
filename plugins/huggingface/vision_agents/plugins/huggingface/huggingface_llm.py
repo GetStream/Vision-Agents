@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
+from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
@@ -44,7 +45,7 @@ class HuggingFaceLLM(LLM):
         self,
         model: str,
         api_key: Optional[str] = None,
-        provider: Optional[str] = None,
+        provider: Optional[PROVIDER_OR_POLICY_T] = None,
         client: Optional[AsyncInferenceClient] = None,
     ):
         """
@@ -53,7 +54,7 @@ class HuggingFaceLLM(LLM):
         Args:
             model: The HuggingFace model ID to use.
             api_key: HuggingFace API token. Defaults to HF_TOKEN environment variable.
-            provider: Inference provider (e.g., "cheapest" ,"fastest" ,"together", "groq"). Auto-selects if omitted.
+            provider: Inference provider (e.g., "together", "groq", "fireworks-ai"). Defaults to "auto" which auto-selects.
             client: Optional AsyncInferenceClient instance for dependency injection.
         """
         super().__init__()
@@ -68,6 +69,7 @@ class HuggingFaceLLM(LLM):
             self._client = AsyncInferenceClient(
                 token=api_key,
                 model=model,
+                provider=provider,
             )
 
     async def simple_response(
