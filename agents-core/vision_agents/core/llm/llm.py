@@ -381,13 +381,18 @@ class LLM(abc.ABC):
         """Sanitize tool output to prevent oversized responses.
 
         Args:
-            value: Tool output value
+            value: Tool output value (can be string, dict, or exception)
             max_chars: Maximum characters allowed
 
         Returns:
             Sanitized string output
         """
-        s = value if isinstance(value, str) else json.dumps(value)
+        if isinstance(value, str):
+            s = value
+        elif isinstance(value, Exception):
+            s = f"Error: {type(value).__name__}: {value}"
+        else:
+            s = json.dumps(value)
         return (s[:max_chars] + "…") if len(s) > max_chars else s
 
 
