@@ -1,0 +1,9 @@
+flowchart TD
+    A[📹 Video Input] --> B[RF-DETR]
+    B -.-> C[Detection Events]
+    B --> D[Annotated Video<br>with bounding boxes]
+    C --> E{Criteria Met?}
+    E -->|Yes| F[Realtime Model]
+    D --> G[🖥 User Display]
+    D --> F
+    F --> H[🎙 Match Commentary]
