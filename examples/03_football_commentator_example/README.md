@@ -141,7 +141,7 @@ async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
 
 Given that we were showing match footage where the ball was frequently detected in the frame, this effectively meant we were asking the real-time model to comment every eight seconds. With response latency of several seconds, the game had often moved on by the time the commentary was delivered. 
 
-https://github.com/user-attachments/assets/ffc77eb8-43c5-4b2b-ab3a-be12e79385d4
+https://github.com/user-attachments/assets/339715d2-8eda-4ee5-97c5-1e8d75938855
 
 We tried this with OpenAI and Gemini Live and the results were similarly inconsistent.
 
@@ -175,10 +175,13 @@ Our sample footage was pretty low-quality and we only had short clips to test wi
 
 While this seems more logical, it didn’t really improve things. Here’s an example with Gemini Live:
 
+https://github.com/user-attachments/assets/ffc77eb8-43c5-4b2b-ab3a-be12e79385d4
 
+As you can see, it wasn’t able to respond accurately or in a timely manner. It speaks about earlier events and gets key details wrong. OpenAI showed similar behavior.
 
+We suspected that the video inference capabilities of these models might still be quite limited. Both models appeared to guess what was happening based on a very limited (perhaps only one!) number of frames.
 
-
+To give these models a fighting chance, we tried improving the quality of the input data by improving the Roboflow detection model.
 
 
 
