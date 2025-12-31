@@ -97,7 +97,7 @@ With our pipeline configured, we ran our first tests using public domain footbal
 
 https://github.com/user-attachments/assets/600275c4-3ed7-4149-a791-79d24828c0b8
 
-As you can see, the real-time models struggled to identify what was happening. 
+As you can see (from the pain in my eyes), the real-time models struggled to identify what was happening. 
 
 Initially, the system also required explicitly prompting the model every time we wanted commentary, which made the experience feel unresponsive and unnatural. 
 
