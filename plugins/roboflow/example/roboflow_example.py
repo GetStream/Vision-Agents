@@ -42,8 +42,8 @@ async def create_agent(**kwargs) -> Agent:
     async def on_detection(event: roboflow.DetectionCompletedEvent):
         """Print when objects are detected."""
         if event.objects:
-            labels = [obj["label"] for obj in event.objects]
-            print(f"🎯 Detected: {labels}")
+            for obj in event.objects:
+                print(f"Detected {obj['label']} at ({obj['x1']}, {obj['y1']})")
 
     return agent
 

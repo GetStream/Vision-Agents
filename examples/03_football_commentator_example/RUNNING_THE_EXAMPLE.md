@@ -7,7 +7,6 @@ A real-time AI sports commentator that watches football footage and provides pla
 1. **Get API keys:**
    - OpenAI API key: https://platform.openai.com/api-keys
    - GetStream API key: https://getstream.io
-   - Roboflow API key: https://roboflow.com/
 
 2. **Configure environment:**
    ```bash
@@ -18,7 +17,7 @@ A real-time AI sports commentator that watches football footage and provides pla
 
 3. **Run the example:**
    ```bash
-   uv run roboflow_example.py
+   uv run football_commentator_example.py
    ```
 
 ## What It Does
@@ -40,12 +39,12 @@ The agent:
 
 To use a local video file instead of screen sharing:
 ```bash
-uv run roboflow_example.py --video-track-override path/to/football.mp4
+uv run football_commentator_example.py --video-track-override path/to/football.mp4
 ```
 
 ## Configuration
 
-Edit `roboflow_example.py` to customize:
+Edit `football_commentator_example.py` to customize:
 
 ```python
 roboflow.RoboflowLocalDetectionProcessor(

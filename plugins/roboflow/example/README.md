@@ -73,7 +73,8 @@ React to detection events:
 @agent.events.subscribe
 async def on_detection(event: roboflow.DetectionCompletedEvent):
     for obj in event.objects:
-        print(f"Detected {obj['label']} with confidence {obj['confidence']}")
+        # DetectedObject fields: label, x1, y1, x2, y2
+        print(f"Detected {obj['label']} at ({obj['x1']}, {obj['y1']})")
 ```
 
 ## Additional Resources
