@@ -95,13 +95,93 @@ The Vision Agents SDK can be configured very quickly, which allowed us to iterat
 
 With our pipeline configured, we ran our first tests using public domain football footage to see how the system would perform as a real-time commentator.
 
-VIDEO NEEDS TO GO HERE!!!!!!!!
-
-
 https://github.com/user-attachments/assets/600275c4-3ed7-4149-a791-79d24828c0b8
 
+As you can see, the real-time models struggled to identify what was happening. 
+
+Initially, the system also required explicitly prompting the model every time we wanted commentary, which made the experience feel unresponsive and unnatural. 
+
+It took around 0.5 seconds to get the first token from OpenAI, and the output was inaccurate. Occasionally, it got match events right by sheer luck, but it was wrong more than half the time. 
+
+The model also appeared to be making a judgment based on a very small number of frames rather than looking at the overall context — e.g. if a shot appeared to be in progress when the prompt was sent, the model chose to reply based on a couple of frames rather than the overall context.
+
+Vision Agents’ plugin structure makes switching between models very quick, so we also ran the demo with Gemini Live, which produced very similar results. It took 3-4 seconds to get the first token from Gemini and accuracy was about the same as OpenAI.
+
+In practice, both models were ineffective for live sports commentary. From here, we had two aims: make the model respond without requiring us to request input, and improve the accuracy.
+
+## Making It Responsive
+
+### Initial Timed Approach
+
+In order to make the model responsive (i.e. not requiring us to ask the model what’s happening over and over again), we decided to catch the detection events emitted by Roboflow and have the real-time model respond when certain conditions were met.
+
+```python
+# In roboflow_example.py
+last_comment_time = 0.0
+COOLDOWN = 8.0  # Seconds between commentary
+
+@agent.events.subscribe
+async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
+    nonlocal last_comment_time
+    now = time.time()
+    if now - last_comment_time < COOLDOWN:
+        return
+
+    # Only comment if we see the ball
+    ball = next((o for o in event.objects if o["label"] == "sports ball"), None)
+    if not ball:
+        return
+
+    logger.info("⚽ Triggering commentary")
+    last_comment_time = now
+    await agent.simple_response(
+        "Describe what's happening in one sentence."
+    )
+```
+
+Given that we were showing match footage where the ball was frequently detected in the frame, this effectively meant we were asking the real-time model to comment every eight seconds. With response latency of several seconds, the game had often moved on by the time the commentary was delivered. 
 
 https://github.com/user-attachments/assets/ffc77eb8-43c5-4b2b-ab3a-be12e79385d4
+
+We tried this with OpenAI and Gemini Live and the results were similarly inconsistent.
+
+### Event-Based Approach
+
+After this, we wanted to see if it was possible to use the information returned by Roboflow for more than just annotating the video. If we could detect an event (a shot on goal, a penalty kick, etc.), we should be able to give the real-time model a cue to respond.
+
+Our sample footage was pretty low-quality and we only had short clips to test with. This meant that when the ball was kicked hard, Roboflow would stop detecting it in fast motion. As a result, we wrote logic to test when the ball reappeared (likely after an exciting play was made) and asked the model to comment accordingly.
+
+```python
+    @agent.events.subscribe
+    async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
+        """
+        Trigger an action when the ball reappears after being lost.
+
+        This suggests a fast play happened that was too quick for detection to follow.
+        """
+        nonlocal ball_was_present
+
+        ball_detected = bool(
+            [obj for obj in event.objects if obj["label"] == "sports ball"]
+        )
+        
+        # Trigger commentary when ball comes back after being gone
+        if ball_detected and not ball_was_present and debouncer:
+            # Pick a question randomly from the list
+            await agent.simple_response("A play has just been made! Describe what happened, and the outcome")
+        
+        ball_was_present = ball_detected
+```
+
+While this seems more logical, it didn’t really improve things. Here’s an example with Gemini Live:
+
+
+
+
+
+
+
+
 
 
 https://github.com/user-attachments/assets/cdbef810-8dd9-4bf0-8c21-560e20d4964e
