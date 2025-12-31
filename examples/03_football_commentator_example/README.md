@@ -97,14 +97,12 @@ With our pipeline configured, we ran our first tests using public domain footbal
 
 VIDEO NEEDS TO GO HERE!!!!!!!!
 
+
+https://github.com/user-attachments/assets/600275c4-3ed7-4149-a791-79d24828c0b8
+
+
 https://github.com/user-attachments/assets/ffc77eb8-43c5-4b2b-ab3a-be12e79385d4
 
 
-VIDEO NEEDS TO GO HERE!!!!!!!!
-VIDEO NEEDS TO GO HERE!!!!!!!!
-VIDEO NEEDS TO GO HERE!!!!!!!!
-VIDEO NEEDS TO GO HERE!!!!!!!!
-VIDEO NEEDS TO GO HERE!!!!!!!!
-VIDEO NEEDS TO GO HERE!!!!!!!!
-VIDEO NEEDS TO GO HERE!!!!!!!!
-VIDEO NEEDS TO GO HERE!!!!!!!!
+https://github.com/user-attachments/assets/cdbef810-8dd9-4bf0-8c21-560e20d4964e
+
