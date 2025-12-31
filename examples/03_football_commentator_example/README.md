@@ -118,7 +118,7 @@ In order to make the model responsive (i.e. not requiring us to ask the model wh
 ```python
 # In roboflow_example.py
 last_comment_time = 0.0
-COOLDOWN = 8.0  # Seconds between commentary
+COOLDOWN = 5.0  # Seconds between commentary
 
 @agent.events.subscribe
 async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
@@ -139,7 +139,7 @@ async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
     )
 ```
 
-Given that we were showing match footage where the ball was frequently detected in the frame, this effectively meant we were asking the real-time model to comment every eight seconds. With response latency of several seconds, the game had often moved on by the time the commentary was delivered. 
+Given that we were showing match footage where the ball was frequently detected in the frame, this effectively meant we were asking the real-time model to comment every five seconds. With response latency of several seconds, the game had often moved on by the time the commentary was delivered. 
 
 https://github.com/user-attachments/assets/339715d2-8eda-4ee5-97c5-1e8d75938855
 
@@ -183,9 +183,70 @@ We suspected that the video inference capabilities of these models might still b
 
 To give these models a fighting chance, we tried improving the quality of the input data by improving the Roboflow detection model.
 
+## Improving the Roboflow Model
 
+[SAM3](https://ai.meta.com/sam3/) is a zero-shot segmentation model by Meta that detects objects based on natural language prompts rather than pre-trained classes. Luckily for us, it was also made available via [Roboflow Rapid](https://rapid.roboflow.com/) so we could drop in a video and have it identify custom features via natural language, all from the Roboflow platform.
 
+Instead of being limited to RF-DETR classes like "person" and "sports ball," we could prompt for domain-specific objects like "goal keeper", "goal post" and "penalty spot." We hoped that more semantically meaningful detections might give the real-time model better context.
 
+We prototyped a processor similar to the regular Roboflow one but tailored to run SAM3. SAM3 is accessed via a cloud API, so we had to reduce our detection rate from 10 FPS to roughly one call every 2 seconds. This made the temporal lag problem worse, and while the detections were more meaningful when they arrived, they arrived too late for fast-moving action.
+
+![example showing the highlighting of different objects made possible in natural language by SAM3](images/sam3_example_highlighting.png)
+
+You can see from this image that SAM3 is much more accurate than RF-DETR, identifying player outlines and other shapes accurately. But without dedicated hardware, we couldn’t use it in a way that meaningfully improved the real-time models.
+
+We found that even using a more advanced object detection model didn’t help the real-time models enough to make a difference. Without the ability to understand multiple frames well enough to tell a story of what happened, it would be challenging to rely on either real-time model to do any heavy lifting.
 
 https://github.com/user-attachments/assets/cdbef810-8dd9-4bf0-8c21-560e20d4964e
 
+## Gemini Live vs. OpenAI Realtime
+
+We measured time-to-first-audio (TTFA) across ~30 prompts per configuration - the time from requesting a response to “What's happening on the field?" to the model's first audio output.
+
+Provider            | FPS | Mean  | StdDev | Min   | Max
+--------------------|-----|-------|--------|-------|------
+OpenAI Realtime     | 1   | 0.39s | 0.10s  | 0.31s | 0.72s
+OpenAI Realtime     | 2   | 0.47s | 0.22s  | 0.32s | 1.20s
+Gemini Live         | 1   | 3.06s | 0.88s  | 1.52s | 5.05s
+Gemini Live         | 2   | 4.08s | 1.04s  | 2.75s | 6.85s
+
+OpenAI was roughly 8x faster to start responding. This gap held across both FPS settings.
+
+Doubling the frame rate didn't improve latency for either provider - if anything, it made things slightly worse. For OpenAI, mean TTFA went from 0.39s to 0.47s; for Gemini, from 3.06s to 4.08s. Increasing the number of frames the model sees didn’t measurably improve accuracy either.
+
+Gemini showed much higher time variance - responses ranged from 1.5s to nearly 7s, while OpenAI stayed between 0.3s and 1.2s. If you need predictable response times, OpenAI is more consistent. The latency difference likely comes down to architecture: OpenAI's Realtime API uses WebRTC, built for low-latency audio streaming. Gemini Live uses WebSockets over TCP, which adds overhead.
+
+On accuracy, both models struggled equally. Neither could reliably track fast action or maintain context across frames. The 8x speed advantage doesn't help when the commentary is wrong, regardless of how quickly it arrives.
+
+## Where Video AI Works Today
+
+Not all video AI applications are this hard. Real-time use cases with minimal movement - yoga coaches, cooking assistants, security monitoring - work much better. We pushed real-time models into their weakest territory: fast action, constantly changing context and the need to synthesize multiple frames into a narrative.
+
+There are some existing examples of people adding analysis to high-motion sports, like [this basketball demo](https://x.com/skalskip92/status/1996677561452237044) or [this football analytics demo](https://x.com/measure_plan/status/1998867067324310012). The football analytics demo in particular aligns closely with our goal, but our focus was different. We wanted to send the annotated video to a real-time provider and have it perform the analysis and commentary live. This demo is very cool, but it doesn’t have this additional focus.
+
+We could get our demo to work with current technology, but it would come with significant tradeoffs. Here are some of our suggestions to make it work:
+
+- A static camera angle and better-quality footage to improve detections
+- Run SAM3 on a dedicated GPU
+- Screen the events more carefully so we can tell a model exactly what’s going on. (At this point, we could actually replace it with a Roboflow event -> prompt -> LLM -> TTS pipeline)
+
+## Wishlist for 2026
+
+It’s fair to say that real-time models aren’t quite there. They’re good with image understanding (look at [our Geoguessr demos](https://x.com/max_does_tech/status/1985883869330231709) to see just how good!), but they aren’t able to understand video frames in context and tell a coherent story.
+
+Here are some of our hopes for 2026 model improvements:
+
+- **Larger video context windows:** Current models seem to reason over just a handful of frames. Sports commentary needs 5-10 seconds of context.
+- **Better high-motion inference:** Fast action is where these models fall apart. Google's emphasis on high-motion video AI with Gemini 3 Pro Vision suggests this is on the roadmap.
+- **Native video triggers:** Currently, you always need to send audio or text to prompt a response from a real-time model. It would be much better for our use case if the model could choose when to respond based on video events.
+- **Lower latency:** 2-4 seconds is too slow for live sports. < 1s would be preferred.
+
+## Summing Up
+
+This demo was a useful reality check and reflects the current state of the technology as of December 2025. The two-model architecture is sound and Vision Agents made iteration easy but current real-time models aren't ready for high-motion video. 
+
+For now, [reliable sports commentary](https://getstream.io/blog/ai-sports-analytics/) would need more intelligence in the detection layer: custom models to recognize game events, with more structured prompts and TTS for narration.
+
+Things in the AI space are moving so quickly that it would be fun to revisit this project in a few months’ time or when an exciting new model is released. We’re optimistic that we’ll get very different results.
+
+If you’re building a frontier AI model focused on image or video understanding, please get in touch! We’d love to showcase your model and make it easy for users to get going with your model via Vision Agents.
