@@ -96,6 +96,10 @@ The Vision Agents SDK can be configured very quickly, which allowed us to iterat
 With our pipeline configured, we ran our first tests using public domain football footage to see how the system would perform as a real-time commentator.
 
 VIDEO NEEDS TO GO HERE!!!!!!!!
+
+https://github.com/user-attachments/assets/ffc77eb8-43c5-4b2b-ab3a-be12e79385d4
+
+
 VIDEO NEEDS TO GO HERE!!!!!!!!
 VIDEO NEEDS TO GO HERE!!!!!!!!
 VIDEO NEEDS TO GO HERE!!!!!!!!
