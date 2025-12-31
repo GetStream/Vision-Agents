@@ -1,71 +1,58 @@
-import logging
-import random
+"""
+Roboflow Object Detection Example
+
+This example demonstrates Roboflow object detection with Vision Agents.
+
+The agent uses:
+- Roboflow for real-time object detection (local RF-DETR model)
+- GetStream for edge/real-time communication
+- OpenAI for LLM
+
+Requirements:
+- STREAM_API_KEY and STREAM_API_SECRET environment variables
+- OPENAI_API_KEY environment variable
+"""
 
 from dotenv import load_dotenv
+
 from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, openai, roboflow
-
-from utils import Debouncer
-
-logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = openai.Realtime()
-
+    """Create an agent with Roboflow object detection."""
     agent = Agent(
-        edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-        agent_user=User(name="AI Sports Commentator", id="agent"),
-        instructions="Read @instructions.md",
+        edge=getstream.Edge(),
+        agent_user=User(name="Vision Agent", id="agent"),
+        instructions="You're a helpful AI assistant that can see and describe what's happening in the video.",
         processors=[
             roboflow.RoboflowLocalDetectionProcessor(
-                classes=["person", "sports ball"],
+                classes=["person"],  # Detect people by default
                 conf_threshold=0.5,
                 fps=5,
             )
         ],
-        llm=llm,
+        llm=openai.Realtime(),
     )
 
-    # A list of questions to pick from when pinging the model
-    questions = [
-        "Provide an update on the situation on the football field.",
-        "What has just happened?",
-        "What is happenning on the field right now?",
-    ]
-
-    # Call LLM once in 4s max
-    debouncer = Debouncer(4)
-
     @agent.events.subscribe
-    async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
-        """
-        Trigger an action when Roboflow detected objects on the video.
-
-        This function will be called for every detection,
-        so we use previously created Debouncer object to avoid calling the LLM too often.
-        """
-
-        ball_detected = bool(
-            [obj for obj in event.objects if obj["label"] == "sports ball"]
-        )
-        # Ping LLM for a commentary only when the ball is detected and the call is not debounced.
-        if ball_detected and debouncer:
-            # Pick a question randomly from the list
-            await agent.simple_response(random.choice(questions))
+    async def on_detection(event: roboflow.DetectionCompletedEvent):
+        """Print when objects are detected."""
+        if event.objects:
+            for obj in event.objects:
+                print(f"Detected {obj['label']} at ({obj['x1']}, {obj['y1']})")
 
     return agent
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    """Join the call and run the agent."""
     call = await agent.create_call(call_type, call_id)
 
-    # Have the agent join the call/room
     with await agent.join(call):
-        # run till the call ends
         await agent.finish()
 
 
