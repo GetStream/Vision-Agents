@@ -13,16 +13,11 @@ Requirements:
 - OPENAI_API_KEY environment variable
 """
 
-import logging
-import time
-
 from dotenv import load_dotenv
 
 from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, openai, roboflow
-
-logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -43,17 +38,12 @@ async def create_agent(**kwargs) -> Agent:
         llm=openai.Realtime(),
     )
 
-    last_prompt_time = 0.0
-
     @agent.events.subscribe
     async def on_detection(event: roboflow.DetectionCompletedEvent):
-        """Prompt the LLM when objects are detected (max once per 8 seconds)."""
-        nonlocal last_prompt_time
+        """Print when objects are detected."""
         if event.objects:
-            now = time.monotonic()
-            if now - last_prompt_time >= 8:
-                last_prompt_time = now
-                await agent.simple_response(text="describe what you see.")
+            labels = [obj["label"] for obj in event.objects]
+            print(f"🎯 Detected: {labels}")
 
     return agent
 

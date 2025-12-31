@@ -29,6 +29,14 @@ The agent will:
 2. Join a video call with object detection enabled
 3. Process video frames at 5 FPS using RF-DETR
 4. Annotate the video with bounding boxes around detected objects
+5. Log detected objects to the console
+
+## How to Test
+
+1. Open the demo UI link that appears in the console
+2. Enable your camera
+3. **Speak to the agent** and ask "What do you see?" or "Describe what's in the video"
+4. The agent will describe what it sees in the annotated video feed
 
 ## Customization
 
