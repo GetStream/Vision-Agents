@@ -132,9 +132,15 @@ class Agent:
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
     ):
+        self._agent_user_initialized = False
+        self.agent_user = agent_user
+        if not self.agent_user.id:
+            self.agent_user.id = f"agent-{uuid4()}"
+
         self._pending_turn: Optional[LLMTurn] = None
         self.participants: Optional[ParticipantsState] = None
-        self.call = None
+        self.call: Optional[Call] = None
+
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
         if options is None:
@@ -148,8 +154,6 @@ class Agent:
 
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
-        self.agent_user = agent_user
-        self._agent_user_initialized = False
 
         # only needed in case we spin threads
         self.tracer = tracer
@@ -203,18 +207,14 @@ class Agent:
             processor.attach_agent(self)
 
         self.events.subscribe(self._on_agent_say)
-        # Initialize state variables
-        self._is_running: bool = False
-        self._current_frame = None
-        self._interval_task = None
-        self._callback_executed = False
-        self._track_tasks: Dict[str, asyncio.Task] = {}
+        # An event to detect if the call was ended.
+        # `None` means the call is ended, or it hasn't started yet.
+        self._call_ended_event: Optional[asyncio.Event] = None
 
         # Track metadata: track_id -> TrackInfo
         self._active_video_tracks: Dict[str, TrackInfo] = {}
         self._video_forwarders: List[VideoForwarder] = []
-        self._current_video_track_id: Optional[str] = None
-        self._connection: Optional[Connection] = None
+        self._connection: Optional[StreamConnection] = None
 
         # Optional local video track override for debugging.
         # This track will play instead of any incoming video track.
@@ -226,8 +226,6 @@ class Agent:
         # the outgoing video track
         self._video_track: Optional[VideoStreamTrack] = None
 
-        self._realtime_connection = None
-        self._pc_track_handler_attached: bool = False
         self._audio_consumer_task: Optional[asyncio.Task] = None
 
         # validation time
@@ -590,21 +588,6 @@ class Agent:
             )
             return
 
-        running_event = asyncio.Event()
-        with self.span("agent.finish"):
-            # If connection is None or already closed, return immediately
-            if not self._connection:
-                logging.info(
-                    "🔚 Agent connection already closed, finishing immediately"
-                )
-                return
-
-            @self.edge.events.subscribe
-            async def on_ended(event: CallEndedEvent):
-                running_event.set()
-                self._is_running = False
-        # TODO: add members count check (particiapnts left + count = 1 timeout 2 minutes)
-
         try:
             await running_event.wait()
         except asyncio.CancelledError:
@@ -653,9 +636,6 @@ class Agent:
             otel_context.detach(self._context_token)
             self._context_token = None
 
-    def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._end_tracing()
-
     async def close(self):
         """Clean up all connections and resources.
 
@@ -701,15 +681,6 @@ class Agent:
                     self.logger.error(f"Error stopping video forwarder: {e}")
             self._video_forwarders.clear()
 
-        # Close Realtime connection
-        if self._realtime_connection:
-            await self._realtime_connection.__aexit__(None, None, None)
-        self._realtime_connection = None
-
-        # shutdown task processing
-        for _, track in self._track_tasks.items():
-            track.cancel()
-
         # Close RTC connection
         if self._connection:
             await self._connection.close()
@@ -724,11 +695,6 @@ class Agent:
         if self._video_track:
             self._video_track.stop()
         self._video_track = None
-
-        # Cancel interval task
-        if self._interval_task:
-            self._interval_task.cancel()
-        self._interval_task = None
 
     # ------------------------------------------------------------------
     # Logging context helpers
@@ -754,8 +720,6 @@ class Agent:
             return None
 
         with self.span("edge.create_user"):
-            if not self.agent_user.id:
-                self.agent_user.id = f"agent-{uuid4()}"
             await self.edge.create_user(self.agent_user)
             self._agent_user_initialized = True
 
@@ -1312,13 +1276,6 @@ class Agent:
     def _sanitize_text(self, text: str) -> str:
         """Remove markdown and special characters that don't speak well."""
         return text.replace("*", "").replace("#", "")
-
-    def _truncate_for_logging(self, obj, max_length=200):
-        """Truncate object string representation for logging to prevent spam."""
-        obj_str = str(obj)
-        if len(obj_str) > max_length:
-            obj_str = obj_str[:max_length] + "... (truncated)"
-        return obj_str
 
     async def _get_video_track_override(self) -> VideoFileTrack:
         """
