@@ -15,8 +15,10 @@ vision-agents-plugins-gemini = { workspace = true }
 vision-agents-plugins-kokoro = { workspace = true }
 vision-agents-plugins-openai = { workspace = true }
 vision-agents-plugins-openrouter = { workspace = true }
+vision-agents-plugins-qwen = { workspace = true }
 vision-agents-plugins-xai = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
+vision-agents-plugins-huggingface = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
@@ -50,8 +52,10 @@ members = [
     "plugins/kokoro",
     "plugins/openai",
     "plugins/openrouter",
+    "plugins/qwen",
     "plugins/xai",
     "plugins/getstream",
+    "plugins/huggingface",
     "plugins/ultralytics",
     "plugins/smart_turn",
     "plugins/wizper",
@@ -94,9 +98,10 @@ dev = [
     "pytest-timeout>=2.4.0",
     "hatch-vcs>=0.5.0",
     "hatch>=1.14.2",
-    "blockbuster>=1.5.5,<1.6",
+    "blockbuster>=1.5.26,<1.6",
     "aiofiles>=25.1.0",
     "pyinstrument>=5.1.1",
+    "toml>=0.10.2",
 ]
 
 [tool.mypy]

@@ -9,14 +9,18 @@ Tests cover:
 """
 
 import asyncio
+from typing import Optional
 from unittest.mock import Mock
-import pytest
 
+import aiortc
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from vision_agents.core.agents.agents import Agent
-from vision_agents.core.edge.types import User, Participant
+from vision_agents.core.edge.types import Participant, User
 from vision_agents.core.llm.llm import LLM, VideoLLM
-from vision_agents.core.processors.base_processor import Processor, ProcessorType
+from vision_agents.core.processors.base_processor import (
+    VideoProcessor,
+)
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 
 class MockVideoTrack:
@@ -30,19 +34,33 @@ class MockVideoTrack:
         pass
 
 
-class MockVideoProcessor(Processor):
+class MockVideoProcessor(VideoProcessor):
     """Mock video processor that tracks calls"""
 
-    def __init__(self, name: str = "test_processor"):
-        self.name = name
+    def __init__(self, name: str = "mock_video_processor"):
         self.process_video_calls = []
-        self.processor_type = ProcessorType.VIDEO
+        self._name = name
 
-    async def process_video(self, track, user_id, shared_forwarder=None):
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def process_video(
+        self,
+        track: aiortc.VideoStreamTrack,
+        participant_id: Optional[str],
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ):
         """Track that this processor received a video track"""
         self.process_video_calls.append(
-            {"track": track, "user_id": user_id, "shared_forwarder": shared_forwarder}
+            {
+                "track": track,
+                "user_id": participant_id,
+                "shared_forwarder": shared_forwarder,
+            }
         )
+
+    async def close(self) -> None: ...
 
 
 class MockVideoLLM(VideoLLM):
@@ -130,27 +148,25 @@ class TestAgentTrackHandling:
 
         return agent
 
-    @pytest.mark.asyncio
     async def test_no_video_tracks_nothing_shared(self):
         """Test that with no video tracks, nothing is forwarded to processors or LLM"""
-        video_processor = MockVideoProcessor("processor1")
+        processor = MockVideoProcessor()
         video_llm = MockVideoLLM()
 
-        agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
+        agent = self.create_mock_agent(llm=video_llm, processors=[processor])
 
         # Verify no tracks were added
         assert len(agent._active_video_tracks) == 0
 
         # Verify processor was not called
-        assert len(video_processor.process_video_calls) == 0
+        assert len(processor.process_video_calls) == 0
 
         # Verify LLM was not called
         assert len(video_llm.watch_video_track_calls) == 0
 
-    @pytest.mark.asyncio
     async def test_regular_video_track_is_forwarded(self):
         """Test that a regular video track is forwarded to processor and LLM"""
-        video_processor = MockVideoProcessor("processor1")
+        video_processor = MockVideoProcessor()
         video_llm = MockVideoLLM()
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
@@ -184,10 +200,9 @@ class TestAgentTrackHandling:
         llm_call = video_llm.watch_video_track_calls[0]
         assert llm_call["shared_forwarder"] is not None
 
-    @pytest.mark.asyncio
     async def test_screenshare_takes_priority_over_video(self):
         """Test that screenshare track takes priority over regular video track"""
-        video_processor = MockVideoProcessor("processor1")
+        video_processor = MockVideoProcessor()
         video_llm = MockVideoLLM()
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
@@ -241,10 +256,9 @@ class TestAgentTrackHandling:
         # LLM should receive the highest priority track (screenshare)
         assert "screenshare_track_1" in llm_call["shared_forwarder"].name
 
-    @pytest.mark.asyncio
     async def test_track_removed_updates_active_tracks(self):
         """Test that removing a track updates the active tracks"""
-        video_processor = MockVideoProcessor("processor1")
+        video_processor = MockVideoProcessor()
         video_llm = MockVideoLLM()
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
@@ -293,7 +307,6 @@ class TestAgentTrackHandling:
         # Verify LLM now receives the regular video track
         assert len(video_llm.watch_video_track_calls) == 1
 
-    @pytest.mark.asyncio
     async def test_multiple_processors_all_receive_tracks(self):
         """Test that all video processors receive the track"""
         processor1 = MockVideoProcessor("processor1")
@@ -321,7 +334,6 @@ class TestAgentTrackHandling:
         # Verify LLM received the track
         assert len(video_llm.watch_video_track_calls) == 1
 
-    @pytest.mark.asyncio
     async def test_llm_receives_highest_priority_track(self):
         """Test that LLM receives the highest priority track (including processed tracks)"""
         video_processor = MockVideoProcessor("processor1")
@@ -353,7 +365,6 @@ class TestAgentTrackHandling:
         assert llm_call["shared_forwarder"] is not None
         assert llm_call["track"] is not None
 
-    @pytest.mark.asyncio
     async def test_processors_optional(self):
         """Test that processors are optional and LLM still receives tracks"""
         video_llm = MockVideoLLM()
@@ -384,7 +395,6 @@ class TestAgentTrackHandling:
         # Verify LLM still received the track directly
         assert len(video_llm.watch_video_track_calls) == 1
 
-    @pytest.mark.asyncio
     async def test_non_video_llm_does_not_receive_tracks(self):
         """Test that non-VideoLLM implementations don't receive tracks"""
         regular_llm = MockLLM()

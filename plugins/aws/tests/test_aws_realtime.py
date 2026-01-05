@@ -2,6 +2,7 @@
 
 import asyncio
 import pytest
+from conftest import skip_blockbuster
 from dotenv import load_dotenv
 
 from vision_agents.core.agents.agent_types import AgentOptions
@@ -16,11 +17,12 @@ from getstream.video.rtc import PcmData, AudioFormat
 load_dotenv()
 
 
+@skip_blockbuster
 class TestBedrockRealtime:
     """Integration tests for AWS Bedrock Realtime connect flow"""
 
     @pytest.fixture
-    async def realtime(self):
+    async def realtime(self, tmp_path):
         """Create and manage Realtime connection lifecycle"""
         # Using AWS Nova Sonic model for testing
         realtime = Realtime(
@@ -28,7 +30,7 @@ class TestBedrockRealtime:
             region_name="us-east-1",
         )
 
-        realtime.options = AgentOptions(model_dir="/tmp")
+        realtime.options = AgentOptions(model_dir=tmp_path.as_posix())
         await realtime.warmup()
         realtime.set_instructions(
             Instructions("you're a kind assistant, always be friendly please.")
@@ -144,9 +146,10 @@ class TestBedrockRealtime:
         assert len(events) > 0
 
 
+@skip_blockbuster
 class TestNova2Realtime:
     @pytest.fixture
-    async def realtime(self):
+    async def realtime(self, tmp_path):
         """Create and manage Realtime connection lifecycle"""
         # Using AWS Nova Sonic model for testing
         realtime = Realtime(
@@ -154,6 +157,8 @@ class TestNova2Realtime:
             region_name="us-east-1",
         )
 
+        realtime.options = AgentOptions(model_dir=tmp_path.as_posix())
+        await realtime.warmup()
         realtime.set_instructions("you're a kind assistant, always be friendly please.")
         try:
             yield realtime

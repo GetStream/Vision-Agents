@@ -1,70 +1,76 @@
 import asyncio
 import contextlib
 import datetime
-import inspect
 import logging
 import time
 import uuid
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
 from uuid import uuid4
 
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
-
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
-from .agent_types import AgentOptions, default_agent_options, LLMTurn, TrackInfo
+from opentelemetry import context as otel_context
+from opentelemetry import trace
+from opentelemetry.context import Token
+from opentelemetry.trace import Tracer, set_span_in_context
+from opentelemetry.trace.propagation import Context, Span
 
 from ..edge import sfu_events
 from ..edge.events import (
     AudioReceivedEvent,
+    CallEndedEvent,
     TrackAddedEvent,
     TrackRemovedEvent,
-    CallEndedEvent,
 )
-from ..edge.types import Connection, Participant, PcmData, User, OutputAudioTrack
+from ..edge.types import Connection, OutputAudioTrack, Participant, PcmData, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
 from ..llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
-    RealtimeUserSpeechTranscriptionEvent,
     RealtimeAgentSpeechTranscriptionEvent,
     RealtimeAudioOutputEvent,
+    RealtimeUserSpeechTranscriptionEvent,
 )
-from ..llm.llm import AudioLLM, LLM, VideoLLM
+from ..llm.llm import LLM, AudioLLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..mcp import MCPBaseServer, MCPManager
-from ..processors.base_processor import Processor, ProcessorType, filter_processors
-from ..stt.events import STTTranscriptEvent, STTErrorEvent, STTPartialTranscriptEvent
+from ..processors.base_processor import (
+    AudioProcessor,
+    AudioPublisher,
+    Processor,
+    VideoProcessor,
+    VideoPublisher,
+)
+from ..profiling import Profiler
+from ..stt.events import STTErrorEvent, STTPartialTranscriptEvent, STTTranscriptEvent
 from ..stt.stt import STT
-from ..tts.tts import TTS
 from ..tts.events import TTSAudioEvent
-from ..turn_detection import TurnDetector, TurnStartedEvent, TurnEndedEvent
+from ..tts.tts import TTS
+from ..turn_detection import TurnDetector, TurnEndedEvent, TurnStartedEvent
 from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
     clear_call_context,
     set_call_context,
 )
+from ..utils.utils import await_or_run
 from ..utils.video_forwarder import VideoForwarder
+from ..utils.video_track import VideoFileTrack
 from . import events
+from .agent_session import AgentSessionContextManager
+from .agent_types import AgentOptions, LLMTurn, TrackInfo, default_agent_options
 from .conversation import Conversation
 from .transcript_buffer import TranscriptBuffer
-from ..profiling import Profiler
-from opentelemetry.trace import set_span_in_context
-from opentelemetry.trace.propagation import Span, Context
-from opentelemetry import trace, context as otel_context
-from opentelemetry.trace import Tracer
-from opentelemetry.context import Token
 
 if TYPE_CHECKING:
     from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
-
-    from .agent_session import AgentSessionContextManager
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +168,7 @@ class Agent:
         self.stt = stt
         self.tts = tts
         self.turn_detection = turn_detection
-        self.processors = processors or []
+        self.processors: list[Processor] = processors or []
         self.mcp_servers = mcp_servers or []
         self._call_context_token: CallContextToken | None = None
         self._context_token: Token[Context] | None = None
@@ -194,8 +200,7 @@ class Agent:
 
         # Attach processors that need agent reference
         for processor in self.processors:
-            if hasattr(processor, "_attach_agent"):
-                processor._attach_agent(self)
+            processor.attach_agent(self)
 
         self.events.subscribe(self._on_agent_say)
         # Initialize state variables
@@ -204,11 +209,16 @@ class Agent:
         self._interval_task = None
         self._callback_executed = False
         self._track_tasks: Dict[str, asyncio.Task] = {}
+
         # Track metadata: track_id -> TrackInfo
         self._active_video_tracks: Dict[str, TrackInfo] = {}
         self._video_forwarders: List[VideoForwarder] = []
         self._current_video_track_id: Optional[str] = None
         self._connection: Optional[Connection] = None
+
+        # Optional local video track override for debugging.
+        # This track will play instead of any incoming video track.
+        self._video_track_override_path: Optional[str | Path] = None
 
         # the outgoing audio track
         self._audio_track: Optional[OutputAudioTrack] = None
@@ -538,18 +548,6 @@ class Agent:
             with self.span("edge.publish_tracks"):
                 await self.edge.publish_tracks(audio_track, video_track)
 
-        connection._connection._coordinator_ws_client.on_wildcard(
-            "*",
-            lambda event_name, event: self.events.send(event),
-        )
-
-        connection._connection._ws_client.on_wildcard(
-            "*",
-            lambda event_name, event: self.events.send(event),
-        )
-
-        from .agent_session import AgentSessionContextManager
-
         # wait for conversation creation coro at the very end of the join flow
         self.conversation = await create_conversation_coro
         # Provide conversation to the LLM so it can access the chat history.
@@ -638,11 +636,7 @@ class Agent:
                 func = getattr(subclass, function_name)
                 if func is not None:
                     try:
-                        if inspect.iscoroutinefunction(func):
-                            await func(*args, **kwargs)
-                        else:
-                            func(*args, **kwargs)
-
+                        await await_or_run(func, *args, **kwargs)
                     except Exception as e:
                         self.logger.exception(
                             f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
@@ -868,6 +862,16 @@ class Agent:
                 completed=True,
             )
 
+    def set_video_track_override_path(self, path: str):
+        if not path or not self.publish_video:
+            return
+
+        self.logger.warning(
+            f'🎥 The video will be played from "{path}" instead of the call'
+        )
+        # Store the local video track.
+        self._video_track_override_path = path
+
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from the queue."""
         interval_seconds = 0.02  # 20ms target interval
@@ -939,31 +943,21 @@ class Agent:
                     f"Error in video processor {type(processor).__name__}: {e}"
                 )
 
-    async def _image_to_video_processors(self, track_id: str, track_type: int):
-        """
-        Send the current image to the image processors
-        """
-        track_info = self._active_video_tracks.get(track_id)
-        if not track_info:
-            return
-
-        for processor in self.image_processors:
-            try:
-                pass
-                # TODO: run this better
-                # await processor.process_image(
-                #    img, track_info.participant.user_id, track_id=track_id, track_type=track_type
-                # )
-            except Exception as e:
-                self.logger.error(
-                    f"Error in image processor {type(processor).__name__}: {e}"
-                )
-
     async def _on_track_removed(
         self, track_id: str, track_type: int, participant: Participant
     ):
+        track_type_name = (
+            "SCREEN_SHARE"
+            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            else "VIDEO"
+        )
+        user_id = participant.user_id if participant else "unknown"
+        self.logger.info(f"📺 Track removed: {track_type_name} from {user_id}")
+
         track = self._active_video_tracks.pop(track_id, None)
         if track is not None:
+            await track.forwarder.stop()
+            track.track.stop()
             await self._on_track_change(track_id)
 
     async def _on_track_change(self, track_id: str):
@@ -992,11 +986,9 @@ class Agent:
 
         # See if we have a processed track. If so forward that to LLM
         # TODO: this should run in a loop and handle multiple forwarders
-        # self._image_to_video_processors()
 
         # If Realtime provider supports video, switch to this new track
         if _is_video_llm(self.llm):
-            logger.info("watch video called with track %s", processed_track)
             await self.llm.watch_video_track(
                 processed_track.track, shared_forwarder=processed_track.forwarder
             )
@@ -1011,11 +1003,25 @@ class Agent:
         ):
             return
 
-        # Subscribe to the video track, we watch all tracks by default
-        track = self.edge.add_track_subscriber(track_id)
-        if not track:
-            self.logger.error(f"Failed to subscribe to {track_id}")
-            return
+        track_type_name = (
+            "SCREEN_SHARE"
+            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            else "VIDEO"
+        )
+        user_id = participant.user_id if participant else "unknown"
+        self.logger.info(f"📺 Track added: {track_type_name} from {user_id}")
+
+        if self._video_track_override_path is not None:
+            # If local video track is set, we override all other video tracks with it.
+            # We override tracks instead of simply playing one in order to keep the same lifecycle within the call.
+            # Otherwise, we'd have a video going on without anybody on the call.
+            track = await self._get_video_track_override()
+        else:
+            # Subscribe to the video track, we watch all tracks by default
+            track = self.edge.add_track_subscriber(track_id)
+            if not track:
+                self.logger.error(f"Failed to subscribe to {track_id}")
+                return
 
         # Store track metadata
         forwarder = VideoForwarder(
@@ -1198,49 +1204,40 @@ class Agent:
         return needs_audio or needs_video
 
     @property
-    def audio_processors(self) -> List[Any]:
+    def audio_processors(self) -> list[AudioProcessor]:
         """Get processors that can process audio.
 
         Returns:
             List of processors that implement `process_audio(pcm_data: PcmData)`.
         """
-        return filter_processors(self.processors, ProcessorType.AUDIO)
+        return [p for p in self.processors if isinstance(p, AudioProcessor)]
 
     @property
-    def video_processors(self) -> List[Any]:
+    def video_processors(self) -> list[VideoProcessor]:
         """Get processors that can process video.
 
         Returns:
-            List of processors that implement `process_video(track, user_id)`.
+            List of processors that implement `process_video(track, participant_id, shared_forwarder)`.
         """
-        return filter_processors(self.processors, ProcessorType.VIDEO)
+        return [p for p in self.processors if isinstance(p, VideoProcessor)]
 
     @property
-    def video_publishers(self) -> List[Any]:
+    def video_publishers(self) -> list[VideoPublisher]:
         """Get processors capable of publishing a video track.
 
         Returns:
-            List of processors that implement `create_video_track()`.
+            List of processors that implement `publish_video_track()`.
         """
-        return filter_processors(self.processors, ProcessorType.VIDEO_PUBLISHER)
+        return [p for p in self.processors if isinstance(p, VideoPublisher)]
 
     @property
-    def audio_publishers(self) -> List[Any]:
+    def audio_publishers(self) -> list[AudioPublisher]:
         """Get processors capable of publishing an audio track.
 
         Returns:
-            List of processors that implement `create_audio_track()`.
+            List of processors that implement `publish_audio_track()`.
         """
-        return filter_processors(self.processors, ProcessorType.AUDIO_PUBLISHER)
-
-    @property
-    def image_processors(self) -> List[Any]:
-        """Get processors that can process images.
-
-        Returns:
-            List of processors that implement `process_image()`.
-        """
-        return filter_processors(self.processors, ProcessorType.IMAGE)
+        return [p for p in self.processors if isinstance(p, AudioPublisher)]
 
     def _validate_configuration(self):
         """Validate the agent configuration."""
@@ -1259,11 +1256,8 @@ class Agent:
                 )
         else:
             # Traditional mode - check if we have audio processing or just video processing
-            has_audio_processing = self.stt or self.tts or self.turn_detection
-            has_video_processing = any(
-                hasattr(p, "process_video") or hasattr(p, "process_image")
-                for p in self.processors
-            )
+            has_audio_processing = bool(self.stt or self.tts or self.turn_detection)
+            has_video_processing = bool(self.video_processors)
 
             if has_audio_processing and not self.llm:
                 raise ValueError(
@@ -1325,6 +1319,18 @@ class Agent:
         if len(obj_str) > max_length:
             obj_str = obj_str[:max_length] + "... (truncated)"
         return obj_str
+
+    async def _get_video_track_override(self) -> VideoFileTrack:
+        """
+        Create a video track override in async way if the path is set.
+
+        Returns: `VideoFileTrack`
+        """
+        if not self._video_track_override_path:
+            raise ValueError("video_track_override_path is not set")
+        return await asyncio.to_thread(
+            lambda p: VideoFileTrack(p), self._video_track_override_path
+        )
 
 
 def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:

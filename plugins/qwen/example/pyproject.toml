@@ -1,0 +1,16 @@
+[project]
+name = "qwen-omni-example"
+version = "0.1.0"
+description = "Example using Qwen Omni with Vision Agents"
+requires-python = ">=3.10"
+dependencies = [
+    "vision-agents",
+    "vision-agents-plugins-qwen",
+    "vision-agents-plugins-getstream",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+vision-agents = { workspace = true }
+vision-agents-plugins-qwen = { workspace = true }
+vision-agents-plugins-getstream = { workspace = true }

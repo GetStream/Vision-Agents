@@ -11,29 +11,23 @@ import numpy as np
 import torch
 from PIL import Image
 from transformers import AutoModelForCausalLM
-
 from vision_agents.core.agents.agent_types import AgentOptions, default_agent_options
-from vision_agents.core.processors.base_processor import (
-    VideoProcessorMixin,
-    VideoPublisherMixin,
-    AudioVideoProcessor,
-)
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
-from vision_agents.plugins.moondream.moondream_utils import (
-    parse_detection_bbox,
-    annotate_detections,
-    handle_device,
-)
+from vision_agents.core.warmup import Warmable
 from vision_agents.plugins.moondream.detection.moondream_video_track import (
     MoondreamVideoTrack,
+)
+from vision_agents.plugins.moondream.moondream_utils import (
+    annotate_detections,
+    handle_device,
+    parse_detection_bbox,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class LocalDetectionProcessor(
-    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
-):
+class LocalDetectionProcessor(VideoProcessorPublisher, Warmable):
     """Performs real-time object detection on video streams using local Moondream 3 model.
 
     This processor downloads and runs the moondream3-preview model locally from Hugging Face,
@@ -51,7 +45,6 @@ class LocalDetectionProcessor(
                        so any object string works. Examples: "person", "car",
                        "basketball", ["person", "car", "dog"]. Default: "person"
         fps: Frame processing rate (default: 30)
-        interval: Processing interval in seconds (default: 0)
         max_workers: Number of worker threads for CPU-intensive operations (default: 10)
         force_cpu: If True, force CPU usage even if CUDA/MPS is available (default: False).
                   Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU. We recommend running on CUDA for best performance.
@@ -67,14 +60,11 @@ class LocalDetectionProcessor(
         conf_threshold: float = 0.3,
         detect_objects: Union[str, List[str]] = "person",
         fps: int = 30,
-        interval: int = 0,
         max_workers: int = 10,
         force_cpu: bool = False,
         model_name: str = "moondream/moondream3-preview",
         options: Optional[AgentOptions] = None,
     ):
-        super().__init__(interval=interval, receive_audio=False, receive_video=True)
-
         if options is None:
             self.options = default_agent_options()
         else:
@@ -129,21 +119,20 @@ class LocalDetectionProcessor(
         """Return the device type as a string (e.g., 'cuda', 'cpu')."""
         return str(self._device)
 
-    async def warmup(self):
-        # Prepare model asynchronously
-        await self._prepare_moondream()
-
-    async def _prepare_moondream(self):
-        """Load the Moondream model from Hugging Face."""
+    async def on_warmup(self):
         logger.info(f"Loading Moondream model: {self.model_name}")
         logger.info(f"Device: {self._device}")
 
         # Load model in thread pool to avoid blocking event loop
         # Transformers handles downloading and caching automatically via Hugging Face Hub
-        self.model = await asyncio.to_thread(  # type: ignore[func-returns-value]
+        model = await asyncio.to_thread(  # type: ignore[func-returns-value]
             lambda: self._load_model_sync()
         )
         logger.info("✅ Moondream model loaded")
+        return model
+
+    def on_warmed_up(self, model) -> None:
+        self.model = model
 
     def _load_model_sync(self):
         """Synchronous model loading function run in thread pool."""
@@ -209,9 +198,9 @@ class LocalDetectionProcessor(
 
     async def process_video(
         self,
-        incoming_track: aiortc.mediastreams.MediaStreamTrack,
-        participant: Any,
-        shared_forwarder=None,
+        incoming_track: aiortc.VideoStreamTrack,
+        participant_id: Optional[str],
+        shared_forwarder: Optional[VideoForwarder] = None,
     ):
         """
         Process incoming video track.
@@ -225,7 +214,7 @@ class LocalDetectionProcessor(
 
         # Ensure model is loaded
         if self.model is None:
-            await self._prepare_moondream()
+            raise ValueError("The Moondream model is not loaded")
 
         if shared_forwarder is not None:
             self._video_forwarder = shared_forwarder
@@ -329,7 +318,7 @@ class LocalDetectionProcessor(
             logger.exception(f"❌ Frame processing failed: {e}")
             await self._video_track.add_frame(frame)
 
-    def close(self):
+    async def close(self):
         """Clean up resources."""
         self._shutdown = True
         self.executor.shutdown(wait=False)

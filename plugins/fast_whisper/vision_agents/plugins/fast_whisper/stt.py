@@ -11,6 +11,7 @@ from numpy.typing import NDArray
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt.events import TranscriptResponse
+from vision_agents.core.warmup import Warmable
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ MAX_BUFFER_DURATION_MS = (
 PROCESS_INTERVAL_MS = 2000  # Process buffer every 2 seconds if it has content
 
 
-class STT(stt.STT):
+class STT(stt.STT, Warmable[Optional[WhisperModel]]):
     """
     Faster-Whisper Speech-to-Text implementation.
 
@@ -69,21 +70,26 @@ class STT(stt.STT):
         self._last_process_time = time.time()
         self._executor = ThreadPoolExecutor(max_workers=1)
 
-    async def warmup(self) -> None:
-        """
-        The Whisper model if not already provided."""
-
+    async def on_warmup(self) -> Optional[WhisperModel]:
         if self.whisper is None:
             logger.info(f"Loading faster-whisper model: {self.model_size}")
             # Load whisper in thread pool to avoid blocking event loop
             loop = asyncio.get_running_loop()
-            self.whisper = await loop.run_in_executor(
+            whisper = await loop.run_in_executor(
                 self._executor,
                 lambda: WhisperModel(
                     self.model_size, device=self.device, compute_type=self.compute_type
                 ),
             )
             logger.info("Faster-whisper model loaded")
+            return whisper
+
+        # The WhisperModel is already provided on init, no need to load it
+        return None
+
+    def on_warmed_up(self, whisper: Optional[WhisperModel]) -> None:
+        if self.whisper is None:
+            self.whisper = whisper
 
     async def process_audio(
         self,

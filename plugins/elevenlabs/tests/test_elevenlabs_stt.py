@@ -63,12 +63,15 @@ class TestElevenLabsSTT:
         # Process the audio with participant
         await stt.process_audio(mia_audio_48khz, participant=participant)
 
-        # Wait for result
+        # Wait a bit for all audio to be processed
+        await asyncio.sleep(5)
+
+        # Commit the transcript (required for MANUAL commit strategy)
+        await stt.clear()
+
+        # Wait for committed transcript
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
-
-        # Wait a bit longer for all audio to be processed
-        import asyncio
 
         await asyncio.sleep(5)
 
@@ -93,12 +96,15 @@ class TestElevenLabsSTT:
         # Process the audio with participant
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
-        # Wait for result
+        # Wait a bit for all audio to be processed
+        await asyncio.sleep(5)
+
+        # Commit the transcript (required for MANUAL commit strategy)
+        await stt.clear()
+
+        # Wait for committed transcript
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
-
-        # Wait a bit longer for all audio to be processed
-        import asyncio
 
         await asyncio.sleep(5)
 
@@ -121,20 +127,21 @@ class TestElevenLabsSTT:
 
         # Process audio chunks one by one (simulating real-time streaming)
         # Use more chunks to ensure we get a complete phrase
-        import asyncio
-
         for chunk in mia_audio_48khz_chunked[:100]:  # Use first 100 chunks (~2 seconds)
             await stt.process_audio(chunk, participant=participant)
             await asyncio.sleep(
                 0.02
             )  # 20ms delay between chunks (real-time simulation)
 
-        # Wait for result
-        await session.wait_for_result(timeout=30.0)
-        assert not session.errors, f"Errors occurred: {session.errors}"
-
         # Wait for audio to be processed
         await asyncio.sleep(3)
+
+        # Commit the transcript (required for MANUAL commit strategy)
+        await stt.clear()
+
+        # Wait for committed transcript
+        await session.wait_for_result(timeout=30.0)
+        assert not session.errors, f"Errors occurred: {session.errors}"
 
         # Verify we got some transcript
         assert len(session.transcripts) > 0 or len(session.partial_transcripts) > 0
@@ -148,7 +155,13 @@ class TestElevenLabsSTT:
         # Process the audio with participant
         await stt.process_audio(mia_audio_48khz, participant=participant)
 
-        # Wait for result
+        # Wait for audio to be processed
+        await asyncio.sleep(5)
+
+        # Commit the transcript (required for MANUAL commit strategy)
+        await stt.clear()
+
+        # Wait for committed transcript
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
@@ -174,7 +187,12 @@ class TestElevenLabsSTT:
         # Process first audio segment
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
-        # Wait for first result
+        # Wait for audio to be processed
+        await asyncio.sleep(5)
+
+        await stt.clear()
+
+        # Wait for first committed transcript
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
@@ -183,6 +201,11 @@ class TestElevenLabsSTT:
 
         # Process second audio segment
         await stt.process_audio(mia_audio_16khz, participant=participant)
+
+        # Wait for audio to be processed
+        await asyncio.sleep(5)
+
+        await stt.clear()
 
         # Wait a bit longer for second result
         await session.wait_for_result(timeout=30.0)

@@ -1,7 +1,9 @@
+import asyncio
 import base64
 import logging
 from collections import deque
-from typing import Iterator, Optional, cast
+from concurrent.futures import ThreadPoolExecutor
+from typing import AsyncIterator, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
@@ -53,6 +55,9 @@ class ChatCompletionsVLM(VideoLLM):
         base_url: Optional[str] = None,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
+        frame_width: int = 800,
+        frame_height: int = 600,
+        max_workers: int = 4,
         client: Optional[AsyncOpenAI] = None,
     ):
         """
@@ -65,6 +70,10 @@ class ChatCompletionsVLM(VideoLLM):
             fps: the number of video frames per second to handle.
             frame_buffer_seconds: the number of seconds to buffer for the model's input.
                 Total buffer size = fps * frame_buffer_seconds.
+            frame_width: the width of the video frame to send. Default - `800`.
+            frame_height: the height of the video frame to send. Default - `600`.
+            max_workers: the maximum number of worker threads to use for frame-to-image conversion.
+                Default - `4`.
             client: optional `AsyncOpenAI` client. By default, creates a new client object.
         """
         super().__init__()
@@ -84,8 +93,9 @@ class ChatCompletionsVLM(VideoLLM):
         self._frame_buffer: deque[av.VideoFrame] = deque(
             maxlen=fps * frame_buffer_seconds
         )
-        self._frame_width = 800
-        self._frame_height = 600
+        self._frame_width = frame_width
+        self._frame_height = frame_height
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
     async def simple_response(
         self,
@@ -101,7 +111,7 @@ class ChatCompletionsVLM(VideoLLM):
         Args:
             text: The text to respond to.
             processors: list of processors (which contain state) about the video/voice AI.
-            participant: the Participant object, optional. If not provided, the message will be sent with the "system" role.
+            participant: the Participant object, optional. If not provided, the message will be sent with the "user" role.
 
         Examples:
 
@@ -119,7 +129,7 @@ class ChatCompletionsVLM(VideoLLM):
         # assuming it's an initial prompt.
         if participant is None:
             await self._conversation.send_message(
-                role="system", user_id="system", content=text
+                role="user", user_id="user", content=text
             )
 
         messages = await self._build_model_request()
@@ -230,17 +240,27 @@ class ChatCompletionsVLM(VideoLLM):
             self._frame_buffer.append, fps=self._fps
         )
 
-    def _get_frames_bytes(self) -> Iterator[bytes]:
+    async def _get_frames_bytes(self) -> AsyncIterator[bytes]:
         """
-        Iterate over all buffered video frames.
+        Convert the buffered video frames to bytes and yield them.
+        The conversion happens asynchronously in the background threads.
         """
-        for frame in self._frame_buffer:
-            yield frame_to_jpeg_bytes(
-                frame=frame,
-                target_width=self._frame_width,
-                target_height=self._frame_height,
-                quality=85,
+        loop = asyncio.get_running_loop()
+
+        # Convert frames to bytes in parallel in background threads
+        coroutines = [
+            loop.run_in_executor(
+                self._executor,
+                frame_to_jpeg_bytes,
+                frame,
+                self._frame_width,
+                self._frame_height,
+                85,
             )
+            for frame in self._frame_buffer
+        ]
+        for frame_bytes in await asyncio.gather(*coroutines):
+            yield frame_bytes
 
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
@@ -265,7 +285,7 @@ class ChatCompletionsVLM(VideoLLM):
 
         # Attach the latest buffered frames to the request
         frames_data = []
-        for frame_bytes in self._get_frames_bytes():
+        async for frame_bytes in self._get_frames_bytes():
             frame_b64 = base64.b64encode(frame_bytes).decode("utf-8")
             frame_msg = {
                 "type": "image_url",
@@ -281,3 +301,6 @@ class ChatCompletionsVLM(VideoLLM):
                 }
             )
         return messages
+
+    async def close(self) -> None:
+        self._executor.shutdown(wait=False)

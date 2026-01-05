@@ -20,13 +20,10 @@ from rfdetr.detr import (
 from supervision import Detections
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
-from vision_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    VideoProcessorMixin,
-    VideoPublisherMixin,
-)
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
+from vision_agents.core.warmup import Warmable
 
 from .events import DetectedObject, DetectionCompletedEvent
 from .utils import annotate_image
@@ -53,9 +50,7 @@ _RFDETR_MODELS: dict[str, Type[RFDETR]] = {
 }
 
 
-class RoboflowLocalDetectionProcessor(
-    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
-):
+class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR]):
     """
     A VideoProcessor for real-time object detection with Roboflow's RF-DETR models.
     This processor downloads pre-trained models from Roboflow and runs them locally.
@@ -89,13 +84,17 @@ class RoboflowLocalDetectionProcessor(
             Example: ["person", "sports ball"]
             Verify that the classes a supported by the given model.
             Default - None (all classes are detected).
+        model: optional instance of `RFDETRModel` to be used for detections.
+            Use it provide a model of choosing with custom parameters.
         annotate: if True, annotate the detected objects with boxes and labels.
             Default - True.
         dim_background_factor: how much to dim the background around detected objects from 0 to 1.0.
             Effective only when annotate=True.
             Default - 0.0 (no dimming).
-        model: optional instance of `RFDETRModel` to be used for detections.
-            Use it provide a model of choosing with custom parameters.
+        annotate_text_scale: annotation text scale. Default - 0.75.
+        annotate_text_padding: annotation text padding. Default - 1.
+        annotate_box_thickness: annotation box thickness. Default - 2.
+        annotate_text_position: annotation text position. Default - `sv.Position.TOP_CENTER`.
     """
 
     name = "roboflow_local"
@@ -106,12 +105,14 @@ class RoboflowLocalDetectionProcessor(
         conf_threshold: float = 0.5,
         fps: int = 10,
         classes: Optional[list[str]] = None,
+        model: Optional[RFDETR] = None,
         annotate: bool = True,
         dim_background_factor: float = 0.0,
-        model: Optional[RFDETR] = None,
+        annotate_text_scale: float = 0.75,
+        annotate_text_padding: int = 1,
+        annotate_box_thickness: int = 2,
+        annotate_text_position: sv.Position = sv.Position.TOP_CENTER,
     ):
-        super().__init__(interval=0, receive_audio=False, receive_video=True)
-
         if not 0 <= conf_threshold <= 1.0:
             raise ValueError("Confidence threshold must be between 0 and 1.")
 
@@ -153,13 +154,17 @@ class RoboflowLocalDetectionProcessor(
             fps=self.fps,
             max_queue_size=self.fps,  # Buffer 1s of the video
         )
+        self._annotate_text_scale = annotate_text_scale
+        self._annotate_text_padding = annotate_text_padding
+        self._annotate_box_thickness = annotate_box_thickness
+        self._annotate_text_position = annotate_text_position
 
     async def process_video(
         self,
-        incoming_track: aiortc.MediaStreamTrack,
+        track: aiortc.VideoStreamTrack,
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
-    ):
+    ) -> None:
         """
         Process incoming video track with Roboflow detection.
         """
@@ -175,7 +180,7 @@ class RoboflowLocalDetectionProcessor(
             shared_forwarder
             if shared_forwarder
             else VideoForwarder(
-                cast(aiortc.VideoStreamTrack, incoming_track),
+                track,
                 max_buffer=self.fps,  # 1 second
                 fps=self.fps,
                 name="roboflow_forwarder",
@@ -204,12 +209,14 @@ class RoboflowLocalDetectionProcessor(
             raise ValueError("Agent is not attached to the processor yet")
         return self._events
 
-    async def warmup(self):
-        if self._model is None:
-            loop = asyncio.get_running_loop()
-            self._model = await loop.run_in_executor(self._executor, self._load_model)
+    async def on_warmup(self) -> RFDETR:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, self._load_model)
 
-    def _attach_agent(self, agent: Agent):
+    def on_warmed_up(self, resource: RFDETR) -> None:
+        self._model = resource
+
+    def attach_agent(self, agent: Agent):
         self._events = agent.events
         self._events.register(DetectionCompletedEvent)
 
@@ -267,12 +274,15 @@ class RoboflowLocalDetectionProcessor(
                 detections,
                 classes=self._model.class_names,
                 dim_factor=self.dim_background_factor,
+                text_scale=self._annotate_text_scale,
+                text_position=self._annotate_text_position,
+                text_padding=self._annotate_text_padding,
+                box_thickness=self._annotate_box_thickness,
             )
             # Convert back to av.VideoFrame
             annotated_frame = av.VideoFrame.from_ndarray(annotated_image)
             annotated_frame.pts = frame.pts
             annotated_frame.time_base = frame.time_base
-            # Send the annotated frame to the output video track
             await self._video_track.add_frame(annotated_frame)
         else:
             # Forward original frame

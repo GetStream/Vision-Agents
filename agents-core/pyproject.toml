@@ -23,7 +23,7 @@ requires-python = ">=3.10"
 dependencies = [
     "getstream[webrtc,telemetry]>=2.5.16",
     "python-dotenv>=1.1.1",
-    "pillow>=10.4.0",  # Compatible with moondream SDK (<11.0.0)
+    "pillow>=10.4.0", # Compatible with moondream SDK (<11.0.0)
     "numpy>=1.24.0",
     "mcp>=1.16.0",
     "colorlog>=6.10.1",
@@ -52,23 +52,42 @@ smart_turn = ["vision-agents-plugins-smart-turn"]
 ultralytics = ["vision-agents-plugins-ultralytics"]
 wizper = ["vision-agents-plugins-wizper"]
 xai = ["vision-agents-plugins-xai"]
+vogent = ["vision-agents-plugins-vogent"]
+huggingface = ["vision-agents-plugins-huggingface"]
+moondream = ["vision-agents-plugins-moondream"]
+aws = ["vision-agents-plugins-aws"]
+openrouter = ["vision-agents-plugins-openrouter"]
+qwen = ["vision-agents-plugins-qwen"]
+fish = ["vision-agents-plugins-fish"]
+fast-whisper = ["vision-agents-plugins-fast-whisper"]
+decart = ["vision-agents-plugins-decart"]
+
 all-plugins = [
-  "vision-agents-plugins-anthropic",
-  "vision-agents-plugins-cartesia",
-  "vision-agents-plugins-deepgram",
-  "vision-agents-plugins-elevenlabs",
-  "vision-agents-plugins-gemini",
-  "vision-agents-plugins-getstream",
-  "vision-agents-plugins-heygen",
-  "vision-agents-plugins-inworld",
-  "vision-agents-plugins-kokoro",
-  "vision-agents-plugins-moonshine",
-  "vision-agents-plugins-roboflow",
-  "vision-agents-plugins-openai",
-  "vision-agents-plugins-smart-turn",
-  "vision-agents-plugins-ultralytics",
-  "vision-agents-plugins-wizper",
-  "vision-agents-plugins-xai",
+    "vision-agents-plugins-anthropic",
+    "vision-agents-plugins-cartesia",
+    "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-heygen",
+    "vision-agents-plugins-inworld",
+    "vision-agents-plugins-kokoro",
+    "vision-agents-plugins-moonshine",
+    "vision-agents-plugins-roboflow",
+    "vision-agents-plugins-openai",
+    "vision-agents-plugins-smart-turn",
+    "vision-agents-plugins-ultralytics",
+    "vision-agents-plugins-wizper",
+    "vision-agents-plugins-xai",
+    "vision-agents-plugins-huggingface",
+    "vision-agents-plugins-moondream",
+    "vision-agents-plugins-aws",
+    "vision-agents-plugins-openrouter",
+    "vision-agents-plugins-fish",
+    "vision-agents-plugins-decart",
+    "vision-agents-plugins-vogent",
+    "vision-agents-plugins-fast-whisper",
+    "vision-agents-plugins-qwen",
 ]
 
 [tool.hatch.metadata]

@@ -35,9 +35,9 @@ https://github.com/user-attachments/assets/d66587ea-7af4-40c4-9966-5c04fbcf467c
 
 ### Sports Coaching
 
-https://github.com/user-attachments/assets/9527ab03-0541-493b-97b1-e17ff1b20e21
+https://github.com/user-attachments/assets/d1258ac2-ca98-4019-80e4-41ec5530117e
 
-This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
+This example shows you how to build golf coaching AI with YOLO and Gemini Live.
 Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
 For example: Drone fire detection, sports/video game coaching, physical therapy, workout coaching, just dance style games etc.
 
@@ -47,15 +47,12 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=agent_user,
     instructions="Read @golf_coach.md",
-    llm=openai.Realtime(fps=10),
-    #llm=gemini.Realtime(fps=1), # Careful with FPS can get expensive
-    processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")],
+    llm=gemini.Realtime(fps=10),
+    #llm=openai.Realtime(fps=1), # Careful with FPS can get expensive
+    processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt", device="cuda")],
 )
 ```
 
-This example shows you how to build golf coaching AI with YOLO and OpenAI realtime.
-Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use cases.
-For example: Drone fire detection. Sports/video game coaching. Physical therapy. Workout coaching, Just dance style games etc.
 
 ### Cluely style Invisible Assistant (coming soon)
 
@@ -106,22 +103,28 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 
 | **Plugin Name** | **Description** | **Docs Link** |
 |-------------|-------------|-----------|
-| AWS | AWS (Bedrock) integration with support for standard LLM (Qwen, Claude with vision), realtime with Nova 2 Sonic, and TTS with AWS Polly | [AWS](https://visionagents.ai/integrations/aws) |
+| AWS Bedrock | Realtime speech-to-speech plugin using Amazon Nova models with automatic reconnection | [AWS](https://visionagents.ai/integrations/aws-bedrock) |
+| AWS Polly | TTS plugin using Amazon's cloud-based service with natural-sounding voices and neural engine support | [AWS Polly](https://visionagents.ai/integrations/aws-polly) |
 | Cartesia | TTS plugin for realistic voice synthesis in real-time voice applications | [Cartesia](https://visionagents.ai/integrations/cartesia) |
-| Decart | Real-time video restyling capabilities using generative AI models | [Decart](https://visionagents.ai/integrations/decart) |
+| Decart | Real-time AI video transformation service for applying artistic styles and effects to video streams | [Decart](https://visionagents.ai/integrations/decart) |
 | Deepgram | STT plugin for fast, accurate real-time transcription with speaker diarization | [Deepgram](https://visionagents.ai/integrations/deepgram) |
 | ElevenLabs | TTS plugin with highly realistic and expressive voices for conversational agents | [ElevenLabs](https://visionagents.ai/integrations/elevenlabs) |
+| Fast-Whisper | High-performance STT plugin using OpenAI's Whisper model with CTranslate2 for fast inference | [Fast-Whisper](https://visionagents.ai/integrations/fast-whisper) |
 | Fish Audio | STT and TTS plugin with automatic language detection and voice cloning capabilities | [Fish Audio](https://visionagents.ai/integrations/fish) |
 | Gemini | Realtime API for building conversational agents with support for both voice and video | [Gemini](https://visionagents.ai/integrations/gemini) |
-| HeyGen | Realtime interactive avatars powered by [HeyGen](https://heygen.com/) | [Heygen](https://visionagents.ai/integrations/heygen) |
+| HeyGen | Realtime interactive avatars powered by [HeyGen](https://heygen.com/) | [HeyGen](https://visionagents.ai/integrations/heygen) |
 | Inworld | TTS plugin with high-quality streaming voices for real-time conversational AI agents | [Inworld](https://visionagents.ai/integrations/inworld) |
 | Kokoro | Local TTS engine for offline voice synthesis with low latency | [Kokoro](https://visionagents.ai/integrations/kokoro) |
 | Moondream | Moondream provides realtime detection and VLM capabilities. Developers can choose from using the hosted API or running locally on their CUDA devices. Vision Agents supports Moondream's Detect, Caption and VQA skills out-of-the-box. | [Moondream](https://visionagents.ai/integrations/moondream) |
 | OpenAI | Realtime API for building conversational agents with out of the box support for real-time video directly over WebRTC, LLMs and Open AI TTS | [OpenAI](https://visionagents.ai/integrations/openai) |
+| OpenRouter | LLM plugin providing access to multiple providers (Anthropic, Google, OpenAI) through a unified API | [OpenRouter](https://visionagents.ai/integrations/openrouter) |
+| Qwen | Realtime audio plugin using Alibaba's Qwen3 with native audio output and built-in speech recognition | [Qwen](https://visionagents.ai/integrations/qwen) |
+| Roboflow | Object detection processor using Roboflow's hosted API or local RF-DETR models | [Roboflow](https://visionagents.ai/integrations/roboflow) |
 | Smart Turn | Advanced turn detection system combining Silero VAD, Whisper, and neural models for natural conversation flow | [Smart Turn](https://visionagents.ai/integrations/smart-turn) |
+| Ultralytics | Real-time pose detection processor using YOLO models with skeleton overlays | [Ultralytics](https://visionagents.ai/integrations/ultralytics) |
 | Vogent | Neural turn detection system for intelligent turn-taking in voice conversations | [Vogent](https://visionagents.ai/integrations/vogent) |
 | Wizper | STT plugin with real-time translation capabilities powered by Whisper v3 | [Wizper](https://visionagents.ai/integrations/wizper) |
-| xAI | xAI (Grok) integration for using powerful language models in conversational AI applications | [xAI](https://visionagents.ai/integrations/xai) |
+| xAI | LLM plugin using xAI's Grok models with advanced reasoning and real-time knowledge | [xAI](https://visionagents.ai/integrations/xai) |
 
 
 ## Processors
@@ -230,11 +233,9 @@ While building the integrations, here are the limitations we've noticed (Dec 202
 
 ## We are hiring
 
-We've recently closed a [\$38 million Series B funding round](https://techcrunch.com/2021/03/04/stream-raises-38m-as-its-chat-and-activity-feed-apis-power-communications-for-1b-users/) and we keep actively growing.
-Our APIs are used by more than a billion end-users, and you'll have a chance to make a huge impact on the product within a team of the strongest engineers all over the world.
+Join the team behind this project - we’re hiring a Staff Python Engineer to architect, build, and maintain a powerful toolkit for developers integrating voice and video AI into their products.
 
-Check out our current openings and apply via [Stream's website](https://getstream.io/team/#jobs).
-
+[Apply here](https://jobs.ashbyhq.com/stream/3bea7dba-54e1-4c71-aa02-712a075842df?utm_source=Jmv9QOkznl)
 
 ## Star History
 

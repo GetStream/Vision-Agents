@@ -1,15 +1,10 @@
 import asyncio
 import logging
-from typing import Optional, Any, Tuple
+from typing import Any, Optional, Tuple
 
 from getstream.video.rtc import audio_track
 from getstream.video.rtc.track_util import PcmData
-
-from vision_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    VideoPublisherMixin,
-    AudioPublisherMixin,
-)
+from vision_agents.core.processors.base_processor import AudioPublisher, VideoPublisher
 
 from .heygen_rtc_manager import HeyGenRTCManager
 from .heygen_types import VideoQuality
@@ -18,7 +13,7 @@ from .heygen_video_track import HeyGenVideoTrack
 logger = logging.getLogger(__name__)
 
 
-class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMixin):
+class AvatarPublisher(AudioPublisher, VideoPublisher):
     """HeyGen avatar video and audio publisher.
 
     Publishes video of a HeyGen avatar that lip-syncs based on LLM text output.
@@ -63,13 +58,6 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
             interval: Processing interval (not used, kept for compatibility).
             **kwargs: Additional arguments passed to parent class.
         """
-        super().__init__(
-            interval=interval,
-            receive_audio=False,  # We send text to HeyGen, not audio
-            receive_video=False,
-            **kwargs,
-        )
-
         self.avatar_id = avatar_id
         self.quality = quality
         self.resolution = resolution
@@ -117,7 +105,7 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
         """
         return self._audio_track
 
-    def _attach_agent(self, agent: Any) -> None:
+    def attach_agent(self, agent: Any) -> None:
         """Attach the agent reference for event subscription.
 
         This is called automatically by the Agent during initialization.
@@ -372,20 +360,6 @@ class AvatarPublisher(AudioVideoProcessor, VideoPublisherMixin, AudioPublisherMi
 
         logger.info("Publishing HeyGen avatar video track")
         return self._video_track
-
-    def state(self) -> dict:
-        """Get current state of the avatar publisher.
-
-        Returns:
-            Dictionary containing current state information.
-        """
-        return {
-            "avatar_id": self.avatar_id,
-            "quality": self.quality,
-            "resolution": self.resolution,
-            "connected": self._connected,
-            "rtc_connected": self.rtc_manager.is_connected,
-        }
 
     async def close(self) -> None:
         """Clean up resources and close connections."""

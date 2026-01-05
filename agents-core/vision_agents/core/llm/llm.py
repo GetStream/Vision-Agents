@@ -63,16 +63,6 @@ class LLM(abc.ABC):
         self._instructions: str = ""
         self._conversation: Optional[Conversation] = None
 
-    async def warmup(self) -> None:
-        """
-        Warm up the LLM model.
-
-        This method can be overridden by implementations to perform
-        model loading, connection establishment, or other initialization
-        that should happen before the first request.
-        """
-        pass
-
     async def simple_response(
         self,
         text: str,
@@ -391,13 +381,18 @@ class LLM(abc.ABC):
         """Sanitize tool output to prevent oversized responses.
 
         Args:
-            value: Tool output value
+            value: Tool output value (can be string, dict, or exception)
             max_chars: Maximum characters allowed
 
         Returns:
             Sanitized string output
         """
-        s = value if isinstance(value, str) else json.dumps(value)
+        if isinstance(value, str):
+            s = value
+        elif isinstance(value, Exception):
+            s = f"Error: {type(value).__name__}: {value}"
+        else:
+            s = json.dumps(value)
         return (s[:max_chars] + "…") if len(s) > max_chars else s
 
 

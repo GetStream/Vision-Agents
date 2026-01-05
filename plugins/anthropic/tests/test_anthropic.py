@@ -23,9 +23,9 @@ class TestTavus:
             pytest.skip("ANTHROPIC_API_KEY not set")
         import anthropic
 
-        client = anthropic.Anthropic()
+        client = anthropic.AsyncAnthropic()
 
-        message = client.messages.create(
+        message = await client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1000,
             messages=[

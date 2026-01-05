@@ -99,7 +99,7 @@ class TestChatCompletionsVLM:
         assert messages[0]["content"] == "message1"
         assert messages[1]["content"] == "message2"
         assert messages[2]["content"] == "prompt"
-        assert messages[2]["role"] == "system"
+        assert messages[2]["role"] == "user"
         assert messages[3]["content"][0]["type"] == "image_url"
 
     async def test_simple_response_model_failure(
@@ -169,7 +169,7 @@ class TestChatCompletionsLLM:
         assert messages[0]["content"] == "message1"
         assert messages[1]["content"] == "message2"
         assert messages[2]["content"] == "prompt"
-        assert messages[2]["role"] == "system"
+        assert messages[2]["role"] == "user"
 
     async def test_simple_response_model_failure(
         self, llm, conversation, openai_client_mock

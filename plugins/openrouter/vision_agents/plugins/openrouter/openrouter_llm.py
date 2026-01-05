@@ -1,9 +1,8 @@
-"""OpenRouter LLM implementation with auto-detection of API format.
+"""OpenRouter LLM implementation using Chat Completions API.
 
 OpenRouter supports many models from different providers. This implementation
-automatically selects the appropriate API format based on the model:
-- OpenAI models (openai/*): Use Responses API for best native support
-- All other models: Use Chat Completions API (the industry standard)
+uses Chat Completions API for all models as it's the industry standard and
+works consistently across all providers.
 """
 
 import json
@@ -37,12 +36,10 @@ TOOL_SUPPORTING_MODELS = [
 
 
 class OpenRouterLLM(OpenAILLM):
-    """OpenRouter LLM with automatic API format selection.
+    """OpenRouter LLM using Chat Completions API for all models.
 
     Extends OpenAI LLM with OpenRouter-specific handling:
-    - Auto-detects model provider and uses appropriate API format
-    - OpenAI models use Responses API (native support)
-    - Non-OpenAI models use Chat Completions API (universal standard)
+    - Uses Chat Completions API for all models (consistent behavior)
     - Uses manual conversation history (no server-side conversation IDs)
     """
 
@@ -73,175 +70,40 @@ class OpenRouterLLM(OpenAILLM):
         # For tracking streaming tool calls in Chat Completions mode
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
 
-    def _is_openai_model(self, model: Optional[str] = None) -> bool:
-        """Check if the model is an OpenAI model (uses Responses API)."""
-        model = model or self.model
-        return model.startswith("openai/")
-
     def _is_auto_model(self, model: Optional[str] = None) -> bool:
         """Check if the model is a meta/auto model that may not support tools."""
         model = model or self.model
         return model in ("openrouter/auto",)
+
+    def _is_openai_model(self, model: Optional[str] = None) -> bool:
+        """Check if the model is an OpenAI model.
+
+        OpenAI models have stricter schema requirements for tool calling
+        (all properties must be in `required` when using strict mode).
+        """
+        model = model or self.model
+        return model.startswith("openai/")
 
     async def create_conversation(self):
         """No-op for OpenRouter (no server-side conversation IDs)."""
         pass
 
     async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponseEvent:
-        """Create a response using the appropriate API based on model.
+        """Create a response using Chat Completions API.
 
-        For OpenAI models: Uses parent's Responses API (native, proven to work)
-        For other models: Uses Chat Completions API
+        Always uses Chat Completions API for consistent behavior across all
+        providers. OpenRouter's Responses API support is in beta, so we avoid it.
         """
-        model = kwargs.get("model", self.model)
-
-        if self._is_openai_model(model):
-            return await super().create_response(*args, **kwargs)
-        else:
-            return await self._create_response_chat_completions(*args, **kwargs)
-
-    def add_conversation_history(self, kwargs):
-        """Add conversation history to the request input (for Responses API).
-
-        Overrides parent to handle manual conversation history since OpenRouter
-        doesn't support server-side conversation IDs.
-        """
-        new_messages = kwargs["input"]
-        if not isinstance(new_messages, list):
-            new_messages = [dict(content=new_messages, role="user", type="message")]
-
-        if self._conversation:
-            old_messages = []
-            for m in self._conversation.messages:
-                if isinstance(m.original, dict):
-                    old_messages.append(m.original)
-                else:
-                    old_messages.append(
-                        {"content": m.content, "role": m.role, "type": "message"}
-                    )
-            kwargs["input"] = old_messages + new_messages
-            normalized_messages = self._normalize_message(new_messages)
-            for msg in normalized_messages:
-                self._conversation.messages.append(msg)
+        return await self._create_response_chat_completions(*args, **kwargs)
 
     # =========================================================================
-    # Responses API tool handling (for OpenAI models)
-    # =========================================================================
-
-    async def _handle_tool_calls(
-        self,
-        tool_calls: List[NormalizedToolCallItem],
-        original_kwargs: Dict[str, Any],
-    ) -> LLMResponseEvent:
-        """Handle tool calls for Responses API without server-side conversation.
-
-        Overrides parent to work without openai_conversation by manually
-        building the conversation context for follow-up requests.
-        """
-        from openai.types.responses import Response as OpenAIResponse
-
-        max_rounds = 3
-        current_tool_calls = tool_calls
-        seen: set[tuple] = set()
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-
-        # Build conversation context from original input (ensure proper format)
-        raw_input = original_kwargs.get("input", [])
-        if isinstance(raw_input, str):
-            context = [{"role": "user", "content": raw_input, "type": "message"}]
-        elif isinstance(raw_input, list):
-            context = []
-            for item in raw_input:
-                if isinstance(item, str):
-                    context.append({"role": "user", "content": item, "type": "message"})
-                elif isinstance(item, dict):
-                    context.append(item)
-        else:
-            context = [{"role": "user", "content": str(raw_input), "type": "message"}]
-
-        for round_num in range(max_rounds):
-            triples, seen = await self._dedup_and_execute(
-                current_tool_calls, max_concurrency=8, timeout_s=30, seen=seen
-            )
-            if not triples:
-                break
-
-            # Build function_call items (what model requested) and outputs
-            function_calls, tool_outputs = [], []
-            for tc, res, err in triples:
-                cid = tc.get("id")
-                if not cid:
-                    continue
-                function_calls.append(
-                    {
-                        "type": "function_call",
-                        "call_id": cid,
-                        "name": tc["name"],
-                        "arguments": json.dumps(tc.get("arguments_json", {})),
-                    }
-                )
-                tool_outputs.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": cid,
-                        "output": self._sanitize_tool_output(
-                            err if err is not None else res
-                        ),
-                    }
-                )
-
-            if not tool_outputs:
-                return llm_response
-
-            # Make follow-up request: context + function_calls + outputs
-            follow_up_kwargs = {
-                "model": original_kwargs.get("model", self.model),
-                "input": context + function_calls + tool_outputs,
-                "stream": True,
-            }
-            if "tools" in original_kwargs:
-                follow_up_kwargs["tools"] = original_kwargs["tools"]
-
-            response = await self.client.responses.create(**follow_up_kwargs)
-
-            # Process response
-            next_tool_calls: List[NormalizedToolCallItem] = []
-            if isinstance(response, OpenAIResponse):
-                llm_response = LLMResponseEvent(response, response.output_text)
-                next_tool_calls = self._extract_tool_calls_from_response(response)
-            else:
-                async for event in response:
-                    result = self._standardize_and_emit_event(event)
-                    if result:
-                        llm_response = result
-                    if getattr(event, "type", "") == "response.completed":
-                        for c in self._extract_tool_calls_from_response(event.response):
-                            key = (
-                                c["id"],
-                                c["name"],
-                                json.dumps(c["arguments_json"], sort_keys=True),
-                            )
-                            if key not in seen:
-                                next_tool_calls.append(c)
-                                seen.add(key)
-
-            if next_tool_calls and round_num < max_rounds - 1:
-                current_tool_calls = next_tool_calls
-                context = context + function_calls + tool_outputs
-                continue
-
-            return llm_response
-
-        return llm_response
-
-    # =========================================================================
-    # Chat Completions API path (for non-OpenAI models)
+    # Chat Completions API implementation
     # =========================================================================
 
     async def _create_response_chat_completions(
         self, *args: Any, **kwargs: Any
     ) -> LLMResponseEvent:
-        """Create response using Chat Completions API (for non-OpenAI models)."""
+        """Create response using Chat Completions API."""
         from vision_agents.core.agents.conversation import Message
 
         # Get the user input
@@ -333,7 +195,16 @@ class OpenRouterLLM(OpenAILLM):
     def _convert_tools_to_chat_completions_format(
         self, tools: List[ToolSchema]
     ) -> List[Dict[str, Any]]:
-        """Convert ToolSchema to Chat Completions API format."""
+        """Convert ToolSchema to Chat Completions API format.
+
+        For non-OpenAI models: Adds strict mode to help models understand
+        required parameters better.
+
+        For OpenAI models: Omits strict mode because OpenAI requires ALL
+        properties to be in `required` when strict is enabled, which breaks
+        MCP tools that have optional parameters.
+        """
+        use_strict = not self._is_openai_model()
         result = []
         for t in tools or []:
             name = t.get("name", "unnamed_tool")
@@ -344,25 +215,18 @@ class OpenRouterLLM(OpenAILLM):
             params.setdefault("type", "object")
             params.setdefault("properties", {})
 
-            # Build the function spec
             func_spec: Dict[str, Any] = {
                 "name": name,
                 "description": description,
                 "parameters": params,
             }
 
-            # Add strict mode if the schema has required fields (helps models follow schema)
-            if params.get("required"):
+            # Add strict mode for non-OpenAI models to help them follow schemas
+            if use_strict and params.get("required"):
                 func_spec["strict"] = True
-                # Strict mode requires additionalProperties: false
                 params.setdefault("additionalProperties", False)
 
-            result.append(
-                {
-                    "type": "function",
-                    "function": func_spec,
-                }
-            )
+            result.append({"type": "function", "function": func_spec})
         return result
 
     async def _chat_completions_internal(

@@ -1,12 +1,17 @@
 import asyncio
 import importlib.metadata
+import inspect
 import logging
 import os
-from typing import Dict, Optional
+from typing import Awaitable, Callable, Dict, Optional, ParamSpec, TypeVar, Union
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+T = TypeVar("T")
+P = ParamSpec("P")
 
 
 # Type alias for markdown file contents: maps filename to file content
@@ -81,3 +86,16 @@ async def ensure_model(path: str, url: str) -> str:
             raise RuntimeError(f"Failed to download {model_name}: {e}")
 
     return path
+
+
+async def await_or_run(
+    fn: Callable[P, Union[T, Awaitable[T]]], *args: P.args, **kwargs: P.kwargs
+) -> T:
+    """
+    Run a callable that may be synchronous or asynchronous.
+    Automatically awaits if the result is awaitable.
+    """
+    result = fn(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result

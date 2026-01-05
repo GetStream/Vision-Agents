@@ -4,30 +4,28 @@ import datetime
 import json
 import logging
 import uuid
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
 import aiortc
-
-from getstream.video.rtc.audio_track import AudioStreamTrack
-from vision_agents.core.agents.agent_types import AgentOptions
-
-from vision_agents.core.llm import realtime
 from aws_sdk_bedrock_runtime.client import (
     BedrockRuntimeClient,
     InvokeModelWithBidirectionalStreamOperationInput,
 )
-from aws_sdk_bedrock_runtime.models import (
-    InvokeModelWithBidirectionalStreamInputChunk,
-    BidirectionalInputPayloadPart,
-)
 from aws_sdk_bedrock_runtime.config import Config
-from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
-
-from vision_agents.core.utils.video_forwarder import VideoForwarder
-from vision_agents.core.processors import Processor
-from vision_agents.core.edge.types import Participant
+from aws_sdk_bedrock_runtime.models import (
+    BidirectionalInputPayloadPart,
+    InvokeModelWithBidirectionalStreamInputChunk,
+)
 from getstream.video.rtc import PcmData
-from vision_agents.core.vad.silero import prepare_silero_vad
+from getstream.video.rtc.audio_track import AudioStreamTrack
+from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
+from vision_agents.core.agents.agent_types import AgentOptions
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm import realtime
+from vision_agents.core.processors import Processor
+from vision_agents.core.utils.video_forwarder import VideoForwarder
+from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
+from vision_agents.core.warmup import Warmable
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +84,7 @@ class RealtimeConnection:
                 self.stream = None
 
 
-class Realtime(realtime.Realtime):
+class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
     """
     Realtime on AWS with support for audio streaming and function calling (uses AWS Bedrock).
 
@@ -148,13 +146,8 @@ class Realtime(realtime.Realtime):
         await llm.close()
     """
 
-    connected: bool = False
     voice_id: str
     options: AgentOptions
-
-    last_connected_at: Optional[datetime.datetime] = None
-    # when we last hear or send audio (track this for reconnection logic)
-    _last_audio_at: Optional[datetime.datetime] = None
 
     def __init__(
         self,
@@ -171,6 +164,11 @@ class Realtime(realtime.Realtime):
         self.sample_rate = 24000
         self.voice_id = voice_id
         self.reconnect_after_minutes = reconnect_after_minutes
+        self.connected: bool = False
+        self.last_connected_at: Optional[datetime.datetime] = None
+        # when we last hear or send audio (track this for reconnection logic)
+        self._last_audio_at: Optional[datetime.datetime] = None
+        self._vad_session: Optional[SileroVADSession] = None
 
         # Initialize Bedrock Runtime client with SDK
         config = Config(
@@ -196,18 +194,17 @@ class Realtime(realtime.Realtime):
             str, Dict[str, Any]
         ] = {}  # Store tool calls until contentEnd: key=toolUseId
 
-    async def warmup(self):
-        await self._prepare_silero_vad()
+    async def on_warmup(self) -> SileroVADSessionPool:
+        return await SileroVADSessionPool.load(self.options.model_dir)
+
+    def on_warmed_up(self, vad_pool: SileroVADSessionPool) -> None:
+        # Initialize a new VAD session using the shared Silero VAD pool
+        self._vad_session = vad_pool.session()
 
     def _attach_agent(self, agent):
         logger.info(f"Attaching agent {agent}")
         super()._attach_agent(agent)
         self.options = agent.options
-
-    async def _prepare_silero_vad(self) -> None:
-        """Load Silero VAD model for speech detection."""
-        # Initialize VAD in thread pool to avoid blocking event loop
-        self.vad = await prepare_silero_vad(self.options.model_dir)
 
     async def watch_video_track(
         self,
@@ -393,9 +390,12 @@ class Realtime(realtime.Realtime):
             )
             return
 
+        if self._vad_session is None:
+            raise ValueError("The VAD model has not been initialized.")
+
         # Resample to 24kHz if needed, as required by AWS Nova
         pcm = pcm.resample(24000)
-        is_talking = self.vad.predict_speech(pcm) > 0.5
+        is_talking = self._vad_session.predict_speech(pcm) > 0.5
         if is_talking:
             self._last_audio_at = datetime.datetime.now()
 

@@ -38,14 +38,13 @@ def sample_frame(sample_image):
     return av.VideoFrame.from_image(sample_image)
 
 
-def test_processor_initialization():
+async def test_processor_initialization():
     """Test that processor can be initialized with basic config."""
     processor = CloudDetectionProcessor(api_key="test_key")
     assert processor is not None
-    processor.close()
+    await processor.close()
 
 
-@pytest.mark.asyncio
 async def test_video_track_frame_queuing(sample_frame):
     """Test that video track can queue and receive frames."""
     track = MoondreamVideoTrack()
@@ -57,15 +56,14 @@ async def test_video_track_frame_queuing(sample_frame):
     track.stop()
 
 
-def test_processor_publishes_track():
+async def test_processor_publishes_track():
     """Test that processor publishes a MoondreamVideoTrack."""
     processor = CloudDetectionProcessor(api_key="test_key")
     track = processor.publish_video_track()
     assert isinstance(track, MoondreamVideoTrack)
-    processor.close()
+    await processor.close()
 
 
-@pytest.mark.asyncio
 async def test_cloud_inference_structure(sample_image):
     """Test that cloud inference returns proper structure."""
     processor = CloudDetectionProcessor(api_key="test_key")
@@ -81,10 +79,9 @@ async def test_cloud_inference_structure(sample_image):
 
     assert isinstance(result, dict)
     assert "detections" in result
-    processor.close()
+    await processor.close()
 
 
-@pytest.mark.asyncio
 async def test_run_inference(sample_image):
     """Test that run_inference works correctly."""
     frame_array = np.array(sample_image)
@@ -98,10 +95,10 @@ async def test_run_inference(sample_image):
     processor._run_detection_sync = mock_detection_sync
     result = await processor._run_inference(frame_array)
     assert isinstance(result, dict)
-    processor.close()
+    await processor.close()
 
 
-def test_annotate_detections_with_normalized_coords(sample_image):
+async def test_annotate_detections_with_normalized_coords(sample_image):
     """Test annotation with normalized coordinates."""
     processor = CloudDetectionProcessor(api_key="test_key")
 
@@ -128,10 +125,10 @@ def test_annotate_detections_with_normalized_coords(sample_image):
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
     assert annotated.shape == frame_array.shape
-    processor.close()
+    await processor.close()
 
 
-def test_annotate_detections_with_pixel_coords(sample_image):
+async def test_annotate_detections_with_pixel_coords(sample_image):
     """Test annotation with pixel coordinates."""
     processor = CloudDetectionProcessor(api_key="test_key")
 
@@ -156,10 +153,10 @@ def test_annotate_detections_with_pixel_coords(sample_image):
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
     assert annotated.shape == frame_array.shape
-    processor.close()
+    await processor.close()
 
 
-def test_annotate_detections_multiple_objects(sample_image):
+async def test_annotate_detections_multiple_objects(sample_image):
     """Test annotation with multiple detections."""
     processor = CloudDetectionProcessor(api_key="test_key")
 
@@ -187,10 +184,10 @@ def test_annotate_detections_multiple_objects(sample_image):
 
     # Verify frame was modified
     assert not np.array_equal(frame_array, annotated)
-    processor.close()
+    await processor.close()
 
 
-def test_annotate_detections_empty_results(sample_image):
+async def test_annotate_detections_empty_results(sample_image):
     """Test annotation with no detections."""
     processor = CloudDetectionProcessor(api_key="test_key")
 
@@ -210,10 +207,9 @@ def test_annotate_detections_empty_results(sample_image):
 
     # Frame should be unchanged
     assert np.array_equal(frame_array, annotated)
-    processor.close()
+    await processor.close()
 
 
-@pytest.mark.asyncio
 async def test_process_and_add_frame(sample_frame):
     """Test the full frame processing pipeline."""
     processor = CloudDetectionProcessor(api_key="test_key")
@@ -234,14 +230,13 @@ async def test_process_and_add_frame(sample_frame):
     # Verify results were stored
     assert hasattr(processor, "_last_results")
     assert "detections" in processor._last_results
-    processor.close()
+    await processor.close()
 
 
 @pytest.mark.integration
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-@pytest.mark.asyncio
 async def test_live_detection_api():
     """Test live detection API with real Moondream service."""
     processor = CloudDetectionProcessor(
@@ -275,14 +270,13 @@ async def test_live_detection_api():
     else:
         pytest.skip(f"Test image not found: {image_path}")
 
-    processor.close()
+    await processor.close()
 
 
 @pytest.mark.integration
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-@pytest.mark.asyncio
 async def test_live_detection_with_annotation():
     """Test that detection results are properly annotated on frames."""
     processor = CloudDetectionProcessor(api_key=os.getenv("MOONDREAM_API_KEY"))
@@ -313,7 +307,7 @@ async def test_live_detection_with_annotation():
         # Optionally save for visual inspection
         # Image.fromarray(annotated).save("/tmp/moondream_test_annotated.jpg")
 
-    processor.close()
+    await processor.close()
 
 
 def test_missing_api_key(monkeypatch):
@@ -325,45 +319,45 @@ def test_missing_api_key(monkeypatch):
         CloudDetectionProcessor(api_key=None)
 
 
-def test_api_key_from_env(monkeypatch):
+async def test_api_key_from_env(monkeypatch):
     """Test that API key is loaded from environment variable."""
     monkeypatch.setenv("MOONDREAM_API_KEY", "test_env_key")
 
     processor = CloudDetectionProcessor()
     assert processor.api_key == "test_env_key"
-    processor.close()
+    await processor.close()
 
 
-def test_api_key_explicit_override(monkeypatch):
+async def test_api_key_explicit_override(monkeypatch):
     """Test that explicit API key overrides environment variable."""
     monkeypatch.setenv("MOONDREAM_API_KEY", "env_key")
 
     processor = CloudDetectionProcessor(api_key="explicit_key")
     assert processor.api_key == "explicit_key"
-    processor.close()
+    await processor.close()
 
 
-def test_detect_objects_default():
+async def test_detect_objects_default():
     """Test default detect_objects is 'person'."""
     processor = CloudDetectionProcessor(api_key="test_key")
     assert processor.detect_objects == ["person"]
-    processor.close()
+    await processor.close()
 
 
-def test_detect_objects_single_string():
+async def test_detect_objects_single_string():
     """Test detect_objects with single string."""
     processor = CloudDetectionProcessor(api_key="test_key", detect_objects="car")
     assert processor.detect_objects == ["car"]
-    processor.close()
+    await processor.close()
 
 
-def test_detect_objects_list():
+async def test_detect_objects_list():
     """Test detect_objects with list."""
     processor = CloudDetectionProcessor(
         api_key="test_key", detect_objects=["person", "car", "dog"]
     )
     assert processor.detect_objects == ["person", "car", "dog"]
-    processor.close()
+    await processor.close()
 
 
 def test_detect_objects_invalid_type():
@@ -388,7 +382,6 @@ def test_detect_objects_invalid_list_contents():
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-@pytest.mark.asyncio
 async def test_custom_object_detection():
     """Test detection with custom object type (not 'person')."""
     processor = CloudDetectionProcessor(
@@ -423,14 +416,13 @@ async def test_custom_object_detection():
     else:
         pytest.skip(f"Test image not found: {image_path}")
 
-    processor.close()
+    await processor.close()
 
 
 @pytest.mark.integration
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-@pytest.mark.asyncio
 async def test_multiple_object_detection():
     """Test detection with multiple object types."""
     processor = CloudDetectionProcessor(
@@ -472,4 +464,4 @@ async def test_multiple_object_detection():
     else:
         pytest.skip(f"Test image not found: {image_path}")
 
-    processor.close()
+    await processor.close()

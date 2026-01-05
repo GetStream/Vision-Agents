@@ -57,7 +57,7 @@ class TestRoboflowLocalDetectionProcessor:
     ):
         processor = RoboflowLocalDetectionProcessor(annotate=annotate)
         await processor.warmup()
-        processor._attach_agent(agent_mock)
+        processor.attach_agent(agent_mock)
 
         # Use future to catch a detection event
         future = asyncio.Future()
@@ -101,7 +101,7 @@ class TestRoboflowLocalDetectionProcessor:
     ):
         processor = RoboflowLocalDetectionProcessor(classes=["class-123"])
         await processor.warmup()
-        processor._attach_agent(agent_mock)
+        processor.attach_agent(agent_mock)
 
         # Use future to catch a detection event
         future = asyncio.Future()
@@ -136,7 +136,7 @@ class TestRoboflowLocalDetectionProcessor:
     async def test_process_video_nothing_detected(self, agent_mock, events_manager):
         processor = RoboflowLocalDetectionProcessor()
         await processor.warmup()
-        processor._attach_agent(agent_mock)
+        processor.attach_agent(agent_mock)
 
         # Use future to catch a detection event
         future = asyncio.Future()
@@ -190,7 +190,7 @@ class TestRoboflowCloudDetectionProcessor:
             classes=["cat"],
             model_id="yolo-nas-s-640",  # Use a general pre-trained model
         )
-        processor._attach_agent(agent_mock)
+        processor.attach_agent(agent_mock)
 
         # Use future to catch a detection event
         future = asyncio.Future()
@@ -231,7 +231,7 @@ class TestRoboflowCloudDetectionProcessor:
 
     async def test_process_video_nothing_detected(self, agent_mock, events_manager):
         processor = RoboflowCloudDetectionProcessor(model_id="yolo-nas-s-640", fps=1)
-        processor._attach_agent(agent_mock)
+        processor.attach_agent(agent_mock)
 
         # Use future to catch a detection event
         future = asyncio.Future()
@@ -270,7 +270,7 @@ class TestRoboflowCloudDetectionProcessor:
         processor = RoboflowCloudDetectionProcessor(
             model_id="yolo-nas-s-640", classes=["class-123"], fps=1
         )
-        processor._attach_agent(agent_mock)
+        processor.attach_agent(agent_mock)
 
         # Use future to catch a detection event
         future = asyncio.Future()

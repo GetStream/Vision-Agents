@@ -33,13 +33,11 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with OpenRouter LLM, function calling, and optional MCP."""
-    # OpenRouter auto-detects the API format based on model:
-    # - openai/* models use Responses API
-    # - All other models (google/*, anthropic/*, etc.) use Chat Completions API
-    #
+    # OpenRouter uses Chat Completions API for all models.
+    # Any model available on OpenRouter can be used here.
     # For MCP/GitHub integration, Claude is recommended as it handles
     # multi-step tool reasoning well (e.g., call get_me first, then use the result)
-    model = "openai/gpt-4o"
+    model = "openrouter/auto"
 
     llm = openrouter.LLM(model=model)
 
@@ -81,8 +79,10 @@ async def create_agent(**kwargs) -> Agent:
 
 TOOL USE RULES:
 1. When you need info, call tools silently - don't narrate what you're doing
-2. For GitHub tasks requiring a username/owner: ALWAYS call get_me first, then use the returned username
-3. Chain multiple tool calls as needed - don't ask for clarification if you can figure it out
+2. Don't ask the user for information you can look up yourself. e.g. for GitHub tasks requiring a username/owner: 
+    ALWAYS call get_me first, then use the returned username
+3. Chain multiple tool calls as needed - for example, if asked about user repositories 
+   and you need a username, call get_me first, then use that for subsequent calls
 4. Example: "How many PRs in my repo?" → call get_me → use username for list_pull_requests → report count
 
 Available: get_weather, calculate_sum, get_me, list_pull_requests, search_repositories, and GitHub tools.""",

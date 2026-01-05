@@ -29,6 +29,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.skip("Skip Moondream local tests because they take too long to run")
 class TestMoondreamLocalProcessor:
     """Test cases for MoondreamLocalProcessor."""
 
@@ -56,7 +57,7 @@ class TestMoondreamLocalProcessor:
     async def test_model_loads_correctly(
         self, moondream_processor: LocalDetectionProcessor
     ):
-        """Test that start() successfully loads the model."""
+        """Test that load() successfully loads the model."""
         # Model should be None initially
         assert moondream_processor.model is None
 

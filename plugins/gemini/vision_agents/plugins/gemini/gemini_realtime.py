@@ -47,7 +47,7 @@ from .file_search import FileSearchStore
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
+DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 
 DEFAULT_CONFIG = LiveConnectConfigDict(
     response_modalities=[Modality.AUDIO],

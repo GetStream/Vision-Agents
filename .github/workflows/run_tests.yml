@@ -6,7 +6,7 @@ on:
         description: 'pytest -m expression (e.g., `not integration` or `integration`)'
         required: true
         type: string
-    secrets: {}
+    secrets: { }
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -28,6 +28,17 @@ jobs:
         run: uv run ruff check .
       - name: Run Ruff formatter
         run: uv run ruff format --check .
+
+  validate-core-pyproject:
+    name: Validate extra dependencies in "agents-core/pyproject.toml"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
+      - name: Run validation script
+        run: uv run dev.py validate-extras
 
   mypy:
     name: Mypy
@@ -78,6 +89,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+      - name: Clean space as per https://github.com/actions/virtual-environments/issues/709
+        run: |
+          sudo rm -rf "/usr/share/dotnet" || true
+          sudo rm -rf "/usr/local/lib/android" || true
+          sudo rm -rf "/usr/local/share/boost" || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       - name: Export AWS_BEARER_TOKEN_BEDROCK (heredoc)

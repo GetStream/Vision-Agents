@@ -52,6 +52,44 @@ class TestOpenRouterLLM:
         messages = LLM._normalize_message(advanced)
         assert messages[0].original is not None
 
+    async def test_strict_mode_for_non_openai(self):
+        """Non-OpenAI models should have strict mode enabled for tools with required params."""
+        llm = LLM(model="google/gemini-2.0-flash-001")
+        tools = [
+            {
+                "name": "test_tool",
+                "description": "A test",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"foo": {"type": "string"}},
+                    "required": ["foo"],
+                },
+            }
+        ]
+        converted = llm._convert_tools_to_chat_completions_format(tools)
+        func = converted[0]["function"]
+        assert func.get("strict") is True
+        assert func["parameters"].get("additionalProperties") is False
+
+    async def test_no_strict_mode_for_openai(self):
+        """OpenAI models should NOT have strict mode (breaks with optional params)."""
+        llm = LLM(model="openai/gpt-4o")
+        tools = [
+            {
+                "name": "test_tool",
+                "description": "A test",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"foo": {"type": "string"}},
+                    "required": ["foo"],
+                },
+            }
+        ]
+        converted = llm._convert_tools_to_chat_completions_format(tools)
+        func = converted[0]["function"]
+        assert func.get("strict") is None
+        assert func["parameters"].get("additionalProperties") is None
+
     @pytest.fixture
     async def llm(self) -> LLM:
         """Fixture for OpenRouter LLM with conversation."""
@@ -135,7 +173,7 @@ class TestOpenRouterLLM:
 
     @pytest.mark.integration
     async def test_function_calling_openai(self):
-        """Test function calling with OpenAI model (Responses API path)."""
+        """Test function calling with OpenAI model."""
         skip_without_api_key()
         llm = LLM(model="openai/gpt-4o-mini")
 
@@ -159,7 +197,7 @@ class TestOpenRouterLLM:
 
     @pytest.mark.integration
     async def test_function_calling_gemini(self):
-        """Test function calling with Gemini model (Chat Completions API path)."""
+        """Test function calling with Gemini model."""
         skip_without_api_key()
         llm = LLM(model="google/gemini-2.0-flash-001")
 

@@ -1,7 +1,7 @@
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, cast
+from typing import Optional
 
 import aiortc
 import av
@@ -10,11 +10,7 @@ import supervision as sv
 from inference_sdk import InferenceConfiguration, InferenceHTTPClient
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
-from vision_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    VideoProcessorMixin,
-    VideoPublisherMixin,
-)
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.plugins.roboflow.events import (
@@ -26,9 +22,7 @@ from vision_agents.plugins.roboflow.utils import annotate_image
 logger = logging.getLogger(__name__)
 
 
-class RoboflowCloudDetectionProcessor(
-    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
-):
+class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
     """
     A VideoProcessor for real-time object detection with Roboflow's models.
     This processor uses models from Roboflow Universe, and calls Roboflow's serverless API for inference.
@@ -70,12 +64,16 @@ class RoboflowCloudDetectionProcessor(
             Example: ["person", "sports ball"]
             Verify that the classes a supported by the given model.
             Default - None (all classes are detected).
+        client: optional custom instance of `inference_sdk.InferenceHTTPClient`.
         annotate: if True, annotate the detected objects with boxes and labels.
             Default - True.
         dim_background_factor: how much to dim the background around detected objects from 0 to 1.0.
             Effective only when annotate=True.
             Default - 0.0 (no dimming).
-        client: optional custom instance of `inference_sdk.InferenceHTTPClient`.
+        annotate_text_scale: annotation text scale. Default - 0.75.
+        annotate_text_padding: annotation text padding. Default - 1.
+        annotate_box_thickness: annotation box thickness. Default - 2.
+        annotate_text_position: annotation text position. Default - `sv.Position.TOP_CENTER`.
 
     Examples:
         Example usage:
@@ -104,13 +102,15 @@ class RoboflowCloudDetectionProcessor(
         api_url: Optional[str] = None,
         conf_threshold: float = 0.5,
         fps: int = 5,
-        annotate: bool = True,
         classes: Optional[list[str]] = None,
-        dim_background_factor: float = 0.0,
         client: Optional[InferenceHTTPClient] = None,
+        annotate: bool = True,
+        dim_background_factor: float = 0.0,
+        annotate_text_scale: float = 0.75,
+        annotate_text_padding: int = 1,
+        annotate_box_thickness: int = 2,
+        annotate_text_position: sv.Position = sv.Position.TOP_CENTER,
     ):
-        super().__init__(interval=0, receive_audio=False, receive_video=True)
-
         if not model_id:
             raise ValueError("model_id is required")
 
@@ -139,6 +139,10 @@ class RoboflowCloudDetectionProcessor(
         self.fps = fps
         self.dim_background_factor = max(0.0, dim_background_factor)
         self.annotate = annotate
+        self._annotate_text_scale = annotate_text_scale
+        self._annotate_text_padding = annotate_text_padding
+        self._annotate_box_thickness = annotate_box_thickness
+        self._annotate_text_position = annotate_text_position
 
         self._events: Optional[EventManager] = None
         self._client.configure(
@@ -165,7 +169,7 @@ class RoboflowCloudDetectionProcessor(
 
     async def process_video(
         self,
-        incoming_track: aiortc.MediaStreamTrack,
+        incoming_track: aiortc.VideoStreamTrack,
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
@@ -181,7 +185,7 @@ class RoboflowCloudDetectionProcessor(
             shared_forwarder
             if shared_forwarder
             else VideoForwarder(
-                cast(aiortc.VideoStreamTrack, incoming_track),
+                incoming_track,
                 max_buffer=self.fps,  # 1 second
                 fps=self.fps,
                 name="roboflow_forwarder",
@@ -210,7 +214,7 @@ class RoboflowCloudDetectionProcessor(
             raise ValueError("Agent is not attached to the processor yet")
         return self._events
 
-    def _attach_agent(self, agent: Agent):
+    def attach_agent(self, agent: Agent):
         self._events = agent.events
         self._events.register(DetectionCompletedEvent)
 
@@ -237,7 +241,14 @@ class RoboflowCloudDetectionProcessor(
         if self.annotate:
             # Annotate frame with detections
             annotated_image = annotate_image(
-                image, detections, classes, dim_factor=self.dim_background_factor
+                image,
+                detections,
+                classes,
+                dim_factor=self.dim_background_factor,
+                text_scale=self._annotate_text_scale,
+                text_position=self._annotate_text_position,
+                text_padding=self._annotate_text_padding,
+                box_thickness=self._annotate_box_thickness,
             )
 
             # Convert back to av.VideoFrame
