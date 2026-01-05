@@ -12,7 +12,6 @@ from uuid import uuid4
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
-from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from opentelemetry import context as otel_context
 from opentelemetry import trace
@@ -27,7 +26,7 @@ from ..edge.events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import Connection, OutputAudioTrack, Participant, PcmData, User
+from ..edge.types import OutputAudioTrack, Participant, PcmData, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -70,7 +69,10 @@ from .conversation import Conversation
 from .transcript_buffer import TranscriptBuffer
 
 if TYPE_CHECKING:
-    from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
+    from vision_agents.plugins.getstream.stream_edge_transport import (
+        StreamConnection,
+        StreamEdge,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +140,6 @@ class Agent:
             self.agent_user.id = f"agent-{uuid4()}"
 
         self._pending_turn: Optional[LLMTurn] = None
-        self.participants: Optional[ParticipantsState] = None
         self.call: Optional[Call] = None
 
         self._active_processed_track_id: Optional[str] = None
@@ -308,6 +309,13 @@ class Agent:
                 return
 
             await self._incoming_audio_queue.put(event.pcm_data)
+
+        @self.edge.events.subscribe
+        async def on_call_ended(event: CallEndedEvent):
+            if self._call_ended_event is not None:
+                self._call_ended_event.set()
+
+            await self.close()
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(
@@ -552,30 +560,37 @@ class Agent:
         self.llm.set_conversation(self.conversation)
 
         if wait_for_participant:
-            self.logger.info("Agent is ready, waiting for participant to join")
             await self.wait_for_participant()
 
         return AgentSessionContextManager(self, self._connection)
 
-    async def wait_for_participant(self):
-        """wait for a participant other than the AI agent to join"""
-
-        if self.participants is None:
+    async def wait_for_participant(self, timeout: Optional[float] = None) -> None:
+        """
+        Wait for a participant other than the AI agent to join
+        """
+        if self._connection is None:
             return
 
-        participant_joined = asyncio.Event()
-
-        def on_participants(participants):
-            for p in participants:
-                if p.user_id != self.agent_user.id:
-                    participant_joined.set()
-
-        subscription = self.participants.map(on_participants)
-
+        self.logger.info("Waiting for other participants to join")
         try:
-            await participant_joined.wait()
-        finally:
-            subscription.unsubscribe()
+            await self._connection.wait_for_participant(timeout=timeout)
+        except asyncio.TimeoutError:
+            self.logger.info(
+                f"No participants joined after {timeout}s timeout, proceeding."
+            )
+
+    def idle_for(self) -> float:
+        """
+        Return the idle time for this connection if there is no other participants except the agent itself.
+        `0.0` means that connection is active.
+
+        Returns:
+            idle time for this connection or 0.0
+        """
+        if self._connection is None:
+            return 0.0
+
+        return self._connection.idle_for()
 
     async def finish(self):
         """Wait for the call to end gracefully.
