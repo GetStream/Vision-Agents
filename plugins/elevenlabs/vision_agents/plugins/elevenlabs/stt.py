@@ -2,6 +2,7 @@ import asyncio
 import base64
 import logging
 import os
+import time
 from typing import Optional, Any
 
 from elevenlabs.client import AsyncElevenLabs
@@ -90,6 +91,8 @@ class STT(stt.STT):
         self._should_reconnect = {"value": False}
         self._reconnect_event = asyncio.Event()
         self._commit_received = asyncio.Event()
+        # Track when audio processing started for latency measurement
+        self._audio_start_time: Optional[float] = None
 
     async def process_audio(
         self,
@@ -122,6 +125,10 @@ class STT(stt.STT):
         resampled_pcm = pcm_data.resample(16_000, 1)
 
         self._current_participant = participant
+
+        # Track start time for first audio chunk of a new utterance
+        if self._audio_start_time is None:
+            self._audio_start_time = time.perf_counter()
 
         # Add to audio queue for batching
         if self._audio_queue is not None:
@@ -244,11 +251,17 @@ class STT(stt.STT):
         if words:
             other = {"words": words}
 
+        # Calculate processing time (time from first audio to transcript)
+        processing_time_ms: Optional[float] = None
+        if self._audio_start_time is not None:
+            processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
+
         response_metadata = TranscriptResponse(
             confidence=confidence,
             language=self.language_code,
             model_name=self.model_id,
             other=other,
+            processing_time_ms=processing_time_ms,
         )
 
         # Use the participant from the most recent process_audio call
@@ -291,11 +304,17 @@ class STT(stt.STT):
         if words:
             other = {"words": words}
 
+        # Calculate processing time (time from first audio to transcript)
+        processing_time_ms: Optional[float] = None
+        if self._audio_start_time is not None:
+            processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
+
         response_metadata = TranscriptResponse(
             confidence=confidence,
             language=self.language_code,
             model_name=self.model_id,
             other=other,
+            processing_time_ms=processing_time_ms,
         )
 
         # Use the participant from the most recent process_audio call
@@ -308,6 +327,9 @@ class STT(stt.STT):
 
         # Emit final transcript
         self._emit_transcript_event(transcript_text, participant, response_metadata)
+
+        # Reset audio start time for next utterance
+        self._audio_start_time = None
 
         # Signal that commit was received
         self._commit_received.set()

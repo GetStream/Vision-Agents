@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Optional, Any
 
 from deepgram import AsyncDeepgramClient
@@ -80,6 +81,8 @@ class STT(stt.STT):
         self._connection_ready = asyncio.Event()
         self._connection_context: Optional[Any] = None
         self._listen_task: Optional[asyncio.Task[Any]] = None
+        # Track when audio processing started for latency measurement
+        self._audio_start_time: Optional[float] = None
 
     async def process_audio(
         self,
@@ -115,6 +118,10 @@ class STT(stt.STT):
         audio_bytes = resampled_pcm.samples.tobytes()
 
         self._current_participant = participant
+
+        # Track start time for first audio chunk of a new utterance
+        if self._audio_start_time is None:
+            self._audio_start_time = time.perf_counter()
 
         if self.connection is not None:
             await self.connection.send_media(audio_bytes)
@@ -208,12 +215,18 @@ class STT(stt.STT):
             audio_window_end = getattr(message, "audio_window_end", 0.0)
             duration_ms = int(audio_window_end * 1000)
 
+            # Calculate processing time (time from first audio to transcript)
+            processing_time_ms: Optional[float] = None
+            if self._audio_start_time is not None:
+                processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
+
             # Build response metadata
             response_metadata = TranscriptResponse(
                 confidence=avg_confidence,
                 language=self.language or "auto",
                 audio_duration_ms=duration_ms,
                 model_name=self.model,
+                processing_time_ms=processing_time_ms,
             )
 
             # Use the participant from the most recent process_audio call
@@ -235,6 +248,8 @@ class STT(stt.STT):
 
             # broadcast turn event
             if is_final or eager_end_of_turn:
+                # Reset audio start time for next utterance
+                self._audio_start_time = None
                 self._emit_turn_ended_event(
                     participant=participant,
                     eager_end_of_turn=eager_end_of_turn,

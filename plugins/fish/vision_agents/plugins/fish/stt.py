@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Optional
 
 import numpy as np
@@ -84,6 +85,7 @@ class STT(stt.STT):
             return None
 
         try:
+            start_time = time.perf_counter()
             # Convert PCM to WAV format using shared PcmData method
             wav_data = pcm_data.to_wav_bytes()
 
@@ -110,11 +112,14 @@ class STT(stt.STT):
                 )
                 return None
 
+            processing_time_ms = (time.perf_counter() - start_time) * 1000
+
             # Build response metadata
             response_metadata = TranscriptResponse(
                 audio_duration_ms=response.duration,
                 language=self.language or "auto",
                 model_name="fish-audio-asr",
+                processing_time_ms=processing_time_ms,
             )
 
             logger.debug(

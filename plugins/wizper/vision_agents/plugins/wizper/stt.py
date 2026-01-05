@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -80,6 +81,7 @@ class STT(stt.STT):
             return
 
         try:
+            start_time = time.perf_counter()
             logger.debug(
                 "Sending speech audio to fal-ai/wizper",
                 extra={"audio_bytes": pcm_data.samples.nbytes},
@@ -123,7 +125,11 @@ class STT(stt.STT):
                                 original=None, user_id="test-user"
                             )
 
-                        response_metadata = TranscriptResponse()
+                        processing_time_ms = (time.perf_counter() - start_time) * 1000
+                        response_metadata = TranscriptResponse(
+                            processing_time_ms=processing_time_ms,
+                            model_name="wizper-v3",
+                        )
                         self._emit_transcript_event(
                             text, participant, response_metadata
                         )

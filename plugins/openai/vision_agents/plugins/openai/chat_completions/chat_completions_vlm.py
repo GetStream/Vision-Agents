@@ -1,6 +1,8 @@
 import asyncio
 import base64
 import logging
+import time
+import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncIterator, Optional, cast
@@ -11,8 +13,12 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core.llm.events import (
+    LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
+    VLMInferenceStartEvent,
+    VLMInferenceCompletedEvent,
+    VLMErrorEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
 from vision_agents.core.processors import Processor
@@ -134,6 +140,33 @@ class ChatCompletionsVLM(VideoLLM):
 
         messages = await self._build_model_request()
 
+        # Count frames being processed
+        frames_count = len(self._frame_buffer)
+        inference_id = str(uuid.uuid4())
+
+        # Emit VLM start event
+        self.events.send(
+            VLMInferenceStartEvent(
+                plugin_name=PLUGIN_NAME,
+                inference_id=inference_id,
+                model=self.model,
+                frames_count=frames_count,
+            )
+        )
+
+        # Emit request started event
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name=PLUGIN_NAME,
+                model=self.model,
+                streaming=True,
+            )
+        )
+
+        # Track timing
+        request_start_time = time.perf_counter()
+        first_token_time: Optional[float] = None
+
         try:
             response = await self._client.chat.completions.create(  # type: ignore[arg-type]
                 messages=messages,  # type: ignore[arg-type]
@@ -148,6 +181,14 @@ class ChatCompletionsVLM(VideoLLM):
                     plugin_name=PLUGIN_NAME,
                     error_message=str(e),
                     event_data=e,
+                )
+            )
+            self.events.send(
+                VLMErrorEvent(
+                    plugin_name=PLUGIN_NAME,
+                    inference_id=inference_id,
+                    error=e,
+                    context="api_request",
                 )
             )
             return LLMResponseEvent(original=None, text="")
@@ -167,6 +208,15 @@ class ChatCompletionsVLM(VideoLLM):
             finish_reason = choice.finish_reason
 
             if content:
+                # Track time to first token
+                if first_token_time is None:
+                    first_token_time = time.perf_counter()
+
+                is_first = len(text_chunks) == 0
+                ttft_ms = None
+                if is_first:
+                    ttft_ms = (first_token_time - request_start_time) * 1000
+
                 text_chunks.append(content)
                 # Emit delta events for each response chunk.
                 self.events.send(
@@ -177,6 +227,8 @@ class ChatCompletionsVLM(VideoLLM):
                         output_index=0,
                         sequence_number=i,
                         delta=content,
+                        is_first_chunk=is_first,
+                        time_to_first_token_ms=ttft_ms,
                     )
                 )
 
@@ -187,12 +239,33 @@ class ChatCompletionsVLM(VideoLLM):
                     )
                 # Emit the completion event when the response stream is finished.
                 total_text = "".join(text_chunks)
+                latency_ms = (time.perf_counter() - request_start_time) * 1000
+                ttft_ms_final = None
+                if first_token_time is not None:
+                    ttft_ms_final = (first_token_time - request_start_time) * 1000
+
+                # Emit VLM-specific completion event with metrics
+                self.events.send(
+                    VLMInferenceCompletedEvent(
+                        plugin_name=PLUGIN_NAME,
+                        inference_id=inference_id,
+                        model=self.model,
+                        text=total_text,
+                        latency_ms=latency_ms,
+                        frames_processed=frames_count,
+                    )
+                )
+
+                # Also emit LLM completion for compatibility
                 self.events.send(
                     LLMResponseCompletedEvent(
                         plugin_name=PLUGIN_NAME,
                         original=chunk,
                         text=total_text,
                         item_id=chunk.id,
+                        latency_ms=latency_ms,
+                        time_to_first_token_ms=ttft_ms_final,
+                        model=self.model,
                     )
                 )
 
