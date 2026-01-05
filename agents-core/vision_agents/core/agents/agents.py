@@ -238,6 +238,9 @@ class Agent:
 
         self.events.send(events.AgentInitEvent())
 
+        self._close_lock = asyncio.Lock()
+        self._closed = False
+
     async def _finish_llm_turn(self):
         if self._pending_turn is None or self._pending_turn.response is None:
             raise ValueError(
@@ -494,32 +497,22 @@ class Agent:
     async def join(
         self, call: Call, wait_for_participant=True
     ) -> "AgentSessionContextManager":
-        # TODO: validation. join can only be called once
-        self.logger.info("joining call")
-        # run start on all subclasses
-        await self._apply("start")
-        self._start_tracing()
-
-        if self._root_span:
-            self._root_span.set_attribute("call_id", call.id)
-            if self.agent_user.id:
-                self._root_span.set_attribute("agent_id", self.agent_user.id)
-
-        if self._is_running:
-            raise RuntimeError("Agent is already running")
-
-        await self.create_user()
-
+        if self._call_ended_event is not None:
+            raise RuntimeError("Agent already joined the call")
+        self._call_ended_event = asyncio.Event()
         self.call = call
         self.conversation = None
 
+        self._start_tracing(call)
         # Ensure all subsequent logs include the call context.
         self._set_call_logging_context(call.id)
 
-        # Setup chat and connect it to transcript events (we'll wait at the end)
-        create_conversation_coro = self.edge.create_conversation(
-            call, self.agent_user, self.instructions.full_reference
-        )
+        # run start on all subclasses
+        await self._apply("start")
+
+        await self.create_user()
+        if self.agent_user.id:
+            self._root_span.set_attribute("agent_id", self.agent_user.id)
 
         try:
             # Connect to MCP servers if manager is available
@@ -534,14 +527,12 @@ class Agent:
 
             with self.span("edge.join"):
                 connection = await self.edge.join(self, call)
-                self.participants = connection.participants
 
         except Exception:
             self.clear_call_logging_context()
             raise
 
         self._connection = connection
-        self._is_running = True
         self._audio_consumer_task = asyncio.create_task(self._consume_incoming_audio())
 
         self.logger.info(f"🤖 Agent joined call: {call.id}")
@@ -554,8 +545,11 @@ class Agent:
             with self.span("edge.publish_tracks"):
                 await self.edge.publish_tracks(audio_track, video_track)
 
-        # wait for conversation creation coro at the very end of the join flow
-        self.conversation = await create_conversation_coro
+        # Setup chat and connect it to transcript events
+        self.conversation = await self.edge.create_conversation(
+            call, self.agent_user, self.instructions.full_reference
+        )
+
         # Provide conversation to the LLM so it can access the chat history.
         self.llm.set_conversation(self.conversation)
 
@@ -593,32 +587,30 @@ class Agent:
         return self._connection.idle_for()
 
     async def finish(self):
-        """Wait for the call to end gracefully.
-        Subscribes to the edge transport's `call_ended` event and awaits it. If
-        no connection is active, returns immediately.
         """
-        if not self._connection:
-            self.logger.info(
-                "🔚 Agent connection is already closed, finishing immediately"
-            )
+        Wait for the call to end gracefully.
+        If no connection is active, returns immediately.
+        """
+        if self._call_ended_event is None:
+            # Exit immediately because the agent either left the call, or the call hasn't even started.
             return
 
         try:
-            await running_event.wait()
+            await self._call_ended_event.wait()
         except asyncio.CancelledError:
-            running_event.clear()
-
-        self.events.send(events.AgentFinishEvent())
-
-        await self.close()
+            # Close the agent even if the coroutine is canceled
+            self.events.send(events.AgentFinishEvent())
+            await self.close()
+            raise
 
     @contextlib.contextmanager
-    def span(self, name):
-        with tracer.start_as_current_span(name, context=self._root_ctx) as span:
+    def span(self, name: str):
+        with self.tracer.start_as_current_span(name, context=self._root_ctx) as span:
             yield span
 
-    def _start_tracing(self):
-        self._root_span = tracer.start_span("join").__enter__()
+    def _start_tracing(self, call: Call) -> None:
+        self._root_span = self.tracer.start_span("join").__enter__()
+        self._root_span.set_attribute("call_id", call.id)
         self._root_ctx = set_span_in_context(self._root_span)
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
@@ -652,21 +644,28 @@ class Agent:
             self._context_token = None
 
     async def close(self):
-        """Clean up all connections and resources.
+        """
+        Clean up all connections and resources.
 
         Closes MCP connections, realtime output, active media tracks, processor
         tasks, the call connection, STT/TTS services, and stops turn detection.
-        Safe to call multiple times.
-
-        This is an async method because several components expose async shutdown
-        hooks (e.g., WebRTC connections, plugin services).
+        It is safe to call multiple times.
         """
-        self._end_tracing()
-        self._is_running = False
-        self.clear_call_logging_context()
-        # Run the async cleanup code in a separate shielded coroutine.
-        # asyncio.shield changes the context, failing self._end_tracing()
-        await asyncio.shield(self._stop())
+        async with self._close_lock:
+            if self._closed:
+                # The agent was closed while waiting for the lock, exit early
+                return
+            self.logger.info("🤖 Closing the agent")
+            # Set call_ended event again in case the agent is closed externally
+            self._call_ended_event.set()
+
+            # Run the async cleanup code in a separate shielded coroutine.
+            # asyncio.shield changes the context, failing self._end_tracing()
+            await asyncio.shield(self._stop())
+            self._call_ended_event = None
+            self.clear_call_logging_context()
+            self._closed = True
+            self._end_tracing()
 
     async def _stop(self):
         # Stop audio consumer task
@@ -856,10 +855,10 @@ class Agent:
         interval_seconds = 0.02  # 20ms target interval
 
         try:
-            while self._is_running:
+            while not self._call_ended_event.is_set():
                 loop_start = time.perf_counter()
                 try:
-                    # Get audio data from queue with timeout to allow checking _is_running
+                    # Get audio data from queue with timeout to keep the loop running
                     pcm = await asyncio.wait_for(
                         self._incoming_audio_queue.get_duration(duration_ms=20),
                         timeout=1.0,
@@ -891,7 +890,7 @@ class Agent:
                         )
 
                 except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                    # No audio data available, continue loop to check _is_running
+                    # No audio data available, continue the loop
                     pass
 
                 # Sleep for remaining time to maintain consistent interval
