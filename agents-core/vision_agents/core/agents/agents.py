@@ -925,13 +925,20 @@ class Agent:
     async def _on_track_removed(
         self, track_id: str, track_type: int, participant: Participant
     ):
+        # We only process video tracks (camera video or screenshare)
+        if track_type not in (
+            TrackType.TRACK_TYPE_VIDEO,
+            TrackType.TRACK_TYPE_SCREEN_SHARE,
+        ):
+            return
         track_type_name = (
             "SCREEN_SHARE"
             if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
             else "VIDEO"
         )
-        user_id = participant.user_id if participant else "unknown"
-        self.logger.info(f"📺 Track removed: {track_type_name} from {user_id}")
+        self.logger.info(
+            f"📺 Track removed: {track_type_name} from {participant.user_id}"
+        )
 
         track = self._active_video_tracks.pop(track_id, None)
         if track is not None:
@@ -987,8 +994,9 @@ class Agent:
             if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
             else "VIDEO"
         )
-        user_id = participant.user_id if participant else "unknown"
-        self.logger.info(f"📺 Track added: {track_type_name} from {user_id}")
+        self.logger.info(
+            f"📺 Track added: {track_type_name} from {participant.user_id}"
+        )
 
         if self._video_track_override_path is not None:
             # If local video track is set, we override all other video tracks with it.
