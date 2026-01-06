@@ -39,7 +39,7 @@ class StreamConnection(Connection):
         super().__init__()
         # store the native connection object
         self._connection = connection
-        self._idle_since = 0
+        self._idle_since: float = 0.0
         self._participant_joined = asyncio.Event()
         # Subscribe to participants changes for this connection
         self._subscription = self._connection.participants_state.map(
@@ -50,17 +50,15 @@ class StreamConnection(Connection):
     def participants(self) -> ParticipantsState:
         return self._connection.participants_state
 
-    def idle_for(self) -> float:
+    def idle_since(self) -> float:
         """
-        Return the idle time for this connection if there is no other participants except the agent itself.
+        Return the timestamp when all participants left this call except the agent itself.
         `0.0` means that connection is active.
 
         Returns:
             idle time for this connection or 0.
         """
-        if self._idle_since:
-            return time.time() - self._idle_since
-        return 0.0
+        return self._idle_since
 
     async def wait_for_participant(self, timeout: Optional[float] = None) -> None:
         """
@@ -89,7 +87,7 @@ class StreamConnection(Connection):
         if other_participants:
             # Some participants detected.
             # Reset the idleness timeout back to zero.
-            self._idle_since = 0
+            self._idle_since = 0.0
             # Resolve the participant joined event
             self._participant_joined.set()
         elif not self._idle_since:

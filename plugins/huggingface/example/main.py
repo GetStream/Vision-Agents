@@ -51,7 +51,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     logger.info("Starting HuggingFace Agent...")
 
-    with await agent.join(call):
+    async with agent.join(call):
         logger.info("Joining call")
 
         await asyncio.sleep(2)

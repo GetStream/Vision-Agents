@@ -19,25 +19,25 @@ class TestStreamConnection:
         # No participants, connection is idle
         conn = StreamConnection(connection=connection_manager)
         time.sleep(0.01)
-        assert conn.idle_for() > 0
+        assert conn.idle_since() > 0
 
         # One participant (itself), still idle
         connection_manager.participants_state._add_participant(
             Participant(user_id=str(connection_manager.user_id))
         )
         time.sleep(0.01)
-        assert conn.idle_for() > 0
+        assert conn.idle_since() > 0
 
         # A participant joined, not idle anymore
         another_participant = Participant(user_id="another-user-id")
         connection_manager.participants_state._add_participant(another_participant)
         time.sleep(0.01)
-        assert not conn.idle_for()
+        assert not conn.idle_since()
 
         # A participant left, idle again
         connection_manager.participants_state._remove_participant(another_participant)
         time.sleep(0.01)
-        assert conn.idle_for() > 0
+        assert conn.idle_since() > 0
 
     async def test_wait_for_participant_already_present(self, connection_manager):
         """Test that wait_for_participant returns immediately if participant already in call"""
