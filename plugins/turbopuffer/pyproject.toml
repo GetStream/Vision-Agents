@@ -32,8 +32,6 @@ packages = ["."]
 [tool.hatch.build.targets.sdist]
 include = ["/vision_agents"]
 
-[tool.uv.sources]
-vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [

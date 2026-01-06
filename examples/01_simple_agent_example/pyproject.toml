@@ -1,7 +1,7 @@
 [project]
 name = "simple-agents-example"
 version = "0.0.0"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.13"
 
 # Dependencies that the example actually uses
 dependencies = [

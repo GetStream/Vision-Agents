@@ -16,14 +16,8 @@ dependencies = [
   "vision-agents-plugins-turbopuffer",
   "fastapi",
   "uvicorn",
-  "audioop-lts>=0.2.2",
-  # TurboPuffer RAG dependencies
-  "turbopuffer>=0.1",
   "langchain-google-genai>=2.0",
   "langchain-text-splitters>=0.3",
-  # Testing
-  "pytest>=8.0",
-  "pytest-asyncio>=0.24",
 ]
 
 [tool.uv.sources]
