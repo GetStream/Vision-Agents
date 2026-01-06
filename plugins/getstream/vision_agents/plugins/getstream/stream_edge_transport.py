@@ -277,6 +277,14 @@ class StreamEdge(EdgeTransport):
         self.agent_user_id = user.id
         return await self.client.create_user(name=user.name, id=user.id)
 
+    async def create_users(self, users: list[User]):
+        """Create multiple users in a single API call."""
+        from getstream.models import UserRequest
+
+        users_map = {u.id: UserRequest(name=u.name, id=u.id) for u in users}
+        response = await self.client.update_users(users_map)
+        return [response.data.users[u.id] for u in users]
+
     async def join(self, agent: "Agent", call: Call) -> StreamConnection:
         """
         The logic for joining a call is different for each edge network/realtime audio/video provider

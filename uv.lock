@@ -1,9 +1,11 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
-    "python_full_version >= '3.13' and sys_platform == 'win32'",
-    "python_full_version >= '3.13' and sys_platform != 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform != 'win32'",
     "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version < '3.13' and sys_platform != 'win32'",
 ]
@@ -41,7 +43,7 @@ overrides = [{ name = "numpy", specifier = ">=1.26.0,<2.0" }]
 [manifest.dependency-groups]
 dev = [
     { name = "aiofiles", specifier = ">=25.1.0" },
-    { name = "blockbuster", specifier = ">=1.5.26,<1.6" },
+    { name = "blockbuster", specifier = ">=1.5.5,<1.6" },
     { name = "fastmcp", specifier = ">=2.12.3" },
     { name = "hatch", specifier = ">=1.14.2" },
     { name = "hatch-vcs", specifier = ">=0.5.0" },
@@ -1586,7 +1588,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.18"
+version = "2.5.19"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1600,8 +1602,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "twirp" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/48/5a/d8db2ea5f41e237320aeba1281866dba2076f0a457aebab823c8bae6f0f6/getstream-2.5.19.tar.gz", hash = "sha256:c517cb52037ec606e734068556641fe764ddc1338c3e4eb37fce8e28f93b418c", size = 443976, upload-time = "2026-01-06T02:08:50.872Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/04/184b3c72f9c99dc1cf2ae56aca3ba2286637fdd576905c196d7c08832791/getstream-2.5.18-py3-none-any.whl", hash = "sha256:def4763c666494825eb893d55d0d222cd4db2ff03e7aa1d42ce8ee3c9cc8bd77", size = 247981, upload-time = "2025-12-12T14:20:00.031Z" },
+    { url = "https://files.pythonhosted.org/packages/58/e8/0ec692109e6d8d5ce25ed726f2937bc807d27e1db0fb965f5512d51e4880/getstream-2.5.19-py3-none-any.whl", hash = "sha256:9442988025425e40e98936c8b8980c64b8c231ba56430082429bc07ad8613836", size = 253552, upload-time = "2026-01-06T02:08:49.215Z" },
 ]
 
 [package.optional-dependencies]
@@ -6566,7 +6569,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.18" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.19" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

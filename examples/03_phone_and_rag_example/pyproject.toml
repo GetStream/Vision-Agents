@@ -1,0 +1,31 @@
+[project]
+name = "vision-agents-phone"
+version = "0.0.0"
+requires-python = ">=3.13,<3.14"
+
+# put only what this example needs
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-gemini",
+  "vision-agents-plugins-twilio",
+  "vision-agents-plugins-elevenlabs",
+  "vision-agents-plugins-openai",
+  "vision-agents-plugins-deepgram",
+  "vision-agents-plugins-turbopuffer",
+  "fastapi",
+  "uvicorn",
+  "langchain-google-genai>=2.0",
+  "langchain-text-splitters>=0.3",
+]
+
+[tool.uv.sources]
+"vision-agents" = {path = "../../agents-core", editable=true}
+"vision-agents-plugins-twilio" = {path = "../../plugins/twilio", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../plugins/gemini", editable=true}
+"vision-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
+"vision-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
+"vision-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
+"vision-agents-plugins-turbopuffer" = {path = "../../plugins/turbopuffer", editable=true}
