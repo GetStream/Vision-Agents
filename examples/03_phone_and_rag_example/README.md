@@ -1,10 +1,17 @@
-# Phone & RAG example
+# Phone & RAG example with Twilio, Stream and Turbopuffer
 
-This example teaches you how to handle inbound or outbound phone connects and RAG.
-It uses Twilio for the voice connection and either Gemini or turbopuffer for RAG.
-Note that this example will have relatively high latency unless you run it in US-east/ close to the twilio/stream servers
+This example shows you how easy it is to build both inbound and outbound calling agents. 
+It uses Twilio for calling, Stream for video edge, and either Gemini or Turbopuffer for RAG. 
 
-## Requirements to run the example
+Note that for optimal latency you'll want to deploy this sample in US-east. Local development will incur some additional latency due to roundtrips. 
+
+## Step 1 - Setup up your .env
+
+### Clone the repo
+
+```
+git clone git@github.com:GetStream/Vision-Agents.git
+```
 
 ### Set your .env file
 
@@ -19,72 +26,88 @@ TWILIO_AUTH_TOKEN=
 TURBO_PUFFER_KEY=
 ```
 
-### Running the Outbound Call example
+### Step 2 - Outbound Call example
+
+The outbound example showcases how you can call a restaurant and use AI to make a reservation. 
 
 A. Start NGROK 
+
+First we'll start [NGROK](https://ngrok.com/) to ensure we have a public address for our local server.
+Copy the NGROK url from this tab.
 
 ```
 ngrok http 8000
 ```
 
-B. HTTP & Call
+B. Setup your Twilio phone number
 
-Copy the ngrok url from the first tab. And in a new tab start your http endpoint
+* Login to Twilio
+* Phone numbers -> Manager -> Active numbers -> Buy a number
+* For the number you've bought set the "A call comes in" webhook to your NGROK URL like this: `https://replaceme.ngrok-free.app/twilio/voice`
+
+C. HTTP & Call
+
+Now create a new tab in your terminal and start the HTTP endpoint
 
 ```
-cd 03_phone_and_rag_example
-uv sync
+cd examples/03_phone_and_rag_example
 NGROK_URL=replaceme.ngrok-free.app uv run outbound_phone_example.py --from +1**** --to +1***
 ```
 
-This will start an HTTP server that can accept the twilio media stream. It also initiates the call
+Remember to set the correct:
 
+* Ngrok domain
+* the number you're calling from (as registered in your Twilio account)
+* the number you're calling (try with your own cell)
+
+When you run the above command you'll start a HTTP server to handle the Twilio media stream and initiate an outbound call.
+That's how easy it is to connect AI to a Twilio phone call.
+Next, let's try an inbound example.
 
 ### Running the example - Inbound call
 
-The inbound call example is more complex. It showcases RAG and inbound call handling
+The inbound example is easy since you already have the Twilio number and NGROK up and running.
 
-A. Start NGROK 
+A. HTTP
 
-```
-ngrok http 8000
-```
-
-B. HTTP
-
-Copy the ngrok url from the first tab. And in a new tab start your http endpoint
+Remember the ngrok url from the first tab. And in a new tab start your HTTPs endpoint
 
 ```
 cd 03_phone_and_rag_example
-uv sync
 RAG_BACKEND=gemini NGROK_URL=replaceme.ngrok-free.app uv run inbound_phone_and_rag_example.py
 ```
 
-C. Twilio console
+B. Call the number
 
-For one of your phone numbers set the webhook url to
+Call the number and you'll end up talking to the agent. 
+The agent will gladly tell you all about Stream's APIs for chat, video and voice.
 
-```
-replaceme.ngrok-free.app/twilio/voice
-```
-
-D. Call the number
-
-Call the number and you'll end up talking to the agent.
 Note that there is some added latency during development if you're not running in US-east.
+For optimal latency run the example in US-east.
 
 
 ## Understanding the examples
 
-### Twilio & Twiml
+### TWIML
 
-Both the inbound and outbound code for twilio generate a TwiML doc.
-This TwiML doc starts the media websocket connection to Twilio.
-After that it behaves like a regular agent.
+Twilio uses a [Twiml](https://www.twilio.com/docs/voice/twiml) syntax to control phone calls. 
+We use the [Twilio Stream](https://www.twilio.com/docs/voice/twiml/stream) command to pipe the call to a websocket URL.
 
-## RAG
+### Websocket handling
 
-RAG is a relatively complicated topic. Have a look at the full docs on
+If you open up inbound_phone_and_rag_example.py you'll see the following endpoint
+
+```python
+@app.websocket("/twilio/media/{call_id}/{token}")
+async def media_stream(websocket: WebSocket, call_id: str, token: str):
+```
+
+The following syntax connects the twilio media stream to a Stream call object
+
+```
+await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
+```
+
 
 
 
