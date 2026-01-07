@@ -2,22 +2,22 @@ import asyncio
 import base64
 import logging
 import os
-from typing import Optional, Any
+from typing import Any, Optional
 
-from elevenlabs.client import AsyncElevenLabs
 from elevenlabs import (
-    RealtimeAudioOptions,
     AudioFormat,
     CommitStrategy,
-    RealtimeEvents,
+    RealtimeAudioOptions,
     RealtimeConnection,
+    RealtimeEvents,
 )
+from elevenlabs.client import AsyncElevenLabs
 from getstream.video.rtc.track_util import PcmData
-
 from vision_agents.core import stt
-from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.utils.audio_queue import AudioQueue
+from vision_agents.core.utils.utils import cancel_and_wait
 
 logger = logging.getLogger(__name__)
 
@@ -387,21 +387,19 @@ class STT(stt.STT):
         await super().close()
 
         # Cancel send task
-        if self._send_task and not self._send_task.done():
-            self._send_task.cancel()
-            await asyncio.gather(self._send_task, return_exceptions=True)
+        if self._send_task:
+            await cancel_and_wait(self._send_task)
 
         # Cancel listen task
-        if self._listen_task and not self._listen_task.done():
-            self._listen_task.cancel()
-            await asyncio.gather(self._listen_task, return_exceptions=True)
+        if self._listen_task:
+            await cancel_and_wait(self._listen_task)
 
         # Close connection
         if self.connection:
             try:
                 await self.connection.close()
             except Exception as e:
-                logger.warning(f"Error closing connection: {e}")
+                logger.warning(f"Error closing Elevenlabs connection: {e}")
             finally:
                 self.connection = None
                 self._connection_ready.clear()

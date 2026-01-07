@@ -59,7 +59,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     await agent.create_user()
     call = await agent.create_call(call_type, call_id)
 
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.edge.open_demo(call)
         await agent.finish()
 

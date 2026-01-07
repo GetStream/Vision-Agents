@@ -61,6 +61,8 @@ qwen = ["vision-agents-plugins-qwen"]
 fish = ["vision-agents-plugins-fish"]
 fast-whisper = ["vision-agents-plugins-fast-whisper"]
 decart = ["vision-agents-plugins-decart"]
+twilio = ["vision-agents-plugins-twilio"]
+turbopuffer = ["vision-agents-plugins-turbopuffer"]
 
 all-plugins = [
     "vision-agents-plugins-anthropic",
@@ -88,6 +90,8 @@ all-plugins = [
     "vision-agents-plugins-vogent",
     "vision-agents-plugins-fast-whisper",
     "vision-agents-plugins-qwen",
+    "vision-agents-plugins-twilio",
+    "vision-agents-plugins-turbopuffer",
 ]
 
 [tool.hatch.metadata]

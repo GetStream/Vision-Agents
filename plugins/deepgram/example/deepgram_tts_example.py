@@ -53,7 +53,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     logger.info("Starting Deepgram TTS Agent...")
 
     # Have the agent join the call/room
-    with await agent.join(call):
+    async with agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
 

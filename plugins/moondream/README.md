@@ -152,7 +152,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
             # Ask the agent to describe what it sees
             await agent.simple_response("Describe what you currently see")
 
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.finish()
 
 if __name__ == "__main__":

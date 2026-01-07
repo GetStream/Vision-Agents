@@ -469,7 +469,7 @@ async def start_agent() -> None:
     )
 
     call = agent.edge.client.video.call("default", str(uuid4()))
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.simple_response("Hello!")
         await agent.finish()
 ```

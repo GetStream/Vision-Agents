@@ -83,7 +83,7 @@ agent = Agent(
 ```python
 call = agent.edge.client.video.call("default", str(uuid4()))
 
-with await agent.join(call):
+async with agent.join(call):
     await agent.finish()
 ```
 
