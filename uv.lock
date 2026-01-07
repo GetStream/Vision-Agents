@@ -6527,6 +6527,12 @@ roboflow = [
 smart-turn = [
     { name = "vision-agents-plugins-smart-turn" },
 ]
+turbopuffer = [
+    { name = "vision-agents-plugins-turbopuffer" },
+]
+twilio = [
+    { name = "vision-agents-plugins-twilio" },
+]
 ultralytics = [
     { name = "vision-agents-plugins-ultralytics" },
 ]
@@ -6595,7 +6601,9 @@ requires-dist = [
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'all-plugins'", editable = "plugins/turbopuffer" },
+    { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'turbopuffer'", editable = "plugins/turbopuffer" },
     { name = "vision-agents-plugins-twilio", marker = "extra == 'all-plugins'", editable = "plugins/twilio" },
+    { name = "vision-agents-plugins-twilio", marker = "extra == 'twilio'", editable = "plugins/twilio" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'all-plugins'", editable = "plugins/ultralytics" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'ultralytics'", editable = "plugins/ultralytics" },
     { name = "vision-agents-plugins-vogent", marker = "extra == 'all-plugins'", editable = "plugins/vogent" },
@@ -6605,7 +6613,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"

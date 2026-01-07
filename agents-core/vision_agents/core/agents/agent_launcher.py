@@ -24,7 +24,7 @@ class AgentLauncher:
         self,
         create_agent: Callable[..., "Agent" | Awaitable["Agent"]],
         join_call: Callable[..., None | Awaitable[None]] | None = None,
-        agent_idle_timeout: float = 30.0,
+        agent_idle_timeout: float = 60.0,
         agent_idle_cleanup_interval: float = 5.0,
     ):
         """
@@ -33,7 +33,7 @@ class AgentLauncher:
         Args:
             create_agent: A function that creates and returns an Agent instance
             join_call: Optional function that handles joining a call with the agent
-            agent_idle_timeout: Optional timeout in seconds for agent to stay alone on the call. Default - `30.0`.
+            agent_idle_timeout: Optional timeout in seconds for agent to stay alone on the call. Default - `60.0`.
                 `0` means idle agents won't leave the call until it's ended.
 
         """
