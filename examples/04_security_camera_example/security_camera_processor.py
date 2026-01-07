@@ -17,12 +17,11 @@ from pathlib import Path
 from vision_agents.core.events.base import PluginBaseEvent
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.processors.base_processor import (
-    AudioVideoProcessor,
-    VideoProcessorMixin,
-    VideoPublisherMixin,
+    VideoProcessorPublisher,
 )
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
+from vision_agents.core.warmup import Warmable
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +97,7 @@ class ActivityLogEntry:
     details: Dict[str, Any] = field(default_factory=dict)
 
 
-class SecurityCameraProcessor(
-    AudioVideoProcessor, VideoProcessorMixin, VideoPublisherMixin
-):
+class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
     """
     Security camera processor that detects and recognizes faces and packages.
 
@@ -142,8 +139,6 @@ class SecurityCameraProcessor(
         package_fps: int = 1,
         package_conf_threshold: float = 0.3,
     ):
-        super().__init__(interval=0, receive_audio=False, receive_video=True)
-
         self.fps = fps
         self.max_workers = max_workers
         self.time_window = time_window
@@ -174,23 +169,37 @@ class SecurityCameraProcessor(
             max_workers=max_workers, thread_name_prefix="security_camera"
         )
 
+        # Shutdown flag to prevent new tasks
+        self._shutdown = False
+
         # Video track for publishing
         self._video_track: QueuedVideoTrack = QueuedVideoTrack()
         self._video_forwarder: Optional[VideoForwarder] = None
-
-        # Load OpenCV face detector
-        self._face_cascade = None
 
         # Initialize YOLO model for package detection
         self.model_path = model_path
         self.device = device
         self.yolo_model: Optional[Any] = None
+        # Package-related classes detected by the weights.pt model
         self.package_detect_classes = [
             "package",
-            "box",
             "parcel",
+            "box",
+            "boxes",
+            "Box",
+            "Boxes",
+            "Box_broken",
+            "Cardboard",
+            "Cardboards",
+            "cardboard",
+            "Open_package",
+            "damaged box",
+            "good-parcel",
+            "Parcel",
+            "Package",
             "suitcase",
             "backpack",
+            "handbag",
         ]
 
         # Event manager for detection events
@@ -205,16 +214,8 @@ class SecurityCameraProcessor(
             f"📦 Package detection: {package_fps} FPS, interval: {package_detection_interval}s"
         )
 
-    async def warmup(self):
-        """Load OpenCV Haar Cascade face detector and YOLO model."""
-        try:
-            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            self._face_cascade = cv2.CascadeClassifier(cascade_path)
-            logger.info("✅ Face detector loaded")
-        except Exception as e:
-            logger.exception(f"❌ Failed to load face detector: {e}")
-            raise
-
+    async def on_warmup(self) -> Optional[Any]:
+        """Load YOLO model for package detection."""
         try:
             from ultralytics import YOLO
 
@@ -230,12 +231,17 @@ class SecurityCameraProcessor(
                 model.to(self.device)
                 return model
 
-            self.yolo_model = await loop.run_in_executor(self.executor, load_yolo_model)
+            yolo_model = await loop.run_in_executor(self.executor, load_yolo_model)
             logger.info(f"✅ YOLO model loaded: {self.model_path} on {self.device}")
+            return yolo_model
         except Exception as e:
             logger.warning(f"⚠️ Failed to load YOLO model: {e}")
             logger.warning("⚠️ Package detection will be disabled")
-            self.yolo_model = None
+            return None
+
+    def on_warmed_up(self, resource: Optional[Any]) -> None:
+        """Set the loaded YOLO model to the instance."""
+        self.yolo_model = resource
 
     def _cleanup_old_faces(self, current_time: float):
         cutoff_time = current_time - self.time_window
@@ -495,6 +501,9 @@ class SecurityCameraProcessor(
         Returns:
             Number of new unique faces detected
         """
+        if self._shutdown:
+            return 0
+
         # Check if enough time has passed since last detection
         if current_time - self._last_detection_time < self.detection_interval:
             return 0
@@ -652,13 +661,28 @@ class SecurityCameraProcessor(
             class_ids = result.boxes.cls.cpu().numpy().astype(int)
             class_names = result.names
 
+            # Log all detections for debugging
+            detected_classes = {}
             for box, conf, cls_id in zip(boxes, confidences, class_ids):
-                class_name = class_names[cls_id].lower()
+                class_name = class_names[cls_id]
+                detected_classes[class_name] = detected_classes.get(class_name, 0) + 1
 
-                if any(
-                    detect_class in class_name
+            if detected_classes:
+                logger.info(
+                    f"🔍 YOLO detected {len(boxes)} objects: {', '.join(f'{k}({v})' for k, v in detected_classes.items())}"
+                )
+
+            for box, conf, cls_id in zip(boxes, confidences, class_ids):
+                class_name_original = class_names[cls_id]
+                class_name = class_name_original.lower()
+
+                # Lowercase detect_class for case-insensitive matching
+                matches_package_class = any(
+                    detect_class.lower() in class_name
                     for detect_class in self.package_detect_classes
-                ):
+                )
+
+                if matches_package_class:
                     x_min, y_min, x_max, y_max = box
 
                     x_min = int(max(0, min(x_min, width - 1)))
@@ -675,12 +699,27 @@ class SecurityCameraProcessor(
                         {
                             "bbox": (x, y, w, h),
                             "confidence": float(conf),
-                            "label": class_name,
+                            "label": class_name_original,
                         }
+                    )
+                    logger.info(
+                        f"📦 Matched package class: {class_name_original} (confidence: {conf:.2f})"
+                    )
+                else:
+                    logger.debug(
+                        f"⏭️ Skipped non-package class: {class_name_original} (confidence: {conf:.2f})"
                     )
 
         except Exception as e:
             logger.warning(f"⚠️ Failed to detect packages with YOLO: {e}")
+
+        if all_detections:
+            logger.info(f"📦 Found {len(all_detections)} package-like objects")
+        elif detected_classes:
+            logger.debug(
+                f"📦 No packages matched from {len(boxes)} detections. "
+                f"Looking for: {', '.join(self.package_detect_classes[:5])}..."
+            )
 
         return all_detections
 
@@ -693,6 +732,9 @@ class SecurityCameraProcessor(
         Returns:
             Number of new unique packages detected
         """
+        if self._shutdown:
+            return 0
+
         if not self.yolo_model:
             return 0
 
@@ -1035,16 +1077,16 @@ class SecurityCameraProcessor(
 
     async def process_video(
         self,
-        incoming_track: aiortc.mediastreams.MediaStreamTrack,
-        participant: Any,
-        shared_forwarder=None,
-    ):
+        track: aiortc.VideoStreamTrack,
+        participant_id: Optional[str],
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
         """
         Set up video processing pipeline.
 
         Args:
-            incoming_track: The incoming video track to process
-            participant: Participant information
+            track: The incoming video track to process
+            participant_id: Participant ID
             shared_forwarder: Optional shared VideoForwarder
         """
         logger.info("✅ Security Camera process_video starting")
@@ -1059,7 +1101,7 @@ class SecurityCameraProcessor(
             )
         else:
             self._video_forwarder = VideoForwarder(
-                incoming_track,
+                track,
                 max_buffer=30,
                 fps=self.fps,
                 name="security_camera_forwarder",
@@ -1299,9 +1341,19 @@ class SecurityCameraProcessor(
             for face in self._known_faces.values()
         ]
 
-    def close(self):
+    async def close(self):
         """Clean up resources."""
         logger.info("🛑 Security Camera Processor closing")
+        self._shutdown = True
+        
+        # Stop video forwarder if it exists
+        if self._video_forwarder is not None:
+            try:
+                await self._video_forwarder.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping video forwarder: {e}")
+        
+        # Shutdown executor
         self.executor.shutdown(wait=False)
         self._detected_faces.clear()
         self._detected_packages.clear()
