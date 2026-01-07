@@ -53,7 +53,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, call_id)
 
     # Join call and wait
-    with await agent.join(call):
+    async with agent.join(call):
         await asyncio.sleep(3)
         await agent.simple_response("narrate a story about a dragon")
         await agent.finish()

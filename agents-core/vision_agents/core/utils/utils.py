@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import importlib.metadata
 import inspect
 import logging
@@ -99,3 +100,22 @@ async def await_or_run(
     if inspect.isawaitable(result):
         return await result
     return result
+
+
+async def cancel_and_wait(fut: asyncio.Future) -> None:
+    """
+    Cancel an async task or future and wait for it to complete.
+
+    Args:
+        fut: a Future or Task to cancel.
+
+    Returns:
+        None
+    """
+
+    if fut.done():
+        return None
+    fut.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.shield(fut)
+    return None

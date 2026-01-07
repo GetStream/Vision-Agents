@@ -52,7 +52,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     """Join the call and run the agent."""
     call = await agent.create_call(call_type, call_id)
 
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.finish()
 
 

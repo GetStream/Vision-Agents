@@ -1,10 +1,9 @@
 import logging
 
 from dotenv import load_dotenv
-
-from vision_agents.core import User, Agent, cli
+from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import decart, getstream, openai, elevenlabs, deepgram
+from vision_agents.plugins import decart, deepgram, elevenlabs, getstream, openai
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     logger.info("🤖 Starting Agent...")
 
     # Have the agent join the call/room
-    with await agent.join(call):
+    async with agent.join(call):
         logger.info("Joining call")
         logger.info("LLM ready")
 

@@ -101,8 +101,8 @@ def cli(launcher: "AgentLauncher") -> None:
             logger.info("🚀 Launching agent...")
 
             try:
-                # Warmup the agent's dependencies
-                await launcher.warmup()
+                # Start the agent launcher.
+                await launcher.start()
 
                 # Create the agent
                 agent = await launcher.launch()
@@ -135,6 +135,8 @@ def cli(launcher: "AgentLauncher") -> None:
             except Exception as e:
                 logger.error(f"❌ Error running agent: {e}", exc_info=True)
                 raise
+            finally:
+                await launcher.stop()
 
         asyncio_logger_level = asyncio_logger.level
 

@@ -2,6 +2,8 @@ import abc
 import asyncio
 from typing import Any, Generic, Type, TypeVar
 
+from vision_agents.core.utils.utils import await_or_run
+
 __all__ = (
     "Warmable",
     "WarmupCache",
@@ -39,7 +41,7 @@ class WarmupCache:
                 # Store the result
                 self._cache[warmable_cls] = resource
             # Set the resource back to the warmable instance.
-            warmable.on_warmed_up(resource)
+            await await_or_run(warmable.on_warmed_up, resource)
 
 
 class Warmable(abc.ABC, Generic[T]):

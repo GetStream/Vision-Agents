@@ -1,18 +1,26 @@
 import asyncio
-import contextlib
 import datetime
 import logging
 import time
 import uuid
 from collections import defaultdict
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    TypeGuard,
+)
 from uuid import uuid4
 
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
-from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from opentelemetry import context as otel_context
 from opentelemetry import trace
@@ -27,7 +35,7 @@ from ..edge.events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import Connection, OutputAudioTrack, Participant, PcmData, User
+from ..edge.types import OutputAudioTrack, Participant, PcmData, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -60,17 +68,19 @@ from ..utils.logging import (
     clear_call_context,
     set_call_context,
 )
-from ..utils.utils import await_or_run
+from ..utils.utils import await_or_run, cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
 from . import events
-from .agent_session import AgentSessionContextManager
 from .agent_types import AgentOptions, LLMTurn, TrackInfo, default_agent_options
 from .conversation import Conversation
 from .transcript_buffer import TranscriptBuffer
 
 if TYPE_CHECKING:
-    from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
+    from vision_agents.plugins.getstream.stream_edge_transport import (
+        StreamConnection,
+        StreamEdge,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +142,14 @@ class Agent:
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
     ):
+        self._agent_user_initialized = False
+        self.agent_user = agent_user
+        if not self.agent_user.id:
+            self.agent_user.id = f"agent-{uuid4()}"
+
         self._pending_turn: Optional[LLMTurn] = None
-        self.participants: Optional[ParticipantsState] = None
-        self.call = None
+        self.call: Optional[Call] = None
+
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
         if options is None:
@@ -148,10 +163,8 @@ class Agent:
 
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
-        self.agent_user = agent_user
-        self._agent_user_initialized = False
 
-        # only needed in case we spin threads
+        # OpenTelemetry data
         self.tracer = tracer
         self._root_span: Optional[Span] = None
         self._root_ctx: Optional[Context] = None
@@ -203,18 +216,11 @@ class Agent:
             processor.attach_agent(self)
 
         self.events.subscribe(self._on_agent_say)
-        # Initialize state variables
-        self._is_running: bool = False
-        self._current_frame = None
-        self._interval_task = None
-        self._callback_executed = False
-        self._track_tasks: Dict[str, asyncio.Task] = {}
 
         # Track metadata: track_id -> TrackInfo
         self._active_video_tracks: Dict[str, TrackInfo] = {}
         self._video_forwarders: List[VideoForwarder] = []
-        self._current_video_track_id: Optional[str] = None
-        self._connection: Optional[Connection] = None
+        self._connection: Optional[StreamConnection] = None
 
         # Optional local video track override for debugging.
         # This track will play instead of any incoming video track.
@@ -226,8 +232,6 @@ class Agent:
         # the outgoing video track
         self._video_track: Optional[VideoStreamTrack] = None
 
-        self._realtime_connection = None
-        self._pc_track_handler_attached: bool = False
         self._audio_consumer_task: Optional[asyncio.Task] = None
 
         # validation time
@@ -238,6 +242,16 @@ class Agent:
         self.setup_event_handling()
 
         self.events.send(events.AgentInitEvent())
+
+        # An event to detect if the call was ended.
+        # `None` means the call is ended, or it hasn't started yet.
+        # It is set only after agent joins the call
+        self._call_ended_event: Optional[asyncio.Event] = None
+        self._joined_at: float = 0.0
+
+        self._join_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
+        self._closed = False
 
     async def _finish_llm_turn(self):
         if self._pending_turn is None or self._pending_turn.response is None:
@@ -310,6 +324,13 @@ class Agent:
                 return
 
             await self._incoming_audio_queue.put(event.pcm_data)
+
+        @self.edge.events.subscribe
+        async def on_call_ended(event: CallEndedEvent):
+            if self._call_ended_event is not None:
+                self._call_ended_event.set()
+
+            await self.close()
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(
@@ -485,37 +506,42 @@ class Agent:
         """
         return self.events.subscribe(function)
 
+    @asynccontextmanager
     async def join(
-        self, call: Call, wait_for_participant=True
-    ) -> "AgentSessionContextManager":
-        # TODO: validation. join can only be called once
-        self.logger.info("joining call")
-        # run start on all subclasses
-        await self._apply("start")
-        self._start_tracing()
+        self, call: Call, participant_wait_timeout: Optional[float] = 10.0
+    ) -> AsyncIterator[None]:
+        """
+        Join the given call.
 
-        if self._root_span:
-            self._root_span.set_attribute("call_id", call.id)
-            if self.agent_user.id:
-                self._root_span.set_attribute("agent_id", self.agent_user.id)
+        The agent can join the call only once.
+        Once the call is ended, the agent closes itself.
 
-        if self._is_running:
-            raise RuntimeError("Agent is already running")
+        Args:
+            call: the call to join.
+            participant_wait_timeout: timeout in seconds to wait for other participants to join before proceeding.
+                 If `0`, do not wait at all. If `None`, wait forever.
+                 Default - `10.0`.
 
-        await self.create_user()
+        Returns:
 
-        self.call = call
-        self.conversation = None
-
-        # Ensure all subsequent logs include the call context.
-        self._set_call_logging_context(call.id)
-
-        # Setup chat and connect it to transcript events (we'll wait at the end)
-        create_conversation_coro = self.edge.create_conversation(
-            call, self.agent_user, self.instructions.full_reference
-        )
+        """
+        if self._call_ended_event is not None:
+            raise RuntimeError("Agent already joined the call")
 
         try:
+            await self._join_lock.acquire()
+            self._start_tracing(call)
+            self.call = call
+            self.conversation = None
+
+            # Ensure all subsequent logs include the call context.
+            self._set_call_logging_context(call.id)
+
+            # run start on all subclasses
+            await self._apply("start")
+
+            await self.create_user()
+
             # Connect to MCP servers if manager is available
             if self.mcp_manager:
                 with self.span("mcp_manager.connect_all"):
@@ -527,100 +553,111 @@ class Agent:
                 await self.llm.connect()
 
             with self.span("edge.join"):
-                connection = await self.edge.join(self, call)
-                self.participants = connection.participants
+                self._connection = await self.edge.join(self, call)
+            self.logger.info(f"🤖 Agent joined call: {call.id}")
 
-        except Exception:
-            self.clear_call_logging_context()
-            raise
+            # Set up audio and video tracks together to avoid SDP issues
+            audio_track = self._audio_track if self.publish_audio else None
+            video_track = self._video_track if self.publish_video else None
 
-        self._connection = connection
-        self._is_running = True
-        self._audio_consumer_task = asyncio.create_task(self._consume_incoming_audio())
+            if audio_track or video_track:
+                with self.span("edge.publish_tracks"):
+                    await self.edge.publish_tracks(audio_track, video_track)
 
-        self.logger.info(f"🤖 Agent joined call: {call.id}")
+            # Setup chat and connect it to transcript events
+            self.conversation = await self.edge.create_conversation(
+                call, self.agent_user, self.instructions.full_reference
+            )
 
-        # Set up audio and video tracks together to avoid SDP issues
-        audio_track = self._audio_track if self.publish_audio else None
-        video_track = self._video_track if self.publish_video else None
+            # Provide conversation to the LLM so it can access the chat history.
+            self.llm.set_conversation(self.conversation)
 
-        if audio_track or video_track:
-            with self.span("edge.publish_tracks"):
-                await self.edge.publish_tracks(audio_track, video_track)
+            if participant_wait_timeout != 0:
+                await self.wait_for_participant(timeout=participant_wait_timeout)
 
-        # wait for conversation creation coro at the very end of the join flow
-        self.conversation = await create_conversation_coro
-        # Provide conversation to the LLM so it can access the chat history.
-        self.llm.set_conversation(self.conversation)
+            # Start consuming audio from the call
+            self._audio_consumer_task = asyncio.create_task(
+                self._consume_incoming_audio()
+            )
+            self._call_ended_event = asyncio.Event()
+            self._joined_at = time.time()
+            yield
+        finally:
+            await self.close()
+            self._end_tracing()
+            self._join_lock.release()
 
-        if wait_for_participant:
-            self.logger.info("Agent is ready, waiting for participant to join")
-            await self.wait_for_participant()
+    async def wait_for_participant(self, timeout: Optional[float] = None) -> None:
+        """
+        Wait for a participant other than the AI agent to join.
 
-        return AgentSessionContextManager(self, self._connection)
-
-    async def wait_for_participant(self):
-        """wait for a participant other than the AI agent to join"""
-
-        if self.participants is None:
+        Args:
+            timeout: How long to wait for the participant to join in seconds.
+            If `None`, wait forever.
+            Default - `30.0`.
+        """
+        if self._connection is None:
             return
 
-        participant_joined = asyncio.Event()
-
-        def on_participants(participants):
-            for p in participants:
-                if p.user_id != self.agent_user.id:
-                    participant_joined.set()
-
-        subscription = self.participants.map(on_participants)
+        self.logger.info("Waiting for other participants to join")
 
         try:
-            await participant_joined.wait()
-        finally:
-            subscription.unsubscribe()
+            await self._connection.wait_for_participant(timeout=timeout)
+        except asyncio.TimeoutError:
+            self.logger.info(
+                f"No participants joined after {timeout}s timeout, proceeding."
+            )
+
+    def idle_for(self) -> float:
+        """
+        Return the idle time for this connection if there is no other participants except the agent itself.
+        `0.0` means that connection is active.
+
+        Returns:
+            idle time for this connection or 0.0
+        """
+        if self._connection is None or not self._joined_at:
+            # The call hasn't started yet.
+            return 0.0
+
+        # The connection is opened, but it's not idle, exit early.
+        idle_since = self._connection.idle_since()
+        if not idle_since:
+            return 0.0
+
+        # The RTC connection is established and it's idle.
+        # Adjust the idle_since timestamp if the Agent was waiting for participants before actually
+        # joining the call.
+        idle_since_adjusted = max(idle_since, self._joined_at)
+        return time.time() - idle_since_adjusted
 
     async def finish(self):
-        """Wait for the call to end gracefully.
-        Subscribes to the edge transport's `call_ended` event and awaits it. If
-        no connection is active, returns immediately.
         """
-        if not self._connection:
-            self.logger.info(
-                "🔚 Agent connection is already closed, finishing immediately"
-            )
+        Wait for the call to end gracefully.
+        If no connection is active, returns immediately.
+        """
+        if self._call_ended_event is None:
+            # Exit immediately because the agent either left the call, or the call hasn't even started.
             return
 
-        running_event = asyncio.Event()
-        with self.span("agent.finish"):
-            # If connection is None or already closed, return immediately
-            if not self._connection:
-                logging.info(
-                    "🔚 Agent connection already closed, finishing immediately"
-                )
-                return
-
-            @self.edge.events.subscribe
-            async def on_ended(event: CallEndedEvent):
-                running_event.set()
-                self._is_running = False
-        # TODO: add members count check (particiapnts left + count = 1 timeout 2 minutes)
-
         try:
-            await running_event.wait()
+            await self._call_ended_event.wait()
         except asyncio.CancelledError:
-            running_event.clear()
+            # Close the agent even if the coroutine is canceled
+            self.events.send(events.AgentFinishEvent())
+            await self.close()
+            raise
 
-        self.events.send(events.AgentFinishEvent())
-
-        await self.close()
-
-    @contextlib.contextmanager
-    def span(self, name):
-        with tracer.start_as_current_span(name, context=self._root_ctx) as span:
+    @contextmanager
+    def span(self, name: str) -> Iterator[Span]:
+        with self.tracer.start_as_current_span(name, context=self._root_ctx) as span:
             yield span
 
-    def _start_tracing(self):
-        self._root_span = tracer.start_span("join").__enter__()
+    def _start_tracing(self, call: Call) -> None:
+        self._root_span = self.tracer.start_span("join").__enter__()
+        self._root_span.set_attribute("call_id", call.id)
+        if self.agent_user.id:
+            self._root_span.set_attribute("agent_id", self.agent_user.id)
         self._root_ctx = set_span_in_context(self._root_span)
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
@@ -653,34 +690,45 @@ class Agent:
             otel_context.detach(self._context_token)
             self._context_token = None
 
-    def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._end_tracing()
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     async def close(self):
-        """Clean up all connections and resources.
+        """
+        Clean up all connections and resources.
 
         Closes MCP connections, realtime output, active media tracks, processor
         tasks, the call connection, STT/TTS services, and stops turn detection.
-        Safe to call multiple times.
-
-        This is an async method because several components expose async shutdown
-        hooks (e.g., WebRTC connections, plugin services).
+        It is safe to call multiple times.
         """
-        self._end_tracing()
-        self._is_running = False
-        self.clear_call_logging_context()
-        # Run the async cleanup code in a separate shielded coroutine.
-        # asyncio.shield changes the context, failing self._end_tracing()
-        await asyncio.shield(self._stop())
+        if self._close_lock.locked() or self._closed:
+            return
 
-    async def _stop(self):
+        async with self._close_lock:
+            # This is how to make sure the `_stop()` coroutine is definitely finished even if the outer
+            # task is cancelled.
+            # Run _stop() in a shielded task
+            task = asyncio.create_task(self._close())
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                # The close() itself is cancelled, but the shielded task is still running because that's
+                # how shield() works.
+                # Wait until the shielded task finishes
+                await task
+                # Propagate cancellation upwards
+                raise
+
+    async def _close(self):
+        # Set call_ended event again in case the agent is closed externally
+        self.logger.info("🤖 Stopping the agent")
+        if self._call_ended_event is not None:
+            self._call_ended_event.set()
+
         # Stop audio consumer task
         if self._audio_consumer_task:
-            self._audio_consumer_task.cancel()
-            try:
-                await self._audio_consumer_task
-            except asyncio.CancelledError:
-                pass
+            await cancel_and_wait(self._audio_consumer_task)
             self._audio_consumer_task = None
 
         # run stop on all subclasses
@@ -693,22 +741,12 @@ class Agent:
             await self.mcp_manager.disconnect_all()
 
         # Stop all video forwarders
-        if hasattr(self, "_video_forwarders"):
-            for forwarder in self._video_forwarders:
-                try:
-                    await forwarder.stop()
-                except Exception as e:
-                    self.logger.error(f"Error stopping video forwarder: {e}")
-            self._video_forwarders.clear()
-
-        # Close Realtime connection
-        if self._realtime_connection:
-            await self._realtime_connection.__aexit__(None, None, None)
-        self._realtime_connection = None
-
-        # shutdown task processing
-        for _, track in self._track_tasks.items():
-            track.cancel()
+        for forwarder in self._video_forwarders:
+            try:
+                await forwarder.stop()
+            except Exception as e:
+                self.logger.error(f"Error stopping video forwarder: {e}")
+        self._video_forwarders.clear()
 
         # Close RTC connection
         if self._connection:
@@ -725,10 +763,11 @@ class Agent:
             self._video_track.stop()
         self._video_track = None
 
-        # Cancel interval task
-        if self._interval_task:
-            self._interval_task.cancel()
-        self._interval_task = None
+        self._call_ended_event = None
+        self._joined_at = 0.0
+        self.clear_call_logging_context()
+        self._closed = True
+        self.logger.info("🤖 Agent stopped")
 
     # ------------------------------------------------------------------
     # Logging context helpers
@@ -754,8 +793,6 @@ class Agent:
             return None
 
         with self.span("edge.create_user"):
-            if not self.agent_user.id:
-                self.agent_user.id = f"agent-{uuid4()}"
             await self.edge.create_user(self.agent_user)
             self._agent_user_initialized = True
 
@@ -877,10 +914,10 @@ class Agent:
         interval_seconds = 0.02  # 20ms target interval
 
         try:
-            while self._is_running:
+            while self._call_ended_event and not self._call_ended_event.is_set():
                 loop_start = time.perf_counter()
                 try:
-                    # Get audio data from queue with timeout to allow checking _is_running
+                    # Get audio data from queue with timeout to keep the loop running
                     pcm = await asyncio.wait_for(
                         self._incoming_audio_queue.get_duration(duration_ms=20),
                         timeout=1.0,
@@ -912,7 +949,7 @@ class Agent:
                         )
 
                 except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                    # No audio data available, continue loop to check _is_running
+                    # No audio data available, continue the loop
                     pass
 
                 # Sleep for remaining time to maintain consistent interval
@@ -946,13 +983,20 @@ class Agent:
     async def _on_track_removed(
         self, track_id: str, track_type: int, participant: Participant
     ):
+        # We only process video tracks (camera video or screenshare)
+        if track_type not in (
+            TrackType.TRACK_TYPE_VIDEO,
+            TrackType.TRACK_TYPE_SCREEN_SHARE,
+        ):
+            return
         track_type_name = (
             "SCREEN_SHARE"
             if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
             else "VIDEO"
         )
-        user_id = participant.user_id if participant else "unknown"
-        self.logger.info(f"📺 Track removed: {track_type_name} from {user_id}")
+        self.logger.info(
+            f"📺 Track removed: {track_type_name} from {participant.user_id}"
+        )
 
         track = self._active_video_tracks.pop(track_id, None)
         if track is not None:
@@ -1008,8 +1052,9 @@ class Agent:
             if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
             else "VIDEO"
         )
-        user_id = participant.user_id if participant else "unknown"
-        self.logger.info(f"📺 Track added: {track_type_name} from {user_id}")
+        self.logger.info(
+            f"📺 Track added: {track_type_name} from {participant.user_id}"
+        )
 
         if self._video_track_override_path is not None:
             # If local video track is set, we override all other video tracks with it.
@@ -1313,13 +1358,6 @@ class Agent:
         """Remove markdown and special characters that don't speak well."""
         return text.replace("*", "").replace("#", "")
 
-    def _truncate_for_logging(self, obj, max_length=200):
-        """Truncate object string representation for logging to prevent spam."""
-        obj_str = str(obj)
-        if len(obj_str) > max_length:
-            obj_str = obj_str[:max_length] + "... (truncated)"
-        return obj_str
-
     async def _get_video_track_override(self) -> VideoFileTrack:
         """
         Create a video track override in async way if the path is set.
@@ -1343,13 +1381,6 @@ def _is_video_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[VideoLLM]:
 
 def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Realtime]:
     return isinstance(llm, Realtime)
-
-
-def _log_task_exception(task: asyncio.Task):
-    try:
-        task.result()
-    except Exception:
-        logger.exception("Error in background task")
 
 
 class _AgentLoggerAdapter(logging.LoggerAdapter):

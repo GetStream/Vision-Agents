@@ -36,7 +36,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
             await asyncio.sleep(2)
             await agent.simple_response("Describe what you currently see")
 
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.edge.open_demo(call)
         # The agent will automatically process video frames and respond to user input
         await agent.finish()

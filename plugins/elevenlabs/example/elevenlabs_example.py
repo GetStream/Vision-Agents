@@ -49,7 +49,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     logger.info("🤖 Starting ElevenLabs Agent...")
 
     # Have the agent join the call/room
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.simple_response("tell me something interesting in a short sentence")
         await agent.finish()  # Run till the call ends
 
