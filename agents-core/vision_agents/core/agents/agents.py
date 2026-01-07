@@ -690,6 +690,10 @@ class Agent:
             otel_context.detach(self._context_token)
             self._context_token = None
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
     async def close(self):
         """
         Clean up all connections and resources.
