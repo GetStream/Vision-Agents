@@ -108,6 +108,9 @@ The following syntax connects the twilio media stream to a Stream call object
 await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
 ```
 
+### RAG
+
+RAG can be quite complicated. Have a look at the [RAG docs](https://visionagents.ai/guides/rag) to understand what's possible. 
 
 
 
