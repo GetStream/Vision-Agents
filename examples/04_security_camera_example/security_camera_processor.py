@@ -52,6 +52,17 @@ class PackageDetectedEvent(PluginBaseEvent):
 
 
 @dataclass
+class PackageDisappearedEvent(PluginBaseEvent):
+    """Event emitted when a package disappears from the frame."""
+
+    type: str = field(default="security.package_disappeared", init=False)
+    package_id: str = ""
+    confidence: float = 0.0
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+
+
+@dataclass
 class FaceDetection:
     """Represents a detected face with metadata."""
 
@@ -63,6 +74,7 @@ class FaceDetection:
     bbox: tuple
     detection_count: int = 1
     name: Optional[str] = None  # Name if this is a known face
+    disappeared_at: Optional[float] = None  # When this face left the frame
 
 
 @dataclass
@@ -76,6 +88,7 @@ class PackageDetection:
     bbox: tuple
     confidence: float
     detection_count: int = 1
+    disappeared_at: Optional[float] = None  # When this package left the frame
 
 
 @dataclass
@@ -138,6 +151,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         package_detection_interval: float = 3.0,
         package_fps: int = 1,
         package_conf_threshold: float = 0.3,
+        package_min_area_ratio: float = 0.01,  # Minimum area as ratio of frame (1% of frame)
+        package_max_area_ratio: float = 0.9,  # Maximum area as ratio of frame (50% of frame)
     ):
         self.fps = fps
         self.max_workers = max_workers
@@ -148,6 +163,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         self.package_detection_interval = package_detection_interval
         self.package_fps = package_fps
         self.package_conf_threshold = package_conf_threshold
+        self.package_min_area_ratio = package_min_area_ratio
+        self.package_max_area_ratio = package_max_area_ratio
 
         # Storage for unique detected faces (keyed by face_id)
         self._detected_faces: Dict[str, FaceDetection] = {}
@@ -206,6 +223,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         self.events = EventManager()
         self.events.register(PersonDetectedEvent)
         self.events.register(PackageDetectedEvent)
+        self.events.register(PackageDisappearedEvent)
 
         logger.info("🎥 Security Camera Processor initialized")
         logger.info(f"📊 Time window: {time_window}s ({time_window // 60} minutes)")
@@ -519,6 +537,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
 
         new_faces = 0
         updated_faces = 0
+        faces_seen_this_frame: set[str] = set()
 
         for face_data in detected_faces:
             x, y, w, h = face_data["bbox"]
@@ -539,37 +558,51 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             if matching_face_id:
                 # Update existing face
                 face_detection = self._detected_faces[matching_face_id]
+                faces_seen_this_frame.add(matching_face_id)
                 face_detection.last_seen = current_time
-                face_detection.detection_count += 1
                 face_detection.bbox = (x, y, w, h)
                 # Update thumbnail to latest image
                 face_detection.face_image = face_thumbnail
                 # Update name if we now recognize them
                 if known_name and not face_detection.name:
                     face_detection.name = known_name
-                updated_faces += 1
-
-                display_name = face_detection.name or matching_face_id[:8]
-                logger.debug(
-                    f"🔄 Updated existing face {display_name} "
-                    f"(seen {face_detection.detection_count} times)"
-                )
-                # Emit event for returning visitor
-                self.events.send(
-                    PersonDetectedEvent(
-                        plugin_name="security_camera",
-                        face_id=display_name,
-                        is_new=False,
-                        detection_count=face_detection.detection_count,
-                        first_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S",
-                            time.localtime(face_detection.first_seen),
-                        ),
-                        last_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                        ),
+                
+                # Only increment count and emit event if they returned after disappearing
+                # This ensures each visit (disappear → return) is counted independently
+                if face_detection.disappeared_at is not None:
+                    # They left and came back - increment count and emit event
+                    # After clearing disappeared_at, if they disappear and return again,
+                    # the cycle repeats and count increments again
+                    face_detection.detection_count += 1
+                    updated_faces += 1
+                    display_name = face_detection.name or matching_face_id[:8]
+                    logger.info(
+                        f"👤 Returning visitor: {display_name} (visit #{face_detection.detection_count})"
                     )
-                )
+                    self.events.send(
+                        PersonDetectedEvent(
+                            plugin_name="security_camera",
+                            face_id=display_name,
+                            is_new=False,
+                            detection_count=face_detection.detection_count,
+                            first_seen=time.strftime(
+                                "%Y-%m-%d %H:%M:%S",
+                                time.localtime(face_detection.first_seen),
+                            ),
+                            last_seen=time.strftime(
+                                "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                            ),
+                        )
+                    )
+                    face_detection.disappeared_at = None  # Clear disappeared flag so next disappearance can be tracked
+                else:
+                    # Continuously present - just update silently, don't increment count
+                    display_name = face_detection.name or matching_face_id[:8]
+                    logger.debug(
+                        f"🔄 Updated existing face {display_name} "
+                        f"(continuously present, entry count: {face_detection.detection_count})"
+                    )
+                # If disappeared_at is None, they're continuously present - no event
             else:
                 # New unique face
                 face_id = str(uuid.uuid4())
@@ -582,8 +615,10 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     bbox=(x, y, w, h),
                     detection_count=1,
                     name=known_name,  # Will be None if not recognized
+                    disappeared_at=None,
                 )
                 self._detected_faces[face_id] = detection
+                faces_seen_this_frame.add(face_id)
                 new_faces += 1
 
                 display_name = known_name or face_id[:8]
@@ -615,6 +650,16 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                         ),
                     )
                 )
+
+        # Mark faces that weren't seen this frame as disappeared
+        # If disappeared_at is None, they were continuously present and just disappeared
+        # If disappeared_at is already set, they're still disappeared (no change needed)
+        for face_id, face_detection in self._detected_faces.items():
+            if face_id not in faces_seen_this_frame:
+                if face_detection.disappeared_at is None:
+                    # They were present, now disappeared - mark the disappearance time
+                    # This will trigger count increment when they return
+                    face_detection.disappeared_at = current_time
 
         if new_faces > 0 or updated_faces > 0:
             self._last_detection_time = current_time
@@ -695,6 +740,25 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     w = x_max - x_min
                     h = y_max - y_min
 
+                    # Filter by size to exclude walls and very small detections
+                    frame_area = width * height
+                    detection_area = w * h
+                    area_ratio = detection_area / frame_area
+
+                    if area_ratio < self.package_min_area_ratio:
+                        logger.debug(
+                            f"⏭️ Skipped small detection: {class_name_original} "
+                            f"(area: {area_ratio:.2%} < {self.package_min_area_ratio:.2%})"
+                        )
+                        continue
+
+                    if area_ratio > self.package_max_area_ratio:
+                        logger.debug(
+                            f"⏭️ Skipped large detection (likely wall/background): {class_name_original} "
+                            f"(area: {area_ratio:.2%} > {self.package_max_area_ratio:.2%})"
+                        )
+                        continue
+
                     all_detections.append(
                         {
                             "bbox": (x, y, w, h),
@@ -703,7 +767,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                         }
                     )
                     logger.info(
-                        f"📦 Matched package class: {class_name_original} (confidence: {conf:.2f})"
+                        f"📦 Matched package class: {class_name_original} (confidence: {conf:.2f}, area: {area_ratio:.2%})"
                     )
                 else:
                     logger.debug(
@@ -756,6 +820,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
 
         new_packages = 0
         updated_packages = 0
+        packages_seen_this_frame: set[str] = set()
 
         for package_data in detected_packages:
             x, y, w, h = package_data["bbox"]
@@ -783,35 +848,46 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             if matching_package_id:
                 # Update existing package
                 package_detection = self._detected_packages[matching_package_id]
+                packages_seen_this_frame.add(matching_package_id)
                 package_detection.last_seen = current_time
-                package_detection.detection_count += 1
                 package_detection.bbox = (x, y, w, h)
                 package_detection.confidence = max(
                     package_detection.confidence, confidence
                 )
                 package_detection.package_image = package_thumbnail
-                updated_packages += 1
-                logger.debug(
-                    f"🔄 Updated existing package {matching_package_id[:8]} "
-                    f"(seen {package_detection.detection_count} times)"
-                )
-                # Emit event for returning package
-                self.events.send(
-                    PackageDetectedEvent(
-                        plugin_name="security_camera",
-                        package_id=matching_package_id[:8],
-                        is_new=False,
-                        detection_count=package_detection.detection_count,
-                        confidence=package_detection.confidence,
-                        first_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S",
-                            time.localtime(package_detection.first_seen),
-                        ),
-                        last_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                        ),
+                
+                # Only increment count and emit event if package returned after disappearing
+                if package_detection.disappeared_at is not None:
+                    # Package left and came back - increment count and emit arrival event
+                    package_detection.detection_count += 1
+                    updated_packages += 1
+                    logger.info(
+                        f"📦 Package returned: {matching_package_id[:8]} (visit #{package_detection.detection_count})"
                     )
-                )
+                    self.events.send(
+                        PackageDetectedEvent(
+                            plugin_name="security_camera",
+                            package_id=matching_package_id[:8],
+                            is_new=False,
+                            detection_count=package_detection.detection_count,
+                            confidence=package_detection.confidence,
+                            first_seen=time.strftime(
+                                "%Y-%m-%d %H:%M:%S",
+                                time.localtime(package_detection.first_seen),
+                            ),
+                            last_seen=time.strftime(
+                                "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                            ),
+                        )
+                    )
+                    package_detection.disappeared_at = None  # Clear disappeared flag
+                else:
+                    # Continuously present - just update silently, don't increment count or emit event
+                    logger.debug(
+                        f"🔄 Updated existing package {matching_package_id[:8]} "
+                        f"(continuously present, entry count: {package_detection.detection_count})"
+                    )
+                # If disappeared_at is None, package is continuously present - no event
             else:
                 # New unique package
                 package_id = str(uuid.uuid4())
@@ -823,8 +899,10 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     bbox=(x, y, w, h),
                     confidence=confidence,
                     detection_count=1,
+                    disappeared_at=None,
                 )
                 self._detected_packages[package_id] = detection
+                packages_seen_this_frame.add(package_id)
                 new_packages += 1
                 logger.info(f"📦 New unique package detected: {package_id[:8]}")
 
@@ -854,6 +932,30 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                         ),
                     )
                 )
+
+        # Mark packages that weren't seen this frame as disappeared
+        for package_id, package_detection in self._detected_packages.items():
+            if package_id not in packages_seen_this_frame:
+                if package_detection.disappeared_at is None:
+                    # First time disappearing - mark it and emit event
+                    package_detection.disappeared_at = current_time
+                    logger.info(
+                        f"📦 Package disappeared: {package_id[:8]} (confidence: {package_detection.confidence:.2f})"
+                    )
+                    self.events.send(
+                        PackageDisappearedEvent(
+                            plugin_name="security_camera",
+                            package_id=package_id[:8],
+                            confidence=package_detection.confidence,
+                            first_seen=time.strftime(
+                                "%Y-%m-%d %H:%M:%S",
+                                time.localtime(package_detection.first_seen),
+                            ),
+                            last_seen=time.strftime(
+                                "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                            ),
+                        )
+                    )
 
         if new_packages > 0 or updated_packages > 0:
             self._last_package_detection_time = current_time
@@ -885,8 +987,40 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         # Create a copy to draw on
         frame_with_overlay = frame_bgr.copy()
 
-        # Draw package bounding boxes on the frame
+        # Draw face bounding boxes on the frame (only for currently visible faces)
+        for face in self._detected_faces.values():
+            # Only draw if face hasn't disappeared (disappeared_at is None)
+            if face.disappeared_at is not None:
+                continue
+            x, y, w, h = face.bbox
+            # Ensure coordinates are integers
+            x, y, w, h = int(x), int(y), int(w), int(h)
+            # Ensure coordinates are within bounds
+            x = max(0, min(x, width - 1))
+            y = max(0, min(y, height - 1))
+            x2 = min(x + w, width)
+            y2 = min(y + h, height)
+            # Draw green rectangle for faces
+            cv2.rectangle(frame_with_overlay, (x, y), (x2, y2), (0, 255, 0), 2)
+            # Draw face label
+            display_name = face.name or face.face_id[:8]
+            label_text = f"{display_name}"
+            cv2.putText(
+                frame_with_overlay,
+                label_text,
+                (x, max(10, y - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (0, 255, 0),
+                1,
+                cv2.LINE_AA,
+            )
+
+        # Draw package bounding boxes on the frame (only for currently visible packages)
         for package in self._detected_packages.values():
+            # Only draw if package hasn't disappeared (disappeared_at is None)
+            if package.disappeared_at is not None:
+                continue
             x, y, w, h = package.bbox
             # Ensure coordinates are integers
             x, y, w, h = int(x), int(y), int(w), int(h)
@@ -895,9 +1029,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             y = max(0, min(y, height - 1))
             x2 = min(x + w, width)
             y2 = min(y + h, height)
-            # Draw blue rectangle for packages
-            cv2.rectangle(frame_with_overlay, (x, y), (x2, y2), (255, 0, 0), 2)
-            # Draw package label
+            # Draw brighter blue rectangle for packages (BGR: brighter blue)
+            cv2.rectangle(frame_with_overlay, (x, y), (x2, y2), (255, 150, 150), 2)
+            # Draw package label in brighter blue
             label_text = f"Package {package.confidence:.2f}"
             cv2.putText(
                 frame_with_overlay,
@@ -905,7 +1039,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 (x, max(10, y - 5)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.4,
-                (255, 0, 0),
+                (255, 150, 150),
                 1,
                 cv2.LINE_AA,
             )
@@ -960,66 +1094,99 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             cv2.LINE_AA,
         )
 
-        # Draw thumbnail grid
-        if self._detected_faces:
-            grid_start_y = 80
-            grid_padding = 10
-            thumb_size = self.thumbnail_size
+        # Draw thumbnail grid (faces and packages combined)
+        grid_start_y = 110  # Start below the stats
+        grid_padding = 10
+        thumb_size = self.thumbnail_size
 
-            # Get most recent 12 faces sorted by last_seen
-            recent_faces = sorted(
-                self._detected_faces.values(), key=lambda f: f.last_seen, reverse=True
-            )[:12]
+        # Combine faces and packages, sorted by last_seen
+        all_detections = []
+        
+        # Add faces
+        for face in self._detected_faces.values():
+            all_detections.append({
+                "type": "face",
+                "image": face.face_image,
+                "last_seen": face.last_seen,
+                "detection_count": face.detection_count,
+                "name": face.name or face.face_id[:8],
+            })
+        
+        # Add packages
+        for package in self._detected_packages.values():
+            all_detections.append({
+                "type": "package",
+                "image": package.package_image,
+                "last_seen": package.last_seen,
+                "detection_count": package.detection_count,
+                "package_id": package.package_id[:8],
+                "confidence": package.confidence,
+            })
+        
+        # Sort by last_seen (most recent first) and take top 12
+        recent_detections = sorted(
+            all_detections, key=lambda d: d["last_seen"], reverse=True
+        )[:12]
 
-            for idx, detection in enumerate(recent_faces):
-                row = idx // grid_cols
-                col = idx % grid_cols
+        for idx, detection in enumerate(recent_detections):
+            row = idx // grid_cols
+            col = idx % grid_cols
 
-                x_pos = width - overlay_width + 10 + col * (thumb_size + grid_padding)
-                y_pos = grid_start_y + row * (thumb_size + grid_padding)
+            x_pos = width - overlay_width + 10 + col * (thumb_size + grid_padding)
+            y_pos = grid_start_y + row * (thumb_size + grid_padding)
 
-                # Check if we're still within the frame bounds
-                if y_pos + thumb_size > height:
-                    break
+            # Check if we're still within the frame bounds
+            if y_pos + thumb_size > height:
+                break
 
-                # Draw thumbnail
-                try:
-                    frame_with_overlay[
-                        y_pos : y_pos + thumb_size, x_pos : x_pos + thumb_size
-                    ] = detection.face_image
+            # Draw thumbnail
+            try:
+                frame_with_overlay[
+                    y_pos : y_pos + thumb_size, x_pos : x_pos + thumb_size
+                ] = detection["image"]
 
-                    # Draw detection count badge
-                    if detection.detection_count > 1:
-                        badge_text = f"{detection.detection_count}x"
-                        badge_size = cv2.getTextSize(
-                            badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1
-                        )[0]
-                        badge_x = x_pos + thumb_size - badge_size[0] - 2
-                        badge_y = y_pos + thumb_size - 2
+                # Draw colored border to distinguish type
+                border_color = (0, 255, 0) if detection["type"] == "face" else (255, 150, 150)  # Green for faces, blue for packages
+                cv2.rectangle(
+                    frame_with_overlay,
+                    (x_pos, y_pos),
+                    (x_pos + thumb_size, y_pos + thumb_size),
+                    border_color,
+                    2,
+                )
 
-                        # Draw badge background
-                        cv2.rectangle(
-                            frame_with_overlay,
-                            (badge_x - 2, badge_y - badge_size[1] - 2),
-                            (x_pos + thumb_size, y_pos + thumb_size),
-                            (0, 0, 0),
-                            -1,
-                        )
+                # Draw detection count badge
+                if detection["detection_count"] > 1:
+                    badge_text = f"{detection['detection_count']}x"
+                    badge_size = cv2.getTextSize(
+                        badge_text, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1
+                    )[0]
+                    badge_x = x_pos + thumb_size - badge_size[0] - 2
+                    badge_y = y_pos + thumb_size - 2
 
-                        # Draw badge text
-                        cv2.putText(
-                            frame_with_overlay,
-                            badge_text,
-                            (badge_x, badge_y),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.3,
-                            (255, 255, 255),
-                            1,
-                            cv2.LINE_AA,
-                        )
-                except Exception as e:
-                    logger.debug(f"Failed to draw thumbnail: {e}")
-                    continue
+                    # Draw badge background
+                    cv2.rectangle(
+                        frame_with_overlay,
+                        (badge_x - 2, badge_y - badge_size[1] - 2),
+                        (x_pos + thumb_size, y_pos + thumb_size),
+                        (0, 0, 0),
+                        -1,
+                    )
+
+                    # Draw badge text
+                    cv2.putText(
+                        frame_with_overlay,
+                        badge_text,
+                        (badge_x, badge_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.3,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to draw thumbnail: {e}")
+                continue
 
         timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
         cv2.putText(

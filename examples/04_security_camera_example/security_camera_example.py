@@ -11,6 +11,7 @@ from security_camera_processor import (
     SecurityCameraProcessor,
     PersonDetectedEvent,
     PackageDetectedEvent,
+    PackageDisappearedEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ async def create_agent(**kwargs) -> Agent:
         time_window=1800,  # 30 minutes in seconds
         thumbnail_size=80,  # Size of face thumbnails
         detection_interval=2.0,  # Detect faces every 2 seconds
+        package_conf_threshold=0.7,  # Higher threshold to reduce false positives
     )
 
     agent = Agent(
@@ -164,8 +166,14 @@ async def create_agent(**kwargs) -> Agent:
             )
         else:
             agent.logger.info(
-                f"📦 Package still there: {event.package_id} (seen {event.detection_count}x)"
+                f"📦 Package returned: {event.package_id} (visit #{event.detection_count})"
             )
+
+    @agent.events.subscribe
+    async def on_package_disappeared(event: PackageDisappearedEvent):
+        agent.logger.info(
+            f"📦 Package disappeared: {event.package_id} (confidence: {event.confidence:.2f})"
+        )
 
     return agent
 
