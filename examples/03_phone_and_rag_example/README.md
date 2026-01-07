@@ -64,13 +64,13 @@ When you run the above command you'll start a HTTP server to handle the Twilio m
 That's how easy it is to connect AI to a Twilio phone call.
 Next, let's try an inbound example.
 
-### Running the example - Inbound call
+### Step 3 - Inbound call
 
 The inbound example is easy since you already have the Twilio number and NGROK up and running.
 
 A. HTTP
 
-Remember the ngrok url from the first tab. And in a new tab start your HTTPs endpoint
+Remember the ngrok url from the first tab. And in a new tab start your server
 
 ```
 cd 03_phone_and_rag_example
@@ -79,14 +79,14 @@ RAG_BACKEND=gemini NGROK_URL=replaceme.ngrok-free.app uv run inbound_phone_and_r
 
 B. Call the number
 
-Call the number and you'll end up talking to the agent. 
+Call the number you've setup in Twilio and you'll end up talking to the agent. 
 The agent will gladly tell you all about Stream's APIs for chat, video and voice.
 
 Note that there is some added latency during development if you're not running in US-east.
 For optimal latency run the example in US-east.
 
 
-## Understanding the examples
+## Step 4 - Understanding the examples
 
 ### TWIML
 
