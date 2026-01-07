@@ -13,9 +13,9 @@ class TestNemotronSTT:
     @pytest.fixture
     async def stt(self):
         """Create and manage Nemotron STT lifecycle."""
-        stt_instance = nemotron.STT()
-        await stt_instance.warmup()
+        stt_instance = nemotron.STT(server_url="http://localhost:8765")
         try:
+            await stt_instance.start()
             yield stt_instance
         finally:
             await stt_instance.close()
@@ -27,7 +27,7 @@ class TestNemotronSTT:
 
         await stt.process_audio(mia_audio_16khz)
 
-        await session.wait_for_result(timeout=120.0)
+        await session.wait_for_result(timeout=10.0)
         assert not session.errors
 
         full_transcript = session.get_full_transcript()
@@ -41,7 +41,7 @@ class TestNemotronSTT:
 
         await stt.process_audio(mia_audio_48khz)
 
-        await session.wait_for_result(timeout=120.0)
+        await session.wait_for_result(timeout=10.0)
         assert not session.errors
 
         full_transcript = session.get_full_transcript()

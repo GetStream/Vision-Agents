@@ -1,15 +1,14 @@
-import asyncio
+import base64
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Literal, Optional
+from typing import Optional
 
+import httpx
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt.events import TranscriptResponse
-from vision_agents.core.warmup import Warmable
 
 logger = logging.getLogger(__name__)
 
@@ -18,77 +17,50 @@ MIN_BUFFER_DURATION_MS = 500
 MAX_BUFFER_DURATION_MS = 8000
 PROCESS_INTERVAL_MS = 1000
 
-CHUNK_SIZE_TO_CONTEXT: dict[str, tuple[int, int]] = {
-    "80ms": (70, 0),
-    "160ms": (70, 1),
-    "560ms": (70, 6),
-    "1120ms": (70, 13),
-}
 
-
-class STT(stt.STT, Warmable[Optional[Any]]):
+class STT(stt.STT):
     """
-    NVIDIA Nemotron Speech-to-Text implementation.
+    NVIDIA Nemotron Speech-to-Text client.
 
-    Uses NeMo's cache-aware FastConformer + RNN-T architecture for
-    high-quality English transcription with punctuation and capitalization.
+    Connects to a Nemotron ASR server for transcription.
+    See plugins/nemotron/server for the server component.
 
-    Audio is buffered and processed periodically to provide transcription results.
+    Audio is buffered and sent to the server periodically.
     """
 
     def __init__(
         self,
-        model_name: str = "nvidia/nemotron-speech-streaming-en-0.6b",
-        chunk_size: Literal["80ms", "160ms", "560ms", "1120ms"] = "560ms",
-        device: Literal["cpu", "cuda"] = "cpu",
-        client: Optional[Any] = None,
+        server_url: str = "http://localhost:8765",
+        timeout: float = 30.0,
     ):
         """
-        Initialize Nemotron STT.
+        Initialize Nemotron STT client.
 
         Args:
-            model_name: HuggingFace model name for Nemotron Speech
-            chunk_size: Processing chunk size affecting latency-accuracy tradeoff.
-                        Smaller chunks = lower latency but slightly higher WER.
-                        Options: 80ms, 160ms, 560ms, 1120ms
-            device: Device to run on ("cpu" or "cuda")
-            client: Optional pre-initialized ASRModel instance
+            server_url: URL of the Nemotron ASR server
+            timeout: HTTP request timeout in seconds
         """
         super().__init__(provider_name="nemotron")
 
-        self.model_name = model_name
-        self.chunk_size = chunk_size
-        self.device = device
-        self._model = client
-        self._att_context_size = list(CHUNK_SIZE_TO_CONTEXT[chunk_size])
+        self.server_url = server_url.rstrip("/")
+        self.timeout = timeout
+        self._client: Optional[httpx.AsyncClient] = None
         self._audio_buffer = PcmData(
             sample_rate=RATE, channels=1, format=AudioFormat.F32
         )
         self._last_process_time = time.time()
-        self._executor = ThreadPoolExecutor(max_workers=1)
 
-    async def on_warmup(self) -> Optional[Any]:
-        if self._model is not None:
-            return None
+    async def start(self):
+        """Start the STT client and verify server connection."""
+        await super().start()
+        self._client = httpx.AsyncClient(timeout=self.timeout)
 
-        import nemo.collections.asr as nemo_asr
-
-        logger.info(f"Loading Nemotron model: {self.model_name}")
-
-        def _load_model():
-            model = nemo_asr.models.ASRModel.from_pretrained(model_name=self.model_name)
-            if self.device == "cuda":
-                model = model.cuda()
-            return model
-
-        loop = asyncio.get_running_loop()
-        model = await loop.run_in_executor(self._executor, _load_model)
-        logger.info("Nemotron model loaded")
-        return model
-
-    def on_warmed_up(self, model: Optional[Any]) -> None:
-        if self._model is None:
-            self._model = model
+        response = await self._client.get(f"{self.server_url}/health")
+        response.raise_for_status()
+        health = response.json()
+        if not health.get("model_loaded"):
+            raise RuntimeError("Nemotron server model not loaded")
+        logger.info("Connected to Nemotron server")
 
     async def process_audio(
         self,
@@ -96,9 +68,7 @@ class STT(stt.STT, Warmable[Optional[Any]]):
         participant: Optional[Participant] = None,
     ):
         """
-        Process audio data through Nemotron for transcription.
-
-        Audio is buffered and processed periodically to provide transcription results.
+        Process audio data through Nemotron server for transcription.
 
         Args:
             pcm_data: The PCM audio data to process
@@ -108,8 +78,8 @@ class STT(stt.STT, Warmable[Optional[Any]]):
             logger.warning("Nemotron STT is closed, ignoring audio")
             return
 
-        if self._model is None:
-            raise ValueError("Model not loaded, call warmup() first")
+        if self._client is None:
+            raise ValueError("STT not started, call start() first")
 
         if pcm_data.samples.size == 0:
             return
@@ -135,7 +105,7 @@ class STT(stt.STT, Warmable[Optional[Any]]):
             await self._process_buffer(participant)
 
     async def _process_buffer(self, participant: Optional[Participant] = None):
-        """Process the current audio buffer through Nemotron."""
+        """Send buffered audio to server for transcription."""
         buffer_to_process = self._audio_buffer
 
         self._audio_buffer = PcmData(
@@ -149,42 +119,41 @@ class STT(stt.STT, Warmable[Optional[Any]]):
         if audio_samples.size == 0:
             return
 
+        audio_bytes = audio_samples.tobytes()
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+        if self._client is None:
+            raise ValueError("STT client not initialized")
+
         start_time = time.time()
 
-        transcripts = await self._transcribe(audio_samples)
+        response = await self._client.post(
+            f"{self.server_url}/transcribe",
+            json={"audio_base64": audio_base64, "sample_rate": RATE},
+        )
+        response.raise_for_status()
+        result = response.json()
 
-        processing_time_ms = (time.time() - start_time) * 1000
+        text = result.get("text", "").strip()
+        server_time_ms = result.get("processing_time_ms", 0)
+        total_time_ms = (time.time() - start_time) * 1000
 
         if participant is None:
             participant = Participant(original=None, user_id="unknown")
 
-        if transcripts:
-            full_text = " ".join(transcripts).strip()
-            if full_text:
-                response = TranscriptResponse(
-                    language="en",
-                    processing_time_ms=processing_time_ms,
-                    audio_duration_ms=buffer_to_process.duration_ms,
-                    model_name=self.model_name,
-                )
-                self._emit_transcript_event(full_text, participant, response)
-
-    async def _transcribe(self, audio_samples) -> list[str]:
-        if self._model is None:
-            raise ValueError("Model not loaded, call warmup() first")
-
-        model = self._model
-
-        def _worker():
-            transcriptions = model.transcribe([audio_samples])
-            if isinstance(transcriptions, tuple):
-                transcriptions = transcriptions[0]
-            return transcriptions
-
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._executor, _worker)
+        if text:
+            response_meta = TranscriptResponse(
+                language="en",
+                processing_time_ms=total_time_ms,
+                audio_duration_ms=buffer_to_process.duration_ms,
+                model_name="nemotron-speech",
+                other={"server_processing_time_ms": server_time_ms},
+            )
+            self._emit_transcript_event(text, participant, response_meta)
 
     async def close(self):
-        """Close the STT and cleanup resources."""
+        """Close the STT client."""
         await super().close()
-        self._executor.shutdown(wait=False)
+        if self._client:
+            await self._client.aclose()
+            self._client = None

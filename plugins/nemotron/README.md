@@ -8,13 +8,29 @@ NVIDIA Nemotron Speech STT integration for Vision Agents.
 pip install vision-agents-plugins-nemotron
 ```
 
-## Usage
+## Quick Start
+
+### 1. Start the Nemotron Server
+
+```bash
+cd plugins/nemotron/server
+
+# Option A: Direct Python (requires NeMo)
+pip install -r requirements.txt
+python nemotron_server.py
+
+# Option B: Docker
+docker build -t nemotron-server .
+docker run -p 8765:8765 nemotron-server
+```
+
+### 2. Use the Plugin
 
 ```python
 from vision_agents.plugins import nemotron
 
-stt = nemotron.STT()
-await stt.warmup()
+stt = nemotron.STT(server_url="http://localhost:8765")
+await stt.start()
 
 await stt.process_audio(pcm_data)
 ```
@@ -23,9 +39,17 @@ await stt.process_audio(pcm_data)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `model_name` | `nvidia/nemotron-speech-streaming-en-0.6b` | HuggingFace model name |
-| `chunk_size` | `560ms` | Processing chunk size (80ms, 160ms, 560ms, 1120ms) |
-| `device` | `cpu` | Device to run on (cpu or cuda) |
+| `server_url` | `http://localhost:8765` | Nemotron server URL |
+| `timeout` | `30.0` | HTTP request timeout (seconds) |
+
+## Server Configuration
+
+Set via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEMOTRON_DEVICE` | `cpu` | Device: cpu or cuda |
+| `NEMOTRON_MODEL` | `nvidia/nemotron-speech-streaming-en-0.6b` | HuggingFace model |
 
 ## Links
 

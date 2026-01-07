@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "nemo_toolkit[asr]>=2.0.0",
+    "httpx>=0.25.0",
 ]
 
 [project.urls]

@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -28,6 +28,7 @@ members = [
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
     "vision-agents-plugins-moondream",
+    "vision-agents-plugins-nemotron",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-openrouter",
     "vision-agents-plugins-qwen",
@@ -1588,13 +1589,14 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.19"
+version = "2.5.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
     { name = "httpx" },
     { name = "ijson" },
     { name = "marshmallow" },
+    { name = "protobuf" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyee" },
@@ -1602,9 +1604,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "twirp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/48/5a/d8db2ea5f41e237320aeba1281866dba2076f0a457aebab823c8bae6f0f6/getstream-2.5.19.tar.gz", hash = "sha256:c517cb52037ec606e734068556641fe764ddc1338c3e4eb37fce8e28f93b418c", size = 443976, upload-time = "2026-01-06T02:08:50.872Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/99/5d463c00cb905ee7fa4a5e59c4af6f4d4967bf8795e79a32280520fefca2/getstream-2.5.20.tar.gz", hash = "sha256:fd777c75bc8e277933a39221fbf4f870063b0fdad19b70b0b93765483b12d2ff", size = 434715, upload-time = "2026-01-06T18:59:47.331Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/e8/0ec692109e6d8d5ce25ed726f2937bc807d27e1db0fb965f5512d51e4880/getstream-2.5.19-py3-none-any.whl", hash = "sha256:9442988025425e40e98936c8b8980c64b8c231ba56430082429bc07ad8613836", size = 253552, upload-time = "2026-01-06T02:08:49.215Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/e2/1a8d05fe3de33151cf2b9fa5178d0db7aa1176b3278c89de0b2a1b1ce385/getstream-2.5.20-py3-none-any.whl", hash = "sha256:c3eee5a6d89659d9cdf1107255bb52b56c8198533403ddd79837c7fd16ebd42b", size = 260060, upload-time = "2026-01-06T18:59:45.925Z" },
 ]
 
 [package.optional-dependencies]
@@ -6569,7 +6571,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.19" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.20" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -6742,6 +6744,32 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8c/ba/8ce852bd136c6818f251e9d2f052318cd906cefcb5ae1a78803e8941fdab/vision_agents_plugins_moonshine-0.1.11.tar.gz", hash = "sha256:8b17736fdad5cf0e5fddeb3556c076143b1c48a3e7b3aa591767aa354701ed05", size = 6756, upload-time = "2025-10-28T19:41:35.258Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/a5/465963af3b5bf41ad8ec9e09ee00c28c9f03e62e0f0a1a6adf83acc55bfa/vision_agents_plugins_moonshine-0.1.11-py3-none-any.whl", hash = "sha256:c3aceb6913d592cca434723534f9ae6076111da2eac4738667866de7d906d159", size = 13586, upload-time = "2025-10-28T19:41:34.502Z" },
+]
+
+[[package]]
+name = "vision-agents-plugins-nemotron"
+source = { editable = "plugins/nemotron" }
+dependencies = [
+    { name = "httpx" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.25.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]

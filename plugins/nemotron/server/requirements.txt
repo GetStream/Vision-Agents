@@ -1,0 +1,5 @@
+# Requirements for Nemotron server (run in separate environment)
+nemo_toolkit[asr]>=2.0.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+numpy
