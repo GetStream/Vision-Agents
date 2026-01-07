@@ -24,7 +24,7 @@ class AgentLauncher:
         self,
         create_agent: Callable[..., "Agent" | Awaitable["Agent"]],
         join_call: Callable[..., None | Awaitable[None]] | None = None,
-        agent_idle_timeout: float = 10.0,
+        agent_idle_timeout: float = 30.0,
         agent_idle_cleanup_interval: float = 5.0,
     ):
         """

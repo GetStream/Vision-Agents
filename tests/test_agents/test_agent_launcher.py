@@ -36,7 +36,7 @@ class DummyLLM(LLM, Warmable[bool]):
 @pytest.fixture()
 async def stream_edge_mock() -> MagicMock:
     mock = MagicMock()
-    mock.events.return_value = EventManager()
+    mock.events = EventManager()
     return mock
 
 
@@ -158,6 +158,6 @@ class TestAgentLauncher:
                 # Sleep 2s to let the launcher clean up the agents
                 await asyncio.sleep(2)
 
-        # The agents must be closed
+        # The agents must not be closed
         assert not agent1.closed
         assert not agent2.closed
