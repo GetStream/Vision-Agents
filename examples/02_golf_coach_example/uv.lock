@@ -1377,6 +1377,20 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-exporter-prometheus"
+version = "0.57b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "prometheus-client" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/d8/5f04c6d51c0823c3d8ac973a2a38db6fcf2d040ca3f08fc66b3c14b6e164/opentelemetry_exporter_prometheus-0.57b0.tar.gz", hash = "sha256:9eb15bdc189235cf03c3f93abf56f8ff0ab57a493a189263bd7fe77a4249e689", size = 14906, upload-time = "2025-07-29T15:12:09.96Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/1c/40fb93a7b7e495985393bbc734104d5d20e470811644dd56c2402d683739/opentelemetry_exporter_prometheus-0.57b0-py3-none-any.whl", hash = "sha256:c5b893d1cdd593fb022af2c7de3258c2d5a4d04402ae80d9fa35675fed77f05c", size = 12922, upload-time = "2025-07-29T15:11:54.055Z" },
+]
+
+[[package]]
 name = "opentelemetry-sdk"
 version = "1.36.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1500,6 +1514,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/25/77d12018c35489e19f7650b40679714a834effafc25d61e8dcee7c4fafce/polars_runtime_32-1.34.0-cp39-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:79e4d696392c6d8d51f4347f0b167c52eef303c9d87093c0c68e8651198735b7", size = 37049077, upload-time = "2025-10-02T18:30:11.162Z" },
     { url = "https://files.pythonhosted.org/packages/e2/75/c30049d45ea1365151f86f650ed5354124ff3209f0abe588664c8eb13a31/polars_runtime_32-1.34.0-cp39-abi3-win_amd64.whl", hash = "sha256:2501d6b29d9001ea5ea2fd9b598787e10ddf45d8c4a87c2bead75159e8a15711", size = 40105782, upload-time = "2025-10-02T18:30:14.597Z" },
     { url = "https://files.pythonhosted.org/packages/a3/31/84efa27aa3478c8670bac1a720c8b1aee5c58c9c657c980e5e5c47fde883/polars_runtime_32-1.34.0-cp39-abi3-win_arm64.whl", hash = "sha256:f9ed1765378dfe0bcd1ac5ec570dd9eab27ea728bbc980cc9a76eebc55586559", size = 35873216, upload-time = "2025-10-02T18:30:17.439Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.23.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/53/3edb5d68ecf6b38fcbcc1ad28391117d2a322d9a1a3eff04bfdb184d8c3b/prometheus_client-0.23.1.tar.gz", hash = "sha256:6ae8f9081eaaaf153a2e959d2e6c4f4fb57b12ef76c8c7980202f1e57b48b2ce", size = 80481, upload-time = "2025-09-18T20:47:25.043Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/db/14bafcb4af2139e046d03fd00dea7873e48eafe18b7d2797e73d6681f210/prometheus_client-0.23.1-py3-none-any.whl", hash = "sha256:dd1913e6e76b59cfe44e7a4b83e01afc9873c1bdfd2ed8739f1e76aeca115f99", size = 61145, upload-time = "2025-09-18T20:47:23.875Z" },
 ]
 
 [[package]]
@@ -2349,44 +2372,66 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'all-plugins'", editable = "../../plugins/anthropic" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "../../plugins/anthropic" },
+    { name = "vision-agents-plugins-aws", marker = "extra == 'all-plugins'", editable = "../../plugins/aws" },
+    { name = "vision-agents-plugins-aws", marker = "extra == 'aws'", editable = "../../plugins/aws" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'all-plugins'", editable = "../../plugins/cartesia" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'cartesia'", editable = "../../plugins/cartesia" },
+    { name = "vision-agents-plugins-decart", marker = "extra == 'all-plugins'", editable = "../../plugins/decart" },
+    { name = "vision-agents-plugins-decart", marker = "extra == 'decart'", editable = "../../plugins/decart" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "../../plugins/deepgram" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'deepgram'", editable = "../../plugins/deepgram" },
     { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "../../plugins/elevenlabs" },
     { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "../../plugins/elevenlabs" },
+    { name = "vision-agents-plugins-fast-whisper", marker = "extra == 'all-plugins'", editable = "../../plugins/fast_whisper" },
+    { name = "vision-agents-plugins-fast-whisper", marker = "extra == 'fast-whisper'", editable = "../../plugins/fast_whisper" },
+    { name = "vision-agents-plugins-fish", marker = "extra == 'all-plugins'", editable = "../../plugins/fish" },
+    { name = "vision-agents-plugins-fish", marker = "extra == 'fish'", editable = "../../plugins/fish" },
     { name = "vision-agents-plugins-gemini", marker = "extra == 'all-plugins'", editable = "../../plugins/gemini" },
     { name = "vision-agents-plugins-gemini", marker = "extra == 'gemini'", editable = "../../plugins/gemini" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'all-plugins'", editable = "../../plugins/getstream" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'getstream'", editable = "../../plugins/getstream" },
     { name = "vision-agents-plugins-heygen", marker = "extra == 'all-plugins'", editable = "../../plugins/heygen" },
     { name = "vision-agents-plugins-heygen", marker = "extra == 'heygen'", editable = "../../plugins/heygen" },
+    { name = "vision-agents-plugins-huggingface", marker = "extra == 'all-plugins'", editable = "../../plugins/huggingface" },
+    { name = "vision-agents-plugins-huggingface", marker = "extra == 'huggingface'", editable = "../../plugins/huggingface" },
     { name = "vision-agents-plugins-inworld", marker = "extra == 'all-plugins'", editable = "../../plugins/inworld" },
     { name = "vision-agents-plugins-inworld", marker = "extra == 'inworld'", editable = "../../plugins/inworld" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'all-plugins'", editable = "../../plugins/kokoro" },
     { name = "vision-agents-plugins-kokoro", marker = "extra == 'kokoro'", editable = "../../plugins/kokoro" },
+    { name = "vision-agents-plugins-moondream", marker = "extra == 'all-plugins'", editable = "../../plugins/moondream" },
+    { name = "vision-agents-plugins-moondream", marker = "extra == 'moondream'", editable = "../../plugins/moondream" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'all-plugins'" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "../../plugins/openai" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "../../plugins/openai" },
+    { name = "vision-agents-plugins-openrouter", marker = "extra == 'all-plugins'", editable = "../../plugins/openrouter" },
+    { name = "vision-agents-plugins-openrouter", marker = "extra == 'openrouter'", editable = "../../plugins/openrouter" },
+    { name = "vision-agents-plugins-qwen", marker = "extra == 'all-plugins'", editable = "../../plugins/qwen" },
+    { name = "vision-agents-plugins-qwen", marker = "extra == 'qwen'", editable = "../../plugins/qwen" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'all-plugins'", editable = "../../plugins/roboflow" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'roboflow'", editable = "../../plugins/roboflow" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "../../plugins/smart_turn" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "../../plugins/smart_turn" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'all-plugins'", editable = "../../plugins/ultralytics" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'ultralytics'", editable = "../../plugins/ultralytics" },
+    { name = "vision-agents-plugins-vogent", marker = "extra == 'all-plugins'", editable = "../../plugins/vogent" },
+    { name = "vision-agents-plugins-vogent", marker = "extra == 'vogent'", editable = "../../plugins/vogent" },
     { name = "vision-agents-plugins-wizper", marker = "extra == 'all-plugins'", editable = "../../plugins/wizper" },
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "../../plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "../../plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "../../plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "cartesia", "deepgram", "dev", "elevenlabs", "gemini", "getstream", "heygen", "inworld", "kokoro", "moonshine", "openai", "roboflow", "smart-turn", "ultralytics", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-golf"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-prometheus" },
+    { name = "opentelemetry-sdk" },
+    { name = "prometheus-client" },
     { name = "python-dotenv" },
     { name = "vision-agents" },
     { name = "vision-agents-plugins-gemini" },
@@ -2397,6 +2442,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-prometheus" },
+    { name = "opentelemetry-sdk" },
+    { name = "prometheus-client" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "vision-agents", editable = "../../agents-core" },
     { name = "vision-agents-plugins-gemini", editable = "../../plugins/gemini" },

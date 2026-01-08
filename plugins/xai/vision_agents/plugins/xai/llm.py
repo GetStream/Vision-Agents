@@ -449,8 +449,8 @@ class XAILLM(LLM):
         if chunk.content:
             # Check if this is the first content chunk
             is_first = first_token_time is not None and request_start_time is not None
-            ttft_ms = None
-            if is_first:
+            ttft_ms: Optional[float] = None
+            if first_token_time is not None and request_start_time is not None:
                 ttft_ms = (first_token_time - request_start_time) * 1000
 
             self.events.send(

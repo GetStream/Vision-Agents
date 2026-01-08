@@ -470,6 +470,7 @@ class StreamEdge(EdgeTransport):
                         shadow_banned=False,
                         updated_at=datetime.datetime.now(datetime.timezone.utc),
                         custom={},
+                        is_global_banned=False,
                     )
                 ]
             )

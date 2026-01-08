@@ -248,7 +248,7 @@ class ClaudeLLM(LLM):
                 # Track time to first token
                 if first_token_time is None and event.type == "content_block_delta":
                     delta = getattr(event, "delta", None)
-                    if hasattr(delta, "text") and delta.text:
+                    if delta is not None and hasattr(delta, "text") and delta.text:
                         first_token_time = time.perf_counter()
 
                 llm_response_optional = self._standardize_and_emit_event(
@@ -272,7 +272,6 @@ class ClaudeLLM(LLM):
 
             # 2) While there are tool calls, execute -> return tool_result -> ask again (with tools)
             last_followup_stream = None
-            last_response_for_metrics: Optional[ClaudeMessage] = None
             while accumulated_calls and rounds < MAX_ROUNDS:
                 # Execute calls concurrently with dedup
                 triples, seen = await self._dedup_and_execute(
@@ -471,8 +470,8 @@ class ClaudeLLM(LLM):
                     and request_start_time is not None
                     and len(text_parts) == 1
                 )
-                ttft_ms = None
-                if is_first:
+                ttft_ms: Optional[float] = None
+                if first_token_time is not None and request_start_time is not None:
                     ttft_ms = (first_token_time - request_start_time) * 1000
 
                 self.events.send(

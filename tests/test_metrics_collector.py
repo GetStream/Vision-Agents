@@ -9,8 +9,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from unittest.mock import MagicMock
 
-import pytest
-
 from vision_agents.core.llm.events import (
     LLMResponseCompletedEvent,
     ToolEndEvent,

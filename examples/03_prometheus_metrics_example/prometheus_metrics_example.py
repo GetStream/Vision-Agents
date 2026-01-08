@@ -38,15 +38,15 @@ metrics.set_meter_provider(provider)
 # =============================================================================
 # Now import vision_agents - metrics will be recorded automatically
 # =============================================================================
-import logging
-from typing import Dict, Any
+import logging  # noqa: E402
+from typing import Any, Dict  # noqa: E402
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 
-from vision_agents.core import Agent, User, AgentLauncher, cli
-from vision_agents.core.observability import MetricsCollector
-from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
+from vision_agents.core import Agent, User, AgentLauncher, cli  # noqa: E402
+from vision_agents.core.observability import MetricsCollector  # noqa: E402
+from vision_agents.core.utils.examples import get_weather_by_location  # noqa: E402
+from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs  # noqa: E402
 
 load_dotenv()
 
@@ -80,7 +80,7 @@ async def create_agent(**kwargs) -> Agent:
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join a call with metrics collection enabled."""
     # Attach MetricsCollector to record OpenTelemetry metrics
-    collector = MetricsCollector(agent)
+    _ = MetricsCollector(agent)
 
     logger.info("=" * 60)
     logger.info("Prometheus Metrics Agent")

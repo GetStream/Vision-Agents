@@ -502,9 +502,9 @@ class OpenAILLM(LLM):
             delta_event: ResponseTextDeltaEvent = event
             # Calculate time to first token for the first chunk
             is_first = first_token_time is not None and request_start_time is not None
-            ttft_ms = None
-            if is_first:
-                ttft_ms = (first_token_time - request_start_time) * 1000
+            chunk_ttft_ms: Optional[float] = None
+            if first_token_time is not None and request_start_time is not None:
+                chunk_ttft_ms = (first_token_time - request_start_time) * 1000
 
             self.events.send(
                 LLMResponseChunkEvent(
@@ -515,7 +515,7 @@ class OpenAILLM(LLM):
                     sequence_number=delta_event.sequence_number,
                     delta=delta_event.delta,
                     is_first_chunk=is_first,
-                    time_to_first_token_ms=ttft_ms,
+                    time_to_first_token_ms=chunk_ttft_ms,
                 )
             )
             return None
