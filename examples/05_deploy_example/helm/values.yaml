@@ -1,0 +1,40 @@
+replicaCount: 1
+
+image:
+  repository: vision-agent-deploy
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# Persistent cache for uv packages (faster restarts)
+cache:
+  enabled: true
+  size: 10Gi
+  storageClass: ""  # Leave empty for default
+
+# API keys - set these or use existing secret
+secrets:
+  # Set to existing secret name to use pre-created secret
+  existingSecret: ""
+  # Or provide values directly (will create secret)
+  googleApiKey: ""
+  elevenlabsApiKey: ""
+  deepgramApiKey: ""
+  streamApiKey: ""
+  streamApiSecret: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
