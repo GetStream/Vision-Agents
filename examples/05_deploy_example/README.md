@@ -121,10 +121,22 @@ kubectl create secret generic vision-agent-env --from-env-file=.env
 kubectl rollout restart deployment/vision-agent
 ```
 
-# Watch logs
+# Other tips
+
+## Watch logs
 
 If the container is still starting this will output "ContainerCreating" otherwise will show the logs
 
 ```
 kubectl logs -l app.kubernetes.io/name=vision-agent -f --tail=100
+```
+
+## Pause cluster
+
+```
+nebius mk8s node-group update \
+  --id mk8snodegroup-e01fpzjpjq9weca40a \
+  --fixed-node-count 0 --async
+  
+nebius mk8s node-group get --id mk8snodegroup-e01fpzjpjq9weca40a
 ```
