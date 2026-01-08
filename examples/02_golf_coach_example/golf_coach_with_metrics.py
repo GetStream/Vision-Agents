@@ -7,9 +7,7 @@ Run with:
 Then open http://localhost:9464/metrics to see real-time metrics.
 """
 
-# =============================================================================
-# IMPORTANT: Configure OpenTelemetry BEFORE importing vision_agents
-# =============================================================================
+# Configure OpenTelemetry BEFORE importing vision_agents
 from opentelemetry import metrics
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
@@ -24,9 +22,7 @@ reader = PrometheusMetricReader()
 provider = MeterProvider(metric_readers=[reader])
 metrics.set_meter_provider(provider)
 
-# =============================================================================
 # Now import vision_agents - metrics will be recorded automatically
-# =============================================================================
 import logging  # noqa: E402
 
 from dotenv import load_dotenv  # noqa: E402
@@ -65,7 +61,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     logger.info("Realtime metrics being collected:")
     logger.info("  - realtime.sessions, realtime.session_duration.ms")
     logger.info("  - realtime.audio.input.bytes, realtime.audio.output.bytes")
-    logger.info("  - realtime.audio.input.duration.ms, realtime.audio.output.duration.ms")
+    logger.info(
+        "  - realtime.audio.input.duration.ms, realtime.audio.output.duration.ms"
+    )
     logger.info("  - realtime.responses")
     logger.info("  - realtime.transcriptions.user, realtime.transcriptions.agent")
     logger.info("  - realtime.errors")
@@ -78,7 +76,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     call = await agent.create_call(call_type, call_id)
 
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.llm.simple_response(
             text="Say hi. After the user does their golf swing offer helpful feedback."
         )
@@ -87,4 +85,3 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 if __name__ == "__main__":
     cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
-
