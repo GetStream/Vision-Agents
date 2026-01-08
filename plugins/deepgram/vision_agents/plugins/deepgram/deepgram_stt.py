@@ -5,13 +5,24 @@ from typing import Any, Optional
 
 from deepgram import AsyncDeepgramClient
 from deepgram.core import EventType
-from deepgram.extensions.types.sockets import ListenV2ControlMessage
 from deepgram.listen.v2.socket_client import AsyncV2SocketClient
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.utils.utils import cancel_and_wait
+
+# Handle API changes between deepgram-sdk 5.3.0 and 5.3.1
+try:
+    # deepgram-sdk >= 5.3.1
+    from deepgram.listen.v2.types import ListenV2CloseStream
+
+    _USE_NEW_API = True
+except ImportError:
+    # deepgram-sdk 5.3.0
+    from deepgram.extensions.types.sockets import ListenV2ControlMessage
+
+    _USE_NEW_API = False
 
 logger = logging.getLogger(__name__)
 
@@ -279,9 +290,14 @@ class STT(stt.STT):
 
         # Close connection
         if self.connection and self._connection_context:
-            close_msg = ListenV2ControlMessage(type="CloseStream")
             try:
-                await self.connection.send_control(close_msg)
+                # Handle API differences between deepgram-sdk versions
+                if _USE_NEW_API:
+                    close_msg = ListenV2CloseStream(type="CloseStream")
+                    await self.connection.send_close_stream(close_msg)
+                else:
+                    close_msg = ListenV2ControlMessage(type="CloseStream")
+                    await self.connection.send_control(close_msg)
                 await self._connection_context.__aexit__(None, None, None)
             except Exception as exc:
                 logger.warning(f"Error closing Deepgram websocket connection: {exc}")
