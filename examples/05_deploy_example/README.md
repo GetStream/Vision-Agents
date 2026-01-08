@@ -8,6 +8,20 @@
 - 2 nodes + load balancer?
 - Terraform instead of nebius CLI?
 
+# Secrets
+
+First copy the .env.example
+
+```
+cp .env.example .env
+```
+
+Next fill in the required variables and run the example locally to verify everything works
+
+```
+uv run deploy_example.py
+```
+
 # Requirements
 
 [Nebius CLI](https://docs.nebius.com/cli/configure)
@@ -27,14 +41,20 @@ brew install helm
 
 # 0. Create a new k8s cluster with Nebius CLI
 
-Create the cluster (change parent-id and subnet as needed):
+Lookup your parent-id and subnet for Nebius:
+
+```
+nebius vpc subnet list
+```
+
+Next create the cluster and be sure to replace the subnet and parent id
 
 ```
 nebius mk8s cluster create \
   --parent-id project-e01zw2jzpr000vckjm7t7n \
   --name vision-agents \
   --control-plane-subnet-id vpcsubnet-e01jfyqqs0hfzpp2c3 \
-  --control-plane-version 1.31 \
+  --control-plane-version 1.32.11 \
   --control-plane-endpoints-public-endpoint
 ```
 
@@ -94,9 +114,10 @@ helm upgrade --install vision-agent ./helm \
   --set cache.enabled=true
 ```
 
-# 6. Restart to pick up new image
+# 6. Create the required secrets and restart
 
 ```
+kubectl create secret generic vision-agent-env --from-env-file=.env
 kubectl rollout restart deployment/vision-agent
 ```
 
