@@ -28,6 +28,7 @@ members = [
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
     "vision-agents-plugins-moondream",
+    "vision-agents-plugins-nvidia",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-openrouter",
     "vision-agents-plugins-qwen",
@@ -7054,6 +7055,32 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8c/ba/8ce852bd136c6818f251e9d2f052318cd906cefcb5ae1a78803e8941fdab/vision_agents_plugins_moonshine-0.1.11.tar.gz", hash = "sha256:8b17736fdad5cf0e5fddeb3556c076143b1c48a3e7b3aa591767aa354701ed05", size = 6756, upload-time = "2025-10-28T19:41:35.258Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/a5/465963af3b5bf41ad8ec9e09ee00c28c9f03e62e0f0a1a6adf83acc55bfa/vision_agents_plugins_moonshine-0.1.11-py3-none-any.whl", hash = "sha256:c3aceb6913d592cca434723534f9ae6076111da2eac4738667866de7d906d159", size = 13586, upload-time = "2025-10-28T19:41:34.502Z" },
+]
+
+[[package]]
+name = "vision-agents-plugins-nvidia"
+source = { editable = "plugins/nvidia" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
