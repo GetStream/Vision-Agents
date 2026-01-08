@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vision-agents-plugins-turbopuffer"
+dynamic = ["version"]
+description = "TurboPuffer RAG integration for Vision Agents with hybrid search"
+readme = "README.md"
+keywords = ["turbopuffer", "RAG", "vector-search", "hybrid-search", "AI", "voice agents", "agents"]
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "vision-agents",
+    "turbopuffer>=0.3.3",
+    "langchain-google-genai>=2.1.4",
+    "langchain-text-splitters>=0.3.8",
+]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.hatch.build.targets.sdist]
+include = ["/vision_agents"]
+
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+]

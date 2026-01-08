@@ -20,6 +20,11 @@ cp env.example .env
 uv run examples/01_simple_agent_example/simple_agent_example.py
 ```
 
+### Running with a video file as input
+```bash
+uv run <path-to-example> --video-track-override <path-to-video>
+```
+
 ## Tests
 
 Everything other than integration tests
@@ -464,7 +469,7 @@ async def start_agent() -> None:
     )
 
     call = agent.edge.client.video.call("default", str(uuid4()))
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.simple_response("Hello!")
         await agent.finish()
 ```

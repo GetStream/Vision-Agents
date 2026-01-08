@@ -2,17 +2,17 @@ import asyncio
 import logging
 import os
 import time
-from typing import Optional, Any
+from typing import Any, Optional
 
 from deepgram import AsyncDeepgramClient
 from deepgram.core import EventType
 from deepgram.extensions.types.sockets import ListenV2ControlMessage
 from deepgram.listen.v2.socket_client import AsyncV2SocketClient
 from getstream.video.rtc.track_util import PcmData
-
 from vision_agents.core import stt
-from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.stt import TranscriptResponse
+from vision_agents.core.utils.utils import cancel_and_wait
 
 logger = logging.getLogger(__name__)
 
@@ -288,16 +288,19 @@ class STT(stt.STT):
         # Mark as closed first
         await super().close()
 
-        # Cancel listen task
-        if self._listen_task and not self._listen_task.done():
-            self._listen_task.cancel()
-            await asyncio.gather(self._listen_task, return_exceptions=True)
+        # Cancel the listen task and ensure it's finished
+        if self._listen_task:
+            await cancel_and_wait(self._listen_task)
 
         # Close connection
         if self.connection and self._connection_context:
             close_msg = ListenV2ControlMessage(type="CloseStream")
-            await self.connection.send_control(close_msg)
-            await self._connection_context.__aexit__(None, None, None)
-            self.connection = None
-            self._connection_context = None
-            self._connection_ready.clear()
+            try:
+                await self.connection.send_control(close_msg)
+                await self._connection_context.__aexit__(None, None, None)
+            except Exception as exc:
+                logger.warning(f"Error closing Deepgram websocket connection: {exc}")
+            finally:
+                self.connection = None
+                self._connection_context = None
+                self._connection_ready.clear()

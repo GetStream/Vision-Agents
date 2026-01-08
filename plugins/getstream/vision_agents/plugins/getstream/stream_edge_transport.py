@@ -1,9 +1,10 @@
+import asyncio
 import datetime
 import logging
-import asyncio
 import os
+import time
 import webbrowser
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlencode
 
 import aiortc
@@ -15,17 +16,17 @@ from getstream.video.async_call import Call
 from getstream.video.rtc import ConnectionManager, audio_track
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
+    Participant,
     TrackType,
 )
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.agents.agents import tracer
-from vision_agents.core.edge import EdgeTransport, sfu_events
-from vision_agents.plugins.getstream.stream_conversation import StreamConversation
-from vision_agents.core.edge.types import Connection, User, OutputAudioTrack
+from vision_agents.core.edge import EdgeTransport, events, sfu_events
+from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
 from vision_agents.core.events.manager import EventManager
-from vision_agents.core.edge import events
 from vision_agents.core.utils import get_vision_agents_version
+from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
@@ -38,10 +39,32 @@ class StreamConnection(Connection):
         super().__init__()
         # store the native connection object
         self._connection = connection
+        self._idle_since: float = 0.0
+        self._participant_joined = asyncio.Event()
+        # Subscribe to participants changes for this connection
+        self._subscription = self._connection.participants_state.map(
+            self._on_participant_change
+        )
 
     @property
     def participants(self) -> ParticipantsState:
         return self._connection.participants_state
+
+    def idle_since(self) -> float:
+        """
+        Return the timestamp when all participants left this call except the agent itself.
+        `0.0` means that connection is active.
+
+        Returns:
+            idle time for this connection or 0.
+        """
+        return self._idle_since
+
+    async def wait_for_participant(self, timeout: Optional[float] = None) -> None:
+        """
+        Wait for at least one participant other than the agent to join.
+        """
+        await asyncio.wait_for(self._participant_joined.wait(), timeout=timeout)
 
     async def close(self, timeout: float = 2.0):
         try:
@@ -55,6 +78,21 @@ class StreamConnection(Connection):
                 raise
         except Exception as e:
             logger.error(f"Error during connection close: {e}")
+
+    def _on_participant_change(self, participants: list[Participant]) -> None:
+        # Get all participants except the agent itself.
+        other_participants = [
+            p for p in participants if p.user_id != self._connection.user_id
+        ]
+        if other_participants:
+            # Some participants detected.
+            # Reset the idleness timeout back to zero.
+            self._idle_since = 0.0
+            # Resolve the participant joined event
+            self._participant_joined.set()
+        elif not self._idle_since:
+            # No participants left, register the time the connection became idle if it's not set.
+            self._idle_since = time.time()
 
 
 class StreamEdge(EdgeTransport):
@@ -275,7 +313,17 @@ class StreamEdge(EdgeTransport):
 
     async def create_user(self, user: User):
         self.agent_user_id = user.id
-        return await self.client.create_user(name=user.name, id=user.id)
+        return await self.client.create_user(
+            name=user.name, id=user.id, image=user.image
+        )
+
+    async def create_users(self, users: list[User]):
+        """Create multiple users in a single API call."""
+        from getstream.models import UserRequest
+
+        users_map = {u.id: UserRequest(name=u.name, id=u.id) for u in users}
+        response = await self.client.update_users(users_map)
+        return [response.data.users[u.id] for u in users]
 
     async def join(self, agent: "Agent", call: Call) -> StreamConnection:
         """
@@ -417,10 +465,10 @@ class StreamEdge(EdgeTransport):
                         # TODO: get rid of this when codegen for stream-py is fixed, these fields are meaningless
                         banned=False,
                         channel_role="",
-                        created_at=datetime.datetime.now(datetime.UTC),
+                        created_at=datetime.datetime.now(datetime.timezone.utc),
                         notifications_muted=False,
                         shadow_banned=False,
-                        updated_at=datetime.datetime.now(datetime.UTC),
+                        updated_at=datetime.datetime.now(datetime.timezone.utc),
                         custom={},
                     )
                 ]

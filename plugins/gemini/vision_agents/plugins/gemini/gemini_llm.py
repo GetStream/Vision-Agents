@@ -21,6 +21,7 @@ from vision_agents.core.llm.events import (
 )
 
 from . import events
+from .tools import GeminiTool
 
 from vision_agents.core.processors import Processor
 
@@ -59,6 +60,7 @@ class GeminiLLM(LLM):
         thinking_level: Optional[ThinkingLevel] = None,
         media_resolution: Optional[MediaResolution] = None,
         config: Optional[GenerateContentConfig] = None,
+        tools: Optional[List[GeminiTool]] = None,
         **kwargs,
     ):
         """
@@ -73,10 +75,18 @@ class GeminiLLM(LLM):
                 Cannot be used with legacy thinking_budget parameter.
             media_resolution: Optional media resolution for multimodal processing. Use
                 MediaResolution.MEDIA_RESOLUTION_LOW, MEDIA_RESOLUTION_MEDIUM, or
-                MEDIA_RESOLUTION_HIGH. Recommended: "high" for images, "medium" for PDFs,
+                MediaResolution.MEDIA_RESOLUTION_HIGH. Recommended: "high" for images, "medium" for PDFs,
                 "low"/"medium" for general video, "high" for text-heavy video.
             config: Optional[GenerateContentConfig] to use as base. Any kwargs will be passed
                 to GenerateContentConfig constructor if config is not provided.
+            tools: Optional list of Gemini built-in tools. Available tools:
+                - tools.FileSearch(store): RAG over your documents
+                - tools.GoogleSearch(): Ground responses with web data
+                - tools.CodeExecution(): Run Python code
+                - tools.URLContext(): Read specific web pages
+                - tools.GoogleMaps(): Location-aware queries (Preview)
+                - tools.ComputerUse(): Browser automation (Preview)
+                See: https://ai.google.dev/gemini-api/docs/tools
             **kwargs: Additional arguments passed to GenerateContentConfig constructor.
         """
         super().__init__()
@@ -84,6 +94,7 @@ class GeminiLLM(LLM):
         self.model = model
         self.thinking_level = thinking_level
         self.media_resolution = media_resolution
+        self._builtin_tools = tools or []
 
         if config is not None:
             self._base_config: Optional[GenerateContentConfig] = config
@@ -105,7 +116,7 @@ class GeminiLLM(LLM):
         base_config: Optional[GenerateContentConfig] = None,
     ) -> GenerateContentConfig:
         """
-        Build GenerateContentConfig with Gemini 3 features.
+        Build GenerateContentConfig with Gemini 3 features and built-in tools.
 
         Args:
             system_instruction: Optional system instruction to include. If not provided,
@@ -113,7 +124,7 @@ class GeminiLLM(LLM):
             base_config: Optional base config to extend (takes precedence over self._base_config)
 
         Returns:
-            GenerateContentConfig with thinking_level and media_resolution if set
+            GenerateContentConfig with thinking_level, media_resolution, and tools if set
         """
         if base_config is not None:
             config = base_config
@@ -137,6 +148,19 @@ class GeminiLLM(LLM):
 
         if self.media_resolution:
             config.media_resolution = self.media_resolution
+
+        # Add built-in tools if configured
+        if self._builtin_tools:
+            builtin_tool_objects: list[types.Tool] = [
+                tool.to_tool() for tool in self._builtin_tools
+            ]
+            if config.tools is None:
+                config.tools = builtin_tool_objects  # type: ignore[assignment]
+            else:
+                # Append to existing tools
+                existing_tools = list(config.tools)
+                existing_tools.extend(builtin_tool_objects)
+                config.tools = existing_tools  # type: ignore[assignment]
 
         return config
 

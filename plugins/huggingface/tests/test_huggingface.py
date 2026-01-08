@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 from av import VideoFrame
+from conftest import skip_blockbuster
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
@@ -246,6 +247,7 @@ class TestHuggingFaceLLM:
         assert events[0].error_message == "test"
 
     @pytest.mark.integration
+    @skip_blockbuster
     async def test_simple_response_huggingface_integration(self, conversation):
         api_key = os.getenv("HF_TOKEN")
         if not api_key:
@@ -254,7 +256,6 @@ class TestHuggingFaceLLM:
         llm = LLM(
             api_key=api_key,
             model="meta-llama/Meta-Llama-3-8B-Instruct",
-            provider="fastest",
         )
         llm.set_conversation(conversation)
 

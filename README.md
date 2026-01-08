@@ -121,6 +121,8 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 | Qwen | Realtime audio plugin using Alibaba's Qwen3 with native audio output and built-in speech recognition | [Qwen](https://visionagents.ai/integrations/qwen) |
 | Roboflow | Object detection processor using Roboflow's hosted API or local RF-DETR models | [Roboflow](https://visionagents.ai/integrations/roboflow) |
 | Smart Turn | Advanced turn detection system combining Silero VAD, Whisper, and neural models for natural conversation flow | [Smart Turn](https://visionagents.ai/integrations/smart-turn) |
+| TurboPuffer | RAG plugin using TurboPuffer for hybrid search (vector + BM25) with Gemini embeddings for retrieval augmented generation | [TurboPuffer](https://visionagents.ai/guides/rag) |
+| Twilio | Voice call integration plugin enabling bidirectional audio streaming via Twilio Media Streams with call registry and audio conversion | [Twilio](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) |
 | Ultralytics | Real-time pose detection processor using YOLO models with skeleton overlays | [Ultralytics](https://visionagents.ai/integrations/ultralytics) |
 | Vogent | Neural turn detection system for intelligent turn-taking in voice conversations | [Vogent](https://visionagents.ai/integrations/vogent) |
 | Wizper | STT plugin with real-time translation capabilities powered by Whisper v3 | [Wizper](https://visionagents.ai/integrations/wizper) |
