@@ -1,0 +1,22 @@
+[project]
+name = "nemotron-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+    "vision-agents",
+    "python-dotenv>=1.0",
+    "vision-agents-plugins-nemotron",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-vogent",
+]
+
+[tool.uv.sources]
+"vision-agents" = {path = "../../../agents-core", editable=true}
+"vision-agents-plugins-nemotron" = {path = "..", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../gemini", editable=true}
+"vision-agents-plugins-elevenlabs" = {path = "../../elevenlabs", editable=true}
+"vision-agents-plugins-vogent" = {path = "../../vogent", editable=true}
