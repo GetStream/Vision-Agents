@@ -25,6 +25,14 @@ from vision_agents.core.warmup import Warmable
 
 logger = logging.getLogger(__name__)
 
+# Constants
+OVERLAY_WIDTH = 200
+GRID_COLS = 2
+MAX_THUMBNAILS = 12
+PICKUP_THRESHOLD_SECONDS = 15.0
+PICKUP_MAX_AGE_SECONDS = 300.0
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 
 @dataclass
 class PersonDetectedEvent(PluginBaseEvent):
@@ -58,6 +66,17 @@ class PackageDisappearedEvent(PluginBaseEvent):
     type: str = field(default="security.package_disappeared", init=False)
     package_id: str = ""
     confidence: float = 0.0
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+
+
+@dataclass
+class PersonDisappearedEvent(PluginBaseEvent):
+    """Event emitted when a person disappears from the frame."""
+
+    type: str = field(default="security.person_disappeared", init=False)
+    face_id: str = ""
+    name: Optional[str] = None
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None
 
@@ -224,6 +243,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         self.events.register(PersonDetectedEvent)
         self.events.register(PackageDetectedEvent)
         self.events.register(PackageDisappearedEvent)
+        self.events.register(PersonDisappearedEvent)
 
         logger.info("🎥 Security Camera Processor initialized")
         logger.info(f"📊 Time window: {time_window}s ({time_window // 60} minutes)")
@@ -231,6 +251,27 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         logger.info(
             f"📦 Package detection: {package_fps} FPS, interval: {package_detection_interval}s"
         )
+
+    def _format_timestamp(self, timestamp: float) -> str:
+        """Format a Unix timestamp as a human-readable string."""
+        return time.strftime(TIMESTAMP_FORMAT, time.localtime(timestamp))
+
+    def _cleanup_old_items(
+        self, items: Dict[str, Any], current_time: float, item_type: str
+    ) -> int:
+        """Remove items whose last_seen is older than the time window.
+        
+        Returns the number of items removed.
+        """
+        cutoff_time = current_time - self.time_window
+        to_remove = [
+            item_id for item_id, item in items.items() if item.last_seen < cutoff_time
+        ]
+        for item_id in to_remove:
+            del items[item_id]
+        if to_remove:
+            logger.debug(f"🧹 Cleaned up {len(to_remove)} old {item_type}(s)")
+        return len(to_remove)
 
     async def on_warmup(self) -> Optional[Any]:
         """Load YOLO model for package detection."""
@@ -261,60 +302,32 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         """Set the loaded YOLO model to the instance."""
         self.yolo_model = resource
 
-    def _cleanup_old_faces(self, current_time: float):
-        cutoff_time = current_time - self.time_window
+    def _cleanup_old_faces(self, current_time: float) -> int:
+        """Remove faces older than the time window."""
+        return self._cleanup_old_items(self._detected_faces, current_time, "face")
 
-        # Remove faces whose last_seen is older than the cutoff
-        faces_to_remove = [
-            face_id
-            for face_id, face in self._detected_faces.items()
-            if face.last_seen < cutoff_time
-        ]
-
-        for face_id in faces_to_remove:
-            del self._detected_faces[face_id]
-
-        removed = len(faces_to_remove)
-        if removed > 0:
-            logger.debug(f"🧹 Cleaned up {removed} old face(s)")
-
-    def _cleanup_old_packages(self, current_time: float):
-        cutoff_time = current_time - self.time_window
-
-        # Remove packages whose last_seen is older than the cutoff
-        packages_to_remove = [
-            package_id
-            for package_id, package in self._detected_packages.items()
-            if package.last_seen < cutoff_time
-        ]
-
-        for package_id in packages_to_remove:
-            del self._detected_packages[package_id]
-
-        removed = len(packages_to_remove)
-        if removed > 0:
-            logger.debug(f"🧹 Cleaned up {removed} old package(s)")
+    def _cleanup_old_packages(self, current_time: float) -> int:
+        """Remove packages older than the time window."""
+        return self._cleanup_old_items(self._detected_packages, current_time, "package")
 
     def _check_for_picked_up_packages(self, current_time: float):
         """Check if any packages have disappeared (picked up).
 
-        A package is considered "picked up" if it hasn't been seen for 15 seconds
-        but was detected within the last 5 minutes.
+        A package is considered "picked up" if it hasn't been seen for PICKUP_THRESHOLD_SECONDS
+        but was detected within the last PICKUP_MAX_AGE_SECONDS.
         """
-        pickup_threshold = 15.0  # seconds without seeing = picked up
-        max_age = 300.0  # only consider packages from last 5 minutes
-
         packages_picked_up = []
 
         for package_id, package in list(self._detected_packages.items()):
             time_since_seen = current_time - package.last_seen
             package_age = current_time - package.first_seen
 
-            # Package disappeared recently (not seen for 15s, but was active recently)
-            if pickup_threshold < time_since_seen < max_age and package_age < max_age:
-                # Check if already marked as picked up
-                if not package_id.startswith("picked_"):
-                    packages_picked_up.append(package)
+            # Package disappeared recently (not seen for threshold, but was active recently)
+            if (
+                PICKUP_THRESHOLD_SECONDS < time_since_seen < PICKUP_MAX_AGE_SECONDS
+                and package_age < PICKUP_MAX_AGE_SECONDS
+            ):
+                packages_picked_up.append(package)
 
         for package in packages_picked_up:
             # Find who was present when the package disappeared
@@ -585,13 +598,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             face_id=display_name,
                             is_new=False,
                             detection_count=face_detection.detection_count,
-                            first_seen=time.strftime(
-                                "%Y-%m-%d %H:%M:%S",
-                                time.localtime(face_detection.first_seen),
-                            ),
-                            last_seen=time.strftime(
-                                "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                            ),
+                            first_seen=self._format_timestamp(face_detection.first_seen),
+                            last_seen=self._format_timestamp(current_time),
                         )
                     )
                     face_detection.disappeared_at = None  # Clear disappeared flag so next disappearance can be tracked
@@ -642,12 +650,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                         face_id=display_name,
                         is_new=True,
                         detection_count=1,
-                        first_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                        ),
-                        last_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                        ),
+                        first_seen=self._format_timestamp(current_time),
+                        last_seen=self._format_timestamp(current_time),
                     )
                 )
 
@@ -660,6 +664,30 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     # They were present, now disappeared - mark the disappearance time
                     # This will trigger count increment when they return
                     face_detection.disappeared_at = current_time
+                    display_name = face_detection.name or face_id[:8]
+                    logger.info(f"👤 Person left: {display_name}")
+                    
+                    # Log activity
+                    self._log_activity(
+                        event_type="person_left",
+                        description=f"Person left: {display_name}",
+                        details={
+                            "face_id": face_id[:8],
+                            "name": face_detection.name,
+                            "is_known": face_detection.name is not None,
+                        },
+                    )
+                    
+                    # Emit event
+                    self.events.send(
+                        PersonDisappearedEvent(
+                            plugin_name="security_camera",
+                            face_id=display_name,
+                            name=face_detection.name,
+                            first_seen=self._format_timestamp(face_detection.first_seen),
+                            last_seen=self._format_timestamp(current_time),
+                        )
+                    )
 
         if new_faces > 0 or updated_faces > 0:
             self._last_detection_time = current_time
@@ -809,7 +837,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         ):
             return 0
 
-        # Convert BGR to RGB for Moondream
+        # Convert BGR to RGB for YOLO
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
         # Run detection in thread pool
@@ -871,13 +899,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             is_new=False,
                             detection_count=package_detection.detection_count,
                             confidence=package_detection.confidence,
-                            first_seen=time.strftime(
-                                "%Y-%m-%d %H:%M:%S",
-                                time.localtime(package_detection.first_seen),
-                            ),
-                            last_seen=time.strftime(
-                                "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                            ),
+                            first_seen=self._format_timestamp(package_detection.first_seen),
+                            last_seen=self._format_timestamp(current_time),
                         )
                     )
                     package_detection.disappeared_at = None  # Clear disappeared flag
@@ -924,12 +947,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                         is_new=True,
                         detection_count=1,
                         confidence=confidence,
-                        first_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                        ),
-                        last_seen=time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                        ),
+                        first_seen=self._format_timestamp(current_time),
+                        last_seen=self._format_timestamp(current_time),
                     )
                 )
 
@@ -947,13 +966,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             plugin_name="security_camera",
                             package_id=package_id[:8],
                             confidence=package_detection.confidence,
-                            first_seen=time.strftime(
-                                "%Y-%m-%d %H:%M:%S",
-                                time.localtime(package_detection.first_seen),
-                            ),
-                            last_seen=time.strftime(
-                                "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
-                            ),
+                            first_seen=self._format_timestamp(package_detection.first_seen),
+                            last_seen=self._format_timestamp(current_time),
                         )
                     )
 
@@ -981,8 +995,6 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             Frame with overlay applied
         """
         height, width = frame_bgr.shape[:2]
-        overlay_width = 200  # Width of right panel
-        grid_cols = 2  # Number of columns in thumbnail grid
 
         # Create a copy to draw on
         frame_with_overlay = frame_bgr.copy()
@@ -1048,7 +1060,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         overlay = frame_with_overlay.copy()
         cv2.rectangle(
             overlay,
-            (width - overlay_width, 0),
+            (width - OVERLAY_WIDTH, 0),
             (width, height),
             (40, 40, 40),
             -1,
@@ -1060,7 +1072,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         cv2.putText(
             frame_with_overlay,
             header_text,
-            (width - overlay_width + 10, 30),
+            (width - OVERLAY_WIDTH + 10, 25),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
             (255, 255, 255),
@@ -1068,34 +1080,81 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             cv2.LINE_AA,
         )
 
-        # Draw face count
-        count_text = f"Visitors (30m): {face_count}"
+        # Calculate currently visible counts
+        visible_faces = sum(
+            1 for f in self._detected_faces.values() if f.disappeared_at is None
+        )
+        visible_packages = sum(
+            1 for p in self._detected_packages.values() if p.disappeared_at is None
+        )
+
+        # Draw face count with visible indicator
+        count_text = f"Visitors: {visible_faces}/{face_count}"
         cv2.putText(
             frame_with_overlay,
             count_text,
-            (width - overlay_width + 10, 60),
+            (width - OVERLAY_WIDTH + 10, 50),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.45,
             (0, 255, 0),
             1,
             cv2.LINE_AA,
         )
 
-        # Draw package count
-        package_text = f"Packages (30m): {package_count}"
+        # Draw package count with visible indicator (brighter blue)
+        package_text = f"Packages: {visible_packages}/{package_count}"
         cv2.putText(
             frame_with_overlay,
             package_text,
-            (width - overlay_width + 10, 85),
+            (width - OVERLAY_WIDTH + 10, 70),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 0, 0),
+            0.45,
+            (255, 150, 150),
+            1,
+            cv2.LINE_AA,
+        )
+
+        # Draw legend
+        legend_y = 90
+        # Green square for faces
+        cv2.rectangle(
+            frame_with_overlay,
+            (width - OVERLAY_WIDTH + 10, legend_y - 8),
+            (width - OVERLAY_WIDTH + 20, legend_y + 2),
+            (0, 255, 0),
+            -1,
+        )
+        cv2.putText(
+            frame_with_overlay,
+            "Person",
+            (width - OVERLAY_WIDTH + 25, legend_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (200, 200, 200),
+            1,
+            cv2.LINE_AA,
+        )
+        # Blue square for packages
+        cv2.rectangle(
+            frame_with_overlay,
+            (width - OVERLAY_WIDTH + 80, legend_y - 8),
+            (width - OVERLAY_WIDTH + 90, legend_y + 2),
+            (255, 150, 150),
+            -1,
+        )
+        cv2.putText(
+            frame_with_overlay,
+            "Package",
+            (width - OVERLAY_WIDTH + 95, legend_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (200, 200, 200),
             1,
             cv2.LINE_AA,
         )
 
         # Draw thumbnail grid (faces and packages combined)
-        grid_start_y = 110  # Start below the stats
+        grid_start_y = 105  # Start below the legend
         grid_padding = 10
         thumb_size = self.thumbnail_size
 
@@ -1123,16 +1182,16 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 "confidence": package.confidence,
             })
         
-        # Sort by last_seen (most recent first) and take top 12
+        # Sort by last_seen (most recent first) and take top MAX_THUMBNAILS
         recent_detections = sorted(
             all_detections, key=lambda d: d["last_seen"], reverse=True
-        )[:12]
+        )[:MAX_THUMBNAILS]
 
         for idx, detection in enumerate(recent_detections):
-            row = idx // grid_cols
-            col = idx % grid_cols
+            row = idx // GRID_COLS
+            col = idx % GRID_COLS
 
-            x_pos = width - overlay_width + 10 + col * (thumb_size + grid_padding)
+            x_pos = width - OVERLAY_WIDTH + 10 + col * (thumb_size + grid_padding)
             y_pos = grid_start_y + row * (thumb_size + grid_padding)
 
             # Check if we're still within the frame bounds
@@ -1188,7 +1247,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 logger.debug(f"Failed to draw thumbnail: {e}")
                 continue
 
-        timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
+        timestamp_text = self._format_timestamp(time.time())
         cv2.putText(
             frame_with_overlay,
             timestamp_text,
@@ -1299,25 +1358,30 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         total_package_detections = sum(
             package.detection_count for package in self._detected_packages.values()
         )
+        
+        # Count currently visible (not disappeared) items
+        currently_visible_visitors = sum(
+            1 for f in self._detected_faces.values() if f.disappeared_at is None
+        )
+        currently_visible_packages = sum(
+            1 for p in self._detected_packages.values() if p.disappeared_at is None
+        )
 
         return {
             "unique_visitors": len(self._detected_faces),
+            "currently_visible_visitors": currently_visible_visitors,
             "total_face_detections": total_face_detections,
             "unique_packages": len(self._detected_packages),
+            "currently_visible_packages": currently_visible_packages,
             "total_package_detections": total_package_detections,
             "time_window_minutes": self.time_window // 60,
             "last_face_detection_time": (
-                time.strftime(
-                    "%Y-%m-%d %H:%M:%S", time.localtime(self._last_detection_time)
-                )
+                self._format_timestamp(self._last_detection_time)
                 if self._last_detection_time > 0
                 else "No detections yet"
             ),
             "last_package_detection_time": (
-                time.strftime(
-                    "%Y-%m-%d %H:%M:%S",
-                    time.localtime(self._last_package_detection_time),
-                )
+                self._format_timestamp(self._last_package_detection_time)
                 if self._last_package_detection_time > 0
                 else "No detections yet"
             ),
@@ -1353,12 +1417,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     "face_id": face.face_id[:8],  # Shortened ID
                     "name": face.name,  # Will be None if unknown
                     "is_known": face.name is not None,
-                    "first_seen": time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime(face.first_seen)
-                    ),
-                    "last_seen": time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime(face.last_seen)
-                    ),
+                    "first_seen": self._format_timestamp(face.first_seen),
+                    "last_seen": self._format_timestamp(face.last_seen),
                     "detection_count": face.detection_count,
                 }
             )
@@ -1395,12 +1455,8 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             packages.append(
                 {
                     "package_id": package.package_id[:8],
-                    "first_seen": time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime(package.first_seen)
-                    ),
-                    "last_seen": time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime(package.last_seen)
-                    ),
+                    "first_seen": self._format_timestamp(package.first_seen),
+                    "last_seen": self._format_timestamp(package.last_seen),
                     "detection_count": package.detection_count,
                     "confidence": package.confidence,
                 }
@@ -1422,9 +1478,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         for entry in reversed(self._activity_log[-limit:]):
             entries.append(
                 {
-                    "timestamp": time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime(entry.timestamp)
-                    ),
+                    "timestamp": self._format_timestamp(entry.timestamp),
                     "event_type": entry.event_type,
                     "description": entry.description,
                     "details": entry.details,
@@ -1501,9 +1555,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         return [
             {
                 "name": face.name,
-                "registered_at": time.strftime(
-                    "%Y-%m-%d %H:%M:%S", time.localtime(face.registered_at)
-                ),
+                "registered_at": self._format_timestamp(face.registered_at),
             }
             for face in self._known_faces.values()
         ]

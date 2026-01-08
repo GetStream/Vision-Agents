@@ -10,6 +10,7 @@ from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
 from security_camera_processor import (
     SecurityCameraProcessor,
     PersonDetectedEvent,
+    PersonDisappearedEvent,
     PackageDetectedEvent,
     PackageDisappearedEvent,
 )
@@ -38,18 +39,18 @@ async def create_agent(**kwargs) -> Agent:
 
     # Create security camera processor
     security_processor = SecurityCameraProcessor(
-        fps=30,  # Process 5 frames per second
-        time_window=1800,  # 30 minutes in seconds
-        thumbnail_size=80,  # Size of face thumbnails
-        detection_interval=2.0,  # Detect faces every 2 seconds
-        package_conf_threshold=0.7,  # Higher threshold to reduce false positives
+        fps=5,
+        time_window=1800,
+        thumbnail_size=80,
+        detection_interval=2.0,
+        package_conf_threshold=0.7,
     )
 
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Security AI", id="agent"),
         instructions="Read @instructions.md",
-        processors=[security_processor],  # Add the security camera processor
+        processors=[security_processor],
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),
@@ -157,6 +158,11 @@ async def create_agent(**kwargs) -> Agent:
             agent.logger.info(
                 f"👤 Returning visitor: {event.face_id} (seen {event.detection_count}x)"
             )
+
+    @agent.events.subscribe
+    async def on_person_disappeared(event: PersonDisappearedEvent):
+        display_name = event.name or event.face_id
+        agent.logger.info(f"👤 Person left: {display_name}")
 
     @agent.events.subscribe
     async def on_package_detected(event: PackageDetectedEvent):
