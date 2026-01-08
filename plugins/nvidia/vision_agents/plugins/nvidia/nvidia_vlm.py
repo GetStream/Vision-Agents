@@ -94,11 +94,11 @@ class NvidiaVLM(VideoLLM):
                 "NVIDIA_API_KEY must be provided as argument or environment variable"
             )
 
+        self._client: Optional[aiohttp.ClientSession] = None
         if client is not None:
             self._client = client
             self._own_client = False
         else:
-            self._client = None
             self._own_client = True
 
         self._fps = fps
