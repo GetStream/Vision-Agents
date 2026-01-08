@@ -6,11 +6,11 @@ WORKDIR /app
 RUN pip install uv
 
 # Copy only the example (uses PyPI packages, not local paths)
-COPY pyproject.toml deploy_example.py ./
+COPY pyproject.toml uv.lock deploy_example.py ./
 
 # Expose port if needed for health checks or callbacks
 EXPOSE 8080
 
 # Install deps at startup (faster push, slower cold start)
-CMD ["sh", "-c", "uv sync && uv run deploy_example.py"]
+CMD ["sh", "-c", "uv sync --frozen && uv run deploy_example.py"]
 

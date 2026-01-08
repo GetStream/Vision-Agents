@@ -9,7 +9,7 @@ dependencies = [
   "vision-agents-plugins-elevenlabs",
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-gemini",
-  "vision-agents",
+  "vision-agents>=0.2.8",
 ]
 
 # For local development, uncomment the following:

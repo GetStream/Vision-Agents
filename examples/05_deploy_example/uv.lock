@@ -399,11 +399,11 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "vision-agents", editable = "../../agents-core" },
-    { name = "vision-agents-plugins-deepgram", editable = "../../plugins/deepgram" },
-    { name = "vision-agents-plugins-elevenlabs", editable = "../../plugins/elevenlabs" },
-    { name = "vision-agents-plugins-gemini", editable = "../../plugins/gemini" },
-    { name = "vision-agents-plugins-getstream", editable = "../../plugins/getstream" },
+    { name = "vision-agents", specifier = ">=0.2.8" },
+    { name = "vision-agents-plugins-deepgram" },
+    { name = "vision-agents-plugins-elevenlabs" },
+    { name = "vision-agents-plugins-gemini" },
+    { name = "vision-agents-plugins-getstream" },
 ]
 
 [[package]]
@@ -2210,7 +2210,8 @@ wheels = [
 
 [[package]]
 name = "vision-agents"
-source = { editable = "../../agents-core" }
+version = "0.2.8"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorlog" },
     { name = "getstream", extra = ["telemetry", "webrtc"] },
@@ -2219,162 +2220,63 @@ dependencies = [
     { name = "pillow" },
     { name = "python-dotenv" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", marker = "extra == 'dev'" },
-    { name = "colorlog", specifier = ">=6.10.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.16" },
-    { name = "mcp", specifier = ">=1.16.0" },
-    { name = "mypy", marker = "extra == 'dev'" },
-    { name = "numpy", specifier = ">=1.24.0" },
-    { name = "pillow", specifier = ">=10.4.0" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-    { name = "ruff", marker = "extra == 'dev'" },
-    { name = "vision-agents-plugins-anthropic", marker = "extra == 'all-plugins'", editable = "../../plugins/anthropic" },
-    { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "../../plugins/anthropic" },
-    { name = "vision-agents-plugins-aws", marker = "extra == 'all-plugins'", editable = "../../plugins/aws" },
-    { name = "vision-agents-plugins-aws", marker = "extra == 'aws'", editable = "../../plugins/aws" },
-    { name = "vision-agents-plugins-cartesia", marker = "extra == 'all-plugins'", editable = "../../plugins/cartesia" },
-    { name = "vision-agents-plugins-cartesia", marker = "extra == 'cartesia'", editable = "../../plugins/cartesia" },
-    { name = "vision-agents-plugins-decart", marker = "extra == 'all-plugins'", editable = "../../plugins/decart" },
-    { name = "vision-agents-plugins-decart", marker = "extra == 'decart'", editable = "../../plugins/decart" },
-    { name = "vision-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "../../plugins/deepgram" },
-    { name = "vision-agents-plugins-deepgram", marker = "extra == 'deepgram'", editable = "../../plugins/deepgram" },
-    { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'all-plugins'", editable = "../../plugins/elevenlabs" },
-    { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "../../plugins/elevenlabs" },
-    { name = "vision-agents-plugins-fast-whisper", marker = "extra == 'all-plugins'", editable = "../../plugins/fast_whisper" },
-    { name = "vision-agents-plugins-fast-whisper", marker = "extra == 'fast-whisper'", editable = "../../plugins/fast_whisper" },
-    { name = "vision-agents-plugins-fish", marker = "extra == 'all-plugins'", editable = "../../plugins/fish" },
-    { name = "vision-agents-plugins-fish", marker = "extra == 'fish'", editable = "../../plugins/fish" },
-    { name = "vision-agents-plugins-gemini", marker = "extra == 'all-plugins'", editable = "../../plugins/gemini" },
-    { name = "vision-agents-plugins-gemini", marker = "extra == 'gemini'", editable = "../../plugins/gemini" },
-    { name = "vision-agents-plugins-getstream", marker = "extra == 'all-plugins'", editable = "../../plugins/getstream" },
-    { name = "vision-agents-plugins-getstream", marker = "extra == 'getstream'", editable = "../../plugins/getstream" },
-    { name = "vision-agents-plugins-heygen", marker = "extra == 'all-plugins'", editable = "../../plugins/heygen" },
-    { name = "vision-agents-plugins-heygen", marker = "extra == 'heygen'", editable = "../../plugins/heygen" },
-    { name = "vision-agents-plugins-huggingface", marker = "extra == 'all-plugins'", editable = "../../plugins/huggingface" },
-    { name = "vision-agents-plugins-huggingface", marker = "extra == 'huggingface'", editable = "../../plugins/huggingface" },
-    { name = "vision-agents-plugins-inworld", marker = "extra == 'all-plugins'", editable = "../../plugins/inworld" },
-    { name = "vision-agents-plugins-inworld", marker = "extra == 'inworld'", editable = "../../plugins/inworld" },
-    { name = "vision-agents-plugins-kokoro", marker = "extra == 'all-plugins'", editable = "../../plugins/kokoro" },
-    { name = "vision-agents-plugins-kokoro", marker = "extra == 'kokoro'", editable = "../../plugins/kokoro" },
-    { name = "vision-agents-plugins-moondream", marker = "extra == 'all-plugins'", editable = "../../plugins/moondream" },
-    { name = "vision-agents-plugins-moondream", marker = "extra == 'moondream'", editable = "../../plugins/moondream" },
-    { name = "vision-agents-plugins-moonshine", marker = "extra == 'all-plugins'" },
-    { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'" },
-    { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "../../plugins/openai" },
-    { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "../../plugins/openai" },
-    { name = "vision-agents-plugins-openrouter", marker = "extra == 'all-plugins'", editable = "../../plugins/openrouter" },
-    { name = "vision-agents-plugins-openrouter", marker = "extra == 'openrouter'", editable = "../../plugins/openrouter" },
-    { name = "vision-agents-plugins-qwen", marker = "extra == 'all-plugins'", editable = "../../plugins/qwen" },
-    { name = "vision-agents-plugins-qwen", marker = "extra == 'qwen'", editable = "../../plugins/qwen" },
-    { name = "vision-agents-plugins-roboflow", marker = "extra == 'all-plugins'", editable = "../../plugins/roboflow" },
-    { name = "vision-agents-plugins-roboflow", marker = "extra == 'roboflow'", editable = "../../plugins/roboflow" },
-    { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "../../plugins/smart_turn" },
-    { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "../../plugins/smart_turn" },
-    { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'all-plugins'", editable = "../../plugins/turbopuffer" },
-    { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'turbopuffer'", editable = "../../plugins/turbopuffer" },
-    { name = "vision-agents-plugins-twilio", marker = "extra == 'all-plugins'", editable = "../../plugins/twilio" },
-    { name = "vision-agents-plugins-twilio", marker = "extra == 'twilio'", editable = "../../plugins/twilio" },
-    { name = "vision-agents-plugins-ultralytics", marker = "extra == 'all-plugins'", editable = "../../plugins/ultralytics" },
-    { name = "vision-agents-plugins-ultralytics", marker = "extra == 'ultralytics'", editable = "../../plugins/ultralytics" },
-    { name = "vision-agents-plugins-vogent", marker = "extra == 'all-plugins'", editable = "../../plugins/vogent" },
-    { name = "vision-agents-plugins-vogent", marker = "extra == 'vogent'", editable = "../../plugins/vogent" },
-    { name = "vision-agents-plugins-wizper", marker = "extra == 'all-plugins'", editable = "../../plugins/wizper" },
-    { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "../../plugins/wizper" },
-    { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "../../plugins/xai" },
-    { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "../../plugins/xai" },
+sdist = { url = "https://files.pythonhosted.org/packages/88/50/a211f304575eb7e576031f3667cedf5da40fe7dc05705bacad2b76d6d95f/vision_agents-0.2.8.tar.gz", hash = "sha256:34a0389e23074a845a84af2ceb73e90cc14e8c56d01baa10d2a899bd03bf1ea1", size = 82717, upload-time = "2026-01-08T21:01:00.33Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/ba/8784f4e5e0fe80eb9553b298c7f8b6648244cf9791eb2c5d6921f8fbefd4/vision_agents-0.2.8-py3-none-any.whl", hash = "sha256:75095a6a7d6ae18c1cdf3198880887b48b7e45946bd25feee44a78b8b0b08ef0", size = 110146, upload-time = "2026-01-08T20:57:46.623Z" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-deepgram"
-source = { editable = "../../plugins/deepgram" }
+version = "0.2.8"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deepgram-sdk" },
     { name = "numpy" },
     { name = "vision-agents" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=5.3.0,<5.3.1" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "vision-agents", editable = "../../agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchvision", specifier = ">=0.20.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/34/7c/5bf46bc1043c12fc5f10d3f07c023d484881bfbddf2e99c5d02b08e58905/vision_agents_plugins_deepgram-0.2.8.tar.gz", hash = "sha256:0450bee5d46074021c9bf9b85ed0e7749388141f18f79e83b8908a473a75495a", size = 5822, upload-time = "2026-01-08T21:00:59.649Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4f/87/28fd2ea9218f22fcb7ea0eb388cbd832abf7daa0b54e29a0ca1a13816f9a/vision_agents_plugins_deepgram-0.2.8-py3-none-any.whl", hash = "sha256:ff7122df49bd3565f6fb7f45c4fa2a5f6df51a946d89172a2ba93992c8312f75", size = 14978, upload-time = "2026-01-08T20:57:57.438Z" },
 ]
 
 [[package]]
 name = "vision-agents-plugins-elevenlabs"
-source = { editable = "../../plugins/elevenlabs" }
+version = "0.2.8"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "elevenlabs" },
     { name = "vision-agents" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "elevenlabs", specifier = ">=2.24.0" },
-    { name = "vision-agents", editable = "../../agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/58/e0/d973129d34f85275bcb067746b411f3aec0ee3daa258a101571e95dc8a86/vision_agents_plugins_elevenlabs-0.2.8.tar.gz", hash = "sha256:dd8808b6edcbe0c987747a89d05ade319d729614093c7c805f5110a58ca59cf3", size = 6116, upload-time = "2026-01-08T21:00:57.051Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/c6/8dc2bb06d6adc5123874284e9e75959aab0c9f139e7b8cb9ee5a6aba8d0a/vision_agents_plugins_elevenlabs-0.2.8-py3-none-any.whl", hash = "sha256:27183bacecd9318fd2c88775ba7956b192dbdf99b0105b00f2d010298672d4c7", size = 15267, upload-time = "2026-01-08T21:00:57.917Z" },
 ]
 
 [[package]]
 name = "vision-agents-plugins-gemini"
-source = { editable = "../../plugins/gemini" }
+version = "0.2.8"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-genai" },
     { name = "numpy" },
     { name = "vision-agents" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "google-genai", specifier = ">=1.55.0" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "vision-agents", editable = "../../agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
+sdist = { url = "https://files.pythonhosted.org/packages/d1/18/8c0f3e21e56d837a24391921cc60a6e59c03053fd372500d807b93c668f8/vision_agents_plugins_gemini-0.2.8.tar.gz", hash = "sha256:f17de0467638bf3c3e5cb26e213d6d21cd099cd583dec8b81fd1f46d5ec61260", size = 19422, upload-time = "2026-01-08T20:57:48.62Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f5/c2/e09b88d37a37241e597f173838ce1c416d64907d1f3aa91cafb7ef1c14b3/vision_agents_plugins_gemini-0.2.8-py3-none-any.whl", hash = "sha256:8dd34b193cdf7686b34faa1fcf9cf478771ba2030dba82497502f544454618f3", size = 22404, upload-time = "2026-01-08T21:00:55.552Z" },
 ]
 
 [[package]]
 name = "vision-agents-plugins-getstream"
-source = { editable = "../../plugins/getstream" }
+version = "0.2.8"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "getstream", extra = ["telemetry", "webrtc"] },
     { name = "vision-agents" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.20" },
-    { name = "vision-agents", editable = "../../agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/4f/0c/7d391cba1096c29df1a29e7617d10364effde3ff9d4249c1b3130ed27e55/vision_agents_plugins_getstream-0.2.8.tar.gz", hash = "sha256:c245f48b43421f8e1841dbdcefef05bfb524e7cec5b6fd859508c60c4e615221", size = 9801, upload-time = "2026-01-08T20:57:59.996Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/89/a7ef890ae8faec439b99766477242ac69afb4f3babf8a66b3705294e83f6/vision_agents_plugins_getstream-0.2.8-py3-none-any.whl", hash = "sha256:12d5858efd65fb674cb51cf24fd875009048a0bc2a556dac2fa37c4a9af2199e", size = 21984, upload-time = "2026-01-08T21:00:41.6Z" },
 ]
 
 [[package]]
