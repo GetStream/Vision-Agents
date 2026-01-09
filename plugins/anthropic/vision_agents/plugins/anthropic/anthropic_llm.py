@@ -236,7 +236,7 @@ class ClaudeLLM(LLM):
                 llm_response.original,
                 llm_response.text,
                 latency_ms=latency_ms,
-                    )
+            )
 
         elif isinstance(original, AsyncStream):
             stream: AsyncStream[RawMessageStreamEvent] = original
