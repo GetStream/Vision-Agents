@@ -1,0 +1,20 @@
+[project]
+name = "nvidia-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents-plugins-nvidia",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-deepgram",
+  "vision-agents-plugins-elevenlabs",
+  "vision-agents",
+]
+
+[tool.uv.sources]
+"vision-agents-plugins-nvidia" = {path = "..", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
+"vision-agents-plugins-deepgram" = {path = "../../deepgram", editable=true}
+"vision-agents-plugins-elevenlabs" = {path = "../../elevenlabs", editable=true}
+"vision-agents" = {path = "../../../agents-core", editable=true}

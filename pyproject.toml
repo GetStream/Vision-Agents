@@ -31,6 +31,7 @@ vision-agents-plugins-roboflow = { workspace = true }
 vision-agents-plugins-decart = { workspace = true }
 vision-agents-plugins-twilio = { workspace = true }
 vision-agents-plugins-turbopuffer = { workspace = true }
+vision-agents-plugins-nvidia = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -68,6 +69,7 @@ members = [
     "plugins/decart",
     "plugins/twilio",
     "plugins/turbopuffer",
+    "plugins/nvidia",
 ]
 exclude = [
 "**/__pycache__",

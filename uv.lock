@@ -28,6 +28,7 @@ members = [
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
     "vision-agents-plugins-moondream",
+    "vision-agents-plugins-nvidia",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-openrouter",
     "vision-agents-plugins-qwen",
@@ -6446,6 +6447,7 @@ all-plugins = [
     { name = "vision-agents-plugins-kokoro" },
     { name = "vision-agents-plugins-moondream" },
     { name = "vision-agents-plugins-moonshine" },
+    { name = "vision-agents-plugins-nvidia" },
     { name = "vision-agents-plugins-openai" },
     { name = "vision-agents-plugins-openrouter" },
     { name = "vision-agents-plugins-qwen" },
@@ -6511,6 +6513,9 @@ moondream = [
 ]
 moonshine = [
     { name = "vision-agents-plugins-moonshine" },
+]
+nvidia = [
+    { name = "vision-agents-plugins-nvidia" },
 ]
 openai = [
     { name = "vision-agents-plugins-openai" },
@@ -6590,6 +6595,8 @@ requires-dist = [
     { name = "vision-agents-plugins-moondream", marker = "extra == 'moondream'", editable = "plugins/moondream" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'all-plugins'" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'" },
+    { name = "vision-agents-plugins-nvidia", marker = "extra == 'all-plugins'", editable = "plugins/nvidia" },
+    { name = "vision-agents-plugins-nvidia", marker = "extra == 'nvidia'", editable = "plugins/nvidia" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'all-plugins'", editable = "plugins/openrouter" },
@@ -6613,7 +6620,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "nvidia", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
@@ -7054,6 +7061,32 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8c/ba/8ce852bd136c6818f251e9d2f052318cd906cefcb5ae1a78803e8941fdab/vision_agents_plugins_moonshine-0.1.11.tar.gz", hash = "sha256:8b17736fdad5cf0e5fddeb3556c076143b1c48a3e7b3aa591767aa354701ed05", size = 6756, upload-time = "2025-10-28T19:41:35.258Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/a5/465963af3b5bf41ad8ec9e09ee00c28c9f03e62e0f0a1a6adf83acc55bfa/vision_agents_plugins_moonshine-0.1.11-py3-none-any.whl", hash = "sha256:c3aceb6913d592cca434723534f9ae6076111da2eac4738667866de7d906d159", size = 13586, upload-time = "2025-10-28T19:41:34.502Z" },
+]
+
+[[package]]
+name = "vision-agents-plugins-nvidia"
+source = { editable = "plugins/nvidia" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
