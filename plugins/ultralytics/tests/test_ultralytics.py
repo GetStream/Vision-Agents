@@ -27,13 +27,14 @@ class TestYOLOPoseProcessor:
             yield img.convert("RGB")
 
     @pytest.fixture
-    def pose_processor(self) -> Iterator[YOLOPoseProcessor]:
+    def pose_processor(self) -> YOLOPoseProcessor:
         """Create and manage YOLOPoseProcessor lifecycle."""
+        import asyncio
         processor = YOLOPoseProcessor(device="cpu")
         try:
             yield processor
         finally:
-            processor.close()
+            asyncio.get_event_loop().run_until_complete(processor.close())
 
     async def test_annotated_ndarray(
         self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor

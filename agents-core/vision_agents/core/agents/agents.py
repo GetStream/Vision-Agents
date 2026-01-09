@@ -1012,9 +1012,11 @@ class Agent:
             t for t in self._active_video_tracks.values() if not t.processor
         ]
         if not non_processed_tracks:
-            # No more video tracks, stop sending video to the LLM
+            # No more video tracks, stop sending video to the LLM and processors
             if _is_video_llm(self.llm):
                 await self.llm._stop_watching_video_track()
+            for processor in self.video_processors:
+                await processor.stop_processing()
             return
         source_track = sorted(
             non_processed_tracks, key=lambda t: t.priority, reverse=True

@@ -201,6 +201,7 @@ class Qwen3Realtime(Realtime):
     async def _stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
             await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+            logger.info("🛑 Stopped video forwarding to Qwen (participant left)")
 
     @property
     def _client(self) -> Qwen3RealtimeClient:

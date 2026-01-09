@@ -156,7 +156,7 @@ class RTCManager:
                 self._send_video_frame
             )
             self._current_video_forwarder = None
-            logger.debug("Stopped video forwarding to OpenAI")
+            logger.info("🛑 Stopped video forwarding to OpenAI (participant left)")
 
     def _setup_connection_logging(self) -> None:
         """Set up event handlers for connection monitoring and error logging."""
