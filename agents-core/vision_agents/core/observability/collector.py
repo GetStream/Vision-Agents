@@ -22,9 +22,10 @@ from typing import TYPE_CHECKING, Dict
 from . import metrics
 
 # Import event types at module level so they can be resolved by typing.get_type_hints()
-from vision_agents.core.events import PluginBaseEvent
+from vision_agents.core.events import PluginBaseEvent, VideoProcessorDetectionEvent
 from vision_agents.core.llm.events import (
     LLMResponseCompletedEvent,
+    LLMErrorEvent,
     ToolEndEvent,
     RealtimeErrorEvent,
     RealtimeConnectedEvent,
@@ -93,7 +94,7 @@ class MetricsCollector:
             self._on_tool_end(event)
 
         @self.agent.llm.events.subscribe
-        async def on_llm_error(event: RealtimeErrorEvent):
+        async def on_llm_error(event: LLMErrorEvent):
             self._on_llm_error(event)
 
     def _subscribe_to_realtime_events(self) -> None:
@@ -209,7 +210,7 @@ class MetricsCollector:
         if event.execution_time_ms is not None:
             metrics.llm_tool_latency_ms.record(event.execution_time_ms, attrs)
 
-    def _on_llm_error(self, event: RealtimeErrorEvent) -> None:
+    def _on_llm_error(self, event: LLMErrorEvent) -> None:
         """Handle LLM error event."""
         attrs = self._base_attributes(event)
         if event.error:
@@ -442,38 +443,33 @@ class MetricsCollector:
         # Subscribe to agent-level events for processor events
         # Processors emit events through the agent's event system
         @self.agent.events.subscribe
-        async def on_detection_completed(event: PluginBaseEvent):
-            # Check if this is a detection event by type string
-            if event.type == "plugin.roboflow.detection_completed":
-                self._on_detection_completed(event)
+        async def on_detection_completed(event: VideoProcessorDetectionEvent):
+            self._on_detection_completed(event)
 
-    def _on_detection_completed(self, event: PluginBaseEvent) -> None:
+    def _on_detection_completed(self, event: VideoProcessorDetectionEvent) -> None:
         """Handle video detection completed event."""
         attrs = self._base_attributes(event)
 
         # Add model info if available
-        model_id = getattr(event, "model_id", None)
-        if model_id:
-            attrs["model"] = model_id
+        if event.model_id:
+            attrs["model"] = event.model_id
 
-        # Extract detection count from event if available
-        objects = getattr(event, "objects", [])
-        if objects:
-            metrics.video_detections.add(len(objects), attrs)
+        # Record detection count
+        if event.detection_count > 0:
+            metrics.video_detections.add(event.detection_count, attrs)
 
         # Record frame processed
         metrics.video_frames_processed.add(1, attrs)
 
         # Record inference latency if available
-        inference_time_ms = getattr(event, "inference_time_ms", None)
-        if inference_time_ms is not None:
-            metrics.video_processing_latency_ms.record(inference_time_ms, attrs)
+        if event.inference_time_ms is not None:
+            metrics.video_processing_latency_ms.record(event.inference_time_ms, attrs)
 
     # =========================================================================
     # Helpers
     # =========================================================================
 
-    def _base_attributes(self, event) -> dict:
+    def _base_attributes(self, event: PluginBaseEvent) -> dict:
         """Extract base attributes from an event.
 
         Args:
@@ -483,7 +479,7 @@ class MetricsCollector:
             Dictionary of base attributes.
         """
         attrs = {}
-        if hasattr(event, "plugin_name") and event.plugin_name:
+        if event.plugin_name:
             attrs["provider"] = event.plugin_name
         return attrs
 

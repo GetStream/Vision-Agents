@@ -137,3 +137,20 @@ class ConnectionClosedEvent(BaseEvent):
     code: Optional[int] = None
     reason: Optional[str] = None
     was_clean: bool = False
+
+
+@dataclass
+class VideoProcessorDetectionEvent(PluginBaseEvent):
+    """Base event for video processor detection results.
+
+    Video processor plugins (roboflow, ultralytics, etc.) should inherit from
+    this to enable metrics collection.
+    """
+
+    type: str = field(default="plugin.video_processor.detection", init=False)
+    model_id: Optional[str] = None
+    """Identifier of the model used for detection."""
+    inference_time_ms: Optional[float] = None
+    """Time taken for inference in milliseconds."""
+    detection_count: int = 0
+    """Number of objects/items detected."""

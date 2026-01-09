@@ -245,3 +245,19 @@ class VLMErrorEvent(PluginBaseEvent):
     @property
     def error_message(self) -> str:
         return str(self.error) if self.error else "Unknown error"
+
+
+@dataclass
+class LLMErrorEvent(PluginBaseEvent):
+    """Event emitted when a non-realtime LLM error occurs."""
+
+    type: str = field(default="plugin.llm_error", init=False)
+    error: Optional[Exception] = None
+    error_code: Optional[str] = None
+    context: Optional[str] = None
+    request_id: Optional[str] = None
+    is_recoverable: bool = True
+
+    @property
+    def error_message(self) -> str:
+        return str(self.error) if self.error else "Unknown error"

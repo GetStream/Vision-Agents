@@ -19,10 +19,6 @@ from vision_agents.core.events import (
     PluginClosedEvent,
     AudioFormat,
 )
-from ..observability import (
-    tts_latency_ms,
-    tts_errors,
-)
 from ..edge.types import PcmData
 
 logger = logging.getLogger(__name__)
@@ -271,8 +267,6 @@ class TTS(abc.ABC):
                 )
             )
         except Exception as e:
-            # Metrics: error counter
-            tts_errors.add(1, attributes={"tts_class": self.__class__.__name__})
             self.events.send(
                 TTSErrorEvent(
                     session_id=self.session_id,
@@ -285,11 +279,6 @@ class TTS(abc.ABC):
                 )
             )
             raise
-        finally:
-            elapsed_ms = (time.time() - start_time) * 1000.0
-            tts_latency_ms.record(
-                elapsed_ms, attributes={"tts_class": self.__class__.__name__}
-            )
 
     async def close(self):
         """Close the TTS service and release any resources."""
