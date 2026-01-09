@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -6447,6 +6447,7 @@ all-plugins = [
     { name = "vision-agents-plugins-kokoro" },
     { name = "vision-agents-plugins-moondream" },
     { name = "vision-agents-plugins-moonshine" },
+    { name = "vision-agents-plugins-nvidia" },
     { name = "vision-agents-plugins-openai" },
     { name = "vision-agents-plugins-openrouter" },
     { name = "vision-agents-plugins-qwen" },
@@ -6512,6 +6513,9 @@ moondream = [
 ]
 moonshine = [
     { name = "vision-agents-plugins-moonshine" },
+]
+nvidia = [
+    { name = "vision-agents-plugins-nvidia" },
 ]
 openai = [
     { name = "vision-agents-plugins-openai" },
@@ -6591,6 +6595,8 @@ requires-dist = [
     { name = "vision-agents-plugins-moondream", marker = "extra == 'moondream'", editable = "plugins/moondream" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'all-plugins'" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'" },
+    { name = "vision-agents-plugins-nvidia", marker = "extra == 'all-plugins'", editable = "plugins/nvidia" },
+    { name = "vision-agents-plugins-nvidia", marker = "extra == 'nvidia'", editable = "plugins/nvidia" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'all-plugins'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'all-plugins'", editable = "plugins/openrouter" },
@@ -6614,7 +6620,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "nvidia", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
