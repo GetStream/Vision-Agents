@@ -441,6 +441,10 @@ class VideoLLM(LLM, metaclass=abc.ABCMeta):
                 video stream.
         """
 
+    async def _stop_watching_video_track(self) -> None:
+        """Stop watching the video track. Override in subclasses if needed."""
+        pass
+
 
 class OmniLLM(AudioLLM, VideoLLM, metaclass=abc.ABCMeta):
     """
