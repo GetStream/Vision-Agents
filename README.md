@@ -116,6 +116,7 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 | Inworld | TTS plugin with high-quality streaming voices for real-time conversational AI agents | [Inworld](https://visionagents.ai/integrations/inworld) |
 | Kokoro | Local TTS engine for offline voice synthesis with low latency | [Kokoro](https://visionagents.ai/integrations/kokoro) |
 | Moondream | Moondream provides realtime detection and VLM capabilities. Developers can choose from using the hosted API or running locally on their CUDA devices. Vision Agents supports Moondream's Detect, Caption and VQA skills out-of-the-box. | [Moondream](https://visionagents.ai/integrations/moondream) |
+| NVIDIA Cosmos 2 | VLM plugin using NVIDIA's Cosmos 2 models for video understanding with automatic frame buffering and streaming responses | [NVIDIA](https://visionagents.ai/integrations/nvidia) |
 | OpenAI | Realtime API for building conversational agents with out of the box support for real-time video directly over WebRTC, LLMs and Open AI TTS | [OpenAI](https://visionagents.ai/integrations/openai) |
 | OpenRouter | LLM plugin providing access to multiple providers (Anthropic, Google, OpenAI) through a unified API | [OpenRouter](https://visionagents.ai/integrations/openrouter) |
 | Qwen | Realtime audio plugin using Alibaba's Qwen3 with native audio output and built-in speech recognition | [Qwen](https://visionagents.ai/integrations/qwen) |
