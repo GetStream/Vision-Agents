@@ -321,9 +321,13 @@ class LocalDetectionProcessor(VideoProcessorPublisher, Warmable):
     async def stop_processing(self) -> None:
         """Stop processing video when participant leaves."""
         if self._video_forwarder is not None:
-            await self._video_forwarder.remove_frame_handler(self._process_and_add_frame)
+            await self._video_forwarder.remove_frame_handler(
+                self._process_and_add_frame
+            )
             self._video_forwarder = None
-            logger.info("🛑 Stopped Moondream Local video processing (participant left)")
+            logger.info(
+                "🛑 Stopped Moondream Local video processing (participant left)"
+            )
 
     async def close(self):
         """Clean up resources."""

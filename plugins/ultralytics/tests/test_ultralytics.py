@@ -30,6 +30,7 @@ class TestYOLOPoseProcessor:
     def pose_processor(self) -> YOLOPoseProcessor:
         """Create and manage YOLOPoseProcessor lifecycle."""
         import asyncio
+
         processor = YOLOPoseProcessor(device="cpu")
         try:
             yield processor
