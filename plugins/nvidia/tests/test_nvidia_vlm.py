@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from PIL import Image
 
 from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
@@ -239,3 +240,35 @@ class TestNvidiaVLM:
             assert "nl" in response.text.lower()
         finally:
             await vlm_instance.close()
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(
+        not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set"
+    )
+    async def test_with_participant(self, vlm: VLM):
+        """Test that user message is added to conversation when participant is provided."""
+        test_participant = Participant(original=None, user_id="test_user_123")
+        user_question = "What is 2 + 2?"
+
+        response = await vlm.simple_response(
+            text=user_question,
+            participant=test_participant,
+        )
+
+        assert response.text
+        assert len(response.text) > 0
+
+        assert len(vlm._conversation.messages) > 0
+        last_user_message = None
+        for msg in reversed(vlm._conversation.messages):
+            if msg.role == "user":
+                last_user_message = msg
+                break
+
+        assert last_user_message is not None, "User message should be in conversation"
+        assert last_user_message.content == user_question, (
+            "User message content should match the question"
+        )
+        assert last_user_message.user_id == "test_user_123", (
+            "User message should have participant's user_id"
+        )
