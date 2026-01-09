@@ -315,7 +315,11 @@ class BedrockLLM(LLM):
             # Extract token usage from response if available
             input_tokens: Optional[int] = None
             output_tokens: Optional[int] = None
-            usage = original_for_event.get("usage", {}) if isinstance(original_for_event, dict) else {}
+            usage = (
+                original_for_event.get("usage", {})
+                if isinstance(original_for_event, dict)
+                else {}
+            )
             if usage:
                 input_tokens = usage.get("inputTokens")
                 output_tokens = usage.get("outputTokens")

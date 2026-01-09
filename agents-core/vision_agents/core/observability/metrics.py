@@ -218,4 +218,3 @@ video_detections = meter.create_counter(
     "video.detections",
     description="Objects/items detected in video",
 )
-

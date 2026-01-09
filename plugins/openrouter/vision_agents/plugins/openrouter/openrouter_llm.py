@@ -262,7 +262,11 @@ class OpenRouterLLM(OpenAILLM):
             return await self._process_chat_stream(response, messages, tools, model)
         else:
             return await self._process_chat_response(
-                cast(ChatCompletion, response), messages, tools, model, request_start_time
+                cast(ChatCompletion, response),
+                messages,
+                tools,
+                model,
+                request_start_time,
             )
 
     async def _process_chat_stream(

@@ -197,7 +197,10 @@ class OpenAILLM(LLM):
             # Process streaming events and collect tool calls
             async for event in stream_response:
                 # Track time to first token
-                if first_token_time is None and event.type == "response.output_text.delta":
+                if (
+                    first_token_time is None
+                    and event.type == "response.output_text.delta"
+                ):
                     first_token_time = time.perf_counter()
 
                 llm_response_optional = self._standardize_and_emit_event(

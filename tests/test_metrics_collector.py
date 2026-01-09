@@ -15,7 +15,11 @@ from vision_agents.core.llm.events import (
     VLMInferenceCompletedEvent,
     VLMErrorEvent,
 )
-from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent, TranscriptResponse
+from vision_agents.core.stt.events import (
+    STTTranscriptEvent,
+    STTErrorEvent,
+    TranscriptResponse,
+)
 from vision_agents.core.tts.events import TTSSynthesisCompleteEvent, TTSErrorEvent
 from vision_agents.core.turn_detection.events import TurnEndedEvent
 
@@ -244,7 +248,11 @@ class TestMetricsCollectorHandlers:
         collector._on_tts_synthesis_complete(event)
 
         assert len(mocks["tts_latency_ms"].calls) == 1
-        assert mocks["tts_latency_ms"].calls[0] == ("record", 50.0, {"provider": "cartesia"})
+        assert mocks["tts_latency_ms"].calls[0] == (
+            "record",
+            50.0,
+            {"provider": "cartesia"},
+        )
 
         assert len(mocks["tts_audio_duration_ms"].calls) == 1
         assert mocks["tts_audio_duration_ms"].calls[0] == (

@@ -367,7 +367,11 @@ class GeminiLLM(LLM):
         # Extract token usage from response if available
         input_tokens: Optional[int] = None
         output_tokens: Optional[int] = None
-        if final_chunk and hasattr(final_chunk, "usage_metadata") and final_chunk.usage_metadata:
+        if (
+            final_chunk
+            and hasattr(final_chunk, "usage_metadata")
+            and final_chunk.usage_metadata
+        ):
             usage = final_chunk.usage_metadata
             input_tokens = getattr(usage, "prompt_token_count", None)
             output_tokens = getattr(usage, "candidates_token_count", None)
@@ -432,7 +436,11 @@ class GeminiLLM(LLM):
             # Check if this is the first text chunk
             is_first = len(text_parts) == 0
             ttft_ms = None
-            if is_first and first_token_time is not None and request_start_time is not None:
+            if (
+                is_first
+                and first_token_time is not None
+                and request_start_time is not None
+            ):
                 ttft_ms = (first_token_time - request_start_time) * 1000
 
             self.events.send(

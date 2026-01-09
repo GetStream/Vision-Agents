@@ -342,6 +342,8 @@ class STT(stt.STT):
             error: The error from ElevenLabs
         """
         logger.error(f"ElevenLabs WebSocket error: {error}")
+        # Reset audio start time to avoid incorrect metrics on next utterance
+        self._audio_start_time = None
         self._should_reconnect["value"] = True
         self._reconnect_event.set()
 
@@ -350,6 +352,8 @@ class STT(stt.STT):
         Event handler for connection close.
         """
         logger.warning("ElevenLabs WebSocket connection closed")
+        # Reset audio start time to avoid incorrect metrics on next utterance
+        self._audio_start_time = None
         self._connection_ready.clear()
         self._reconnect_event.set()
 
@@ -390,6 +394,8 @@ class STT(stt.STT):
             timeout: Maximum time to wait for the committed transcript in seconds.
         """
         if not self.connection:
+            # Reset audio start time even if no connection
+            self._audio_start_time = None
             return
 
         # Clear the event before committing
@@ -402,11 +408,16 @@ class STT(stt.STT):
             await asyncio.wait_for(self._commit_received.wait(), timeout=timeout)
         except TimeoutError:
             logger.warning("Timeout waiting for committed transcript after clear()")
+            # Reset audio start time on timeout to avoid incorrect metrics
+            self._audio_start_time = None
 
     async def close(self):
         """Close the ElevenLabs connection and clean up resources."""
         # Mark as closed first
         await super().close()
+
+        # Reset audio start time to avoid incorrect metrics if reused
+        self._audio_start_time = None
 
         # Cancel send task
         if self._send_task:

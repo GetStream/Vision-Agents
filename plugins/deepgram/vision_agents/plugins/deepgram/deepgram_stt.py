@@ -218,7 +218,9 @@ class STT(stt.STT):
             # Calculate processing time (time from first audio to transcript)
             processing_time_ms: Optional[float] = None
             if self._audio_start_time is not None:
-                processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
+                processing_time_ms = (
+                    time.perf_counter() - self._audio_start_time
+                ) * 1000
 
             # Build response metadata
             response_metadata = TranscriptResponse(

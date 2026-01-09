@@ -149,14 +149,17 @@ class XAILLM(LLM):
             assert self.xai_chat is not None
             async for response, chunk in self.xai_chat.stream():
                 # Track time to first token
+                is_first_chunk = False
                 if first_token_time is None and chunk.content:
                     first_token_time = time.perf_counter()
+                    is_first_chunk = True
 
                 llm_response_optional = self._standardize_and_emit_chunk(
                     chunk,
                     response,
                     request_start_time=request_start_time,
                     first_token_time=first_token_time,
+                    is_first_chunk=is_first_chunk,
                 )
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
@@ -438,6 +441,7 @@ class XAILLM(LLM):
         response: Response,
         request_start_time: Optional[float] = None,
         first_token_time: Optional[float] = None,
+        is_first_chunk: bool = False,
     ) -> Optional[LLMResponseEvent[Response]]:
         """
         Forwards the chunk events and also send out a standardized version (the agent class hooks into that)
@@ -447,10 +451,13 @@ class XAILLM(LLM):
 
         # Emit standardized delta events for content
         if chunk.content:
-            # Check if this is the first content chunk
-            is_first = first_token_time is not None and request_start_time is not None
+            # Calculate time to first token only for first chunk
             ttft_ms: Optional[float] = None
-            if first_token_time is not None and request_start_time is not None:
+            if (
+                is_first_chunk
+                and first_token_time is not None
+                and request_start_time is not None
+            ):
                 ttft_ms = (first_token_time - request_start_time) * 1000
 
             self.events.send(
@@ -461,7 +468,7 @@ class XAILLM(LLM):
                     sequence_number=0,  # xAI doesn't have sequence_number
                     delta=chunk.content,
                     plugin_name="xai",
-                    is_first_chunk=is_first,
+                    is_first_chunk=is_first_chunk,
                     time_to_first_token_ms=ttft_ms,
                 )
             )

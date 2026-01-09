@@ -397,9 +397,7 @@ class MetricsCollector:
         async def on_vlm_error(event: VLMErrorEvent):
             self._on_vlm_error(event)
 
-    def _on_vlm_inference_completed(
-        self, event: VLMInferenceCompletedEvent
-    ) -> None:
+    def _on_vlm_inference_completed(self, event: VLMInferenceCompletedEvent) -> None:
         """Handle VLM inference completed event."""
         attrs = self._base_attributes(event)
         if event.model:
@@ -440,6 +438,7 @@ class MetricsCollector:
 
     def _subscribe_to_processor_events(self) -> None:
         """Subscribe to video processor events from any registered processors."""
+
         # Subscribe to agent-level events for processor events
         # Processors emit events through the agent's event system
         @self.agent.events.subscribe
@@ -482,4 +481,3 @@ class MetricsCollector:
         if event.plugin_name:
             attrs["provider"] = event.plugin_name
         return attrs
-
