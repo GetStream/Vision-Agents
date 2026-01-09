@@ -373,8 +373,8 @@ class Realtime(realtime.Realtime):
         )
 
     async def _stop_watching_video_track(self) -> None:
-        # Video sender will be stopped when connection closes
-        pass
+        """Stop forwarding video frames to OpenAI."""
+        await self.rtc.stop_video_sender()
 
     async def _execute_pending_tool_call(self, item_id: str) -> None:
         """Execute a pending tool call after arguments are complete.
