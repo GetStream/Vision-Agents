@@ -27,6 +27,7 @@ dependencies = [
     "numpy>=1.24.0",
     "mcp>=1.16.0",
     "colorlog>=6.10.1",
+    "fastapi>=0.128.0",
 ]
 
 [project.urls]

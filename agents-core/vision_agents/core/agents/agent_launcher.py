@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import weakref
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Coroutine, Optional
+from uuid import uuid4
 
 from vision_agents.core.utils.utils import await_or_run, cancel_and_wait
 from vision_agents.core.warmup import Warmable, WarmupCache
@@ -10,6 +11,9 @@ if TYPE_CHECKING:
     from .agents import Agent
 
 logger = logging.getLogger(__name__)
+
+
+class AgentNotFoundError(Exception): ...
 
 
 class AgentLauncher:
@@ -22,8 +26,8 @@ class AgentLauncher:
 
     def __init__(
         self,
-        create_agent: Callable[..., "Agent" | Awaitable["Agent"]],
-        join_call: Callable[..., None | Awaitable[None]] | None = None,
+        create_agent: Callable[..., "Agent" | Coroutine["Agent", ..., ...]],
+        join_call: Callable[["Agent", ..., ...], Coroutine[None, ..., ...]],
         agent_idle_timeout: float = 60.0,
         agent_idle_cleanup_interval: float = 5.0,
     ):
@@ -37,8 +41,8 @@ class AgentLauncher:
                 `0` means idle agents won't leave the call until it's ended.
 
         """
-        self.create_agent = create_agent
-        self.join_call = join_call
+        self._create_agent = create_agent
+        self._join_call = join_call
         self._warmup_lock = asyncio.Lock()
         self._warmup_cache = WarmupCache()
 
@@ -55,6 +59,7 @@ class AgentLauncher:
         self._running = False
         self._cleanup_task: Optional[asyncio.Task] = None
         self._warmed_up: bool = False
+        self._call_tasks: dict[str, asyncio.Task] = {}
 
     async def start(self):
         if self._running:
@@ -70,6 +75,12 @@ class AgentLauncher:
         self._running = False
         if self._cleanup_task:
             await cancel_and_wait(self._cleanup_task)
+
+        coros = [cancel_and_wait(t) for t in self._call_tasks.values()]
+        async for result in asyncio.as_completed(coros):
+            if result.done() and not result.cancelled() and result.exception():
+                logger.error(f"Failed to cancel the call task: {result.exception()}")
+
         logger.debug("AgentLauncher stopped")
 
     async def warmup(self) -> None:
@@ -86,12 +97,16 @@ class AgentLauncher:
             logger.info("Creating agent...")
 
             # Create a dry-run Agent instance and warmup its components for the first time.
-            agent: "Agent" = await await_or_run(self.create_agent)
+            agent: "Agent" = await await_or_run(self._create_agent)
             logger.info("Warming up agent components...")
             await self._warmup_agent(agent)
             self._warmed_up = True
 
             logger.info("Agent warmup completed")
+
+    @property
+    def warmed_up(self) -> bool:
+        return self._warmed_up
 
     async def launch(self, **kwargs) -> "Agent":
         """
@@ -103,10 +118,38 @@ class AgentLauncher:
         Returns:
             The Agent instance
         """
-        agent: "Agent" = await await_or_run(self.create_agent, **kwargs)
+        agent: "Agent" = await await_or_run(self._create_agent, **kwargs)
         await self._warmup_agent(agent)
         self._active_agents.add(agent)
         return agent
+
+    # TODO: Typing
+    async def join(self, call_id: str, call_type: str = "default"):
+        agent: "Agent" = await await_or_run(self._create_agent)
+        await self._warmup_agent(agent)
+        self._active_agents.add(agent)
+
+        agent_id = str(uuid4())
+        task = asyncio.create_task(
+            self._join_call(agent, call_type, call_id), name=f"agent-{agent_id}"
+        )
+        self._call_tasks[agent_id] = task
+
+        # Remove the task reference when it's done
+        task.add_done_callback(
+            lambda t, agent_id_=agent_id: self._call_tasks.pop(agent_id_, None)
+        )
+        return agent_id
+
+    async def close_agent(self, agent_id: str, wait: bool = False) -> None:
+        task = self._call_tasks.pop(agent_id, None)
+        if task is None:
+            raise AgentNotFoundError(f"Agent with id {agent_id} not found")
+
+        if wait:
+            await cancel_and_wait(task)
+        else:
+            task.cancel()
 
     async def _warmup_agent(self, agent: "Agent") -> None:
         """
