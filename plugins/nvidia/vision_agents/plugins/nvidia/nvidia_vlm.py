@@ -112,6 +112,7 @@ class NvidiaVLM(VideoLLM):
         self._temperature = temperature
         self._top_p = top_p
         self._frames_per_second = frames_per_second
+        self._current_asset_ids: list[str] = []
 
     async def _ensure_client(self) -> aiohttp.ClientSession:
         """Ensure the HTTP client is initialized."""
@@ -212,9 +213,11 @@ class NvidiaVLM(VideoLLM):
                 role="user", user_id="user", content=text
             )
 
-        messages, asset_ids = await self._build_model_request()
-
+        asset_ids: list[str] = []
         try:
+            messages, asset_ids = await self._build_model_request()
+            if asset_ids:
+                self._current_asset_ids.clear()
             client = await self._ensure_client()
             headers = {
                 "Authorization": f"Bearer {self._api_key}",
@@ -328,8 +331,10 @@ class NvidiaVLM(VideoLLM):
             )
             return LLMResponseEvent(original=None, text="")
         finally:
-            for asset_id in asset_ids:
+            cleanup_ids = asset_ids if asset_ids else self._current_asset_ids
+            for asset_id in cleanup_ids:
                 await self._delete_asset(asset_id)
+            self._current_asset_ids.clear()
 
     async def watch_video_track(
         self,
@@ -405,14 +410,24 @@ class NvidiaVLM(VideoLLM):
 
         frames_bytes = self._get_frames_bytes()
         asset_ids: list[str] = []
+        self._current_asset_ids = []
         media_content = ""
 
         if frames_bytes:
             logger.debug(f"Uploading {len(frames_bytes)} frames as assets")
-            for frame_bytes in frames_bytes:
-                asset_id = await self._upload_asset(frame_bytes)
-                asset_ids.append(asset_id)
-                media_content += f'<img src="data:image/jpeg;asset_id,{asset_id}" />'
+            try:
+                for frame_bytes in frames_bytes:
+                    asset_id = await self._upload_asset(frame_bytes)
+                    asset_ids.append(asset_id)
+                    self._current_asset_ids.append(asset_id)
+                    media_content += (
+                        f'<img src="data:image/jpeg;asset_id,{asset_id}" />'
+                    )
+            except Exception:
+                logger.warning(
+                    f"Failed to upload all frames. {len(asset_ids)} assets were uploaded before failure."
+                )
+                raise
 
             if media_content:
                 last_message = messages[-1] if messages else None
