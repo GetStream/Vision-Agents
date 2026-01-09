@@ -345,7 +345,7 @@ class MetricsCollector:
         attrs = self._base_attributes(event)
 
         # Record synthesis latency
-        if event.synthesis_time_ms:
+        if event.synthesis_time_ms is not None:
             metrics.tts_latency_ms.record(event.synthesis_time_ms, attrs)
 
         # Record audio duration
