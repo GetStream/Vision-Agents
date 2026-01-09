@@ -1,6 +1,6 @@
 import typing
 from dataclasses import dataclass, field
-from typing import Optional
+
 import supervision as sv
 from vision_agents.core.events import VideoProcessorDetectionEvent
 
