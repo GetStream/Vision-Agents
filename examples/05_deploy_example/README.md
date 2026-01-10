@@ -52,7 +52,7 @@ nebius mk8s cluster create \
   --parent-id <your-project-id> \
   --name vision-agents \
   --control-plane-subnet-id <your-subnet-id> \
-  --control-plane-version 1.31 \
+  --control-plane-version 1.32 \
   --control-plane-endpoints-public-endpoint
 ```
 
@@ -75,21 +75,29 @@ nebius mk8s node-group create \
 
 ### Option B: GPU Node (H200, for production)
 
+**Important:** You must include `--template-gpu-settings-drivers-preset cuda12` to install NVIDIA drivers!
+
 ```
 nebius mk8s node-group create \
   --parent-id <cluster-id-from-above> \
   --name gpu \
   --template-resources-platform gpu-h200-sxm \
   --template-resources-preset 1gpu-16vcpu-200gb \
-  --template-boot-disk-size-gibibytes 200 \
+  --template-boot-disk-size-gibibytes 300 \
   --template-service-account-id <your-service-account-id> \
   --template-metadata-labels nebius.com/gpu=true \
+  --template-gpu-settings-drivers-preset cuda12 \
   --fixed-node-count 1
 ```
 
 Available GPU presets:
 - `1gpu-16vcpu-200gb` - 1x H200, 16 vCPU, 200GB RAM
 - `8gpu-128vcpu-1600gb` - 8x H200, 128 vCPU, 1.6TB RAM
+
+Available driver presets (see [Nebius GPU docs](https://docs.nebius.com/kubernetes/gpu/set-up)):
+- `cuda12` - CUDA 12.4 (default)
+- `cuda12.4` - CUDA 12.4
+- `cuda12.8` - CUDA 12.8
 
 ### Get kubectl credentials
 
