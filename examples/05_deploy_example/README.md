@@ -3,10 +3,7 @@
 
 - shared UV cache for faster booting
 - does it make sense to use Nvidia base?
-- API/fastapi. (start when a user joins a call? or we make an API call?)
-- include an agent monitoring panel?
-- 2 nodes + load balancer?
-- Terraform instead of nebius CLI?
+- merge monitoring and HTTP efforts into this
 
 # Secrets
 
@@ -45,78 +42,114 @@ Lookup your parent-id and subnet for Nebius:
 
 ```
 nebius vpc subnet list
+nebius config list | grep parent-id
 ```
 
-Next create the cluster and be sure to replace the subnet and parent id
+Create the cluster (replace parent-id and subnet):
 
 ```
 nebius mk8s cluster create \
-  --parent-id project-e01zw2jzpr000vckjm7t7n \
+  --parent-id <your-project-id> \
   --name vision-agents \
-  --control-plane-subnet-id vpcsubnet-e01jfyqqs0hfzpp2c3 \
-  --control-plane-version 1.32.11 \
+  --control-plane-subnet-id <your-subnet-id> \
+  --control-plane-version 1.31 \
   --control-plane-endpoints-public-endpoint
 ```
 
-Add a node group with the registry service account (enables automatic image pulling):
+## Add a Node Group
+
+Choose **one** of the following:
+
+### Option A: CPU Node (cheaper, for testing)
 
 ```
 nebius mk8s node-group create \
   --parent-id <cluster-id-from-above> \
-  --name default \
+  --name cpu \
   --template-resources-platform cpu-d3 \
   --template-resources-preset 4vcpu-16gb \
   --template-boot-disk-size-gibibytes 64 \
-  --template-service-account-id serviceaccount-e01p3340qm0bm4ns9d \
+  --template-service-account-id <your-service-account-id> \
   --fixed-node-count 1
 ```
 
-Get credentials for kubectl:
+### Option B: GPU Node (H200, for production)
+
+```
+nebius mk8s node-group create \
+  --parent-id <cluster-id-from-above> \
+  --name gpu \
+  --template-resources-platform gpu-h200-sxm \
+  --template-resources-preset 1gpu-16vcpu-200gb \
+  --template-boot-disk-size-gibibytes 200 \
+  --template-service-account-id <your-service-account-id> \
+  --template-metadata-labels nebius.com/gpu=true \
+  --fixed-node-count 1
+```
+
+Available GPU presets:
+- `1gpu-16vcpu-200gb` - 1x H200, 16 vCPU, 200GB RAM
+- `8gpu-128vcpu-1600gb` - 8x H200, 128 vCPU, 1.6TB RAM
+
+### Get kubectl credentials
 
 ```
 nebius mk8s cluster get-credentials --id <cluster-id> --external --force
 kubectl get nodes  # verify connection
 ```
 
-# 1. Build the Docker image (force linux)
-
-Build the docker image. This image doesn't include deps so it will be fast.
+# 1. Build the Docker image
 
 ```
 cd examples/05_deploy_example
 docker buildx build --platform linux/amd64 -t vision-agent-deploy .
 ```
 
-# 2. Lookup your registry id
+# 2. Push to registry
 
 ```
+# Lookup your registry id
 nebius registry list
+
+# Tag and push
+docker tag vision-agent-deploy cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:latest
+docker push cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:latest
 ```
 
-# 3. Tag for your registry
+# 3. Deploy with Helm
 
-```
-docker tag vision-agent-deploy cr.eu-west1.nebius.cloud/e01mct3z7jptkdf0nr/vision-agent-deploy:latest
-```
-
-# 4. Push to registry
-
-```
-docker push cr.eu-west1.nebius.cloud/e01mct3z7jptkdf0nr/vision-agent-deploy:latest
-```
-
-# 5. Start the cluster with Helm (first time or update)
+## CPU deployment
 
 ```
 helm upgrade --install vision-agent ./helm \
-  --set image.repository="cr.eu-west1.nebius.cloud/e01mct3z7jptkdf0nr/vision-agent-deploy" \
+  --set image.repository="cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy" \
   --set image.tag=latest \
-  --set cache.enabled=true
+  --set image.pullPolicy=Always \
+  --set cache.enabled=true \
+  --set gpu.enabled=false
 ```
 
-# 6. Create the required secrets and restart
+## GPU deployment
 
 ```
+helm upgrade --install vision-agent ./helm \
+  --set image.repository="cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy" \
+  --set image.tag=latest \
+  --set image.pullPolicy=Always \
+  --set cache.enabled=true \
+  --set gpu.enabled=true
+```
+
+# 4. Create secrets and restart
+
+```
+kubectl create secret generic vision-agent-env --from-env-file=.env
+kubectl rollout restart deployment/vision-agent
+```
+
+To update secrets:
+```
+kubectl delete secret vision-agent-env
 kubectl create secret generic vision-agent-env --from-env-file=.env
 kubectl rollout restart deployment/vision-agent
 ```
@@ -125,18 +158,35 @@ kubectl rollout restart deployment/vision-agent
 
 ## Watch logs
 
-If the container is still starting this will output "ContainerCreating" otherwise will show the logs
-
 ```
 kubectl logs -l app.kubernetes.io/name=vision-agent -f --tail=100
 ```
 
-## Pause cluster
+## Pause cluster (stop paying for compute)
 
 ```
-nebius mk8s node-group update \
-  --id mk8snodegroup-e01fpzjpjq9weca40a \
-  --fixed-node-count 0 --async
-  
-nebius mk8s node-group get --id mk8snodegroup-e01fpzjpjq9weca40a
+# List node groups
+nebius mk8s node-group list --parent-id <cluster-id>
+
+# Scale to 0
+nebius mk8s node-group update --id <node-group-id> --fixed-node-count 0 --async
+
+# Check status
+nebius mk8s node-group get --id <node-group-id>
 ```
+
+Resume by setting count back to 1.
+
+## Switch between CPU and GPU
+
+Just change `gpu.enabled` and redeploy:
+
+```
+# Switch to GPU
+helm upgrade vision-agent ./helm --reuse-values --set gpu.enabled=true
+
+# Switch to CPU  
+helm upgrade vision-agent ./helm --reuse-values --set gpu.enabled=false
+```
+
+Make sure you have the matching node group running.

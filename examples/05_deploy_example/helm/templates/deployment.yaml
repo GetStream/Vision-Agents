@@ -25,8 +25,13 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "vision-agent.secretName" . }}
+          {{- if .Values.gpu.enabled }}
+          resources:
+            {{- toYaml .Values.gpuResources | nindent 12 }}
+          {{- else }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- end }}
           {{- if .Values.cache.enabled }}
           volumeMounts:
             - name: uv-cache
@@ -38,16 +43,27 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "vision-agent.fullname" . }}-uv-cache
       {{- end }}
-      {{- with .Values.nodeSelector }}
+      {{- if or .Values.nodeSelector .Values.gpu.enabled }}
       nodeSelector:
+        {{- if .Values.gpu.enabled }}
+        nebius.com/gpu: "true"
+        {{- end }}
+        {{- with .Values.nodeSelector }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
       {{- with .Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
+      {{- if or .Values.tolerations .Values.gpu.enabled }}
       tolerations:
+        {{- if .Values.gpu.enabled }}
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        {{- end }}
+        {{- with .Values.tolerations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
-

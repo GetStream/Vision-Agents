@@ -7,6 +7,13 @@ image:
 
 imagePullSecrets: []
 
+# GPU configuration
+gpu:
+  enabled: false
+  # Number of GPUs to request (usually 1)
+  count: 1
+
+# Resources - automatically adjusted when gpu.enabled=true
 resources:
   limits:
     cpu: 2000m
@@ -14,6 +21,17 @@ resources:
   requests:
     cpu: 500m
     memory: 1Gi
+
+# GPU resources (used when gpu.enabled=true)
+gpuResources:
+  limits:
+    cpu: 16000m
+    memory: 200Gi
+    nvidia.com/gpu: 1
+  requests:
+    cpu: 8000m
+    memory: 100Gi
+    nvidia.com/gpu: 1
 
 # Persistent cache for uv packages (faster restarts)
 cache:
@@ -32,9 +50,15 @@ secrets:
   streamApiKey: ""
   streamApiSecret: ""
 
+# Use to schedule on specific node groups
 nodeSelector: {}
+# Example for GPU nodes:
+#   nebius.com/gpu: "true"
 
 tolerations: []
+# GPU nodes often have taints, add toleration:
+# - key: "nvidia.com/gpu"
+#   operator: "Exists"
+#   effect: "NoSchedule"
 
 affinity: {}
-
