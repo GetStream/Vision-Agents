@@ -218,24 +218,10 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         self.yolo_model: Optional[Any] = None
         # Package-related classes detected by the weights.pt model
         self.package_detect_classes = [
-            "package",
-            "parcel",
-            "box",
-            "boxes",
             "Box",
-            "Boxes",
             "Box_broken",
-            "Cardboard",
-            "Cardboards",
-            "cardboard",
             "Open_package",
-            "damaged box",
-            "good-parcel",
-            "Parcel",
             "Package",
-            "suitcase",
-            "backpack",
-            "handbag",
         ]
 
         # Event manager for detection events

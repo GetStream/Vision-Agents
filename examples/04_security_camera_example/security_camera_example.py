@@ -43,7 +43,7 @@ async def create_agent(**kwargs) -> Agent:
         time_window=1800,
         thumbnail_size=80,
         detection_interval=2.0,
-        package_conf_threshold=0.7,
+        package_conf_threshold=0.9,
     )
 
     agent = Agent(
