@@ -1,0 +1,9 @@
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: examples/05_deploy_example/Dockerfile
+    env_file:
+      - path: ../../.env
+        required: false
+

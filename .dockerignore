@@ -1,0 +1,43 @@
+# Virtual environments
+.venv/
+*/.venv/
+**/.venv/
+venv/
+*/venv/
+
+# Python cache
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# UV cache
+.uv/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+dist/
+*.egg-info/
+**/*.egg-info/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Misc
+.DS_Store
+*.log
+.env
+.env.*
+

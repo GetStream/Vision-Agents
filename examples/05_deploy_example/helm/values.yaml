@@ -1,0 +1,64 @@
+replicaCount: 1
+
+image:
+  repository: vision-agent-deploy
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+
+# GPU configuration
+gpu:
+  enabled: false
+  # Number of GPUs to request (usually 1)
+  count: 1
+
+# Resources - automatically adjusted when gpu.enabled=true
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# GPU resources (used when gpu.enabled=true)
+gpuResources:
+  limits:
+    cpu: 16000m
+    memory: 200Gi
+    nvidia.com/gpu: 1
+  requests:
+    cpu: 8000m
+    memory: 100Gi
+    nvidia.com/gpu: 1
+
+# Persistent cache for uv packages (faster restarts)
+cache:
+  enabled: true
+  size: 10Gi
+  storageClass: ""  # Leave empty for default
+
+# API keys - set these or use existing secret
+secrets:
+  # Set to existing secret name to use pre-created secret
+  existingSecret: ""
+  # Or provide values directly (will create secret)
+  googleApiKey: ""
+  elevenlabsApiKey: ""
+  deepgramApiKey: ""
+  streamApiKey: ""
+  streamApiSecret: ""
+
+# Use to schedule on specific node groups
+nodeSelector: {}
+# Example for GPU nodes:
+#   nebius.com/gpu: "true"
+
+tolerations: []
+# GPU nodes often have taints, add toleration:
+# - key: "nvidia.com/gpu"
+#   operator: "Exists"
+#   effect: "NoSchedule"
+
+affinity: {}
