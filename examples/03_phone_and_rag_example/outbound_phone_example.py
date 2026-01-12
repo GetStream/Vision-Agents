@@ -48,9 +48,8 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
         await agent.edge.create_users([agent.agent_user, phone_user])
 
         stream_call = await agent.create_call("default", call_id)
-        agent_session = await agent.join(stream_call, wait_for_participant=False)
         logger.info("prepared the call, ready to start")
-        return agent, phone_user, stream_call, agent_session
+        return agent, phone_user, stream_call
 
     twilio_call = call_registry.create(call_id, prepare=prepare_call)
     url = f"wss://{NGROK_URL}/twilio/media/{call_id}/{twilio_call.token}"
@@ -82,13 +81,12 @@ async def media_stream(websocket: WebSocket, call_sid: str, token: str):
             agent,
             phone_user,
             stream_call,
-            agent_session,
         ) = await twilio_call.await_prepare()
         twilio_call.stream_call = stream_call
 
         await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
 
-        with agent_session:
+        async with agent.join(stream_call, participant_wait_timeout=0):
             await agent.llm.simple_response(
                 text="Ask to reserve and answer any follow up questions as needed"
             )
