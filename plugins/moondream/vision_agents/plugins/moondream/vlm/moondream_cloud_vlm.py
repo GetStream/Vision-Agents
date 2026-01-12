@@ -73,7 +73,7 @@ class CloudVLM(llm.VideoLLM):
         """Setup video forwarding and STT subscription."""
         if self._video_forwarder is not None and shared_forwarder is None:
             logger.warning("Video forwarder already running, stopping previous one")
-            await self._stop_watching_video_track()
+            await self.stop_watching_video_track()
 
         if shared_forwarder is not None:
             # Use shared forwarder
@@ -224,7 +224,7 @@ class CloudVLM(llm.VideoLLM):
             )
         return result
 
-    async def _stop_watching_video_track(self) -> None:
+    async def stop_watching_video_track(self) -> None:
         """Stop video forwarding."""
         if self._video_forwarder is not None:
             await self._video_forwarder.stop()

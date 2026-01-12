@@ -240,6 +240,14 @@ class ChatCompletionsVLM(VideoLLM):
             self._frame_buffer.append, fps=self._fps
         )
 
+    def stop_watching_video_track(self) -> None:
+        if self._video_forwarder is not None:
+            self._video_forwarder.remove_frame_handler(self._frame_buffer.append)
+            self._video_forwarder = None
+            logger.info(
+                f"🛑 Stopped video forwarding to {PLUGIN_NAME} (participant left)"
+            )
+
     async def _get_frames_bytes(self) -> AsyncIterator[bytes]:
         """
         Convert the buffered video frames to bytes and yield them.

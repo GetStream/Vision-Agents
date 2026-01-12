@@ -5,7 +5,14 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli, AgentLauncher
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
+from vision_agents.plugins import (
+    deepgram,
+    getstream,
+    gemini,
+    elevenlabs,
+    openai,
+    roboflow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +33,15 @@ This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_ex
 
 async def create_agent(**kwargs) -> Agent:
     llm = gemini.LLM("gemini-2.5-flash-lite")
+    # llm = openai.Realtime()
 
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(name="My happy AI friend", id="agent"),
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        processors=[],  # processors can fetch extra data, check images/audio data or transform video
+        processors=[
+            roboflow.RoboflowLocalDetectionProcessor()
+        ],  # processors can fetch extra data, check images/audio data or transform video
         llm=llm,
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(

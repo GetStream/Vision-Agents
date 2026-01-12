@@ -372,7 +372,7 @@ class Realtime(realtime.Realtime):
             track, self.fps, shared_forwarder=shared_forwarder
         )
 
-    async def _stop_watching_video_track(self) -> None:
+    async def stop_watching_video_track(self) -> None:
         """Stop forwarding video frames to OpenAI."""
         await self.rtc.stop_video_sender()
 
