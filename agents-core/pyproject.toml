@@ -46,6 +46,7 @@ heygen = ["vision-agents-plugins-heygen"]
 inworld = ["vision-agents-plugins-inworld"]
 kokoro = ["vision-agents-plugins-kokoro"]
 moonshine = ["vision-agents-plugins-moonshine"]
+nvidia = ["vision-agents-plugins-nvidia"]
 openai = ["vision-agents-plugins-openai"]
 roboflow = ["vision-agents-plugins-roboflow"]
 smart_turn = ["vision-agents-plugins-smart-turn"]
@@ -75,6 +76,7 @@ all-plugins = [
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
     "vision-agents-plugins-moonshine",
+    "vision-agents-plugins-nvidia",
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-smart-turn",

@@ -240,9 +240,7 @@ class GeminiRealtime(realtime.Realtime):
 
         # This method can be called multiple times with different forwarders
         # Remove handler from old forwarder if it exists
-        await self._stop_watching_video_track()
-        if self._video_forwarder is not None:
-            await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+        await self.stop_watching_video_track()
 
         self._video_forwarder = shared_forwarder or VideoForwarder(
             input_track=cast(VideoStreamTrack, track),
@@ -275,9 +273,11 @@ class GeminiRealtime(realtime.Realtime):
         except Exception:
             logger.exception("Failed to send a video frame to Gemini Live API")
 
-    async def _stop_watching_video_track(self) -> None:
+    async def stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
             await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+            logger.info("🛑 Stopped video forwarding to Gemini (participant left)")
+            self._video_forwarder = None
 
     async def connect(self):
         """
@@ -310,7 +310,7 @@ class GeminiRealtime(realtime.Realtime):
         """
         self.connected = False
 
-        await self._stop_watching_video_track()
+        await self.stop_watching_video_track()
 
         # Do not wait for threads to complete to avoid blocking the loop
         self._executor.shutdown(wait=False)

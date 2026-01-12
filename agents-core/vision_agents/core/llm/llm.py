@@ -441,6 +441,11 @@ class VideoLLM(LLM, metaclass=abc.ABCMeta):
                 video stream.
         """
 
+    @abc.abstractmethod
+    async def stop_watching_video_track(self) -> None:
+        """Stop watching the video track."""
+        pass
+
 
 class OmniLLM(AudioLLM, VideoLLM, metaclass=abc.ABCMeta):
     """

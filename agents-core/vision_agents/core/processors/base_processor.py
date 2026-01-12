@@ -73,6 +73,14 @@ class VideoProcessor(Processor, metaclass=abc.ABCMeta):
         It's called by the Agent every time a new track is published.
         """
 
+    @abc.abstractmethod
+    async def stop_processing(self) -> None:
+        """
+        Stop processing video. Called when all video tracks are removed.
+        Override this to clean up frame handlers and stop output tracks.
+        """
+        pass
+
 
 class VideoProcessorPublisher(VideoProcessor, VideoPublisher, metaclass=abc.ABCMeta):
     """

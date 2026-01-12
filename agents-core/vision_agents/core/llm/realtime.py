@@ -60,7 +60,7 @@ class Realtime(OmniLLM):
         self, pcm: PcmData, participant: Optional[Participant] = None
     ): ...
 
-    async def _stop_watching_video_track(self) -> None:
+    async def stop_watching_video_track(self) -> None:
         """Optionally overridden by providers that support video input."""
         return None
 

@@ -292,7 +292,7 @@ class STT(stt.STT):
         if self.connection and self._connection_context:
             try:
                 # Handle API differences between deepgram-sdk versions
-                if _USE_NEW_API:
+                if _USE_NEW_API and hasattr(self.connection, "send_close_stream"):
                     close_msg = ListenV2CloseStream(type="CloseStream")
                     await self.connection.send_close_stream(close_msg)
                 else:

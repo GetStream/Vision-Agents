@@ -81,6 +81,8 @@ class TestChatCompletionsVLM:
         await vlm.events.wait(1)
         assert response.text == "chunk1 chunk2"
 
+        await vlm.stop_watching_video_track()
+
         # Check that events are fired
         assert len(events) == 3
         assert events[0].type == "plugin.llm_response_chunk"

@@ -84,6 +84,6 @@ class TestQwen3Realtime:
         await asyncio.sleep(10.0)
 
         # Stop video sender
-        await llm._stop_watching_video_track()
+        await llm.stop_watching_video_track()
         # Verify that the model replied
         assert len(events) > 0

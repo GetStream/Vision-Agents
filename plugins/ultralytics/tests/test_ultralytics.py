@@ -2,38 +2,41 @@
 Tests for the ultralytics plugin.
 """
 
+import asyncio
+import logging
 from pathlib import Path
 from typing import Iterator
 
+import av
 import numpy as np
 import pytest
 from PIL import Image
-import av
-
 from vision_agents.plugins.ultralytics import YOLOPoseProcessor
-import logging
 
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(scope="session")
+def golf_image(assets_dir) -> Iterator[Image.Image]:
+    """Load the local golf swing test image from tests/test_assets."""
+    asset_path = Path(assets_dir) / "golf_swing.png"
+    with Image.open(asset_path) as img:
+        yield img.convert("RGB")
+
+
+@pytest.fixture()
+async def pose_processor():
+    """Create and manage YOLOPoseProcessor lifecycle."""
+    # YOLO model checks the OS version on __init__ in a blocking way
+    processor = await asyncio.to_thread(lambda: YOLOPoseProcessor(device="cpu"))
+    try:
+        yield processor
+    finally:
+        await processor.close()
+
+
 class TestYOLOPoseProcessor:
     """Test cases for YOLOPoseProcessor."""
-
-    @pytest.fixture(scope="session")
-    def golf_image(self, assets_dir) -> Iterator[Image.Image]:
-        """Load the local golf swing test image from tests/test_assets."""
-        asset_path = Path(assets_dir) / "golf_swing.png"
-        with Image.open(asset_path) as img:
-            yield img.convert("RGB")
-
-    @pytest.fixture
-    def pose_processor(self) -> Iterator[YOLOPoseProcessor]:
-        """Create and manage YOLOPoseProcessor lifecycle."""
-        processor = YOLOPoseProcessor(device="cpu")
-        try:
-            yield processor
-        finally:
-            processor.close()
 
     async def test_annotated_ndarray(
         self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor
@@ -47,8 +50,6 @@ class TestYOLOPoseProcessor:
     async def test_annotated_image_output(
         self, golf_image: Image.Image, pose_processor: YOLOPoseProcessor
     ):
-        import asyncio
-
         image_with_pose, pose = await pose_processor.add_pose_to_image(image=golf_image)
 
         assert image_with_pose is not None
