@@ -1,0 +1,17 @@
+{{- if .Values.cache.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "vision-agent.fullname" . }}-uv-cache
+  labels:
+    {{- include "vision-agent.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.cache.size }}
+  {{- if .Values.cache.storageClass }}
+  storageClassName: {{ .Values.cache.storageClass }}
+  {{- end }}
+{{- end }}

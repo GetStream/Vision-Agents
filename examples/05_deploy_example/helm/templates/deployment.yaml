@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vision-agent.fullname" . }}
+  labels:
+    {{- include "vision-agent.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "vision-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vision-agent.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "vision-agent.secretName" . }}
+          {{- if .Values.gpu.enabled }}
+          resources:
+            {{- toYaml .Values.gpuResources | nindent 12 }}
+          {{- else }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- end }}
+          {{- if .Values.cache.enabled }}
+          volumeMounts:
+            - name: uv-cache
+              mountPath: /root/.cache/uv
+          {{- end }}
+      {{- if .Values.cache.enabled }}
+      volumes:
+        - name: uv-cache
+          persistentVolumeClaim:
+            claimName: {{ include "vision-agent.fullname" . }}-uv-cache
+      {{- end }}
+      {{- if or .Values.nodeSelector .Values.gpu.enabled }}
+      nodeSelector:
+        {{- if .Values.gpu.enabled }}
+        nebius.com/gpu: "true"
+        {{- end }}
+        {{- with .Values.nodeSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.tolerations .Values.gpu.enabled }}
+      tolerations:
+        {{- if .Values.gpu.enabled }}
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        {{- end }}
+        {{- with .Values.tolerations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
