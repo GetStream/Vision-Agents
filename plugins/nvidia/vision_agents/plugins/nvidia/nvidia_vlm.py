@@ -370,9 +370,9 @@ class NvidiaVLM(VideoLLM):
             self._frame_buffer.append, fps=self._fps
         )
 
-    def stop_watching_video_track(self) -> None:
+    async def stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
-            self._video_forwarder.remove_frame_handler(self._frame_buffer.append)
+            await self._video_forwarder.remove_frame_handler(self._frame_buffer.append)
             self._video_forwarder = None
             logger.info(
                 f"🛑 Stopped video forwarding to {PLUGIN_NAME} (participant left)"
