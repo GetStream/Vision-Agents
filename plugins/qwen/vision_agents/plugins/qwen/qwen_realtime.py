@@ -156,8 +156,6 @@ class Qwen3Realtime(Realtime):
         # This method can be called multiple times with different forwarders
         # Remove handler from old forwarder if it exists
         await self.stop_watching_video_track()
-        if self._video_forwarder is not None:
-            await self._video_forwarder.remove_frame_handler(self._send_video_frame)
 
         self._video_forwarder = shared_forwarder or VideoForwarder(
             input_track=cast(VideoStreamTrack, track),
