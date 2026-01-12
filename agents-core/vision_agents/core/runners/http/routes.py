@@ -104,7 +104,7 @@ async def leave_call(
             detail=f"Agent for call '{agent_id}' not found",
         ) from exc
 
-    return LeaveCallResponse(agent_id=agent_id)
+    return LeaveCallResponse(agent_id=agent_id, message="Agent removed from call")
 
 
 @router.post(
@@ -128,8 +128,9 @@ async def leave_call_beacon(
     except AgentNotFoundError:
         # For beacon requests, we return success even if not found
         # since the agent may have already been cleaned up
-        logger.warning(f"[BE] Beacon leave: agent for call '{agent_id}' not found")
-    return LeaveCallResponse(agent_id=agent_id)
+        logger.warning(f"Beacon leave: agent for call '{agent_id}' not found")
+
+    return LeaveCallResponse(agent_id=agent_id, message="Agent removed from call")
 
 
 @router.get("/alive")
