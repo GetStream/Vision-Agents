@@ -1,9 +1,14 @@
 
 ## TODO / improvements
 
-- shared UV cache for faster booting
-- does it make sense to use Nvidia base?
 - merge monitoring and HTTP efforts into this
+
+# Tips
+
+* US-east. Services like Stream run a global edge network. But many providers default to US-east. So you typically want to run in US-east for optimal latency
+* CPU build is quick to get up and running. GPU/CUDA takes hours.
+* This guide uses Nebius, but you could do this with other K8 enabled clouds quite easily
+* GPU setup needs more checks/testing
 
 # Secrets
 
@@ -49,7 +54,7 @@ Create the cluster (replace parent-id and subnet):
 
 ```
 nebius mk8s cluster create \
-  --parent-id <your-project-id> \
+  --parent-id mk8scluster-<youridhere> \
   --name vision-agents \
   --control-plane-subnet-id <your-subnet-id> \
   --control-plane-version 1.32 \
@@ -57,6 +62,12 @@ nebius mk8s cluster create \
 ```
 
 ## Add a Node Group
+
+Lookup your template service account id
+
+```
+nebius iam service-account list
+```
 
 Choose **one** of the following:
 
@@ -73,7 +84,11 @@ nebius mk8s node-group create \
   --fixed-node-count 1
 ```
 
-### Option B: GPU Node (H200, for production)
+### Option B: GPU Node (H200, if you need to run models locally)
+
+GPUs are expensive. You typically don't want to run your voice agents on a server with a GPU.
+Even from a load balancing perspective you typically want to spin the GPU related work into it's own cluster.
+That being said, in case you want/need to run on a GPU do the following:
 
 **Important:** You must include `--template-gpu-settings-drivers-preset cuda12` to install NVIDIA drivers!
 
@@ -108,10 +123,25 @@ kubectl get nodes  # verify connection
 
 # 1. Build the Docker image
 
+There are two Dockerfiles:
+- `Dockerfile` - CPU version (python:3.13-slim, ~150MB)
+- `Dockerfile.gpu` - GPU version (pytorch:2.9.1-cuda12.8, ~8GB)
+
+### CPU build
+
 ```
 cd examples/05_deploy_example
 docker buildx build --platform linux/amd64 -t vision-agent-deploy .
 ```
+
+### GPU build (takes a long time)
+
+```
+cd examples/05_deploy_example
+docker buildx build --platform linux/amd64 -f Dockerfile.gpu -t vision-agent-deploy:gpu .
+```
+
+**Tip:** Building amd64 on Apple Silicon is slow due to emulation. Consider using CI for production builds.
 
 # 2. Push to registry
 
@@ -119,9 +149,13 @@ docker buildx build --platform linux/amd64 -t vision-agent-deploy .
 # Lookup your registry id
 nebius registry list
 
-# Tag and push
+# Tag and push (CPU)
 docker tag vision-agent-deploy cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:latest
 docker push cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:latest
+
+# Or for GPU
+docker tag vision-agent-deploy:gpu cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:gpu
+docker push cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:gpu
 ```
 
 # 3. Deploy with Helm
@@ -134,7 +168,8 @@ helm upgrade --install vision-agent ./helm \
   --set image.tag=latest \
   --set image.pullPolicy=Always \
   --set cache.enabled=true \
-  --set gpu.enabled=false
+  --set gpu.enabled=false \
+  --set secrets.existingSecret=vision-agent-env
 ```
 
 ## GPU deployment
@@ -142,17 +177,19 @@ helm upgrade --install vision-agent ./helm \
 ```
 helm upgrade --install vision-agent ./helm \
   --set image.repository="cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy" \
-  --set image.tag=latest \
+  --set image.tag=gpu \
   --set image.pullPolicy=Always \
   --set cache.enabled=true \
-  --set gpu.enabled=true
+  --set gpu.enabled=true \
+  --set secrets.existingSecret=vision-agent-env
 ```
 
-# 4. Create secrets and restart
+# 4. Create secrets
+
+Create a Kubernetes secret from your `.env` file:
 
 ```
 kubectl create secret generic vision-agent-env --from-env-file=.env
-kubectl rollout restart deployment/vision-agent
 ```
 
 To update secrets:
