@@ -91,5 +91,5 @@ class TestGeminiRealtime:
         await asyncio.sleep(10.0)
 
         # Stop video sender
-        await realtime._stop_watching_video_track()
+        await realtime.stop_watching_video_track()
         assert len(events) > 0

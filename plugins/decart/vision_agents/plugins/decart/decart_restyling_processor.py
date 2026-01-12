@@ -268,7 +268,16 @@ class RestylingProcessor(VideoProcessorPublisher):
             self._realtime_client = None
             self._connected = False
 
+    async def stop_processing(self) -> None:
+        """Stop processing video when participant leaves."""
+        if self._realtime_client:
+            await self._disconnect_from_decart()
+            logger.info("🛑 Stopped Decart video processing (participant left)")
+        self._current_track = None
+
     async def close(self) -> None:
+        await self.stop_processing()
+
         if self._video_track:
             self._video_track.stop()
 
@@ -277,7 +286,6 @@ class RestylingProcessor(VideoProcessorPublisher):
 
         if self._processing_task and not self._processing_task.done():
             self._processing_task.cancel()
-        else:
-            if self._realtime_client or self._decart_client:
-                await self._disconnect_from_decart()
-                await self._decart_client.close()
+
+        if self._decart_client:
+            await self._decart_client.close()

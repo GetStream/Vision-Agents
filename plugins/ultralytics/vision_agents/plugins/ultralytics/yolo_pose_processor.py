@@ -419,7 +419,17 @@ class YOLOPoseProcessor(VideoProcessorPublisher):
                         1,
                     )
 
+    async def stop_processing(self) -> None:
+        """Stop processing video when participant leaves."""
+        if self._video_forwarder is not None:
+            await self._video_forwarder.remove_frame_handler(
+                self._add_pose_and_add_frame
+            )
+            self._video_forwarder = None
+            logger.info("🛑 Stopped YOLO video processing (participant left)")
+
     async def close(self):
         """Clean up resources."""
         self._shutdown = True
+        await self.stop_processing()
         self.executor.shutdown(wait=False)

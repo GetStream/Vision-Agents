@@ -370,6 +370,14 @@ class NvidiaVLM(VideoLLM):
             self._frame_buffer.append, fps=self._fps
         )
 
+    async def stop_watching_video_track(self) -> None:
+        if self._video_forwarder is not None:
+            await self._video_forwarder.remove_frame_handler(self._frame_buffer.append)
+            self._video_forwarder = None
+            logger.info(
+                f"🛑 Stopped video forwarding to {PLUGIN_NAME} (participant left)"
+            )
+
     def _get_frames_bytes(self) -> list[bytes]:
         """Convert buffered video frames to JPEG bytes."""
         frames_bytes = []

@@ -62,6 +62,9 @@ class MockVideoProcessor(VideoProcessor):
 
     async def close(self) -> None: ...
 
+    async def stop_processing(self) -> None:
+        pass
+
 
 class MockVideoLLM(VideoLLM):
     """Mock VideoLLM that tracks video track assignments"""
@@ -75,6 +78,9 @@ class MockVideoLLM(VideoLLM):
         self.watch_video_track_calls.append(
             {"track": track, "shared_forwarder": shared_forwarder}
         )
+
+    async def stop_watching_video_track(self) -> None:
+        pass
 
     async def simple_response(self, text: str, processors=None, participant=None):
         """Mock simple_response"""

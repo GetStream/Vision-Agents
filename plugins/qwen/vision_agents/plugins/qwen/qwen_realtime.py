@@ -129,7 +129,7 @@ class Qwen3Realtime(Realtime):
 
     async def close(self):
         self.connected = False
-        await self._stop_watching_video_track()
+        await self.stop_watching_video_track()
         if self._processing_task is not None:
             self._processing_task.cancel()
             await self._processing_task
@@ -155,9 +155,7 @@ class Qwen3Realtime(Realtime):
 
         # This method can be called multiple times with different forwarders
         # Remove handler from old forwarder if it exists
-        await self._stop_watching_video_track()
-        if self._video_forwarder is not None:
-            await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+        await self.stop_watching_video_track()
 
         self._video_forwarder = shared_forwarder or VideoForwarder(
             input_track=cast(VideoStreamTrack, track),
@@ -198,9 +196,10 @@ class Qwen3Realtime(Realtime):
         except Exception:
             logger.exception("Failed to send a video frame to Qwen3 Realtime API")
 
-    async def _stop_watching_video_track(self) -> None:
+    async def stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
             await self._video_forwarder.remove_frame_handler(self._send_video_frame)
+            logger.info("🛑 Stopped video forwarding to Qwen (participant left)")
 
     @property
     def _client(self) -> Qwen3RealtimeClient:

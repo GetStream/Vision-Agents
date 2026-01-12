@@ -149,6 +149,15 @@ class RTCManager:
             self._send_video_frame, fps=float(fps), name="openai"
         )
 
+    async def stop_video_sender(self) -> None:
+        """Stop forwarding video frames to OpenAI."""
+        if self._current_video_forwarder is not None:
+            await self._current_video_forwarder.remove_frame_handler(
+                self._send_video_frame
+            )
+            self._current_video_forwarder = None
+            logger.info("🛑 Stopped video forwarding to OpenAI (participant left)")
+
     def _setup_connection_logging(self) -> None:
         """Set up event handlers for connection monitoring and error logging."""
 

@@ -199,10 +199,16 @@ class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
         """Return the video track for publishing processed frames."""
         return self._video_track
 
-    async def close(self):
-        """Clean up resources."""
+    async def stop_processing(self) -> None:
+        """Stop processing video when participant leaves."""
         if self._video_forwarder is not None:
             await self._video_forwarder.remove_frame_handler(self._process_frame)
+            self._video_forwarder = None
+            logger.info("🛑 Stopped Roboflow Cloud video processing (participant left)")
+
+    async def close(self):
+        """Clean up resources."""
+        await self.stop_processing()
         self._closed = True
         self._executor.shutdown(wait=False)
         self._video_track.stop()

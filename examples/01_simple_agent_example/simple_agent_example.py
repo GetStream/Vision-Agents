@@ -1,11 +1,15 @@
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
 from dotenv import load_dotenv
-
-from vision_agents.core import User, Agent, cli, AgentLauncher
+from vision_agents.core import Agent, AgentLauncher, User, cli
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import deepgram, getstream, gemini, elevenlabs
+from vision_agents.plugins import (
+    deepgram,
+    elevenlabs,
+    gemini,
+    getstream,
+)
 
 logger = logging.getLogger(__name__)
 

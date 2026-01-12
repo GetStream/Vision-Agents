@@ -231,8 +231,20 @@ class CloudDetectionProcessor(VideoProcessorPublisher):
             # Pass through original frame on error
             await self._video_track.add_frame(frame)
 
+    async def stop_processing(self) -> None:
+        """Stop processing video when participant leaves."""
+        if self._video_forwarder is not None:
+            await self._video_forwarder.remove_frame_handler(
+                self._process_and_add_frame
+            )
+            self._video_forwarder = None
+            logger.info(
+                "🛑 Stopped Moondream Cloud video processing (participant left)"
+            )
+
     async def close(self):
         """Clean up resources."""
         self._shutdown = True
+        await self.stop_processing()
         self.executor.shutdown(wait=False)
         logger.info("🛑 Moondream Processor closed")
