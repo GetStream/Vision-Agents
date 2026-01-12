@@ -81,7 +81,7 @@ class TestChatCompletionsVLM:
         await vlm.events.wait(1)
         assert response.text == "chunk1 chunk2"
 
-        vlm.stop_watching_video_track()
+        await vlm.stop_watching_video_track()
 
         # Check that events are fired
         assert len(events) == 3
