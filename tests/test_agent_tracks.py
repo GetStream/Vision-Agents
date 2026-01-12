@@ -65,6 +65,7 @@ class MockVideoProcessor(VideoProcessor):
     async def stop_processing(self) -> None:
         pass
 
+
 class MockVideoLLM(VideoLLM):
     """Mock VideoLLM that tracks video track assignments"""
 
