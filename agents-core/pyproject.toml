@@ -58,6 +58,7 @@ huggingface = ["vision-agents-plugins-huggingface"]
 moondream = ["vision-agents-plugins-moondream"]
 aws = ["vision-agents-plugins-aws"]
 openrouter = ["vision-agents-plugins-openrouter"]
+pocket = ["vision-agents-plugins-pocket"]
 qwen = ["vision-agents-plugins-qwen"]
 fish = ["vision-agents-plugins-fish"]
 fast-whisper = ["vision-agents-plugins-fast-whisper"]
@@ -87,6 +88,7 @@ all-plugins = [
     "vision-agents-plugins-moondream",
     "vision-agents-plugins-aws",
     "vision-agents-plugins-openrouter",
+    "vision-agents-plugins-pocket",
     "vision-agents-plugins-fish",
     "vision-agents-plugins-decart",
     "vision-agents-plugins-vogent",
