@@ -83,7 +83,7 @@ class TTS(tts.TTS, Warmable[tuple[TTSModel, Any]]):
 
     async def _ensure_loaded(self) -> None:
         """Ensure model and voice state are loaded."""
-        if self._model is None:
+        if self._model is None or self._voice_state is None:
             resource = await self.on_warmup()
             self.on_warmed_up(resource)
 
