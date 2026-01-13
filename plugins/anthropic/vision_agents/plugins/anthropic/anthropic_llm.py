@@ -448,11 +448,11 @@ class ClaudeLLM(LLM):
         input_tokens: Optional[int] = None
         output_tokens: Optional[int] = None
 
-        if hasattr(response, "usage") and response.usage:
+        if response.usage:
             input_tokens = response.usage.input_tokens
             output_tokens = response.usage.output_tokens
 
-        model = response.model if hasattr(response, "model") else self.model
+        model = response.model or self.model
 
         self.events.send(
             LLMResponseCompletedEvent(

@@ -249,7 +249,7 @@ class MetricsCollector:
         """Handle realtime audio input event."""
         attrs = self._base_attributes(event)
 
-        if event.data:
+        if event.data and event.data.samples is not None:
             # Record bytes using nbytes to handle all audio formats
             metrics.realtime_audio_input_bytes.add(event.data.samples.nbytes, attrs)
 
@@ -263,7 +263,7 @@ class MetricsCollector:
         """Handle realtime audio output event."""
         attrs = self._base_attributes(event)
 
-        if event.data:
+        if event.data and event.data.samples is not None:
             # Record bytes using nbytes to handle all audio formats
             metrics.realtime_audio_output_bytes.add(event.data.samples.nbytes, attrs)
 
