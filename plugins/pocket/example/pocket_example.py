@@ -6,10 +6,12 @@ This example demonstrates Pocket TTS integration with Vision Agents.
 This example creates an agent that uses:
 - Pocket TTS for text-to-speech (runs locally on CPU)
 - Deepgram for speech-to-text
+- Gemini for LLM
 - GetStream for edge/real-time communication
 
 Requirements:
 - DEEPGRAM_API_KEY environment variable
+- GOOGLE_API_KEY environment variable
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
 """
 

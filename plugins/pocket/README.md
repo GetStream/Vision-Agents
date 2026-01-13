@@ -1,13 +1,12 @@
 # Pocket TTS Plugin
 
-A lightweight Text-to-Speech (TTS) plugin for Vision Agents powered by Kyutai's Pocket TTS model. Runs efficiently on CPU with low latency (~200ms) and supports voice cloning.
+A lightweight Text-to-Speech (TTS) plugin for [Vision Agents](https://github.com/GetStream/Vision-Agents) powered by Kyutai's [Pocket TTS](https://huggingface.co/kyutai/pocket-tts) model. Runs efficiently on CPU with low latency (~200ms) and supports voice cloning.
 
 ## Features
 
 - Runs on CPU - no GPU required
 - Small model size (100M parameters)
 - Low latency (~200ms to first audio)
-- Faster than real-time (~6x on modern CPUs)
 - Voice cloning support
 - Built-in voice selection
 
