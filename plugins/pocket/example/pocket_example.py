@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent, cli
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import pocket, getstream, smart_turn, deepgram, gemini
+from vision_agents.plugins import pocket, getstream, deepgram, gemini
 
 
 logger = logging.getLogger(__name__)
@@ -35,8 +35,8 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="Pocket AI", id="agent"),
         instructions="You are a helpful voice assistant. Keep responses brief and conversational.",
         tts=pocket.TTS(voice="alba"),
-        stt=deepgram.STT( eager_turn_detection=True ),
-        llm=gemini.LLM("gemini-2.0-flash"),
+        stt=deepgram.STT(eager_turn_detection=True),
+        llm=gemini.LLM("gemini-3-flash-preview"),
     )
     return agent
 

@@ -1,8 +1,7 @@
 import asyncio
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncIterator, Iterator, Literal
+from typing import Any, AsyncIterator, Iterator, Literal
 
 import numpy as np
 
@@ -31,7 +30,7 @@ VOICE_PATHS = {
 }
 
 
-class TTS(tts.TTS, Warmable[TTSModel]):
+class TTS(tts.TTS, Warmable[tuple[TTSModel, Any]]):
     """
     Pocket TTS Text-to-Speech implementation.
 
@@ -54,39 +53,39 @@ class TTS(tts.TTS, Warmable[TTSModel]):
             client: Optional pre-initialized TTSModel instance.
         """
         super().__init__(provider_name="pocket")
-        
+
         self.voice = voice
         self.device = device
         self._model: TTSModel | None = client
         self._voice_state = None
-        self._executor = ThreadPoolExecutor(max_workers=min(32, os.cpu_count() + 4))
+        self._executor = ThreadPoolExecutor(max_workers=4)
 
-    async def on_warmup(self) -> TTSModel:
-        if self._model is not None:
-            return self._model
+    async def on_warmup(self) -> tuple[TTSModel, Any]:
+        if self._model is not None and self._voice_state is not None:
+            return (self._model, self._voice_state)
 
         logger.info("Loading Pocket TTS model...")
         loop = asyncio.get_running_loop()
         model = await loop.run_in_executor(self._executor, TTSModel.load_model)
         logger.info("Pocket TTS model loaded")
-        return model
 
-    async def on_warmed_up(self, resource: TTSModel) -> None:
-        self._model = resource
         voice_path = VOICE_PATHS.get(self.voice, self.voice)
         logger.info(f"Loading voice state for: {self.voice}")
-        loop = asyncio.get_running_loop()
-        self._voice_state = await loop.run_in_executor(
+        voice_state = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.get_state_for_audio_prompt(voice_path),
+            lambda: model.get_state_for_audio_prompt(voice_path),
         )
         logger.info("Voice state loaded")
+        return (model, voice_state)
+
+    def on_warmed_up(self, resource: tuple[TTSModel, Any]) -> None:
+        self._model, self._voice_state = resource
 
     async def _ensure_loaded(self) -> None:
         """Ensure model and voice state are loaded."""
         if self._model is None:
-            model = await self.on_warmup()
-            await self.on_warmed_up(model)
+            resource = await self.on_warmup()
+            self.on_warmed_up(resource)
 
     async def stream_audio(
         self, text: str, *_, **__
@@ -101,6 +100,8 @@ class TTS(tts.TTS, Warmable[TTSModel]):
             PcmData containing the synthesized audio.
         """
         await self._ensure_loaded()
+        assert self._model is not None
+        assert self._voice_state is not None
 
         model = self._model
         voice_state = self._voice_state
