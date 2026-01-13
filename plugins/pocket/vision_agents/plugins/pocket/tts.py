@@ -64,10 +64,14 @@ class TTS(tts.TTS, Warmable[tuple[TTSModel, Any]]):
         if self._model is not None and self._voice_state is not None:
             return (self._model, self._voice_state)
 
-        logger.info("Loading Pocket TTS model...")
         loop = asyncio.get_running_loop()
-        model = await loop.run_in_executor(self._executor, TTSModel.load_model)
-        logger.info("Pocket TTS model loaded")
+
+        if self._model is not None:
+            model = self._model
+        else:
+            logger.info("Loading Pocket TTS model...")
+            model = await loop.run_in_executor(self._executor, TTSModel.load_model)
+            logger.info("Pocket TTS model loaded")
 
         voice_path = VOICE_PATHS.get(self.voice, self.voice)
         logger.info(f"Loading voice state for: {self.voice}")

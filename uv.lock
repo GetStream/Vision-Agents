@@ -6533,6 +6533,7 @@ all-plugins = [
     { name = "vision-agents-plugins-nvidia" },
     { name = "vision-agents-plugins-openai" },
     { name = "vision-agents-plugins-openrouter" },
+    { name = "vision-agents-plugins-pocket" },
     { name = "vision-agents-plugins-qwen" },
     { name = "vision-agents-plugins-roboflow" },
     { name = "vision-agents-plugins-smart-turn" },
@@ -6605,6 +6606,9 @@ openai = [
 ]
 openrouter = [
     { name = "vision-agents-plugins-openrouter" },
+]
+pocket = [
+    { name = "vision-agents-plugins-pocket" },
 ]
 qwen = [
     { name = "vision-agents-plugins-qwen" },
@@ -6684,6 +6688,8 @@ requires-dist = [
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'all-plugins'", editable = "plugins/openrouter" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'openrouter'", editable = "plugins/openrouter" },
+    { name = "vision-agents-plugins-pocket", marker = "extra == 'all-plugins'", editable = "plugins/pocket" },
+    { name = "vision-agents-plugins-pocket", marker = "extra == 'pocket'", editable = "plugins/pocket" },
     { name = "vision-agents-plugins-qwen", marker = "extra == 'all-plugins'", editable = "plugins/qwen" },
     { name = "vision-agents-plugins-qwen", marker = "extra == 'qwen'", editable = "plugins/qwen" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'all-plugins'", editable = "plugins/roboflow" },
@@ -6703,7 +6709,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "nvidia", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
