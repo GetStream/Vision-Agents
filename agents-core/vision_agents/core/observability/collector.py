@@ -250,9 +250,8 @@ class MetricsCollector:
         attrs = self._base_attributes(event)
 
         if event.data:
-            # Record bytes
-            audio_bytes = len(event.data.samples) * 2  # 16-bit samples
-            metrics.realtime_audio_input_bytes.add(audio_bytes, attrs)
+            # Record bytes using nbytes to handle all audio formats
+            metrics.realtime_audio_input_bytes.add(event.data.samples.nbytes, attrs)
 
             # Record duration
             if event.data.duration_ms:
@@ -265,9 +264,8 @@ class MetricsCollector:
         attrs = self._base_attributes(event)
 
         if event.data:
-            # Record bytes
-            audio_bytes = len(event.data.samples) * 2  # 16-bit samples
-            metrics.realtime_audio_output_bytes.add(audio_bytes, attrs)
+            # Record bytes using nbytes to handle all audio formats
+            metrics.realtime_audio_output_bytes.add(event.data.samples.nbytes, attrs)
 
             # Record duration
             if event.data.duration_ms:

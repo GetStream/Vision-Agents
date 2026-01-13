@@ -141,8 +141,6 @@ class ClaudeLLM(LLM):
 
         original = await self.client.messages.create(*args, **kwargs)
         if isinstance(original, ClaudeMessage):
-            latency_ms = (time.perf_counter() - request_start_time) * 1000
-
             # Extract text from Claude's response format - safely handle all text blocks
             text = self._concat_text_blocks(original.content)
             llm_response = LLMResponseEvent(original, text)
@@ -244,20 +242,23 @@ class ClaudeLLM(LLM):
             accumulated_calls: List[NormalizedToolCallItem] = []
             # Track if we've emitted the first chunk for the entire request
             emitted_first_chunk = False
-            # Track the final message for usage extraction
-            final_message: Optional[Any] = None
+            # Track usage from message_start and message_delta events
+            input_tokens: Optional[int] = None
+            output_tokens: Optional[int] = None
 
             # 1) First round: read stream, gather initial tool_use calls
             async for event in stream:
                 # Track time to first token
                 if first_token_time is None and event.type == "content_block_delta":
-                    delta = getattr(event, "delta", None)
-                    if delta is not None and hasattr(delta, "text") and delta.text:
+                    delta = event.delta if event.delta else None
+                    if delta is not None and delta.text:
                         first_token_time = time.perf_counter()
 
-                # Track message event for usage extraction
-                if event.type == "message_delta":
-                    final_message = event
+                # Track usage from streaming events
+                if event.type == "message_start" and event.message and event.message.usage:
+                    input_tokens = event.message.usage.input_tokens
+                elif event.type == "message_delta" and event.usage:
+                    output_tokens = event.usage.output_tokens
 
                 llm_response_optional, emitted_first_chunk = self._standardize_and_emit_event(
                     event,
@@ -337,9 +338,11 @@ class ClaudeLLM(LLM):
                 accumulated_calls = []  # reset; we'll refill with new calls
                 async for ev in follow_up_stream:
                     last_followup_stream = ev
-                    # Track message event for usage extraction
-                    if ev.type == "message_delta":
-                        final_message = ev
+                    # Track usage from streaming events
+                    if ev.type == "message_start" and ev.message and ev.message.usage:
+                        input_tokens = ev.message.usage.input_tokens
+                    elif ev.type == "message_delta" and ev.usage:
+                        output_tokens = ev.usage.output_tokens
                     llm_response_optional, emitted_first_chunk = self._standardize_and_emit_event(
                         ev,
                         follow_up_text_parts,
@@ -370,9 +373,11 @@ class ClaudeLLM(LLM):
                 final_text_parts: List[str] = []
                 async for ev in final_stream:
                     last_followup_stream = ev
-                    # Track message event for usage extraction
-                    if ev.type == "message_delta":
-                        final_message = ev
+                    # Track usage from streaming events
+                    if ev.type == "message_start" and ev.message and ev.message.usage:
+                        input_tokens = ev.message.usage.input_tokens
+                    elif ev.type == "message_delta" and ev.usage:
+                        output_tokens = ev.usage.output_tokens
                     llm_response_optional, emitted_first_chunk = self._standardize_and_emit_event(
                         ev,
                         final_text_parts,
@@ -397,15 +402,6 @@ class ClaudeLLM(LLM):
             ttft_ms: Optional[float] = None
             if first_token_time is not None:
                 ttft_ms = (first_token_time - request_start_time) * 1000
-
-            # Extract token usage from message_delta event
-            input_tokens: Optional[int] = None
-            output_tokens: Optional[int] = None
-            if final_message is not None and hasattr(final_message, "usage"):
-                usage = final_message.usage
-                if usage is not None:
-                    output_tokens = getattr(usage, "output_tokens", None)
-                    # Note: input_tokens may not be in message_delta, check message_start if needed
 
             self.events.send(
                 LLMResponseCompletedEvent(
