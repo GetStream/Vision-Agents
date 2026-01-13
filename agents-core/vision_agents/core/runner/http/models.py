@@ -1,5 +1,7 @@
 """Pydantic models for agent API requests and responses."""
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -14,24 +16,21 @@ class JoinCallRequest(BaseModel):
 class JoinCallResponse(BaseModel):
     """Response after successfully starting an agent."""
 
-    agent_id: str = Field(..., description="The agent ID that joined the call")
-    message: str = Field(..., description="Status message")
-
-
-class LeaveCallRequest(BaseModel):
-    """Request body for leaving a call (used by DELETE and sendBeacon POST)."""
-
-    user_id: str = Field(..., description="ID of the user requesting agent removal")
-
-
-class LeaveCallResponse(BaseModel):
-    """Response after agent leaves a call."""
-
-    agent_id: str = Field(..., description="The agent ID that left the call")
-    message: str = Field(..., description="Status message")
-
+    session_id: str = Field(..., description="The ID of the agent session")
+    call_id: str = Field(..., description="The ID of the call")
+    config: dict  # TODO: Make it a type
+    started_at: datetime
 
 class ErrorResponse(BaseModel):
     """Standard error response."""
 
     detail: str
+
+
+class GetAgentSessionResponse(BaseModel):
+    """Information about an active agent session."""
+
+    session_id: str
+    call_id: str
+    config: dict  # TODO: Make it a type
+    started_at: datetime

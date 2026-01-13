@@ -1,8 +1,18 @@
 import asyncio
 import logging
 import weakref
-from typing import TYPE_CHECKING, Callable, Coroutine, Optional
-from uuid import uuid4
+from asyncio import Task
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Callable,
+    Coroutine,
+    Optional,
+    cast,
+)
 
 from vision_agents.core.utils.utils import await_or_run, cancel_and_wait
 from vision_agents.core.warmup import Warmable, WarmupCache
@@ -13,9 +23,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AgentNotFoundError(Exception): ...
+class SessionNotFoundError(Exception): ...
 
 
+@dataclass
+class AgentSession:
+    agent: "Agent"
+    call_id: str
+    started_at: datetime
+    task: asyncio.Task
+    config: dict = field(default_factory=dict)
+
+    @property
+    def finished(self) -> bool:
+        return self.task.done()
+
+    @property
+    def id(self) -> str:
+        return self.agent.id
+
+    async def wait(self):
+        """
+        Wait for the session task to finish running.
+        """
+        return await self.task
+
+
+# TODO: Rename to `AgentManager`.
 class AgentLauncher:
     """
     Agent launcher that handles warmup and lifecycle management.
@@ -26,8 +60,8 @@ class AgentLauncher:
 
     def __init__(
         self,
-        create_agent: Callable[..., "Agent" | Coroutine["Agent", ..., ...]],
-        join_call: Callable[["Agent", ..., ...], Coroutine[None, ..., ...]],
+        create_agent: Callable[..., "Agent" | Coroutine[Any, Any, "Agent"]],
+        join_call: Callable[["Agent", str, str], Coroutine],
         agent_idle_timeout: float = 60.0,
         agent_idle_cleanup_interval: float = 5.0,
     ):
@@ -59,7 +93,7 @@ class AgentLauncher:
         self._running = False
         self._cleanup_task: Optional[asyncio.Task] = None
         self._warmed_up: bool = False
-        self._call_tasks: dict[str, asyncio.Task] = {}
+        self._sessions: dict[str, AgentSession] = {}
 
     async def start(self):
         if self._running:
@@ -76,10 +110,10 @@ class AgentLauncher:
         if self._cleanup_task:
             await cancel_and_wait(self._cleanup_task)
 
-        coros = [cancel_and_wait(t) for t in self._call_tasks.values()]
-        async for result in asyncio.as_completed(coros):
+        coros = [cancel_and_wait(s.task) for s in self._sessions.values()]
+        async for result in cast(AsyncIterator[Task], asyncio.as_completed(coros)):
             if result.done() and not result.cancelled() and result.exception():
-                logger.error(f"Failed to cancel the call task: {result.exception()}")
+                logger.error(f"Failed to cancel the agent task: {result.exception()}")
 
         logger.debug("AgentLauncher stopped")
 
@@ -108,6 +142,10 @@ class AgentLauncher:
     def warmed_up(self) -> bool:
         return self._warmed_up
 
+    @property
+    def running(self) -> bool:
+        return self._running
+
     async def launch(self, **kwargs) -> "Agent":
         """
         Launch the agent.
@@ -123,33 +161,51 @@ class AgentLauncher:
         self._active_agents.add(agent)
         return agent
 
-    # TODO: Typing
-    async def join(self, call_id: str, call_type: str = "default"):
-        agent: "Agent" = await await_or_run(self._create_agent)
-        await self._warmup_agent(agent)
-        self._active_agents.add(agent)
+    async def start_session(
+        self,
+        call_id: str,
+        call_type: str = "default",
+        video_track_override_path: Optional[str] = None,
+    ) -> AgentSession:
+        agent: "Agent" = await self.launch()
+        if video_track_override_path:
+            agent.set_video_track_override_path(video_track_override_path)
 
-        agent_id = str(uuid4())
         task = asyncio.create_task(
-            self._join_call(agent, call_type, call_id), name=f"agent-{agent_id}"
+            self._join_call(agent, call_type, call_id), name=f"agent-{agent.id}"
         )
-        self._call_tasks[agent_id] = task
 
-        # Remove the task reference when it's done
-        task.add_done_callback(
-            lambda t, agent_id_=agent_id: self._call_tasks.pop(agent_id_, None)
+        # Remove the session when the task is done
+        def _done_cb(_, agent_id_=agent.id):
+            self._sessions.pop(agent_id_, None)
+
+        task.add_done_callback(_done_cb)
+        session = AgentSession(
+            agent=agent,
+            task=task,
+            started_at=datetime.now(timezone.utc),
+            call_id=call_id,
         )
-        return agent_id
+        self._sessions[agent.id] = session
+        return session
 
-    async def close_agent(self, agent_id: str, wait: bool = False) -> None:
-        task = self._call_tasks.pop(agent_id, None)
-        if task is None:
-            raise AgentNotFoundError(f"Agent with id {agent_id} not found")
+    async def close_session(self, session_id: str, wait: bool = False) -> None:
+        # TODO: Test
+        session = self._sessions.pop(session_id, None)
+        if session is None:
+            raise SessionNotFoundError(f"Session with id {session_id} not found")
 
         if wait:
-            await cancel_and_wait(task)
+            await cancel_and_wait(session.task)
         else:
-            task.cancel()
+            session.task.cancel()
+
+    def get_session(self, session_id: str) -> AgentSession:
+        # TODO: Test
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise SessionNotFoundError(f"Session with id {session_id} not found")
+        return session
 
     async def _warmup_agent(self, agent: "Agent") -> None:
         """

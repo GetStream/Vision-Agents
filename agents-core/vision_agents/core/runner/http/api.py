@@ -2,15 +2,14 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from vision_agents.core import AgentLauncher
-from vision_agents.core.agents.agent_launcher import AgentNotFoundError
+from vision_agents.core.agents.agent_launcher import SessionNotFoundError
 
 from .models import (
+    GetAgentSessionResponse,
     JoinCallRequest,
     JoinCallResponse,
-    LeaveCallRequest,
-    LeaveCallResponse,
 )
 
 __all__ = ["router"]
@@ -44,7 +43,7 @@ AgentLauncherDependency = Depends(_get_launcher)
 
 
 @router.post(
-    "/agents/join",
+    "/sessions",
     response_model=JoinCallResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Join call with an agent",
@@ -56,23 +55,9 @@ async def join_call(
     """Start an agent and join a call."""
 
     try:
-        agent_id = await launcher.join(
+        session = await launcher.start_session(
             call_id=request.call_id, call_type=request.call_type
         )
-
-        return JoinCallResponse(
-            agent_id=agent_id,
-            message="Agent joining call",
-        )
-
-    except ValueError as e:
-        # Duplicate call_id - return 400
-        logger.warning(f"Duplicate agent request: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-
     except Exception as e:
         logger.exception("Failed to start agent")
         raise HTTPException(
@@ -80,65 +65,97 @@ async def join_call(
             detail=f"Failed to start agent: {str(e)}",
         ) from e
 
+    return JoinCallResponse(
+        session_id=session.id,
+        call_id=session.call_id,
+        started_at=session.started_at,
+        config=session.config,
+    )
+
 
 @router.delete(
-    "/agents/{agent_id}",
-    response_model=LeaveCallResponse,
-    summary="Remove agent from call",
-    description="Stop an agent and remove it from its current call.",
+    "/session/{session_id}",
+    summary="Close the agent session and remove it from call",
 )
-async def leave_call(
-    agent_id: str,
-    request: LeaveCallRequest,
+async def close_session(
+    session_id: str,
     launcher: AgentLauncher = AgentLauncherDependency,
-) -> LeaveCallResponse:
+) -> Response:
     """
     Stop an agent and remove it from a call.
     """
 
     try:
-        await launcher.close_agent(agent_id)
-    except AgentNotFoundError as exc:
+        await launcher.close_session(session_id)
+    except SessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent for call '{agent_id}' not found",
+            detail=f"Agent for call '{session_id}' not found",
         ) from exc
 
-    return LeaveCallResponse(agent_id=agent_id, message="Agent removed from call")
+    return Response(status_code=204)
 
 
 @router.post(
-    "/agents/{agent_id}/leave",
-    response_model=LeaveCallResponse,
-    summary="Remove agent from call (sendBeacon)",
+    "/sessions/{session_id}/leave",
+    summary="Close the agent session via sendBeacon (POST alternative to DELETE).",
     description="Alternative endpoint for agent leave via sendBeacon. "
     "sendBeacon only supports POST requests.",
 )
-async def leave_call_beacon(
-    agent_id: str,
-    request: LeaveCallRequest,
+async def close_session_beacon(
+    session_id: str,
     launcher: AgentLauncher = AgentLauncherDependency,
-) -> LeaveCallResponse:
+) -> Response:
     """
     Stop an agent via sendBeacon (POST alternative to DELETE).
     """
 
     try:
-        await launcher.close_agent(agent_id)
-    except AgentNotFoundError:
+        await launcher.close_session(session_id)
+    except SessionNotFoundError:
         # For beacon requests, we return success even if not found
         # since the agent may have already been cleaned up
-        logger.warning(f"Beacon leave: agent for call '{agent_id}' not found")
+        logger.warning(f"Beacon leave: agent session with id '{session_id}' not found")
 
-    return LeaveCallResponse(agent_id=agent_id, message="Agent removed from call")
+    return Response(status_code=200)
 
 
-@router.get("/alive")
-async def alive() -> Response:
+@router.get(
+    "/sessions/{session_id}",
+    response_model=GetAgentSessionResponse,
+    summary="Get info about a running agent session",
+)
+async def get_session_info(
+    session_id: str,
+    launcher: AgentLauncher = AgentLauncherDependency,
+) -> GetAgentSessionResponse:
+    """
+    Get info about a running agent session.
+    """
+
+    try:
+        session = launcher.get_session(session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session with id '{session_id}' not found",
+        ) from exc
+
+    response = GetAgentSessionResponse(
+        session_id=session.id,
+        call_id=session.call_id,
+        config=session.config,
+        started_at=session.started_at,
+    )
+    return response
+
+
+@router.get("/health")
+async def health() -> Response:
     """
     Check if the server is alive.
     """
-    return Response(200)
+    return Response(status_code=200)
 
 
 @router.get("/ready")
@@ -146,7 +163,9 @@ async def ready(launcher: AgentLauncher = Depends(_get_launcher)) -> Response:
     """
     Check if the server is ready to spawn new agents.
     """
-    if launcher.warmed_up:
-        return Response(200)
+    if launcher.warmed_up and launcher.running:
+        return Response(status_code=200)
     else:
-        return JSONResponse({"detail": "Server is warming up"}, status_code=400)
+        raise HTTPException(
+            status_code=400, detail="Server is not ready to accept requests"
+        )

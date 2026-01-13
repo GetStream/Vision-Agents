@@ -2,8 +2,7 @@ import logging
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, AgentLauncher, User
-from vision_agents.core.runners import HTTPServerRunner
+from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
@@ -51,8 +50,6 @@ async def create_agent(**kwargs) -> Agent:
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    # TODO: Feels like we need to pass some call object here instead of just params which may vary
-    #   based on the Edge implementation.
     call = await agent.create_call(call_type, call_id)
 
     # Have the agent join the call/room
@@ -65,6 +62,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
-    HTTPServerRunner(
-        AgentLauncher(create_agent=create_agent, join_call=join_call)
-    ).run()
+    Runner(
+        AgentLauncher(create_agent=create_agent, join_call=join_call),
+    ).cli()

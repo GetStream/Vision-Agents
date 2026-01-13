@@ -148,6 +148,7 @@ class Agent:
         if not self.agent_user.id:
             self.agent_user.id = f"agent-{uuid4()}"
 
+        self._id = str(uuid4())
         self._pending_turn: Optional[LLMTurn] = None
         self.call: Optional[Call] = None
 
@@ -254,6 +255,10 @@ class Agent:
         self._close_lock = asyncio.Lock()
         self._closed = False
         self._metrics = AgentMetrics()
+
+    @property
+    def id(self) -> str:
+        return self._id
 
     async def _finish_llm_turn(self):
         if self._pending_turn is None or self._pending_turn.response is None:
