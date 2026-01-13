@@ -95,8 +95,7 @@ async def twilio_voice_webhook(
         await agent.edge.create_user(user=phone_user)
 
         stream_call = await agent.create_call("default", call_id=call_id)
-        agent_session = await agent.join(stream_call, wait_for_participant=False)
-        return agent, phone_user, stream_call, agent_session
+        return agent, phone_user, stream_call
 
     twilio_call = call_registry.create(call_id, data, prepare=prepare_call)
     url = f"wss://{NGROK_URL}/twilio/media/{call_id}/{twilio_call.token}"
@@ -121,13 +120,12 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
             agent,
             phone_user,
             stream_call,
-            agent_session,
         ) = await twilio_call.await_prepare()
         twilio_call.stream_call = stream_call
 
         await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
 
-        with agent_session:
+        async with agent.join(stream_call, participant_wait_timeout=0):
             await agent.llm.simple_response(
                 text="Greet the caller warmly and ask what kind of app they're building. Use your knowledge base to provide relevant product recommendations."
             )

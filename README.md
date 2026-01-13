@@ -88,16 +88,18 @@ Get a free API key from [Stream](https://getstream.io/). Developers receive **33
 
 ## Features
 
-| **Feature**                         | **Description**                                                                                                                                       |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **True real-time via WebRTC**       | Stream directly to model providers that support it for instant visual understanding.                                                                  |
-| **Interval/processor pipeline**     | For providers without WebRTC, process frames with pluggable video processors (e.g., YOLO, Roboflow, or custom PyTorch/ONNX) before/after model calls. |
-| **Turn detection & diarization**    | Keep conversations natural; know when the agent should speak or stay quiet and who's talking.                                                         |
-| **Voice activity detection (VAD)**  | Trigger actions intelligently and use resources efficiently.                                                                                          |
-| **Speech↔Text↔Speech**              | Enable low-latency loops for smooth, conversational voice UX.                                                                                         |
-| **Tool/function calling**           | Execute arbitrary code and APIs mid-conversation. Create Linear issues, query weather, trigger telephony, or hit internal services.                   |
+| **Feature**                        | **Description**                                                                                                                                       |
+|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **True real-time via WebRTC**      | Stream directly to model providers that support it for instant visual understanding.                                                                  |
+| **Interval/processor pipeline**    | For providers without WebRTC, process frames with pluggable video processors (e.g., YOLO, Roboflow, or custom PyTorch/ONNX) before/after model calls. |
+| **Turn detection & diarization**   | Keep conversations natural; know when the agent should speak or stay quiet and who's talking.                                                         |
+| **Voice activity detection (VAD)** | Trigger actions intelligently and use resources efficiently.                                                                                          |
+| **Speech↔Text↔Speech**             | Enable low-latency loops for smooth, conversational voice UX.                                                                                         |
+| **Tool/function calling**          | Execute arbitrary code and APIs mid-conversation. Create Linear issues, query weather, trigger telephony, or hit internal services.                   |
 | **Built-in memory via Stream Chat** | Agents recall context naturally across turns and sessions.                                                                                            |
-| **Text back-channel**               | Message the agent silently during a call.                                                                                                             |
+| **Text back-channel**              | Message the agent silently during a call.                                                                                                             |
+| **Phone and RAG**                  | Interact with the Agent via inbound or outbound phone calls using Twilio and Turbopuffer                                                              |
+
 
 ## Out-of-the-Box Integrations
 
@@ -153,12 +155,13 @@ Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai
 
 ## Examples
 
-| 🔮 Demo Applications | |
-|:-----|---------|
-|  <br><h3>Cartesia</h3>Using Cartesia's Sonic 3 model to visually look at what's in the frame and tell a story with emotion.<br><br>• Real-time visual understanding<br>• Emotional storytelling<br>• Frame-by-frame analysis<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example) | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Cartesia Demo"> |
-|  <br><h3>Realtime Stable Diffusion</h3>Realtime stable diffusion using Vision Agents and Decart's Mirage 2 model to create interactive scenes and stories.<br><br>• Real-time video restyling<br>• Interactive scene generation<br>• Stable diffusion integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/decart/example) | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Mirage Demo"> |
-|  <br><h3>Golf Coach</h3>Using Gemini Live together with Vision Agents and Ultralytics YOLO, we're able to track the user's pose and provide realtime actionable feedback on their golf game.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• YOLO pose detection<br>• Gemini Live integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example) | <img src="assets/demo_gifs/golf.gif" width="320" alt="Golf Coach Demo"> |
-|  <br><h3>GeoGuesser</h3>Together with OpenAI Realtime and Vision Agents, we can take GeoGuesser to the next level by asking it to identify places in our real world surroundings.<br><br>• Real-world location identification<br>• OpenAI Realtime integration<br>• Visual scene understanding<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/other_examples/openai_realtime_webrtc)| <img src="assets/demo_gifs/geoguesser.gif" width="320" alt="GeoGuesser Demo"> |
+| 🔮 Demo Applications |                                                                                |
+|:-----|--------------------------------------------------------------------------------|
+|  <br><h3>Cartesia</h3>Using Cartesia's Sonic 3 model to visually look at what's in the frame and tell a story with emotion.<br><br>• Real-time visual understanding<br>• Emotional storytelling<br>• Frame-by-frame analysis<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example) | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Cartesia Demo">      |
+|  <br><h3>Realtime Stable Diffusion</h3>Realtime stable diffusion using Vision Agents and Decart's Mirage 2 model to create interactive scenes and stories.<br><br>• Real-time video restyling<br>• Interactive scene generation<br>• Stable diffusion integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/decart/example) | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Mirage Demo">          |
+|  <br><h3>Golf Coach</h3>Using Gemini Live together with Vision Agents and Ultralytics YOLO, we're able to track the user's pose and provide realtime actionable feedback on their golf game.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• YOLO pose detection<br>• Gemini Live integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example) | <img src="assets/demo_gifs/golf.gif" width="320" alt="Golf Coach Demo">        |
+|  <br><h3>GeoGuesser</h3>Together with OpenAI Realtime and Vision Agents, we can take GeoGuesser to the next level by asking it to identify places in our real world surroundings.<br><br>• Real-world location identification<br>• OpenAI Realtime integration<br>• Visual scene understanding<br><br> [>Source Code and tutorial](https://visionagents.ai/integrations/openai#openai-realtime)| <img src="assets/demo_gifs/geoguesser.gif" width="320" alt="GeoGuesser Demo">  |
+|  <br><h3>Phone and RAG</h3>Interact with your Agent over the phone using Twilio. This example demonstrates how to use TurboPuffer for Retrieval Augmented Generation (RAG) to give your agent specialized knowledge.<br><br>• Inbound/Outbound telephony<br>• Twilio Media Streams integration<br>• Vector search with TurboPuffer<br>• Retrieval Augmented Generation<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) | <img src="assets/demo_gifs/va_phone.png" width="320" alt="Phone and RAG Demo"> |
 
 
 ## Development
