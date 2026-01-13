@@ -8,6 +8,7 @@ from anthropic.types import (
     Message as ClaudeMessage,
     RawContentBlockDeltaEvent,
     RawMessageStopEvent,
+    TextDelta,
 )
 
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
@@ -250,22 +251,28 @@ class ClaudeLLM(LLM):
             async for event in stream:
                 # Track time to first token
                 if first_token_time is None and event.type == "content_block_delta":
-                    delta = event.delta if event.delta else None
-                    if delta is not None and delta.text:
+                    delta = event.delta
+                    if isinstance(delta, TextDelta) and delta.text:
                         first_token_time = time.perf_counter()
 
                 # Track usage from streaming events
-                if event.type == "message_start" and event.message and event.message.usage:
+                if (
+                    event.type == "message_start"
+                    and event.message
+                    and event.message.usage
+                ):
                     input_tokens = event.message.usage.input_tokens
                 elif event.type == "message_delta" and event.usage:
                     output_tokens = event.usage.output_tokens
 
-                llm_response_optional, emitted_first_chunk = self._standardize_and_emit_event(
-                    event,
-                    text_parts,
-                    request_start_time=request_start_time,
-                    first_token_time=first_token_time,
-                    emitted_first_chunk=emitted_first_chunk,
+                llm_response_optional, emitted_first_chunk = (
+                    self._standardize_and_emit_event(
+                        event,
+                        text_parts,
+                        request_start_time=request_start_time,
+                        first_token_time=first_token_time,
+                        emitted_first_chunk=emitted_first_chunk,
+                    )
                 )
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
@@ -343,12 +350,14 @@ class ClaudeLLM(LLM):
                         input_tokens = ev.message.usage.input_tokens
                     elif ev.type == "message_delta" and ev.usage:
                         output_tokens = ev.usage.output_tokens
-                    llm_response_optional, emitted_first_chunk = self._standardize_and_emit_event(
-                        ev,
-                        follow_up_text_parts,
-                        request_start_time=request_start_time,
-                        first_token_time=first_token_time,
-                        emitted_first_chunk=emitted_first_chunk,
+                    llm_response_optional, emitted_first_chunk = (
+                        self._standardize_and_emit_event(
+                            ev,
+                            follow_up_text_parts,
+                            request_start_time=request_start_time,
+                            first_token_time=first_token_time,
+                            emitted_first_chunk=emitted_first_chunk,
+                        )
                     )
                     if llm_response_optional is not None:
                         llm_response = llm_response_optional
@@ -378,12 +387,14 @@ class ClaudeLLM(LLM):
                         input_tokens = ev.message.usage.input_tokens
                     elif ev.type == "message_delta" and ev.usage:
                         output_tokens = ev.usage.output_tokens
-                    llm_response_optional, emitted_first_chunk = self._standardize_and_emit_event(
-                        ev,
-                        final_text_parts,
-                        request_start_time=request_start_time,
-                        first_token_time=first_token_time,
-                        emitted_first_chunk=emitted_first_chunk,
+                    llm_response_optional, emitted_first_chunk = (
+                        self._standardize_and_emit_event(
+                            ev,
+                            final_text_parts,
+                            request_start_time=request_start_time,
+                            first_token_time=first_token_time,
+                            emitted_first_chunk=emitted_first_chunk,
+                        )
                     )
                     if llm_response_optional is not None:
                         llm_response = llm_response_optional
