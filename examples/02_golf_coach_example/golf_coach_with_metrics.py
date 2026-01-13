@@ -51,7 +51,8 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     # Attach MetricsCollector to record OpenTelemetry metrics
-    _ = MetricsCollector(agent)
+    # Store reference to prevent garbage collection during call lifetime
+    metrics_collector = MetricsCollector(agent)
 
     logger.info("=" * 60)
     logger.info("Golf Coach with Realtime Metrics")
