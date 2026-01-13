@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 Voice = Literal[
     "alba", "marius", "javert", "jean", "fantine", "cosette", "eponine", "azelma"
 ]
-Device = Literal["cpu", "cuda", "mps"]
 
 VOICE_PATHS = {
     "alba": "hf://kyutai/tts-voices/alba-mackenna/casual.wav",
@@ -41,7 +40,6 @@ class TTS(tts.TTS, Warmable[tuple[TTSModel, Any]]):
     def __init__(
         self,
         voice: Voice | str = "alba",
-        device: Device | None = None,
         client: TTSModel | None = None,
     ) -> None:
         """
@@ -49,13 +47,11 @@ class TTS(tts.TTS, Warmable[tuple[TTSModel, Any]]):
 
         Args:
             voice: Built-in voice name or path to custom wav file for voice cloning.
-            device: Device to run on ("cpu", "cuda", "mps") or None for auto-detect.
             client: Optional pre-initialized TTSModel instance.
         """
         super().__init__(provider_name="pocket")
 
         self.voice = voice
-        self.device = device
         self._model: TTSModel | None = client
         self._voice_state = None
         self._executor = ThreadPoolExecutor(max_workers=4)
