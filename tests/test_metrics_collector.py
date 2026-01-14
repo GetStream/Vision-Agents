@@ -193,7 +193,6 @@ class TestMetricsCollector:
         # Should not record metrics for missing fields
         llm_latency_ms.record.assert_not_called()
         llm_time_to_first_token_ms.record.assert_not_called()
-        llm_time_to_first_token_ms.record.assert_not_called()
         llm_input_tokens.add.assert_not_called()
         llm_output_tokens.add.assert_not_called()
 
