@@ -89,6 +89,7 @@ def mock_metrics():
                 patches.append(patch.object(metric, "record").start())
             if hasattr(metric, "add"):
                 patches.append(patch.object(metric, "add").start())
+        yield
     finally:
         for patch_ in reversed(patches):
             patch_.stop()
@@ -134,6 +135,9 @@ async def collector(mock_metrics, event_manager) -> MetricsCollector:
     collector = MetricsCollector(agent)
 
     return collector
+
+
+# TODO: Test agent metrics too
 
 
 class TestMetricsCollector:
