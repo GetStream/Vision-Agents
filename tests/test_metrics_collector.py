@@ -15,6 +15,7 @@ from vision_agents.core.llm.events import (
     VLMErrorEvent,
     VLMInferenceCompletedEvent,
 )
+from vision_agents.core.observability.agent import AgentMetrics
 from vision_agents.core.observability.collector import MetricsCollector
 from vision_agents.core.observability.metrics import (
     llm_errors,
@@ -116,8 +117,7 @@ async def event_manager() -> EventManager:
 
 
 @pytest.fixture
-async def collector(mock_metrics, event_manager) -> MetricsCollector:
-    # Create a mock agent
+async def agent(event_manager):
     agent = MagicMock()
     agent.llm = MagicMock()
     agent.llm.events = event_manager
@@ -130,20 +130,21 @@ async def collector(mock_metrics, event_manager) -> MetricsCollector:
 
     agent.turn_detection = MagicMock()
     agent.turn_detection.events = event_manager
+    agent.metrics = AgentMetrics()
     agent.events = EventManager()
+    return agent
 
+
+@pytest.fixture
+async def collector(mock_metrics, agent) -> MetricsCollector:
     collector = MetricsCollector(agent)
-
     return collector
-
-
-# TODO: Test agent metrics too
 
 
 class TestMetricsCollector:
     """Tests for MetricsCollector handler methods."""
 
-    async def test_on_llm_response_completed(self, collector, event_manager):
+    async def test_on_llm_response_completed(self, collector, event_manager, agent):
         """Test LLM response completed handler records all metrics."""
 
         event = LLMResponseCompletedEvent(
@@ -170,9 +171,13 @@ class TestMetricsCollector:
         llm_output_tokens.add.assert_called_once_with(
             5, {"provider": "openai", "model": "gpt-4"}
         )
+        assert agent.metrics.llm_latency_ms__avg.value() == 150
+        assert agent.metrics.llm_time_to_first_token_ms__avg.value() == 50
+        assert agent.metrics.llm_input_tokens__total.value() == 10
+        assert agent.metrics.llm_output_tokens__total.value() == 5
 
     async def test_on_llm_response_completed_partial_data(
-        self, collector, event_manager
+        self, collector, event_manager, agent
     ):
         """Test LLM handler with missing optional fields."""
 
@@ -192,7 +197,12 @@ class TestMetricsCollector:
         llm_input_tokens.add.assert_not_called()
         llm_output_tokens.add.assert_not_called()
 
-    async def test_on_tool_end(self, collector, event_manager):
+        assert agent.metrics.llm_latency_ms__avg.value() is None
+        assert agent.metrics.llm_time_to_first_token_ms__avg.value() is None
+        assert agent.metrics.llm_input_tokens__total.value() == 0
+        assert agent.metrics.llm_output_tokens__total.value() == 0
+
+    async def test_on_tool_end(self, collector, event_manager, agent):
         """Test tool end handler records metrics."""
 
         event = ToolEndEvent(
@@ -208,12 +218,14 @@ class TestMetricsCollector:
         llm_tool_calls.add.assert_called_once_with(
             1, {"provider": "openai", "tool_name": "get_weather", "success": "true"}
         )
-
         llm_tool_latency_ms.record.assert_called_once_with(
             25.0, {"provider": "openai", "tool_name": "get_weather", "success": "true"}
         )
 
-    async def test_on_stt_transcript(self, collector, event_manager):
+        assert agent.metrics.llm_tool_calls__total.value() == 1
+        assert agent.metrics.llm_tool_latency_ms__avg.value() == 25
+
+    async def test_on_stt_transcript(self, collector, event_manager, agent):
         """Test STT transcript handler records metrics."""
 
         event = STTTranscriptEvent(
@@ -233,11 +245,13 @@ class TestMetricsCollector:
         stt_latency_ms.record.assert_called_once_with(
             100.0, {"provider": "deepgram", "model": "nova-2", "language": "en"}
         )
-
         stt_audio_duration_ms.record.assert_called_once_with(
             2000.0,
             {"provider": "deepgram", "model": "nova-2", "language": "en"},
         )
+
+        assert agent.metrics.stt_latency_ms__avg.value() == 100.0
+        assert agent.metrics.stt_audio_duration_ms__total.value() == 2000.0
 
     async def test_on_stt_error(self, collector, event_manager):
         """Test STT error handler records metrics."""
@@ -260,7 +274,7 @@ class TestMetricsCollector:
             },
         )
 
-    async def test_on_tts_synthesis_complete(self, collector, event_manager):
+    async def test_on_tts_synthesis_complete(self, collector, event_manager, agent):
         """Test TTS synthesis complete handler records metrics."""
 
         event = TTSSynthesisCompleteEvent(
@@ -280,6 +294,10 @@ class TestMetricsCollector:
         tts_characters.add.assert_called_once_with(
             len("Hello world"), {"provider": "cartesia"}
         )
+
+        assert agent.metrics.tts_latency_ms__avg.value() == 50.0
+        assert agent.metrics.tts_audio_duration_ms__total.value() == 1500.0
+        assert agent.metrics.tts_characters__total.value() == len("Hello world")
 
     async def test_on_tts_error(self, collector, event_manager):
         """Test TTS error handler records metrics."""
@@ -301,7 +319,7 @@ class TestMetricsCollector:
             },
         )
 
-    async def test_on_turn_ended(self, collector, event_manager):
+    async def test_on_turn_ended(self, collector, event_manager, agent):
         """Test turn ended handler records metrics."""
 
         event = TurnEndedEvent(
@@ -312,14 +330,17 @@ class TestMetricsCollector:
 
         event_manager.send(event)
         await event_manager.wait(1)
+
         turn_duration_ms.record.assert_called_once_with(
             3500.0, {"provider": "smart_turn"}
         )
         turn_trailing_silence_ms.record.assert_called_once_with(
             500.0, {"provider": "smart_turn"}
         )
+        assert agent.metrics.turn_duration_ms__avg.value() == 3500.0
+        assert agent.metrics.turn_trailing_silence_ms__avg.value() == 500.0
 
-    async def test_on_vlm_inference_completed(self, collector, event_manager):
+    async def test_on_vlm_inference_completed(self, collector, event_manager, agent):
         """Test VLM inference completed handler records metrics."""
 
         event = VLMInferenceCompletedEvent(
@@ -350,7 +371,13 @@ class TestMetricsCollector:
             20, {"provider": "moondream", "model": "moondream-cloud"}
         )
 
-    async def test_on_vlm_error(self, collector, event_manager):
+        assert agent.metrics.vlm_inferences__total.value() == 1
+        assert agent.metrics.vlm_inference_latency_ms__avg.value() == 200.0
+        assert agent.metrics.video_frames_processed__total.value() == 5
+        assert agent.metrics.vlm_input_tokens__total.value() == 100
+        assert agent.metrics.vlm_output_tokens__total.value() == 20
+
+    async def test_on_vlm_error(self, collector, event_manager, agent):
         """Test VLM error handler records metrics."""
 
         event = VLMErrorEvent(

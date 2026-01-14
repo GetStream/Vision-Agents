@@ -49,6 +49,7 @@ from ..llm.events import (
 from ..llm.llm import LLM, AudioLLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..mcp import MCPBaseServer, MCPManager
+from ..observability.agent import AgentMetrics
 from ..processors.base_processor import (
     AudioProcessor,
     AudioPublisher,
@@ -252,6 +253,7 @@ class Agent:
         self._join_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._closed = False
+        self._metrics = AgentMetrics()
 
     async def _finish_llm_turn(self):
         if self._pending_turn is None or self._pending_turn.response is None:
@@ -1369,6 +1371,10 @@ class Agent:
         return await asyncio.to_thread(
             lambda p: VideoFileTrack(p), self._video_track_override_path
         )
+
+    @property
+    def metrics(self) -> AgentMetrics:
+        return self._metrics
 
 
 def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:

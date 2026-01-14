@@ -19,28 +19,28 @@ import logging
 import time
 from typing import TYPE_CHECKING, Dict
 
-from . import metrics
-
 # Import event types at module level so they can be resolved by typing.get_type_hints()
 from vision_agents.core.events import PluginBaseEvent, VideoProcessorDetectionEvent
 from vision_agents.core.llm.events import (
-    LLMResponseCompletedEvent,
     LLMErrorEvent,
-    ToolEndEvent,
-    RealtimeErrorEvent,
-    RealtimeConnectedEvent,
-    RealtimeDisconnectedEvent,
+    LLMResponseCompletedEvent,
+    RealtimeAgentSpeechTranscriptionEvent,
     RealtimeAudioInputEvent,
     RealtimeAudioOutputEvent,
+    RealtimeConnectedEvent,
+    RealtimeDisconnectedEvent,
+    RealtimeErrorEvent,
     RealtimeResponseEvent,
     RealtimeUserSpeechTranscriptionEvent,
-    RealtimeAgentSpeechTranscriptionEvent,
-    VLMInferenceCompletedEvent,
+    ToolEndEvent,
     VLMErrorEvent,
+    VLMInferenceCompletedEvent,
 )
-from vision_agents.core.stt.events import STTTranscriptEvent, STTErrorEvent
-from vision_agents.core.tts.events import TTSSynthesisCompleteEvent, TTSErrorEvent
+from vision_agents.core.stt.events import STTErrorEvent, STTTranscriptEvent
+from vision_agents.core.tts.events import TTSErrorEvent, TTSSynthesisCompleteEvent
 from vision_agents.core.turn_detection.events import TurnEndedEvent
+
+from . import metrics
 
 if TYPE_CHECKING:
     from vision_agents.core.agents import Agent
@@ -66,11 +66,12 @@ class MetricsCollector:
             agent: The agent to collect metrics from.
         """
         self.agent = agent
+        self._agent_metrics = agent.metrics
         # Track realtime session start times for duration calculation
         self._realtime_session_starts: Dict[str, float] = {}
-        self._subscribe_to_events()
+        self._subscribe()
 
-    def _subscribe_to_events(self) -> None:
+    def _subscribe(self) -> None:
         """Subscribe to all relevant events from the agent's components."""
         self._subscribe_to_llm_events()
         self._subscribe_to_realtime_events()
@@ -186,18 +187,24 @@ class MetricsCollector:
         # Record latency
         if event.latency_ms is not None:
             metrics.llm_latency_ms.record(event.latency_ms, attrs)
+            self._agent_metrics.llm_latency_ms__avg.update(event.latency_ms)
 
         # Record time to first token
         if event.time_to_first_token_ms is not None:
             metrics.llm_time_to_first_token_ms.record(
                 event.time_to_first_token_ms, attrs
             )
+            self._agent_metrics.llm_time_to_first_token_ms__avg.update(
+                event.time_to_first_token_ms
+            )
 
         # Record token usage
         if event.input_tokens is not None:
             metrics.llm_input_tokens.add(event.input_tokens, attrs)
+            self._agent_metrics.llm_input_tokens__total.inc(event.input_tokens)
         if event.output_tokens is not None:
             metrics.llm_output_tokens.add(event.output_tokens, attrs)
+            self._agent_metrics.llm_output_tokens__total.inc(event.output_tokens)
 
     def _on_tool_end(self, event: ToolEndEvent) -> None:
         """Handle tool execution end event."""
@@ -206,9 +213,11 @@ class MetricsCollector:
         attrs["success"] = str(event.success).lower()
 
         metrics.llm_tool_calls.add(1, attrs)
+        self._agent_metrics.llm_tool_calls__total.inc(1)
 
         if event.execution_time_ms is not None:
             metrics.llm_tool_latency_ms.record(event.execution_time_ms, attrs)
+            self._agent_metrics.llm_tool_latency_ms__avg.update(event.execution_time_ms)
 
     def _on_llm_error(self, event: LLMErrorEvent) -> None:
         """Handle LLM error event."""
@@ -229,8 +238,9 @@ class MetricsCollector:
         attrs = self._base_attributes(event)
 
         # Track session start time
+        # TODO: Some lru structure here? this dict will grow if the sessions are not closed properly
         if event.session_id:
-            self._realtime_session_starts[event.session_id] = time.time()
+            self._realtime_session_starts[event.session_id] = time.perf_counter()
 
         metrics.realtime_sessions.add(1, attrs)
 
@@ -242,7 +252,7 @@ class MetricsCollector:
         # Calculate session duration
         if event.session_id and event.session_id in self._realtime_session_starts:
             start_time = self._realtime_session_starts.pop(event.session_id)
-            duration_ms = (time.time() - start_time) * 1000
+            duration_ms = (time.perf_counter() - start_time) * 1000
             metrics.realtime_session_duration_ms.record(duration_ms, attrs)
 
     def _on_realtime_audio_input(self, event: "RealtimeAudioInputEvent") -> None:
@@ -252,11 +262,17 @@ class MetricsCollector:
         if event.data and event.data.samples is not None:
             # Record bytes using nbytes to handle all audio formats
             metrics.realtime_audio_input_bytes.add(event.data.samples.nbytes, attrs)
+            self._agent_metrics.realtime_audio_input_bytes__total.inc(
+                event.data.samples.nbytes
+            )
 
             # Record duration
             if event.data.duration_ms:
                 metrics.realtime_audio_input_duration_ms.add(
                     int(event.data.duration_ms), attrs
+                )
+                self._agent_metrics.realtime_audio_input_duration_ms__total.inc(
+                    int(event.data.duration_ms)
                 )
 
     def _on_realtime_audio_output(self, event: "RealtimeAudioOutputEvent") -> None:
@@ -266,11 +282,17 @@ class MetricsCollector:
         if event.data and event.data.samples is not None:
             # Record bytes using nbytes to handle all audio formats
             metrics.realtime_audio_output_bytes.add(event.data.samples.nbytes, attrs)
+            self._agent_metrics.realtime_audio_output_bytes__total.inc(
+                event.data.samples.nbytes
+            )
 
             # Record duration
             if event.data.duration_ms:
                 metrics.realtime_audio_output_duration_ms.add(
                     int(event.data.duration_ms), attrs
+                )
+                self._agent_metrics.realtime_audio_output_duration_ms__total.inc(
+                    int(event.data.duration_ms)
                 )
 
     def _on_realtime_response(self, event: "RealtimeResponseEvent") -> None:
@@ -287,6 +309,7 @@ class MetricsCollector:
         """Handle realtime user speech transcription event."""
         attrs = self._base_attributes(event)
         metrics.realtime_user_transcriptions.add(1, attrs)
+        self._agent_metrics.realtime_user_transcriptions__total.inc(1)
 
     def _on_realtime_agent_transcription(
         self, event: "RealtimeAgentSpeechTranscriptionEvent"
@@ -294,6 +317,7 @@ class MetricsCollector:
         """Handle realtime agent speech transcription event."""
         attrs = self._base_attributes(event)
         metrics.realtime_agent_transcriptions.add(1, attrs)
+        self._agent_metrics.realtime_agent_transcriptions__total.inc(1)
 
     def _on_realtime_error(self, event: "RealtimeErrorEvent") -> None:
         """Handle realtime error event."""
@@ -320,9 +344,13 @@ class MetricsCollector:
 
         if event.processing_time_ms is not None:
             metrics.stt_latency_ms.record(event.processing_time_ms, attrs)
+            self._agent_metrics.stt_latency_ms__avg.update(event.processing_time_ms)
 
         if event.audio_duration_ms is not None:
             metrics.stt_audio_duration_ms.record(event.audio_duration_ms, attrs)
+            self._agent_metrics.stt_audio_duration_ms__total.inc(
+                int(event.audio_duration_ms)
+            )
 
     def _on_stt_error(self, event: STTErrorEvent) -> None:
         """Handle STT error event."""
@@ -345,14 +373,19 @@ class MetricsCollector:
         # Record synthesis latency
         if event.synthesis_time_ms is not None:
             metrics.tts_latency_ms.record(event.synthesis_time_ms, attrs)
+            self._agent_metrics.tts_latency_ms__avg.update(event.synthesis_time_ms)
 
         # Record audio duration
         if event.audio_duration_ms is not None:
             metrics.tts_audio_duration_ms.record(event.audio_duration_ms, attrs)
+            self._agent_metrics.tts_audio_duration_ms__total.inc(
+                int(event.audio_duration_ms)
+            )
 
         # Record characters synthesized
         if event.text:
             metrics.tts_characters.add(len(event.text), attrs)
+            self._agent_metrics.tts_characters__total.inc(len(event.text))
 
     def _on_tts_error(self, event: TTSErrorEvent) -> None:
         """Handle TTS error event."""
@@ -374,9 +407,13 @@ class MetricsCollector:
 
         if event.duration_ms is not None:
             metrics.turn_duration_ms.record(event.duration_ms, attrs)
+            self._agent_metrics.turn_duration_ms__avg.update(event.duration_ms)
 
         if event.trailing_silence_ms is not None:
             metrics.turn_trailing_silence_ms.record(event.trailing_silence_ms, attrs)
+            self._agent_metrics.turn_trailing_silence_ms__avg.update(
+                event.trailing_silence_ms
+            )
 
     # =========================================================================
     # VLM Event Handlers
@@ -403,20 +440,27 @@ class MetricsCollector:
 
         # Record inference count
         metrics.vlm_inferences.add(1, attrs)
+        self._agent_metrics.vlm_inferences__total.inc(1)
 
         # Record latency
         if event.latency_ms is not None:
             metrics.vlm_inference_latency_ms.record(event.latency_ms, attrs)
+            self._agent_metrics.vlm_inference_latency_ms__avg.update(event.latency_ms)
 
         # Record token usage
         if event.input_tokens is not None:
             metrics.vlm_input_tokens.add(event.input_tokens, attrs)
+            self._agent_metrics.vlm_input_tokens__total.inc(event.input_tokens)
         if event.output_tokens is not None:
             metrics.vlm_output_tokens.add(event.output_tokens, attrs)
+            self._agent_metrics.vlm_output_tokens__total.inc(event.output_tokens)
 
         # Record video-specific metrics
         if event.frames_processed > 0:
             metrics.video_frames_processed.add(event.frames_processed, attrs)
+            self._agent_metrics.video_frames_processed__total.inc(
+                event.frames_processed
+            )
         if event.detections > 0:
             metrics.video_detections.add(event.detections, attrs)
 
@@ -457,10 +501,14 @@ class MetricsCollector:
 
         # Record frame processed
         metrics.video_frames_processed.add(1, attrs)
+        self._agent_metrics.video_frames_processed__total.inc(1)
 
         # Record inference latency if available
         if event.inference_time_ms is not None:
             metrics.video_processing_latency_ms.record(event.inference_time_ms, attrs)
+            self._agent_metrics.video_processing_latency_ms__avg.update(
+                event.inference_time_ms
+            )
 
     # =========================================================================
     # Helpers
