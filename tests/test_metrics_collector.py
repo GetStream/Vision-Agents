@@ -5,99 +5,142 @@ when handling various events. Since the EventManager requires a running
 event loop and complex type resolution, we test the handler methods directly.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
+from vision_agents.core.events import EventManager
 from vision_agents.core.llm.events import (
     LLMResponseCompletedEvent,
     ToolEndEvent,
-    VLMInferenceCompletedEvent,
     VLMErrorEvent,
+    VLMInferenceCompletedEvent,
+)
+from vision_agents.core.observability.collector import MetricsCollector
+from vision_agents.core.observability.metrics import (
+    llm_errors,
+    llm_input_tokens,
+    llm_latency_ms,
+    llm_output_tokens,
+    llm_time_to_first_token_ms,
+    llm_tool_calls,
+    llm_tool_latency_ms,
+    meter,
+    stt_audio_duration_ms,
+    stt_errors,
+    stt_latency_ms,
+    tts_audio_duration_ms,
+    tts_characters,
+    tts_errors,
+    tts_latency_ms,
+    turn_duration_ms,
+    turn_trailing_silence_ms,
+    video_detections,
+    video_frames_processed,
+    vlm_errors,
+    vlm_inference_latency_ms,
+    vlm_inferences,
+    vlm_input_tokens,
+    vlm_output_tokens,
 )
 from vision_agents.core.stt.events import (
-    STTTranscriptEvent,
     STTErrorEvent,
+    STTTranscriptEvent,
     TranscriptResponse,
 )
-from vision_agents.core.tts.events import TTSSynthesisCompleteEvent, TTSErrorEvent
+from vision_agents.core.tts.events import TTSErrorEvent, TTSSynthesisCompleteEvent
 from vision_agents.core.turn_detection.events import TurnEndedEvent
 
 
-@dataclass
-class MockMetric:
-    """Mock metric that records all calls."""
+@pytest.fixture()
+def mock_metrics():
+    """
+    Go over all the used metrics and patch their methods to record the calls.
+    """
+    all_metrics = [
+        llm_errors,
+        llm_input_tokens,
+        llm_latency_ms,
+        llm_output_tokens,
+        llm_time_to_first_token_ms,
+        llm_tool_calls,
+        llm_tool_latency_ms,
+        meter,
+        stt_audio_duration_ms,
+        stt_errors,
+        stt_latency_ms,
+        tts_audio_duration_ms,
+        tts_characters,
+        tts_errors,
+        tts_latency_ms,
+        turn_duration_ms,
+        turn_trailing_silence_ms,
+        video_detections,
+        video_frames_processed,
+        vlm_errors,
+        vlm_inference_latency_ms,
+        vlm_inferences,
+        vlm_input_tokens,
+        vlm_output_tokens,
+    ]
+    patches = []
+    try:
+        for metric in all_metrics:
+            if hasattr(metric, "record"):
+                patches.append(patch.object(metric, "record").start())
+            if hasattr(metric, "add"):
+                patches.append(patch.object(metric, "add").start())
+    finally:
+        for patch_ in reversed(patches):
+            patch_.stop()
 
-    name: str
-    calls: List[tuple] = field(default_factory=list)
 
-    def record(self, value: float, attributes: Optional[Dict] = None):
-        self.calls.append(("record", value, attributes or {}))
+@pytest.fixture
+async def event_manager() -> EventManager:
+    manager = EventManager()
 
-    def add(self, value: int, attributes: Optional[Dict] = None):
-        self.calls.append(("add", value, attributes or {}))
+    events = [
+        LLMResponseCompletedEvent,
+        STTErrorEvent,
+        STTTranscriptEvent,
+        TTSErrorEvent,
+        TTSSynthesisCompleteEvent,
+        ToolEndEvent,
+        TurnEndedEvent,
+        VLMErrorEvent,
+        VLMInferenceCompletedEvent,
+    ]
+    for cls in events:
+        manager.register(cls)
+    return manager
 
 
-class TestMetricsCollectorHandlers:
+@pytest.fixture
+async def collector(mock_metrics, event_manager) -> MetricsCollector:
+    # Create a mock agent
+    agent = MagicMock()
+    agent.llm = MagicMock()
+    agent.llm.events = event_manager
+
+    agent.stt = MagicMock()
+    agent.stt.events = event_manager
+
+    agent.tts = MagicMock()
+    agent.tts.events = event_manager
+
+    agent.turn_detection = MagicMock()
+    agent.turn_detection.events = event_manager
+    agent.events = EventManager()
+
+    collector = MetricsCollector(agent)
+
+    return collector
+
+
+class TestMetricsCollector:
     """Tests for MetricsCollector handler methods."""
 
-    def _create_collector_with_mocks(self, monkeypatch):
-        """Create a collector with mocked metrics."""
-        # Create mock metrics
-        mocks = {
-            "llm_latency_ms": MockMetric("llm_latency_ms"),
-            "llm_time_to_first_token_ms": MockMetric("llm_time_to_first_token_ms"),
-            "llm_input_tokens": MockMetric("llm_input_tokens"),
-            "llm_output_tokens": MockMetric("llm_output_tokens"),
-            "llm_errors": MockMetric("llm_errors"),
-            "llm_tool_calls": MockMetric("llm_tool_calls"),
-            "llm_tool_latency_ms": MockMetric("llm_tool_latency_ms"),
-            "stt_latency_ms": MockMetric("stt_latency_ms"),
-            "stt_audio_duration_ms": MockMetric("stt_audio_duration_ms"),
-            "stt_errors": MockMetric("stt_errors"),
-            "tts_latency_ms": MockMetric("tts_latency_ms"),
-            "tts_audio_duration_ms": MockMetric("tts_audio_duration_ms"),
-            "tts_characters": MockMetric("tts_characters"),
-            "tts_errors": MockMetric("tts_errors"),
-            "turn_duration_ms": MockMetric("turn_duration_ms"),
-            "turn_trailing_silence_ms": MockMetric("turn_trailing_silence_ms"),
-            "vlm_inferences": MockMetric("vlm_inferences"),
-            "vlm_inference_latency_ms": MockMetric("vlm_inference_latency_ms"),
-            "vlm_input_tokens": MockMetric("vlm_input_tokens"),
-            "vlm_output_tokens": MockMetric("vlm_output_tokens"),
-            "vlm_errors": MockMetric("vlm_errors"),
-            "video_frames_processed": MockMetric("video_frames_processed"),
-            "video_detections": MockMetric("video_detections"),
-        }
-
-        # Patch all metrics
-        for name, mock in mocks.items():
-            monkeypatch.setattr(
-                f"vision_agents.core.observability.collector.metrics.{name}",
-                mock,
-            )
-
-        # Create a minimal collector without subscribing to events
-        from vision_agents.core.observability.collector import MetricsCollector
-
-        # Create a mock agent
-        agent = MagicMock()
-        agent.llm = None
-        agent.stt = None
-        agent.tts = None
-        agent.turn_detection = None
-        agent.events = MagicMock()
-
-        # Create collector but skip event subscription
-        collector = object.__new__(MetricsCollector)
-        collector.agent = agent
-        collector._realtime_session_starts = {}
-
-        return collector, mocks
-
-    def test_on_llm_response_completed(self, monkeypatch):
+    async def test_on_llm_response_completed(self, collector, event_manager):
         """Test LLM response completed handler records all metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = LLMResponseCompletedEvent(
             plugin_name="openai",
@@ -108,40 +151,26 @@ class TestMetricsCollectorHandlers:
             output_tokens=5,
             model="gpt-4",
         )
+        event_manager.send(event)
+        await event_manager.wait(1)
 
-        collector._on_llm_response_completed(event)
-
-        assert len(mocks["llm_latency_ms"].calls) == 1
-        assert mocks["llm_latency_ms"].calls[0] == (
-            "record",
-            150.0,
-            {"provider": "openai", "model": "gpt-4"},
+        llm_latency_ms.record.assert_called_once_with(
+            150.0, {"provider": "openai", "model": "gpt-4"}
+        )
+        llm_time_to_first_token_ms.record.assert_called_once_with(
+            50.0, {"provider": "openai", "model": "gpt-4"}
+        )
+        llm_input_tokens.add.assert_called_once_with(
+            10, {"provider": "openai", "model": "gpt-4"}
+        )
+        llm_output_tokens.add.assert_called_once_with(
+            5, {"provider": "openai", "model": "gpt-4"}
         )
 
-        assert len(mocks["llm_time_to_first_token_ms"].calls) == 1
-        assert mocks["llm_time_to_first_token_ms"].calls[0] == (
-            "record",
-            50.0,
-            {"provider": "openai", "model": "gpt-4"},
-        )
-
-        assert len(mocks["llm_input_tokens"].calls) == 1
-        assert mocks["llm_input_tokens"].calls[0] == (
-            "add",
-            10,
-            {"provider": "openai", "model": "gpt-4"},
-        )
-
-        assert len(mocks["llm_output_tokens"].calls) == 1
-        assert mocks["llm_output_tokens"].calls[0] == (
-            "add",
-            5,
-            {"provider": "openai", "model": "gpt-4"},
-        )
-
-    def test_on_llm_response_completed_partial_data(self, monkeypatch):
+    async def test_on_llm_response_completed_partial_data(
+        self, collector, event_manager
+    ):
         """Test LLM handler with missing optional fields."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = LLMResponseCompletedEvent(
             plugin_name="openai",
@@ -149,17 +178,18 @@ class TestMetricsCollectorHandlers:
             # No latency, tokens, or model
         )
 
-        collector._on_llm_response_completed(event)
+        event_manager.send(event)
+        await event_manager.wait(1)
 
         # Should not record metrics for missing fields
-        assert len(mocks["llm_latency_ms"].calls) == 0
-        assert len(mocks["llm_time_to_first_token_ms"].calls) == 0
-        assert len(mocks["llm_input_tokens"].calls) == 0
-        assert len(mocks["llm_output_tokens"].calls) == 0
+        llm_latency_ms.record.assert_not_called()
+        llm_time_to_first_token_ms.record.assert_not_called()
+        llm_time_to_first_token_ms.record.assert_not_called()
+        llm_input_tokens.add.assert_not_called()
+        llm_output_tokens.add.assert_not_called()
 
-    def test_on_tool_end(self, monkeypatch):
+    async def test_on_tool_end(self, collector, event_manager):
         """Test tool end handler records metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = ToolEndEvent(
             plugin_name="openai",
@@ -168,25 +198,19 @@ class TestMetricsCollectorHandlers:
             execution_time_ms=25.0,
         )
 
-        collector._on_tool_end(event)
+        event_manager.send(event)
+        await event_manager.wait(1)
 
-        assert len(mocks["llm_tool_calls"].calls) == 1
-        assert mocks["llm_tool_calls"].calls[0] == (
-            "add",
-            1,
-            {"provider": "openai", "tool_name": "get_weather", "success": "true"},
+        llm_tool_calls.add.assert_called_once_with(
+            1, {"provider": "openai", "tool_name": "get_weather", "success": "true"}
         )
 
-        assert len(mocks["llm_tool_latency_ms"].calls) == 1
-        assert mocks["llm_tool_latency_ms"].calls[0] == (
-            "record",
-            25.0,
-            {"provider": "openai", "tool_name": "get_weather", "success": "true"},
+        llm_tool_latency_ms.record.assert_called_once_with(
+            25.0, {"provider": "openai", "tool_name": "get_weather", "success": "true"}
         )
 
-    def test_on_stt_transcript(self, monkeypatch):
+    async def test_on_stt_transcript(self, collector, event_manager):
         """Test STT transcript handler records metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = STTTranscriptEvent(
             plugin_name="deepgram",
@@ -199,25 +223,20 @@ class TestMetricsCollectorHandlers:
             ),
         )
 
-        collector._on_stt_transcript(event)
+        event_manager.send(event)
+        await event_manager.wait(1)
 
-        assert len(mocks["stt_latency_ms"].calls) == 1
-        assert mocks["stt_latency_ms"].calls[0] == (
-            "record",
-            100.0,
-            {"provider": "deepgram", "model": "nova-2", "language": "en"},
+        stt_latency_ms.record.assert_called_once_with(
+            100.0, {"provider": "deepgram", "model": "nova-2", "language": "en"}
         )
 
-        assert len(mocks["stt_audio_duration_ms"].calls) == 1
-        assert mocks["stt_audio_duration_ms"].calls[0] == (
-            "record",
+        stt_audio_duration_ms.record.assert_called_once_with(
             2000.0,
             {"provider": "deepgram", "model": "nova-2", "language": "en"},
         )
 
-    def test_on_stt_error(self, monkeypatch):
+    async def test_on_stt_error(self, collector, event_manager):
         """Test STT error handler records metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = STTErrorEvent(
             plugin_name="deepgram",
@@ -225,18 +244,20 @@ class TestMetricsCollectorHandlers:
             error_code="CONNECTION_ERROR",
         )
 
-        collector._on_stt_error(event)
+        event_manager.send(event)
+        await event_manager.wait(1)
 
-        assert len(mocks["stt_errors"].calls) == 1
-        assert mocks["stt_errors"].calls[0][0] == "add"
-        assert mocks["stt_errors"].calls[0][1] == 1
-        assert mocks["stt_errors"].calls[0][2]["provider"] == "deepgram"
-        assert mocks["stt_errors"].calls[0][2]["error_type"] == "ValueError"
-        assert mocks["stt_errors"].calls[0][2]["error_code"] == "CONNECTION_ERROR"
+        stt_errors.add.assert_called_once_with(
+            1,
+            {
+                "provider": "deepgram",
+                "error_type": "ValueError",
+                "error_code": "CONNECTION_ERROR",
+            },
+        )
 
-    def test_on_tts_synthesis_complete(self, monkeypatch):
+    async def test_on_tts_synthesis_complete(self, collector, event_manager):
         """Test TTS synthesis complete handler records metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = TTSSynthesisCompleteEvent(
             plugin_name="cartesia",
@@ -245,32 +266,19 @@ class TestMetricsCollectorHandlers:
             audio_duration_ms=1500.0,
         )
 
-        collector._on_tts_synthesis_complete(event)
+        event_manager.send(event)
+        await event_manager.wait(1)
 
-        assert len(mocks["tts_latency_ms"].calls) == 1
-        assert mocks["tts_latency_ms"].calls[0] == (
-            "record",
-            50.0,
-            {"provider": "cartesia"},
+        tts_latency_ms.record.assert_called_once_with(50.0, {"provider": "cartesia"})
+        tts_audio_duration_ms.record.assert_called_once_with(
+            1500.0, {"provider": "cartesia"}
+        )
+        tts_characters.add.assert_called_once_with(
+            len("Hello world"), {"provider": "cartesia"}
         )
 
-        assert len(mocks["tts_audio_duration_ms"].calls) == 1
-        assert mocks["tts_audio_duration_ms"].calls[0] == (
-            "record",
-            1500.0,
-            {"provider": "cartesia"},
-        )
-
-        assert len(mocks["tts_characters"].calls) == 1
-        assert mocks["tts_characters"].calls[0] == (
-            "add",
-            11,
-            {"provider": "cartesia"},
-        )  # len("Hello world")
-
-    def test_on_tts_error(self, monkeypatch):
+    async def test_on_tts_error(self, collector, event_manager):
         """Test TTS error handler records metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = TTSErrorEvent(
             plugin_name="cartesia",
@@ -278,17 +286,19 @@ class TestMetricsCollectorHandlers:
             error_code="SYNTHESIS_ERROR",
         )
 
-        collector._on_tts_error(event)
+        event_manager.send(event)
+        await event_manager.wait(1)
+        tts_errors.add.assert_called_once_with(
+            1,
+            {
+                "provider": "cartesia",
+                "error_type": "RuntimeError",
+                "error_code": "SYNTHESIS_ERROR",
+            },
+        )
 
-        assert len(mocks["tts_errors"].calls) == 1
-        assert mocks["tts_errors"].calls[0][0] == "add"
-        assert mocks["tts_errors"].calls[0][1] == 1
-        assert mocks["tts_errors"].calls[0][2]["provider"] == "cartesia"
-        assert mocks["tts_errors"].calls[0][2]["error_type"] == "RuntimeError"
-
-    def test_on_turn_ended(self, monkeypatch):
+    async def test_on_turn_ended(self, collector, event_manager):
         """Test turn ended handler records metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = TurnEndedEvent(
             plugin_name="smart_turn",
@@ -296,25 +306,17 @@ class TestMetricsCollectorHandlers:
             trailing_silence_ms=500.0,
         )
 
-        collector._on_turn_ended(event)
-
-        assert len(mocks["turn_duration_ms"].calls) == 1
-        assert mocks["turn_duration_ms"].calls[0] == (
-            "record",
-            3500.0,
-            {"provider": "smart_turn"},
+        event_manager.send(event)
+        await event_manager.wait(1)
+        turn_duration_ms.record.assert_called_once_with(
+            3500.0, {"provider": "smart_turn"}
+        )
+        turn_trailing_silence_ms.record.assert_called_once_with(
+            500.0, {"provider": "smart_turn"}
         )
 
-        assert len(mocks["turn_trailing_silence_ms"].calls) == 1
-        assert mocks["turn_trailing_silence_ms"].calls[0] == (
-            "record",
-            500.0,
-            {"provider": "smart_turn"},
-        )
-
-    def test_on_vlm_inference_completed(self, monkeypatch):
+    async def test_on_vlm_inference_completed(self, collector, event_manager):
         """Test VLM inference completed handler records metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = VLMInferenceCompletedEvent(
             plugin_name="moondream",
@@ -325,65 +327,47 @@ class TestMetricsCollectorHandlers:
             input_tokens=100,
             output_tokens=20,
         )
+        event_manager.send(event)
+        await event_manager.wait(1)
 
-        collector._on_vlm_inference_completed(event)
-
-        assert len(mocks["vlm_inferences"].calls) == 1
-        assert mocks["vlm_inferences"].calls[0] == (
-            "add",
-            1,
-            {"provider": "moondream", "model": "moondream-cloud"},
+        vlm_inferences.add.assert_called_once_with(
+            1, {"provider": "moondream", "model": "moondream-cloud"}
+        )
+        vlm_inference_latency_ms.record.assert_called_once_with(
+            200.0, {"provider": "moondream", "model": "moondream-cloud"}
+        )
+        video_frames_processed.add.assert_called_once_with(
+            5, {"provider": "moondream", "model": "moondream-cloud"}
+        )
+        vlm_input_tokens.add.assert_called_once_with(
+            100, {"provider": "moondream", "model": "moondream-cloud"}
+        )
+        vlm_output_tokens.add.assert_called_once_with(
+            20, {"provider": "moondream", "model": "moondream-cloud"}
         )
 
-        assert len(mocks["vlm_inference_latency_ms"].calls) == 1
-        assert mocks["vlm_inference_latency_ms"].calls[0] == (
-            "record",
-            200.0,
-            {"provider": "moondream", "model": "moondream-cloud"},
-        )
-
-        assert len(mocks["video_frames_processed"].calls) == 1
-        assert mocks["video_frames_processed"].calls[0] == (
-            "add",
-            5,
-            {"provider": "moondream", "model": "moondream-cloud"},
-        )
-
-        assert len(mocks["vlm_input_tokens"].calls) == 1
-        assert mocks["vlm_input_tokens"].calls[0] == (
-            "add",
-            100,
-            {"provider": "moondream", "model": "moondream-cloud"},
-        )
-
-        assert len(mocks["vlm_output_tokens"].calls) == 1
-        assert mocks["vlm_output_tokens"].calls[0] == (
-            "add",
-            20,
-            {"provider": "moondream", "model": "moondream-cloud"},
-        )
-
-    def test_on_vlm_error(self, monkeypatch):
+    async def test_on_vlm_error(self, collector, event_manager):
         """Test VLM error handler records metrics."""
-        collector, mocks = self._create_collector_with_mocks(monkeypatch)
 
         event = VLMErrorEvent(
             plugin_name="moondream",
             error=RuntimeError("Inference failed"),
             error_code="INFERENCE_ERROR",
         )
+        event_manager.send(event)
+        await event_manager.wait(1)
 
-        collector._on_vlm_error(event)
+        vlm_errors.add.assert_called_once_with(
+            1,
+            {
+                "provider": "moondream",
+                "error_type": "RuntimeError",
+                "error_code": "INFERENCE_ERROR",
+            },
+        )
 
-        assert len(mocks["vlm_errors"].calls) == 1
-        assert mocks["vlm_errors"].calls[0][0] == "add"
-        assert mocks["vlm_errors"].calls[0][1] == 1
-        assert mocks["vlm_errors"].calls[0][2]["provider"] == "moondream"
-        assert mocks["vlm_errors"].calls[0][2]["error_type"] == "RuntimeError"
-
-    def test_base_attributes_extracts_provider(self, monkeypatch):
+    async def test_base_attributes_extracts_provider(self, collector):
         """Test that base attributes correctly extracts provider."""
-        collector, _ = self._create_collector_with_mocks(monkeypatch)
 
         event = LLMResponseCompletedEvent(
             plugin_name="test_provider",
@@ -393,13 +377,11 @@ class TestMetricsCollectorHandlers:
         attrs = collector._base_attributes(event)
         assert attrs == {"provider": "test_provider"}
 
-    def test_base_attributes_handles_missing_plugin_name(self, monkeypatch):
+    async def test_base_attributes_handles_missing_plugin_name(self, collector):
         """Test that base attributes handles missing plugin_name."""
-        collector, _ = self._create_collector_with_mocks(monkeypatch)
 
         event = LLMResponseCompletedEvent(
             text="Hello",
         )
-
         attrs = collector._base_attributes(event)
         assert attrs == {}
