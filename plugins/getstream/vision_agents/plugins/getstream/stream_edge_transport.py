@@ -76,8 +76,17 @@ class StreamConnection(Connection):
                 logger.debug(f"Ignoring async generator error during shutdown: {e}")
             else:
                 raise
-        except Exception as e:
-            logger.error(f"Error during connection close: {e}")
+        except aiortc.exceptions.InvalidStateError:
+            # Race condition: connection is already closed (e.g., call ended
+            # while the agent was still joining)
+            logger.debug("Connection already closed during shutdown")
+        except AttributeError as e:
+            # Race condition: WebRTC peer connection resources may be None when
+            # the call ends during join (e.g., subscriber_pc.localDescription)
+            if "localDescription" in str(e) or "'NoneType'" in str(e):
+                logger.debug(f"Ignoring attribute error during shutdown: {e}")
+            else:
+                raise
 
     def _on_participant_change(self, participants: list[Participant]) -> None:
         # Get all participants except the agent itself.

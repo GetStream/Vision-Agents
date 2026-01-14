@@ -1,8 +1,9 @@
 import asyncio
 import time
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
+import aiortc.exceptions
 import pytest
 from getstream.video.rtc import ConnectionManager
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
@@ -88,3 +89,103 @@ class TestStreamConnection:
 
         # Wait task should complete now
         await asyncio.wait_for(wait_task, timeout=1.0)
+
+    async def test_close_handles_invalid_state_error(self, connection_manager):
+        """Test that close() handles InvalidStateError when connection is already closed.
+
+        This race condition occurs when the call ends while the agent is still joining.
+        """
+        conn = StreamConnection(connection_manager)
+        # Mock leave() to raise InvalidStateError (simulating closed WebRTC transport)
+        connection_manager.leave = AsyncMock(
+            side_effect=aiortc.exceptions.InvalidStateError("RTCIceTransport is closed")
+        )
+
+        # Should not raise, just log and return gracefully
+        await conn.close()
+
+    async def test_close_handles_local_description_attribute_error(
+        self, connection_manager
+    ):
+        """Test that close() handles AttributeError for localDescription.
+
+        This race condition occurs when WebRTC resources are None due to the call
+        ending during connection setup.
+        """
+        conn = StreamConnection(connection_manager)
+        # Mock leave() to raise AttributeError (simulating None subscriber_pc)
+        connection_manager.leave = AsyncMock(
+            side_effect=AttributeError(
+                "'NoneType' object has no attribute 'localDescription'"
+            )
+        )
+
+        # Should not raise, just log and return gracefully
+        await conn.close()
+
+    async def test_close_reraises_unrelated_attribute_error(self, connection_manager):
+        """Test that close() re-raises unrelated AttributeErrors."""
+        conn = StreamConnection(connection_manager)
+        connection_manager.leave = AsyncMock(
+            side_effect=AttributeError("some_unrelated_attribute")
+        )
+
+        with pytest.raises(AttributeError, match="some_unrelated_attribute"):
+            await conn.close()
+
+    async def test_close_handles_timeout(self, connection_manager):
+        """Test that close() handles timeout when leave() takes too long."""
+        conn = StreamConnection(connection_manager)
+
+        async def slow_leave():
+            await asyncio.sleep(10)
+
+        connection_manager.leave = slow_leave
+
+        # Should not raise, just log warning and return
+        await conn.close(timeout=0.1)
+
+
+class TestRaceConditionResilience:
+    """Tests that verify resilience to race conditions during join/close."""
+
+    async def test_close_during_active_operations(self, connection_manager):
+        """Simulate close() being called while operations are in flight.
+
+        This mimics the real race condition where the call ends while the agent
+        is still joining or performing other operations.
+        """
+        conn = StreamConnection(connection_manager)
+        errors_to_test = [
+            aiortc.exceptions.InvalidStateError("RTCIceTransport is closed"),
+            aiortc.exceptions.InvalidStateError("RTCDtlsTransport is closed"),
+            AttributeError("'NoneType' object has no attribute 'localDescription'"),
+            AttributeError("'NoneType' object has no attribute 'sdp'"),
+        ]
+
+        for error in errors_to_test:
+            connection_manager.leave = AsyncMock(side_effect=error)
+            # Should not raise for any of these expected race condition errors
+            await conn.close()
+
+    async def test_rapid_close_calls(self, connection_manager):
+        """Test that multiple rapid close() calls don't cause issues."""
+        conn = StreamConnection(connection_manager)
+        call_count = 0
+
+        async def counting_leave():
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(0.01)
+
+        connection_manager.leave = counting_leave
+
+        # Call close multiple times rapidly
+        await asyncio.gather(
+            conn.close(),
+            conn.close(),
+            conn.close(),
+        )
+
+        # Leave should be called (at least once, implementation may dedupe)
+        assert call_count >= 1
