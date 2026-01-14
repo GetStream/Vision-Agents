@@ -6,6 +6,7 @@ from .base import (
     PluginInitializedEvent,
     PluginClosedEvent,
     PluginErrorEvent,
+    VideoProcessorDetectionEvent,
 )
 from .manager import EventManager
 
@@ -127,5 +128,6 @@ __all__ += [
     "PluginInitializedEvent",
     "PluginClosedEvent",
     "PluginErrorEvent",
+    "VideoProcessorDetectionEvent",
     "EventManager",
 ]

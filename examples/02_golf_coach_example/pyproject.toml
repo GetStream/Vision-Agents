@@ -11,6 +11,11 @@ dependencies = [
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-ultralytics",
   "vision-agents-plugins-gemini",
+  # Optional: for metrics
+  "opentelemetry-api",
+  "opentelemetry-sdk",
+  "opentelemetry-exporter-prometheus",
+  "prometheus-client",
 ]
 
 [tool.uv.sources]

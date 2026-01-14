@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -230,6 +231,7 @@ class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
             return
 
         image = frame.to_ndarray(format="rgb24")
+        start_time = time.perf_counter()
         try:
             # Run inference
             detections, classes = await self._run_inference(image)
@@ -238,6 +240,8 @@ class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
             # Pass through original frame on error
             await self._video_track.add_frame(frame)
             return
+
+        inference_time_ms = (time.perf_counter() - start_time) * 1000
 
         if detections.class_id is None or not detections.class_id.size:
             # Nothing detected, pass original frame and exit early
@@ -278,10 +282,13 @@ class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
 
         self.events.send(
             DetectionCompletedEvent(
+                plugin_name=self.name,
                 raw_detections=detections,
                 objects=detected_objects,
                 image_width=img_width,
                 image_height=img_height,
+                inference_time_ms=inference_time_ms,
+                model_id=self.model_id,
             )
         )
 

@@ -1,4 +1,5 @@
 import json
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
@@ -12,6 +13,7 @@ from openai.types.responses import (
 )
 
 from vision_agents.core.llm.events import (
+    LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
@@ -146,6 +148,21 @@ class OpenAILLM(LLM):
             input_content = args[0] if args else "Hello"
             kwargs["input"] = input_content
 
+        is_streaming = kwargs.get("stream", True)
+
+        # Emit request started event
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name="openai",
+                model=kwargs.get("model", self.model),
+                streaming=is_streaming,
+            )
+        )
+
+        # Track timing
+        request_start_time = time.perf_counter()
+        first_token_time: Optional[float] = None
+
         # OpenAI Responses API only accepts keyword arguments
         response = await self.client.responses.create(**kwargs)
 
@@ -153,6 +170,7 @@ class OpenAILLM(LLM):
 
         if isinstance(response, OpenAIResponse):
             # Non-streaming response
+            latency_ms = (time.perf_counter() - request_start_time) * 1000
             llm_response = LLMResponseEvent[OpenAIResponse](
                 response, response.output_text
             )
@@ -163,6 +181,13 @@ class OpenAILLM(LLM):
                 # Execute tools and get follow-up response
                 llm_response = await self._handle_tool_calls(tool_calls, kwargs)
 
+            # Emit completion event with metrics for non-streaming
+            self._emit_completion_event(
+                llm_response.original,
+                llm_response.text,
+                latency_ms=latency_ms,
+            )
+
         elif hasattr(response, "__aiter__"):  # async stream
             # Streaming response
             stream_response = response
@@ -171,7 +196,18 @@ class OpenAILLM(LLM):
 
             # Process streaming events and collect tool calls
             async for event in stream_response:
-                llm_response_optional = self._standardize_and_emit_event(event)
+                # Track time to first token
+                if (
+                    first_token_time is None
+                    and event.type == "response.output_text.delta"
+                ):
+                    first_token_time = time.perf_counter()
+
+                llm_response_optional = self._standardize_and_emit_event(
+                    event,
+                    request_start_time=request_start_time,
+                    first_token_time=first_token_time,
+                )
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
 
@@ -190,19 +226,6 @@ class OpenAILLM(LLM):
         else:
             # Defensive fallback for unknown response types
             llm_response = LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
-
-        # Note: For streaming responses, LLMResponseCompletedEvent is already emitted
-        # in _standardize_and_emit_event when processing "response.completed" event.
-        # Only emit it here for non-streaming responses to avoid duplication.
-        if llm_response is not None and isinstance(response, OpenAIResponse):
-            # Non-streaming response - emit completion event
-            self.events.send(
-                LLMResponseCompletedEvent(
-                    item_id=llm_response.original.output[0].id,
-                    original=llm_response.original,
-                    text=llm_response.text,
-                )
-            )
 
         return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
 
@@ -404,10 +427,64 @@ class OpenAILLM(LLM):
             )
         return msgs
 
+    def _emit_completion_event(
+        self,
+        response: OpenAIResponse,
+        text: str,
+        latency_ms: Optional[float] = None,
+        time_to_first_token_ms: Optional[float] = None,
+    ) -> None:
+        """Emit LLMResponseCompletedEvent with metrics.
+
+        Args:
+            response: The OpenAI response object.
+            text: The response text.
+            latency_ms: Total latency in milliseconds.
+            time_to_first_token_ms: Time to first token in milliseconds.
+        """
+        # Extract token usage from response
+        input_tokens: Optional[int] = None
+        output_tokens: Optional[int] = None
+        total_tokens: Optional[int] = None
+
+        if response.usage:
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
+            total_tokens = response.usage.total_tokens
+
+        item_id = response.output[0].id if response.output else None
+
+        self.events.send(
+            LLMResponseCompletedEvent(
+                plugin_name="openai",
+                original=response,
+                text=text,
+                item_id=item_id,
+                latency_ms=latency_ms,
+                time_to_first_token_ms=time_to_first_token_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                model=response.model,
+            )
+        )
+
     def _standardize_and_emit_event(
-        self, event: ResponseStreamEvent
+        self,
+        event: ResponseStreamEvent,
+        request_start_time: Optional[float] = None,
+        first_token_time: Optional[float] = None,
     ) -> Optional[LLMResponseEvent[OpenAIResponse]]:
-        """Forward native events and emit standardized versions."""
+        """Forward native events and emit standardized versions.
+
+        Args:
+            event: The streaming event from OpenAI.
+            request_start_time: Time when the request started (perf_counter).
+            first_token_time: Time when first token was received (perf_counter).
+
+        Returns:
+            LLMResponseEvent if this is a completion event, None otherwise.
+        """
         # Forward the native event
         self.events.send(
             events.OpenAIStreamEvent(
@@ -426,6 +503,12 @@ class OpenAILLM(LLM):
 
         if event.type == "response.output_text.delta":
             delta_event: ResponseTextDeltaEvent = event
+            # Calculate time to first token for the first chunk
+            is_first = first_token_time is not None and request_start_time is not None
+            chunk_ttft_ms: Optional[float] = None
+            if first_token_time is not None and request_start_time is not None:
+                chunk_ttft_ms = (first_token_time - request_start_time) * 1000
+
             self.events.send(
                 LLMResponseChunkEvent(
                     plugin_name="openai",
@@ -434,22 +517,32 @@ class OpenAILLM(LLM):
                     output_index=delta_event.output_index,
                     sequence_number=delta_event.sequence_number,
                     delta=delta_event.delta,
+                    is_first_chunk=is_first,
+                    time_to_first_token_ms=chunk_ttft_ms,
                 )
             )
             return None
 
         if event.type == "response.completed":
             completed_event: ResponseCompletedEvent = event
+            response = completed_event.response
             llm_response = LLMResponseEvent[OpenAIResponse](
-                completed_event.response, completed_event.response.output_text
+                response, response.output_text
             )
-            self.events.send(
-                LLMResponseCompletedEvent(
-                    plugin_name="openai",
-                    original=llm_response.original,
-                    text=llm_response.text,
-                    item_id=llm_response.original.output[0].id,
-                )
+
+            # Calculate timing metrics
+            latency_ms: Optional[float] = None
+            ttft_ms: Optional[float] = None
+            if request_start_time is not None:
+                latency_ms = (time.perf_counter() - request_start_time) * 1000
+            if first_token_time is not None and request_start_time is not None:
+                ttft_ms = (first_token_time - request_start_time) * 1000
+
+            self._emit_completion_event(
+                response,
+                llm_response.text,
+                latency_ms=latency_ms,
+                time_to_first_token_ms=ttft_ms,
             )
             return llm_response
 

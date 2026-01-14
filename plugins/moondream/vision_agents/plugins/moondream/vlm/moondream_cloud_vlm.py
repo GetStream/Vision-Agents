@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import time
+import uuid
 from typing import Optional, List, Literal
 from concurrent.futures import ThreadPoolExecutor
 
@@ -13,6 +15,9 @@ from vision_agents.core.stt.events import STTTranscriptEvent
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
+    VLMInferenceStartEvent,
+    VLMInferenceCompletedEvent,
+    VLMErrorEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.processors import Processor
@@ -143,6 +148,18 @@ class CloudVLM(llm.VideoLLM):
             return None
 
         latest_frame = self._latest_frame
+        inference_id = str(uuid.uuid4())
+        start_time = time.perf_counter()
+
+        # Emit start event
+        self.events.send(
+            VLMInferenceStartEvent(
+                plugin_name="moondream_cloud",
+                inference_id=inference_id,
+                model="moondream-cloud",
+                frames_count=1,
+            )
+        )
 
         async with self._processing_lock:
             try:
@@ -164,8 +181,33 @@ class CloudVLM(llm.VideoLLM):
                         logger.warning("Moondream query returned empty answer")
                         return None
 
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+
+                    # Emit chunk event for TTS
                     self.events.send(LLMResponseChunkEvent(delta=answer))
-                    self.events.send(LLMResponseCompletedEvent(text=answer))
+
+                    # Emit VLM-specific completion event with metrics
+                    self.events.send(
+                        VLMInferenceCompletedEvent(
+                            plugin_name="moondream_cloud",
+                            inference_id=inference_id,
+                            model="moondream-cloud",
+                            text=answer,
+                            latency_ms=latency_ms,
+                            frames_processed=1,
+                        )
+                    )
+
+                    # Also emit LLM completion for compatibility
+                    self.events.send(
+                        LLMResponseCompletedEvent(
+                            plugin_name="moondream_cloud",
+                            text=answer,
+                            latency_ms=latency_ms,
+                            model="moondream-cloud",
+                        )
+                    )
+
                     logger.info(f"Moondream VQA response: {answer}")
                     return LLMResponseEvent(original=answer, text=answer)
 
@@ -179,8 +221,33 @@ class CloudVLM(llm.VideoLLM):
                         logger.warning("Moondream caption returned empty result")
                         return None
 
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+
+                    # Emit chunk event for TTS
                     self.events.send(LLMResponseChunkEvent(delta=caption))
-                    self.events.send(LLMResponseCompletedEvent(text=caption))
+
+                    # Emit VLM-specific completion event with metrics
+                    self.events.send(
+                        VLMInferenceCompletedEvent(
+                            plugin_name="moondream_cloud",
+                            inference_id=inference_id,
+                            model="moondream-cloud",
+                            text=caption,
+                            latency_ms=latency_ms,
+                            frames_processed=1,
+                        )
+                    )
+
+                    # Also emit LLM completion for compatibility
+                    self.events.send(
+                        LLMResponseCompletedEvent(
+                            plugin_name="moondream_cloud",
+                            text=caption,
+                            latency_ms=latency_ms,
+                            model="moondream-cloud",
+                        )
+                    )
+
                     logger.info(f"Moondream caption: {caption}")
                     return LLMResponseEvent(original=caption, text=caption)
                 else:
@@ -189,6 +256,15 @@ class CloudVLM(llm.VideoLLM):
 
             except Exception as e:
                 logger.exception(f"Error processing frame: {e}")
+                # Emit error event
+                self.events.send(
+                    VLMErrorEvent(
+                        plugin_name="moondream_cloud",
+                        inference_id=inference_id,
+                        error=e,
+                        context="frame_processing",
+                    )
+                )
                 return LLMResponseEvent(original=None, text="", exception=e)
 
     async def _on_stt_transcript(self, event: STTTranscriptEvent):

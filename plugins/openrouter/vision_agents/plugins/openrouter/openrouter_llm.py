@@ -8,6 +8,7 @@ works consistently across all providers.
 import json
 import logging
 import os
+import time
 from typing import Any, Dict, List, Optional, cast
 
 from openai import AsyncStream
@@ -254,13 +255,18 @@ class OpenRouterLLM(OpenAILLM):
                 )
                 request_kwargs["extra_body"] = {"models": TOOL_SUPPORTING_MODELS}
 
+        request_start_time = time.perf_counter()
         response = await self.client.chat.completions.create(**request_kwargs)
 
         if stream:
             return await self._process_chat_stream(response, messages, tools, model)
         else:
             return await self._process_chat_response(
-                cast(ChatCompletion, response), messages, tools, model
+                cast(ChatCompletion, response),
+                messages,
+                tools,
+                model,
+                request_start_time,
             )
 
     async def _process_chat_stream(
@@ -277,6 +283,8 @@ class OpenRouterLLM(OpenAILLM):
         - If the response ends with tool_calls, we suppress the text (it was narration)
         - If the response ends normally (stop), the chunks were already emitted
         """
+        request_start_time = time.perf_counter()
+        first_token_time: Optional[float] = None
         llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
         text_chunks: list[str] = []
         self._pending_tool_calls = {}
@@ -299,10 +307,18 @@ class OpenRouterLLM(OpenAILLM):
                     self._accumulate_chat_tool_call(tc)
 
             if content:
+                # Track time to first token
+                if first_token_time is None:
+                    first_token_time = time.perf_counter()
+
                 text_chunks.append(content)
                 # Only emit if we haven't seen tool calls yet
                 # (once tool calls start, text is likely narration like "Let me check...")
                 if not has_tool_call_delta:
+                    is_first = i == 0
+                    ttft_ms = None
+                    if is_first and first_token_time is not None:
+                        ttft_ms = (first_token_time - request_start_time) * 1000
                     self.events.send(
                         LLMResponseChunkEvent(
                             plugin_name="openrouter",
@@ -311,6 +327,8 @@ class OpenRouterLLM(OpenAILLM):
                             output_index=0,
                             sequence_number=i,
                             delta=content,
+                            is_first_chunk=is_first,
+                            time_to_first_token_ms=ttft_ms,
                         )
                     )
                     i += 1
@@ -319,12 +337,19 @@ class OpenRouterLLM(OpenAILLM):
                 accumulated_tool_calls = self._finalize_chat_tool_calls()
             elif finish_reason == "stop":
                 total_text = "".join(text_chunks)
+                latency_ms = (time.perf_counter() - request_start_time) * 1000
+                ttft_ms_final = None
+                if first_token_time is not None:
+                    ttft_ms_final = (first_token_time - request_start_time) * 1000
                 self.events.send(
                     LLMResponseCompletedEvent(
                         plugin_name="openrouter",
                         original=chunk,
                         text=total_text,
                         item_id=chunk.id,
+                        latency_ms=latency_ms,
+                        time_to_first_token_ms=ttft_ms_final,
+                        model=model or self.model,
                     )
                 )
                 llm_response = LLMResponseEvent(original=chunk, text=total_text)
@@ -343,6 +368,7 @@ class OpenRouterLLM(OpenAILLM):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         model: Optional[str],
+        request_start_time: Optional[float] = None,
     ) -> LLMResponseEvent:
         """Process non-streaming Chat Completions response."""
         text = response.choices[0].message.content or ""
@@ -355,12 +381,31 @@ class OpenRouterLLM(OpenAILLM):
                 tool_calls, messages, tools, model
             )
 
+        # Calculate latency if start time provided
+        latency_ms = None
+        if request_start_time is not None:
+            latency_ms = (time.perf_counter() - request_start_time) * 1000
+
+        # Extract token usage if available
+        input_tokens = None
+        output_tokens = None
+        if response.usage:
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+
         self.events.send(
             LLMResponseCompletedEvent(
                 plugin_name="openrouter",
                 original=response,
                 text=text,
                 item_id=response.id,
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=(input_tokens or 0) + (output_tokens or 0)
+                if input_tokens or output_tokens
+                else None,
+                model=model or self.model,
             )
         )
         return llm_response

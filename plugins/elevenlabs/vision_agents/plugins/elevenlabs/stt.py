@@ -2,6 +2,7 @@ import asyncio
 import base64
 import logging
 import os
+import time
 from typing import Any, Optional
 
 from elevenlabs import (
@@ -90,6 +91,8 @@ class STT(stt.STT):
         self._should_reconnect = {"value": False}
         self._reconnect_event = asyncio.Event()
         self._commit_received = asyncio.Event()
+        # Track when audio processing started for latency measurement
+        self._audio_start_time: Optional[float] = None
 
     async def process_audio(
         self,
@@ -122,6 +125,10 @@ class STT(stt.STT):
         resampled_pcm = pcm_data.resample(16_000, 1)
 
         self._current_participant = participant
+
+        # Track start time for first audio chunk of a new utterance
+        if self._audio_start_time is None:
+            self._audio_start_time = time.perf_counter()
 
         # Add to audio queue for batching
         if self._audio_queue is not None:
@@ -244,11 +251,17 @@ class STT(stt.STT):
         if words:
             other = {"words": words}
 
+        # Calculate processing time (time from first audio to transcript)
+        processing_time_ms: Optional[float] = None
+        if self._audio_start_time is not None:
+            processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
+
         response_metadata = TranscriptResponse(
             confidence=confidence,
             language=self.language_code,
             model_name=self.model_id,
             other=other,
+            processing_time_ms=processing_time_ms,
         )
 
         # Use the participant from the most recent process_audio call
@@ -291,11 +304,17 @@ class STT(stt.STT):
         if words:
             other = {"words": words}
 
+        # Calculate processing time (time from first audio to transcript)
+        processing_time_ms: Optional[float] = None
+        if self._audio_start_time is not None:
+            processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
+
         response_metadata = TranscriptResponse(
             confidence=confidence,
             language=self.language_code,
             model_name=self.model_id,
             other=other,
+            processing_time_ms=processing_time_ms,
         )
 
         # Use the participant from the most recent process_audio call
@@ -309,6 +328,9 @@ class STT(stt.STT):
         # Emit final transcript
         self._emit_transcript_event(transcript_text, participant, response_metadata)
 
+        # Reset audio start time for next utterance
+        self._audio_start_time = None
+
         # Signal that commit was received
         self._commit_received.set()
 
@@ -320,6 +342,8 @@ class STT(stt.STT):
             error: The error from ElevenLabs
         """
         logger.error(f"ElevenLabs WebSocket error: {error}")
+        # Reset audio start time to avoid incorrect metrics on next utterance
+        self._audio_start_time = None
         self._should_reconnect["value"] = True
         self._reconnect_event.set()
 
@@ -328,6 +352,8 @@ class STT(stt.STT):
         Event handler for connection close.
         """
         logger.warning("ElevenLabs WebSocket connection closed")
+        # Reset audio start time to avoid incorrect metrics on next utterance
+        self._audio_start_time = None
         self._connection_ready.clear()
         self._reconnect_event.set()
 
@@ -368,6 +394,8 @@ class STT(stt.STT):
             timeout: Maximum time to wait for the committed transcript in seconds.
         """
         if not self.connection:
+            # Reset audio start time even if no connection
+            self._audio_start_time = None
             return
 
         # Clear the event before committing
@@ -380,11 +408,16 @@ class STT(stt.STT):
             await asyncio.wait_for(self._commit_received.wait(), timeout=timeout)
         except TimeoutError:
             logger.warning("Timeout waiting for committed transcript after clear()")
+            # Reset audio start time on timeout to avoid incorrect metrics
+            self._audio_start_time = None
 
     async def close(self):
         """Close the ElevenLabs connection and clean up resources."""
         # Mark as closed first
         await super().close()
+
+        # Reset audio start time to avoid incorrect metrics if reused
+        self._audio_start_time = None
 
         # Cancel send task
         if self._send_task:

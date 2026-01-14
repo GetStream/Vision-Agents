@@ -1,0 +1,25 @@
+[project]
+name = "prometheus-metrics-example"
+version = "0.1.0"
+description = "Example showing how to export Stream Agents metrics to Prometheus"
+requires-python = ">=3.11"
+dependencies = [
+    "vision-agents",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-getstream",
+    "python-dotenv",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-prometheus",
+    "prometheus-client",
+]
+
+[tool.uv.sources]
+vision-agents = { path = "../../agents-core", editable = true }
+vision-agents-plugins-gemini = { path = "../../plugins/gemini", editable = true }
+vision-agents-plugins-deepgram = { path = "../../plugins/deepgram", editable = true }
+vision-agents-plugins-elevenlabs = { path = "../../plugins/elevenlabs", editable = true }
+vision-agents-plugins-getstream = { path = "../../plugins/getstream", editable = true }
+

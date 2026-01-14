@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional, cast
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
@@ -7,6 +8,7 @@ from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core.llm.events import (
+    LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
@@ -160,6 +162,18 @@ class ChatCompletionsLLM(LLM):
         if tools:
             request_kwargs["tools"] = tools
 
+        # Emit request started event
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name=PLUGIN_NAME,
+                model=request_kwargs["model"],
+                streaming=stream,
+            )
+        )
+
+        # Track timing
+        request_start_time = time.perf_counter()
+
         try:
             response = await self._client.chat.completions.create(**request_kwargs)  # type: ignore[arg-type]
         except Exception as e:
@@ -175,11 +189,11 @@ class ChatCompletionsLLM(LLM):
 
         if stream:
             return await self._process_streaming_response(
-                response, messages, tools, kwargs
+                response, messages, tools, kwargs, request_start_time
             )
         else:
             return await self._process_non_streaming_response(
-                response, messages, tools, kwargs
+                response, messages, tools, kwargs, request_start_time
             )
 
     async def _process_streaming_response(
@@ -188,6 +202,7 @@ class ChatCompletionsLLM(LLM):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         kwargs: Dict[str, Any],
+        request_start_time: float,
     ) -> LLMResponseEvent:
         """Process a streaming response, handling tool calls if present."""
         llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
@@ -196,6 +211,7 @@ class ChatCompletionsLLM(LLM):
         self._pending_tool_calls = {}
         accumulated_tool_calls: List[NormalizedToolCallItem] = []
         i = 0
+        first_token_time: Optional[float] = None
 
         async for chunk in cast(AsyncStream[ChatCompletionChunk], response):
             if not chunk.choices:
@@ -211,6 +227,15 @@ class ChatCompletionsLLM(LLM):
                     self._accumulate_tool_call_chunk(tc)
 
             if content:
+                # Track time to first token
+                if first_token_time is None:
+                    first_token_time = time.perf_counter()
+
+                is_first = len(text_chunks) == 0
+                ttft_ms = None
+                if is_first:
+                    ttft_ms = (first_token_time - request_start_time) * 1000
+
                 text_chunks.append(content)
                 self.events.send(
                     LLMResponseChunkEvent(
@@ -220,6 +245,8 @@ class ChatCompletionsLLM(LLM):
                         output_index=0,
                         sequence_number=i,
                         delta=content,
+                        is_first_chunk=is_first,
+                        time_to_first_token_ms=ttft_ms,
                     )
                 )
 
@@ -234,12 +261,20 @@ class ChatCompletionsLLM(LLM):
                     accumulated_tool_calls = self._finalize_pending_tool_calls()
 
                 total_text = "".join(text_chunks)
+                latency_ms = (time.perf_counter() - request_start_time) * 1000
+                ttft_ms_final = None
+                if first_token_time is not None:
+                    ttft_ms_final = (first_token_time - request_start_time) * 1000
+
                 self.events.send(
                     LLMResponseCompletedEvent(
                         plugin_name=PLUGIN_NAME,
                         original=chunk,
                         text=total_text,
                         item_id=chunk.id,
+                        latency_ms=latency_ms,
+                        time_to_first_token_ms=ttft_ms_final,
+                        model=self.model,
                     )
                 )
 
@@ -260,8 +295,10 @@ class ChatCompletionsLLM(LLM):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         kwargs: Dict[str, Any],
+        request_start_time: float,
     ) -> LLMResponseEvent:
         """Process a non-streaming response, handling tool calls if present."""
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
         text = response.choices[0].message.content or ""
         llm_response = LLMResponseEvent(original=response, text=text)
 
@@ -270,12 +307,26 @@ class ChatCompletionsLLM(LLM):
         if tool_calls:
             return await self._handle_tool_calls(tool_calls, messages, tools, kwargs)
 
+        # Extract token usage
+        input_tokens: Optional[int] = None
+        output_tokens: Optional[int] = None
+        if response.usage:
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+
         self.events.send(
             LLMResponseCompletedEvent(
                 plugin_name=PLUGIN_NAME,
                 original=response,
                 text=text,
                 item_id=response.id,
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=(input_tokens or 0) + (output_tokens or 0)
+                if input_tokens or output_tokens
+                else None,
+                model=self.model,
             )
         )
         return llm_response

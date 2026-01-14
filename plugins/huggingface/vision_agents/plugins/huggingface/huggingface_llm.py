@@ -1,11 +1,13 @@
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
 from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
 from vision_agents.core.llm.events import (
+    LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
@@ -157,6 +159,18 @@ class HuggingFaceLLM(LLM):
         if tools:
             request_kwargs["tools"] = tools
 
+        # Emit request started event
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name=PLUGIN_NAME,
+                model=request_kwargs["model"],
+                streaming=stream,
+            )
+        )
+
+        # Track timing
+        request_start_time = time.perf_counter()
+
         try:
             response = await self._client.chat.completions.create(**request_kwargs)
         except Exception as e:
@@ -172,11 +186,11 @@ class HuggingFaceLLM(LLM):
 
         if stream:
             return await self._process_streaming_response(
-                response, messages, tools, kwargs
+                response, messages, tools, kwargs, request_start_time
             )
         else:
             return await self._process_non_streaming_response(
-                response, messages, tools, kwargs
+                response, messages, tools, kwargs, request_start_time
             )
 
     async def _process_streaming_response(
@@ -185,6 +199,7 @@ class HuggingFaceLLM(LLM):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         kwargs: Dict[str, Any],
+        request_start_time: float,
     ) -> LLMResponseEvent:
         """Process a streaming response, handling tool calls if present."""
         llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
@@ -194,6 +209,7 @@ class HuggingFaceLLM(LLM):
         accumulated_tool_calls: List[NormalizedToolCallItem] = []
         i = 0
         chunk_id = ""
+        first_token_time: Optional[float] = None
 
         async for chunk in response:
             if not chunk.choices:
@@ -209,6 +225,15 @@ class HuggingFaceLLM(LLM):
                     self._accumulate_tool_call_chunk(tc)
 
             if content:
+                # Track time to first token
+                if first_token_time is None:
+                    first_token_time = time.perf_counter()
+
+                is_first = len(text_chunks) == 0
+                ttft_ms = None
+                if is_first:
+                    ttft_ms = (first_token_time - request_start_time) * 1000
+
                 text_chunks.append(content)
                 self.events.send(
                     LLMResponseChunkEvent(
@@ -218,6 +243,8 @@ class HuggingFaceLLM(LLM):
                         output_index=0,
                         sequence_number=i,
                         delta=content,
+                        is_first_chunk=is_first,
+                        time_to_first_token_ms=ttft_ms,
                     )
                 )
 
@@ -231,12 +258,20 @@ class HuggingFaceLLM(LLM):
                     accumulated_tool_calls = self._finalize_pending_tool_calls()
 
                 total_text = "".join(text_chunks)
+                latency_ms = (time.perf_counter() - request_start_time) * 1000
+                ttft_ms_final = None
+                if first_token_time is not None:
+                    ttft_ms_final = (first_token_time - request_start_time) * 1000
+
                 self.events.send(
                     LLMResponseCompletedEvent(
                         plugin_name=PLUGIN_NAME,
                         original=chunk,
                         text=total_text,
                         item_id=chunk_id,
+                        latency_ms=latency_ms,
+                        time_to_first_token_ms=ttft_ms_final,
+                        model=self.model,
                     )
                 )
 
@@ -256,8 +291,10 @@ class HuggingFaceLLM(LLM):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         kwargs: Dict[str, Any],
+        request_start_time: float,
     ) -> LLMResponseEvent:
         """Process a non-streaming response, handling tool calls if present."""
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
         text = response.choices[0].message.content or ""
         llm_response = LLMResponseEvent(original=response, text=text)
 
@@ -271,6 +308,8 @@ class HuggingFaceLLM(LLM):
                 original=response,
                 text=text,
                 item_id=response.id,
+                latency_ms=latency_ms,
+                model=self.model,
             )
         )
         return llm_response

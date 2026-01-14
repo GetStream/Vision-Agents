@@ -1,6 +1,7 @@
 import asyncio
 import os
 import logging
+import time
 from typing import Optional, List, TYPE_CHECKING, Any, Dict, cast
 import json
 import boto3
@@ -11,6 +12,7 @@ from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 
 
 from vision_agents.core.llm.events import (
+    LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
@@ -139,6 +141,18 @@ class BedrockLLM(LLM):
             normalized_messages = self._normalize_message(new_messages)
             for msg in normalized_messages:
                 self._conversation.messages.append(msg)
+
+        # Emit request started event
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name="aws",
+                model=self.model,
+                streaming=False,
+            )
+        )
+
+        # Track timing
+        request_start_time = time.perf_counter()
 
         client = await self.client
 
@@ -295,11 +309,33 @@ class BedrockLLM(LLM):
                     "Final response text is empty - model may not have responded"
                 )
 
+            # Calculate timing metrics
+            latency_ms = (time.perf_counter() - request_start_time) * 1000
+
+            # Extract token usage from response if available
+            input_tokens: Optional[int] = None
+            output_tokens: Optional[int] = None
+            usage = (
+                original_for_event.get("usage", {})
+                if isinstance(original_for_event, dict)
+                else {}
+            )
+            if usage:
+                input_tokens = usage.get("inputTokens")
+                output_tokens = usage.get("outputTokens")
+
             self.events.send(
                 LLMResponseCompletedEvent(
                     original=original_for_event,
                     text=final_text_for_event,
                     plugin_name="aws",
+                    latency_ms=latency_ms,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=(input_tokens or 0) + (output_tokens or 0)
+                    if input_tokens or output_tokens
+                    else None,
+                    model=self.model,
                 )
             )
 
@@ -356,6 +392,19 @@ class BedrockLLM(LLM):
         if self._instructions:
             kwargs["system"] = [{"text": self._instructions}]
 
+        # Emit request started event
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name="aws",
+                model=self.model,
+                streaming=True,
+            )
+        )
+
+        # Track timing
+        request_start_time = time.perf_counter()
+        first_token_time: Optional[float] = None
+
         try:
             system_param = kwargs.get("system")
 
@@ -401,6 +450,11 @@ class BedrockLLM(LLM):
 
             for event in events:
                 last_event = event
+                # Track time to first token
+                if first_token_time is None and "contentBlockDelta" in event:
+                    delta = event["contentBlockDelta"].get("delta", {})
+                    if "text" in delta:
+                        first_token_time = time.perf_counter()
                 self._process_stream_event(event, text_parts, accumulated_calls)
 
             messages = kwargs["messages"][:]
@@ -539,9 +593,21 @@ class BedrockLLM(LLM):
 
             total_text = "".join(text_parts)
             llm_response = LLMResponseEvent(last_event, total_text)
+
+            # Calculate timing metrics
+            latency_ms = (time.perf_counter() - request_start_time) * 1000
+            ttft_ms: Optional[float] = None
+            if first_token_time is not None:
+                ttft_ms = (first_token_time - request_start_time) * 1000
+
             self.events.send(
                 LLMResponseCompletedEvent(
-                    original=last_event, text=total_text, plugin_name="aws"
+                    original=last_event,
+                    text=total_text,
+                    plugin_name="aws",
+                    latency_ms=latency_ms,
+                    time_to_first_token_ms=ttft_ms,
+                    model=self.model,
                 )
             )
 

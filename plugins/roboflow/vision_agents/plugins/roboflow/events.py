@@ -1,7 +1,8 @@
 import typing
 from dataclasses import dataclass, field
+
 import supervision as sv
-from vision_agents.core.events import PluginBaseEvent
+from vision_agents.core.events import VideoProcessorDetectionEvent
 
 
 class DetectedObject(typing.TypedDict):
@@ -13,9 +14,8 @@ class DetectedObject(typing.TypedDict):
 
 
 @dataclass
-class DetectionCompletedEvent(PluginBaseEvent):
-    """
-    Event emitted the object detection is completed.
+class DetectionCompletedEvent(VideoProcessorDetectionEvent):
+    """Event emitted when object detection is completed.
 
     Attributes:
         objects: The objects detected in the video track.
@@ -29,3 +29,7 @@ class DetectionCompletedEvent(PluginBaseEvent):
     image_width: int = 0
     image_height: int = 0
     type: str = field(default="plugin.roboflow.detection_completed", init=False)
+
+    def __post_init__(self):
+        """Set detection_count from objects list."""
+        self.detection_count = len(self.objects)

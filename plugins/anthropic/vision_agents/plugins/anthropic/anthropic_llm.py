@@ -1,5 +1,6 @@
 from typing import Optional, List, TYPE_CHECKING, Any, Dict
 import json
+import time
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
 from anthropic.types import (
@@ -7,6 +8,7 @@ from anthropic.types import (
     Message as ClaudeMessage,
     RawContentBlockDeltaEvent,
     RawMessageStopEvent,
+    TextDelta,
 )
 
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
@@ -15,6 +17,7 @@ from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
 from vision_agents.core.llm.events import (
+    LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
@@ -122,6 +125,21 @@ class ClaudeLLM(LLM):
 
         # Note: Message history is tracked in _conversation, no need to emit as event here
 
+        is_streaming = kwargs.get("stream", True)
+
+        # Emit request started event
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name="anthropic",
+                model=kwargs.get("model", self.model),
+                streaming=is_streaming,
+            )
+        )
+
+        # Track timing
+        request_start_time = time.perf_counter()
+        first_token_time: Optional[float] = None
+
         original = await self.client.messages.create(*args, **kwargs)
         if isinstance(original, ClaudeMessage):
             # Extract text from Claude's response format - safely handle all text blocks
@@ -211,15 +229,50 @@ class ClaudeLLM(LLM):
                         final_response, self._concat_text_blocks(final_response.content)
                     )
 
+            # Emit completion event with metrics for non-streaming
+            latency_ms = (time.perf_counter() - request_start_time) * 1000
+            self._emit_completion_event(
+                llm_response.original,
+                llm_response.text,
+                latency_ms=latency_ms,
+            )
+
         elif isinstance(original, AsyncStream):
             stream: AsyncStream[RawMessageStreamEvent] = original
             text_parts: List[str] = []
             accumulated_calls: List[NormalizedToolCallItem] = []
+            # Track if we've emitted the first chunk for the entire request
+            emitted_first_chunk = False
+            # Track usage from message_start and message_delta events
+            input_tokens: Optional[int] = None
+            output_tokens: Optional[int] = None
 
             # 1) First round: read stream, gather initial tool_use calls
             async for event in stream:
-                llm_response_optional = self._standardize_and_emit_event(
-                    event, text_parts
+                # Track time to first token
+                if first_token_time is None and event.type == "content_block_delta":
+                    delta = event.delta
+                    if isinstance(delta, TextDelta) and delta.text:
+                        first_token_time = time.perf_counter()
+
+                # Track usage from streaming events
+                if (
+                    event.type == "message_start"
+                    and event.message
+                    and event.message.usage
+                ):
+                    input_tokens = event.message.usage.input_tokens
+                elif event.type == "message_delta" and event.usage:
+                    output_tokens = event.usage.output_tokens
+
+                llm_response_optional, emitted_first_chunk = (
+                    self._standardize_and_emit_event(
+                        event,
+                        text_parts,
+                        request_start_time=request_start_time,
+                        first_token_time=first_token_time,
+                        emitted_first_chunk=emitted_first_chunk,
+                    )
                 )
                 if llm_response_optional is not None:
                     llm_response = llm_response_optional
@@ -292,8 +345,19 @@ class ClaudeLLM(LLM):
                 accumulated_calls = []  # reset; we'll refill with new calls
                 async for ev in follow_up_stream:
                     last_followup_stream = ev
-                    llm_response_optional = self._standardize_and_emit_event(
-                        ev, follow_up_text_parts
+                    # Track usage from streaming events
+                    if ev.type == "message_start" and ev.message and ev.message.usage:
+                        input_tokens = ev.message.usage.input_tokens
+                    elif ev.type == "message_delta" and ev.usage:
+                        output_tokens = ev.usage.output_tokens
+                    llm_response_optional, emitted_first_chunk = (
+                        self._standardize_and_emit_event(
+                            ev,
+                            follow_up_text_parts,
+                            request_start_time=request_start_time,
+                            first_token_time=first_token_time,
+                            emitted_first_chunk=emitted_first_chunk,
+                        )
                     )
                     if llm_response_optional is not None:
                         llm_response = llm_response_optional
@@ -318,8 +382,19 @@ class ClaudeLLM(LLM):
                 final_text_parts: List[str] = []
                 async for ev in final_stream:
                     last_followup_stream = ev
-                    llm_response_optional = self._standardize_and_emit_event(
-                        ev, final_text_parts
+                    # Track usage from streaming events
+                    if ev.type == "message_start" and ev.message and ev.message.usage:
+                        input_tokens = ev.message.usage.input_tokens
+                    elif ev.type == "message_delta" and ev.usage:
+                        output_tokens = ev.usage.output_tokens
+                    llm_response_optional, emitted_first_chunk = (
+                        self._standardize_and_emit_event(
+                            ev,
+                            final_text_parts,
+                            request_start_time=request_start_time,
+                            first_token_time=first_token_time,
+                            emitted_first_chunk=emitted_first_chunk,
+                        )
                     )
                     if llm_response_optional is not None:
                         llm_response = llm_response_optional
@@ -332,21 +407,88 @@ class ClaudeLLM(LLM):
                 last_followup_stream or original,  # type: ignore
                 total_text,
             )
+
+            # Calculate timing metrics
+            latency_ms = (time.perf_counter() - request_start_time) * 1000
+            ttft_ms: Optional[float] = None
+            if first_token_time is not None:
+                ttft_ms = (first_token_time - request_start_time) * 1000
+
             self.events.send(
                 LLMResponseCompletedEvent(
                     original=last_followup_stream or original,
                     text=total_text,
                     plugin_name="anthropic",
+                    latency_ms=latency_ms,
+                    time_to_first_token_ms=ttft_ms,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    model=self.model,
                 )
             )
 
         return llm_response
 
-    def _standardize_and_emit_event(
-        self, event: RawMessageStreamEvent, text_parts: List[str]
-    ) -> Optional[LLMResponseEvent[Any]]:
+    def _emit_completion_event(
+        self,
+        response: Any,
+        text: str,
+        latency_ms: Optional[float] = None,
+        time_to_first_token_ms: Optional[float] = None,
+    ) -> None:
+        """Emit LLMResponseCompletedEvent with metrics.
+
+        Args:
+            response: The Claude response object.
+            text: The response text.
+            latency_ms: Total latency in milliseconds.
+            time_to_first_token_ms: Time to first token in milliseconds.
         """
-        Forwards the events and also send out a standardized version (the agent class hooks into that)
+        # Extract token usage from response
+        input_tokens: Optional[int] = None
+        output_tokens: Optional[int] = None
+
+        if response.usage:
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
+
+        model = response.model or self.model
+
+        self.events.send(
+            LLMResponseCompletedEvent(
+                plugin_name="anthropic",
+                original=response,
+                text=text,
+                latency_ms=latency_ms,
+                time_to_first_token_ms=time_to_first_token_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=(input_tokens or 0) + (output_tokens or 0)
+                if input_tokens or output_tokens
+                else None,
+                model=model,
+            )
+        )
+
+    def _standardize_and_emit_event(
+        self,
+        event: RawMessageStreamEvent,
+        text_parts: List[str],
+        request_start_time: Optional[float] = None,
+        first_token_time: Optional[float] = None,
+        emitted_first_chunk: bool = False,
+    ) -> tuple[Optional[LLMResponseEvent[Any]], bool]:
+        """Forwards the events and also send out a standardized version.
+
+        Args:
+            event: The streaming event from Claude.
+            text_parts: List to accumulate text parts.
+            request_start_time: Time when the request started (perf_counter).
+            first_token_time: Time when first token was received (perf_counter).
+            emitted_first_chunk: Whether the first chunk has already been emitted.
+
+        Returns:
+            Tuple of (LLMResponseEvent if stop event else None, updated emitted_first_chunk flag).
         """
         # forward the native event
         self.events.send(
@@ -359,22 +501,38 @@ class ClaudeLLM(LLM):
             if hasattr(delta_event.delta, "text") and delta_event.delta.text:
                 text_parts.append(delta_event.delta.text)
 
+                # Check if this is the first text chunk for the entire request
+                is_first = (
+                    not emitted_first_chunk
+                    and first_token_time is not None
+                    and request_start_time is not None
+                )
+                ttft_ms: Optional[float] = None
+                if first_token_time is not None and request_start_time is not None:
+                    ttft_ms = (first_token_time - request_start_time) * 1000
+
                 self.events.send(
                     LLMResponseChunkEvent(
-                        plugin_name="antrhopic",
+                        plugin_name="anthropic",
                         content_index=delta_event.index,
                         item_id="",
                         output_index=0,
                         sequence_number=0,
                         delta=delta_event.delta.text,
+                        is_first_chunk=is_first,
+                        time_to_first_token_ms=ttft_ms if is_first else None,
                     )
                 )
+
+                if is_first:
+                    emitted_first_chunk = True
+
         elif event.type == "message_stop":
             stop_event: RawMessageStopEvent = event
             total_text = "".join(text_parts)
             llm_response = LLMResponseEvent(stop_event, total_text)
-            return llm_response
-        return None
+            return llm_response, emitted_first_chunk
+        return None, emitted_first_chunk
 
     @staticmethod
     def _normalize_message(claude_messages: Any) -> List["Message"]:
