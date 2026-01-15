@@ -138,7 +138,6 @@ class TestAgent:
             edge=edge,
             agent_user=User(name="test"),
         )
-        # It must not fail because the agent is closing or already closed
         with pytest.raises(SomeException):
             async with agent.join(call):
                 ...
