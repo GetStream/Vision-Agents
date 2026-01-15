@@ -331,8 +331,9 @@ class Agent:
         async def on_call_ended(event: CallEndedEvent):
             if self._call_ended_event is not None:
                 self._call_ended_event.set()
-
-            await self.close()
+            # Don't call close() here - join()'s finally block handles cleanup.
+            # Calling close() while join() is still setting up causes a race condition
+            # where the connection is cleaned up before publish_tracks() completes.
 
         @self.events.subscribe
         async def on_stt_transcript_event_create_response(
