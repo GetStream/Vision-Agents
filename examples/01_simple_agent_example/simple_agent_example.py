@@ -37,7 +37,7 @@ async def create_agent(**kwargs) -> Agent:
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
         llm=llm,
-        tts=elevenlabs.TTS(),
+        tts=elevenlabs.TTS(model_id="eleven_flash_v2_5"),
         stt=deepgram.STT(
             eager_turn_detection=True
         ),  # eager_turn_detection -> lower latency (but higher token usage)
