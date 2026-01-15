@@ -19,7 +19,8 @@ class JoinCallResponse(BaseModel):
     session_id: str = Field(..., description="The ID of the agent session")
     call_id: str = Field(..., description="The ID of the call")
     config: dict  # TODO: Make it a type
-    started_at: datetime
+    session_started_at: datetime
+
 
 class ErrorResponse(BaseModel):
     """Standard error response."""
@@ -33,4 +34,20 @@ class GetAgentSessionResponse(BaseModel):
     session_id: str
     call_id: str
     config: dict  # TODO: Make it a type
-    started_at: datetime
+    session_started_at: datetime
+
+
+class GetAgentSessionMetricsResponse(BaseModel):
+    """Information about an active agent session."""
+
+    session_id: str = Field(..., description="The ID of the agent session")
+    call_id: str = Field(..., description="The ID of the current call")
+    metrics: dict[str, int | float | None] = Field(
+        ..., description="Dictionary of metrics"
+    )
+    session_started_at: datetime = Field(
+        ..., description="Date and time in UTC at which the session was started"
+    )
+    metrics_generated_at: datetime = Field(
+        ..., description="Date and time in UTC at which the metrics were generated"
+    )

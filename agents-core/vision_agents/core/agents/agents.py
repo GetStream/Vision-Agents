@@ -49,6 +49,7 @@ from ..llm.events import (
 from ..llm.llm import LLM, AudioLLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..mcp import MCPBaseServer, MCPManager
+from ..observability import MetricsCollector
 from ..observability.agent import AgentMetrics
 from ..processors.base_processor import (
     AudioProcessor,
@@ -255,6 +256,7 @@ class Agent:
         self._close_lock = asyncio.Lock()
         self._closed = False
         self._metrics = AgentMetrics()
+        self._collector = MetricsCollector(self)
 
     @property
     def id(self) -> str:

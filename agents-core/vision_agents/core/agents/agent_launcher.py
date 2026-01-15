@@ -187,6 +187,7 @@ class AgentLauncher:
             call_id=call_id,
         )
         self._sessions[agent.id] = session
+        logger.info(f"Start agent session with id {session.id}")
         return session
 
     async def close_session(self, session_id: str, wait: bool = False) -> None:
@@ -195,6 +196,7 @@ class AgentLauncher:
         if session is None:
             raise SessionNotFoundError(f"Session with id {session_id} not found")
 
+        logger.info(f"Closing agent session with id {session.id}")
         if wait:
             await cancel_and_wait(session.task)
         else:

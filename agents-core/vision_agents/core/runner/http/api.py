@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import Response
@@ -7,6 +8,7 @@ from vision_agents.core import AgentLauncher
 from vision_agents.core.agents.agent_launcher import SessionNotFoundError
 
 from .models import (
+    GetAgentSessionMetricsResponse,
     GetAgentSessionResponse,
     JoinCallRequest,
     JoinCallResponse,
@@ -68,7 +70,7 @@ async def join_call(
     return JoinCallResponse(
         session_id=session.id,
         call_id=session.call_id,
-        started_at=session.started_at,
+        session_started_at=session.started_at,
         config=session.config,
     )
 
@@ -145,7 +147,50 @@ async def get_session_info(
         session_id=session.id,
         call_id=session.call_id,
         config=session.config,
-        started_at=session.started_at,
+        session_started_at=session.started_at,
+    )
+    return response
+
+
+@router.get(
+    "/sessions/{session_id}/metrics",
+    response_model=GetAgentSessionMetricsResponse,
+    summary="Get info about a running agent session",
+)
+async def get_session_metrics(
+    session_id: str,
+    launcher: AgentLauncher = AgentLauncherDependency,
+) -> GetAgentSessionMetricsResponse:
+    """
+    Get info about a running agent session.
+    """
+
+    try:
+        session = launcher.get_session(session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session with id '{session_id}' not found",
+        ) from exc
+
+    metrics_dict = session.agent.metrics.to_dict(
+        fields=[
+            "llm_latency_ms__avg",
+            "llm_time_to_first_token_ms__avg",
+            "llm_input_tokens__total",
+            "llm_output_tokens__total",
+            "stt_latency_ms__avg",
+            "tts_latency_ms__avg",
+            "realtime_audio_input_duration_ms__total",
+            "realtime_audio_output_duration_ms__total",
+        ]
+    )
+    response = GetAgentSessionMetricsResponse(
+        session_id=session.id,
+        call_id=session.call_id,
+        session_started_at=session.started_at,
+        metrics_generated_at=datetime.now(timezone.utc),
+        metrics=metrics_dict,
     )
     return response
 
