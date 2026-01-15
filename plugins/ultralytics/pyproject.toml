@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "ultralytics>=8.3.206",
+    "ultralytics>=8.4.3",
     "numpy>=2.0.0",
 ]
 
