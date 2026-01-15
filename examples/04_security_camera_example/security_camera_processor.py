@@ -1,3 +1,4 @@
+"""Security camera processor with face and package detection."""
 import asyncio
 import logging
 import time
@@ -12,13 +13,9 @@ import cv2
 import face_recognition
 import numpy as np
 
-from pathlib import Path
-
 from vision_agents.core.events.base import PluginBaseEvent
 from vision_agents.core.events.manager import EventManager
-from vision_agents.core.processors.base_processor import (
-    VideoProcessorPublisher,
-)
+from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
@@ -29,7 +26,7 @@ logger = logging.getLogger(__name__)
 OVERLAY_WIDTH = 200
 GRID_COLS = 2
 MAX_THUMBNAILS = 12
-PICKUP_THRESHOLD_SECONDS = 15.0
+PICKUP_THRESHOLD_SECONDS = 5.0  # Reduced for faster demo cleanup (poster fires immediately anyway)
 PICKUP_MAX_AGE_SECONDS = 300.0
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -68,6 +65,9 @@ class PackageDisappearedEvent(PluginBaseEvent):
     confidence: float = 0.0
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None
+    # Picker info (who was present when the package disappeared)
+    picker_face_id: Optional[str] = None
+    picker_name: Optional[str] = None
 
 
 @dataclass
@@ -231,12 +231,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         self.events.register(PackageDisappearedEvent)
         self.events.register(PersonDisappearedEvent)
 
-        logger.info("🎥 Security Camera Processor initialized")
-        logger.info(f"📊 Time window: {time_window}s ({time_window // 60} minutes)")
-        logger.info(f"🖼️ Thumbnail size: {thumbnail_size}x{thumbnail_size}")
-        logger.info(
-            f"📦 Package detection: {package_fps} FPS, interval: {package_detection_interval}s"
-        )
+        logger.info(f"🎥 Security Camera Processor initialized (window: {time_window // 60}min)")
 
     def _format_timestamp(self, timestamp: float) -> str:
         """Format a Unix timestamp as a human-readable string."""
@@ -267,21 +262,15 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             loop = asyncio.get_event_loop()
 
             def load_yolo_model():
-                if not Path(self.model_path).exists():
-                    logger.warning(
-                        f"Model file {self.model_path} not found. YOLO will download it automatically."
-                    )
-                logger.debug("Loading model file...")
                 model = YOLO(self.model_path)
                 model.to(self.device)
                 return model
 
             yolo_model = await loop.run_in_executor(self.executor, load_yolo_model)
-            logger.info(f"✅ YOLO model loaded: {self.model_path} on {self.device}")
+            logger.info(f"✅ YOLO model loaded: {self.model_path}")
             return yolo_model
         except Exception as e:
-            logger.warning(f"⚠️ Failed to load YOLO model: {e}")
-            logger.warning("⚠️ Package detection will be disabled")
+            logger.warning(f"⚠️ YOLO model failed to load: {e} - package detection disabled")
             return None
 
     def on_warmed_up(self, resource: Optional[Any]) -> None:
@@ -542,8 +531,17 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             x, y, w, h = face_data["bbox"]
             face_encoding = face_data["encoding"]
 
-            # Extract face thumbnail (convert back to BGR for storage)
-            face_roi = frame_bgr[y : y + h, x : x + w]
+            # Expand bounding box by 30% on each side for more context
+            frame_h, frame_w = frame_bgr.shape[:2]
+            pad_x = int(w * 0.3)
+            pad_y = int(h * 0.3)
+            x1 = max(0, x - pad_x)
+            y1 = max(0, y - pad_y)
+            x2 = min(frame_w, x + w + pad_x)
+            y2 = min(frame_h, y + h + pad_y)
+
+            # Extract face thumbnail with padding
+            face_roi = frame_bgr[y1:y2, x1:x2]
             face_thumbnail = cv2.resize(
                 face_roi, (self.thumbnail_size, self.thumbnail_size)
             )
@@ -566,18 +564,12 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 if known_name and not face_detection.name:
                     face_detection.name = known_name
                 
-                # Only increment count and emit event if they returned after disappearing
-                # This ensures each visit (disappear → return) is counted independently
+                # Only emit event if they returned after disappearing
                 if face_detection.disappeared_at is not None:
-                    # They left and came back - increment count and emit event
-                    # After clearing disappeared_at, if they disappear and return again,
-                    # the cycle repeats and count increments again
                     face_detection.detection_count += 1
                     updated_faces += 1
                     display_name = face_detection.name or matching_face_id[:8]
-                    logger.info(
-                        f"👤 Returning visitor: {display_name} (visit #{face_detection.detection_count})"
-                    )
+                    logger.info(f"👤 Returning: {display_name} (visit #{face_detection.detection_count})")
                     self.events.send(
                         PersonDetectedEvent(
                             plugin_name="security_camera",
@@ -588,15 +580,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             last_seen=self._format_timestamp(current_time),
                         )
                     )
-                    face_detection.disappeared_at = None  # Clear disappeared flag so next disappearance can be tracked
-                else:
-                    # Continuously present - just update silently, don't increment count
-                    display_name = face_detection.name or matching_face_id[:8]
-                    logger.debug(
-                        f"🔄 Updated existing face {display_name} "
-                        f"(continuously present, entry count: {face_detection.detection_count})"
-                    )
-                # If disappeared_at is None, they're continuously present - no event
+                    face_detection.disappeared_at = None
             else:
                 # New unique face
                 face_id = str(uuid.uuid4())
@@ -668,7 +652,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     self.events.send(
                         PersonDisappearedEvent(
                             plugin_name="security_camera",
-                            face_id=display_name,
+                            face_id=face_id,
                             name=face_detection.name,
                             first_seen=self._format_timestamp(face_detection.first_seen),
                             last_seen=self._format_timestamp(current_time),
@@ -677,10 +661,6 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
 
         if new_faces > 0 or updated_faces > 0:
             self._last_detection_time = current_time
-            logger.info(
-                f"📊 Detection summary - New: {new_faces}, Updated: {updated_faces}, "
-                f"Total unique visitors: {len(self._detected_faces)}"
-            )
 
         return new_faces
 
@@ -720,16 +700,6 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             class_ids = result.boxes.cls.cpu().numpy().astype(int)
             class_names = result.names
 
-            # Log all detections for debugging
-            detected_classes = {}
-            for box, conf, cls_id in zip(boxes, confidences, class_ids):
-                class_name = class_names[cls_id]
-                detected_classes[class_name] = detected_classes.get(class_name, 0) + 1
-
-            if detected_classes:
-                logger.info(
-                    f"🔍 YOLO detected {len(boxes)} objects: {', '.join(f'{k}({v})' for k, v in detected_classes.items())}"
-                )
 
             for box, conf, cls_id in zip(boxes, confidences, class_ids):
                 class_name_original = class_names[cls_id]
@@ -759,45 +729,18 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     detection_area = w * h
                     area_ratio = detection_area / frame_area
 
-                    if area_ratio < self.package_min_area_ratio:
-                        logger.debug(
-                            f"⏭️ Skipped small detection: {class_name_original} "
-                            f"(area: {area_ratio:.2%} < {self.package_min_area_ratio:.2%})"
-                        )
+                    # Filter by size
+                    if area_ratio < self.package_min_area_ratio or area_ratio > self.package_max_area_ratio:
                         continue
 
-                    if area_ratio > self.package_max_area_ratio:
-                        logger.debug(
-                            f"⏭️ Skipped large detection (likely wall/background): {class_name_original} "
-                            f"(area: {area_ratio:.2%} > {self.package_max_area_ratio:.2%})"
-                        )
-                        continue
-
-                    all_detections.append(
-                        {
-                            "bbox": (x, y, w, h),
-                            "confidence": float(conf),
-                            "label": class_name_original,
-                        }
-                    )
-                    logger.info(
-                        f"📦 Matched package class: {class_name_original} (confidence: {conf:.2f}, area: {area_ratio:.2%})"
-                    )
-                else:
-                    logger.debug(
-                        f"⏭️ Skipped non-package class: {class_name_original} (confidence: {conf:.2f})"
-                    )
+                    all_detections.append({
+                        "bbox": (x, y, w, h),
+                        "confidence": float(conf),
+                        "label": class_name_original,
+                    })
 
         except Exception as e:
-            logger.warning(f"⚠️ Failed to detect packages with YOLO: {e}")
-
-        if all_detections:
-            logger.info(f"📦 Found {len(all_detections)} package-like objects")
-        elif detected_classes:
-            logger.debug(
-                f"📦 No packages matched from {len(boxes)} detections. "
-                f"Looking for: {', '.join(self.package_detect_classes[:5])}..."
-            )
+            logger.warning(f"⚠️ Package detection failed: {e}")
 
         return all_detections
 
@@ -870,14 +813,11 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 )
                 package_detection.package_image = package_thumbnail
                 
-                # Only increment count and emit event if package returned after disappearing
+                # Only emit event if package returned after disappearing
                 if package_detection.disappeared_at is not None:
-                    # Package left and came back - increment count and emit arrival event
                     package_detection.detection_count += 1
                     updated_packages += 1
-                    logger.info(
-                        f"📦 Package returned: {matching_package_id[:8]} (visit #{package_detection.detection_count})"
-                    )
+                    logger.info(f"📦 Package returned: {matching_package_id[:8]}")
                     self.events.send(
                         PackageDetectedEvent(
                             plugin_name="security_camera",
@@ -889,14 +829,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             last_seen=self._format_timestamp(current_time),
                         )
                     )
-                    package_detection.disappeared_at = None  # Clear disappeared flag
-                else:
-                    # Continuously present - just update silently, don't increment count or emit event
-                    logger.debug(
-                        f"🔄 Updated existing package {matching_package_id[:8]} "
-                        f"(continuously present, entry count: {package_detection.detection_count})"
-                    )
-                # If disappeared_at is None, package is continuously present - no event
+                    package_detection.disappeared_at = None
             else:
                 # New unique package
                 package_id = str(uuid.uuid4())
@@ -944,8 +877,15 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 if package_detection.disappeared_at is None:
                     # First time disappearing - mark it and emit event
                     package_detection.disappeared_at = current_time
+                    
+                    # Find who was present when package disappeared
+                    picker = self._find_person_present_at(package_detection.last_seen)
+                    picker_face_id = picker.face_id if picker else None
+                    picker_name = picker.name if picker else None
+                    
+                    picker_display = picker_name or (picker_face_id[:8] if picker_face_id else "unknown")
                     logger.info(
-                        f"📦 Package disappeared: {package_id[:8]} (confidence: {package_detection.confidence:.2f})"
+                        f"📦 Package disappeared: {package_id[:8]} (confidence: {package_detection.confidence:.2f}, picker: {picker_display})"
                     )
                     self.events.send(
                         PackageDisappearedEvent(
@@ -954,15 +894,13 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             confidence=package_detection.confidence,
                             first_seen=self._format_timestamp(package_detection.first_seen),
                             last_seen=self._format_timestamp(current_time),
+                            picker_face_id=picker_face_id,
+                            picker_name=picker_name,
                         )
                     )
 
         if new_packages > 0 or updated_packages > 0:
             self._last_package_detection_time = current_time
-            logger.info(
-                f"📦 Package detection summary - New: {new_packages}, Updated: {updated_packages}, "
-                f"Total unique packages: {len(self._detected_packages)}"
-            )
 
         return new_packages
 
@@ -1293,38 +1231,26 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
-        """
-        Set up video processing pipeline.
-
-        Args:
-            track: The incoming video track to process
-            participant_id: Participant ID
-            shared_forwarder: Optional shared VideoForwarder
-        """
-        logger.info("✅ Security Camera process_video starting")
-
+        """Set up video processing pipeline."""
         if shared_forwarder is not None:
             self._video_forwarder = shared_forwarder
-            logger.info(
-                f"🎥 Security Camera subscribing to shared VideoForwarder at {self.fps} FPS"
-            )
             self._video_forwarder.add_frame_handler(
                 self._process_and_add_frame, fps=float(self.fps), name="security_camera"
             )
         else:
             self._video_forwarder = VideoForwarder(
-                track,
-                max_buffer=30,
-                fps=self.fps,
-                name="security_camera_forwarder",
+                track, max_buffer=30, fps=self.fps, name="security_camera_forwarder"
             )
             self._video_forwarder.add_frame_handler(self._process_and_add_frame)
+        logger.info("✅ Security camera video processing started")
 
-        logger.info("✅ Security Camera video processing pipeline started")
+    async def stop_processing(self) -> None:
+        """Stop processing video tracks."""
+        if self._video_forwarder:
+            await self._video_forwarder.stop()
 
     def publish_video_track(self):
         """Return the video track for publishing."""
-        logger.info("📹 publish_video_track called")
         return self._video_track
 
     def state(self) -> Dict[str, Any]:
@@ -1372,6 +1298,20 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 else "No detections yet"
             ),
         }
+
+    def get_face_image(self, face_id: str) -> Optional[np.ndarray]:
+        """
+        Get the face image for a given face ID.
+
+        Args:
+            face_id: The ID of the face to retrieve
+
+        Returns:
+            The face image (numpy array) or None if not found
+        """
+        if face_id in self._detected_faces:
+            return self._detected_faces[face_id].face_image
+        return None
 
     def get_visitor_count(self) -> int:
         """
@@ -1473,30 +1413,12 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         return entries
 
     def register_known_face(self, name: str, face_encoding: np.ndarray) -> bool:
-        """
-        Register a face encoding with a name for future recognition.
-
-        Args:
-            name: Name to associate with the face
-            face_encoding: 128-dimensional face encoding from face_recognition
-
-        Returns:
-            True if registered successfully
-        """
+        """Register a face encoding with a name for future recognition."""
         self._known_faces[name] = KnownFace(
-            name=name,
-            face_encoding=face_encoding,
-            registered_at=time.time(),
+            name=name, face_encoding=face_encoding, registered_at=time.time()
         )
-        logger.info(f"✅ Registered known face: {name}")
-
-        # Log activity
-        self._log_activity(
-            event_type="face_registered",
-            description=f"Registered new known face: {name}",
-            details={"name": name},
-        )
-
+        self._log_activity("face_registered", f"Registered: {name}", {"name": name})
+        logger.info(f"✅ Registered face: {name}")
         return True
 
     def register_current_face_as(self, name: str) -> Dict[str, Any]:
@@ -1548,18 +1470,10 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
 
     async def close(self):
         """Clean up resources."""
-        logger.info("🛑 Security Camera Processor closing")
         self._shutdown = True
-        
-        # Stop video forwarder if it exists
         if self._video_forwarder is not None:
-            try:
-                await self._video_forwarder.stop()
-            except Exception as e:
-                logger.warning(f"Error stopping video forwarder: {e}")
-        
-        # Shutdown executor
+            await self._video_forwarder.stop()
         self.executor.shutdown(wait=False)
         self._detected_faces.clear()
         self._detected_packages.clear()
-        logger.info("🛑 Security Camera Processor closed")
+        logger.info("🛑 Security camera processor closed")

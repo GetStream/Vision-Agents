@@ -439,7 +439,8 @@ class Agent:
 
         @self.llm.events.subscribe
         async def on_llm_response_sync_conversation(event: LLMResponseCompletedEvent):
-            self.logger.info(f"🤖 [LLM response]: {event.text}")
+            if event.text:
+                self.logger.info(f"🤖 [LLM response]: {event.text}")
 
             if self.conversation is None:
                 return
