@@ -584,6 +584,17 @@ class Agent:
             self._call_ended_event = asyncio.Event()
             self._joined_at = time.time()
             yield
+        except Exception as exc:
+            if self._closing or self._closed:
+                # Only log exceptions if the agent is already closing
+                # (e.g., when the call ended before the agent fully joined).
+                logger.warning(
+                    f"Failed to join the call because the agent is closing or already closed: {exc}"
+                )
+                # Yield to let the context manager proceed
+                yield
+            else:
+                raise
         finally:
             await self.close()
             self._end_tracing()
@@ -770,6 +781,10 @@ class Agent:
         self.clear_call_logging_context()
         self._closed = True
         self.logger.info("🤖 Agent stopped")
+
+    @property
+    def _closing(self):
+        return self._close_lock.locked()
 
     # ------------------------------------------------------------------
     # Logging context helpers
