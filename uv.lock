@@ -1666,16 +1666,15 @@ webrtc = [
 
 [[package]]
 name = "google-auth"
-version = "2.43.0"
+version = "2.47.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cachetools" },
     { name = "pyasn1-modules" },
     { name = "rsa" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/ef/66d14cf0e01b08d2d51ffc3c20410c4e134a1548fc246a6081eae585a4fe/google_auth-2.43.0.tar.gz", hash = "sha256:88228eee5fc21b62a1b5fe773ca15e67778cb07dc8363adcb4a8827b52d81483", size = 296359, upload-time = "2025-11-06T00:13:36.587Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/3c/ec64b9a275ca22fa1cd3b6e77fefcf837b0732c890aa32d2bd21313d9b33/google_auth-2.47.0.tar.gz", hash = "sha256:833229070a9dfee1a353ae9877dcd2dec069a8281a4e72e72f77d4a70ff945da", size = 323719, upload-time = "2026-01-06T21:55:31.045Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/d1/385110a9ae86d91cc14c5282c61fe9f4dc41c0b9f7d423c6ad77038c4448/google_auth-2.43.0-py2.py3-none-any.whl", hash = "sha256:af628ba6fa493f75c7e9dbe9373d148ca9f4399b5ea29976519e0a3848eddd16", size = 223114, upload-time = "2025-11-06T00:13:35.209Z" },
+    { url = "https://files.pythonhosted.org/packages/db/18/79e9008530b79527e0d5f79e7eef08d3b179b7f851cfd3a2f27822fbdfa9/google_auth-2.47.0-py3-none-any.whl", hash = "sha256:c516d68336bfde7cf0da26aab674a36fedcf04b37ac4edd59c597178760c3498", size = 234867, upload-time = "2026-01-06T21:55:28.6Z" },
 ]
 
 [package.optional-dependencies]
@@ -1705,7 +1704,7 @@ wheels = [
 
 [[package]]
 name = "google-genai"
-version = "1.55.0"
+version = "1.59.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1719,9 +1718,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/7c/19b59750592702305ae211905985ec8ab56f34270af4a159fba5f0214846/google_genai-1.55.0.tar.gz", hash = "sha256:ae9f1318fedb05c7c1b671a4148724751201e8908a87568364a309804064d986", size = 477615, upload-time = "2025-12-11T02:49:28.624Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/34/c03bcbc759d67ac3d96077838cdc1eac85417de6ea3b65b313fe53043eee/google_genai-1.59.0.tar.gz", hash = "sha256:0b7a2dc24582850ae57294209d8dfc2c4f5fcfde0a3f11d81dc5aca75fb619e2", size = 487374, upload-time = "2026-01-15T20:29:46.619Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/86/a5a8e32b2d40b30b5fb20e7b8113fafd1e38befa4d1801abd5ce6991065a/google_genai-1.55.0-py3-none-any.whl", hash = "sha256:98c422762b5ff6e16b8d9a1e4938e8e0ad910392a5422e47f5301498d7f373a1", size = 703389, upload-time = "2025-12-11T02:49:27.105Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/53/6d00692fe50d73409b3406ae90c71bc4499c8ae7fac377ba16e283da917c/google_genai-1.59.0-py3-none-any.whl", hash = "sha256:59fc01a225d074fe9d1e626c3433da292f33249dadce4deb34edea698305a6df", size = 719099, upload-time = "2026-01-15T20:29:44.604Z" },
 ]
 
 [[package]]
@@ -6361,7 +6360,7 @@ wheels = [
 
 [[package]]
 name = "ultralytics"
-version = "8.3.227"
+version = "8.4.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
@@ -6377,9 +6376,9 @@ dependencies = [
     { name = "torchvision" },
     { name = "ultralytics-thop" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0b/4b/8f637668d231fc187508fdcd0db7718dd598138d62a63195e9f2037735c5/ultralytics-8.3.227.tar.gz", hash = "sha256:26a0c524512407cf88fda68ab19e37c7c2dc850bcf5c7f25083a66a16066c235", size = 926957, upload-time = "2025-11-09T21:14:33.114Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/13/0559afb092ee4c3f0b2ab45c891b02b59a541ca57d1a4843ca0988dcee7d/ultralytics-8.4.3.tar.gz", hash = "sha256:64907ec275dede20f650f6164f155ad21c2eaab61ab4806f9a73d2e0816058a7", size = 1008620, upload-time = "2026-01-15T22:05:20.538Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/f4/4588fc0e29150d3e81f8bf159f04ccfa439d0610fdbf1dd98309d474d98f/ultralytics-8.3.227-py3-none-any.whl", hash = "sha256:2f252a78f877958e85e7ad0fed8f0804a2b71679626467b7d96699ffd355d27e", size = 1081520, upload-time = "2025-11-09T21:14:30.15Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/d9/ced5e20d3d3932f424b3206e861c2ad45b877b22fdc6453358b976242f40/ultralytics-8.4.3-py3-none-any.whl", hash = "sha256:559d6e91fb27e45c8421d50d1d8afcb557aec834b4108aeec4d9bffe4abf74e9", size = 1181163, upload-time = "2026-01-15T22:05:16.886Z" },
 ]
 
 [[package]]
@@ -6949,7 +6948,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "google-genai", specifier = ">=1.55.0" },
+    { name = "google-genai", specifier = ">=1.59.0" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "vision-agents", editable = "agents-core" },
 ]
@@ -7425,7 +7424,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.0.0" },
-    { name = "ultralytics", specifier = ">=8.3.206" },
+    { name = "ultralytics", specifier = ">=8.4.3" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

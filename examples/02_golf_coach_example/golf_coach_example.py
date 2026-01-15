@@ -17,7 +17,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="AI golf coach"),
         instructions="Read @golf_coach.md",  # read the golf coach markdown instructions
         llm=gemini.Realtime(fps=3),  # Share video with gemini
-        #llm=openai.Realtime(fps=3), # use this to switch to openai
+        # llm=openai.Realtime(fps=3), # use this to switch to openai
         processors=[
             ultralytics.YOLOPoseProcessor(model_path="yolo26n-pose.pt")
         ],  # realtime pose detection with yolo
