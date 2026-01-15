@@ -19,7 +19,7 @@ async def create_agent(**kwargs) -> Agent:
         llm=gemini.Realtime(fps=3),  # Share video with gemini
         # llm=openai.Realtime(fps=3), use this to switch to openai
         processors=[
-            ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
+            ultralytics.YOLOPoseProcessor(model_path="yolo26n-pose.pt")
         ],  # realtime pose detection with yolo
     )
     return agent
