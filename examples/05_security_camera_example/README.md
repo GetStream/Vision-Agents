@@ -118,7 +118,7 @@ X_ACCESS_TOKEN_SECRET=your_x_access_token_secret
 ### Running the Demo
 
 ```bash
-uv run python security_camera_example.py
+uv run security_camera_example.py
 ```
 
 The agent will join a call and start monitoring the video feed for faces and packages.
@@ -212,48 +212,6 @@ The processor emits events that the agent subscribes to:
 - `PersonDisappearedEvent`: Person left the frame
 - `PackageDetectedEvent`: New or returning package detected
 - `PackageDisappearedEvent`: Package disappeared (potential theft)
-
-### Performance Optimization
-
-- **Threading**: CPU-intensive operations run in ThreadPoolExecutor
-- **Configurable FPS**: Process only N frames per second (default: 5)
-- **Detection Throttling**: Full face detection every 2s, fast bbox updates every 0.3s
-- **Automatic Cleanup**: Old faces/packages removed after time window
-
-## Troubleshooting
-
-### No faces detected
-
-- Ensure good lighting conditions
-- Position camera to show frontal faces clearly
-- The face_recognition library works best with direct face views
-- Try lowering `detection_interval`
-
-### No packages detected
-
-- Ensure the package is clearly visible and well-lit
-- Check that `weights_custom.pt` is in the example directory (or train/download your own)
-- Try lowering `package_conf_threshold` (e.g., 0.5)
-- Check logs for YOLO model loading errors
-
-### Performance issues
-
-- Reduce `fps` parameter (e.g., from 5 to 2-3)
-- Increase `detection_interval` and `bbox_update_interval`
-- Lower video resolution
-- Use a smaller YOLOv11 variant (nano instead of small)
-
-### Wanted poster not posting to X
-
-- Verify X API credentials are set correctly in `.env`
-- Check that you have write permissions on your X app
-- Look for error messages in the logs
-
-### Same person not being recognized
-
-- Increase `face_match_tolerance` (e.g., 0.7 instead of 0.6)
-- Ensure consistent lighting and camera angle
-- Face encodings work better with clear, frontal face views
 
 ## External Resources
 
