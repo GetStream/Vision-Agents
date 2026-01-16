@@ -123,11 +123,10 @@ class TestXAIRealtimeConfiguration:
         realtime = Realtime(
             api_key="test-key",
             voice="Rex",
-            sample_rate=16000,
             turn_detection=None,
         )
         assert realtime.voice == "Rex"
-        assert realtime.sample_rate == 16000
+        assert realtime.sample_rate == 48000  # Always 48kHz
         assert realtime.turn_detection is None
 
     async def test_search_tools_can_be_disabled(self):

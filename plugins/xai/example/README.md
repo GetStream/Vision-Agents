@@ -56,10 +56,7 @@ xAI provides 5 different voice options:
 To change the voice:
 
 ```python
-llm=xai.Realtime(
-    voice="Rex",
-    sample_rate=24000,
-)
+llm=xai.Realtime(voice="Rex")
 ```
 
 ## Search Tools

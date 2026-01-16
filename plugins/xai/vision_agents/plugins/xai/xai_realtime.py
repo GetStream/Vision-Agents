@@ -77,11 +77,8 @@ class XAIRealtime(realtime.Realtime):
         await llm.connect()
         await llm.simple_response("Hello, how are you?")
 
-        # With custom voice and configuration
-        llm = xai.Realtime(
-            voice="Rex",
-            sample_rate=16000,
-        )
+        # With custom voice
+        llm = xai.Realtime(voice="Rex")
 
         # Disable web search and X search
         llm = xai.Realtime(web_search=False, x_search=False)
@@ -98,8 +95,7 @@ class XAIRealtime(realtime.Realtime):
 
     Development notes:
 
-    - Audio format is PCM16 little-endian
-    - Default sample rate is 48kHz, configurable to 8000, 16000, 21050, 24000, 32000, 44100, 48000
+    - Audio format is PCM16 little-endian at 48kHz
     - Supports server-side VAD (voice activity detection) by default
     - Web search and X search are enabled by default
     """
@@ -110,7 +106,6 @@ class XAIRealtime(realtime.Realtime):
         voice: str = DEFAULT_VOICE,
         api_key: Optional[str] = None,
         client: Optional[AsyncClient] = None,
-        sample_rate: int = DEFAULT_SAMPLE_RATE,
         turn_detection: Optional[str] = "server_vad",
         web_search: bool = True,
         x_search: bool = True,
@@ -125,8 +120,6 @@ class XAIRealtime(realtime.Realtime):
             voice: Voice to use for responses. Options: Ara, Rex, Sal, Eve, Leo.
             api_key: Optional API key. Defaults to XAI_API_KEY environment variable.
             client: Optional AsyncClient instance. If not provided, one is created.
-            sample_rate: Audio sample rate in Hz. Defaults to 48000.
-                         Supported: 8000, 16000, 21050, 24000, 32000, 44100, 48000.
             turn_detection: Turn detection mode. Use "server_vad" for automatic
                            voice activity detection, or None for manual control.
             web_search: Enable web search tool. Defaults to True.
@@ -137,7 +130,7 @@ class XAIRealtime(realtime.Realtime):
         super().__init__(**kwargs)
         self.model = model
         self.voice = voice
-        self.sample_rate = sample_rate
+        self.sample_rate = DEFAULT_SAMPLE_RATE
         self.turn_detection = turn_detection
         self.web_search = web_search
         self.x_search = x_search
@@ -242,7 +235,6 @@ class XAIRealtime(realtime.Realtime):
         self._emit_connected_event(
             session_config={
                 "voice": self.voice,
-                "sample_rate": self.sample_rate,
                 "turn_detection": self.turn_detection,
             },
             capabilities=["audio", "text", "function_calling"],
