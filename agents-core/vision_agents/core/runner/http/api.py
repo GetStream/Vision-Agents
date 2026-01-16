@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import Response
 from vision_agents.core import AgentLauncher
-from vision_agents.core.agents.agent_launcher import AgentSession, SessionNotFoundError
+from vision_agents.core.agents.agent_launcher import AgentSession
 
 from .dependencies import (
     can_close_session,
@@ -91,13 +91,7 @@ async def close_session(
     Stop an agent and remove it from a call.
     """
 
-    try:
-        await launcher.close_session(session_id)
-    except SessionNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent for call '{session_id}' not found",
-        ) from exc
+    await launcher.close_session(session_id)
 
     return Response(status_code=204)
 
@@ -117,13 +111,7 @@ async def close_session_beacon(
     Stop an agent via sendBeacon (POST alternative to DELETE).
     """
 
-    try:
-        await launcher.close_session(session_id)
-    except SessionNotFoundError:
-        # For beacon requests, we return success even if not found
-        # since the agent may have already been cleaned up
-        logger.warning(f"Beacon leave: agent session with id '{session_id}' not found")
-
+    await launcher.close_session(session_id)
     return Response(status_code=200)
 
 

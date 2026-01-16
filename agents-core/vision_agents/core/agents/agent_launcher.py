@@ -23,9 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SessionNotFoundError(Exception): ...
-
-
 @dataclass
 class AgentSession:
     agent: "Agent"
