@@ -1,16 +1,18 @@
 # Security Camera Demo
 
-A real-time security camera demo with face recognition that identifies unique visitors, tracks their activity, and provides an AI assistant to answer questions about security.
+A real-time security camera demo with face recognition, package detection, and automated package theft response - including wanted poster generation and posting to X.
 
 ## Features
 
-- 🎥 **Real-time Face Detection**: Uses face_recognition library for accurate face detection
-- 🧠 **Face Recognition**: Identifies unique individuals and prevents duplicate entries
-- 👥 **Visitor Tracking**: Maintains a 30-minute sliding window of unique visitors
-- 📊 **Visual Overlay**: Displays unique visitor count and face thumbnails in a grid
-- 🔢 **Detection Counter**: Shows how many times each visitor has been seen
-- 🤖 **AI Integration**: Ask the AI assistant detailed questions about visitor activity
-- ⏰ **Timestamp Display**: Shows current date/time on the video feed
+- 🎥 **Real-time Face Detection**: Uses [face_recognition](https://github.com/ageitgey/face_recognition) library for accurate face detection and recognition
+- 📦 **Package Detection**: [YOLOv11](https://docs.ultralytics.com/models/yolo11/)-based object detection for packages and boxes
+- 🚨 **Package Theft Detection**: Detects when a package disappears and identifies the suspect
+- 🖼️ **Wanted Poster Generation**: Automatically creates a wanted poster when a package is "stolen"
+- 🐦 **X Integration**: Posts wanted posters to [X](https://developer.x.com) automatically
+- 👤 **Named Face Recognition**: Remembers people by name ("remember me as xxx")
+- 📊 **Visual Overlay**: Displays visitor count, package count, and thumbnail grid
+- 📜 **Activity Log**: Tracks events like arrivals, departures, and package detections
+- 🤖 **AI Integration**: Ask the AI assistant questions about security activity
 
 ## How It Works
 
@@ -20,29 +22,49 @@ The demo uses a custom `SecurityCameraProcessor` that:
 
 1. **Subscribes to Video Stream**: Uses `VideoForwarder` to receive frames from the camera
 2. **Detects Faces**: Runs face_recognition on frames at configurable intervals
-3. **Generates Face Encodings**: Creates unique 128-dimensional encodings for each face
+3. **Detects Packages**: Runs YOLO model to detect packages, boxes, and parcels
 4. **Matches Faces**: Compares new detections against known faces to identify individuals
-5. **Tracks Visitors**: Stores unique visitors with first/last seen timestamps and detection counts
-6. **Cleans Old Data**: Automatically removes visitors not seen within the time window
-7. **Creates Overlay**: Composites face thumbnails with detection counts onto the video
+5. **Tracks Visitors & Packages**: Stores unique visitors and packages with timestamps
+6. **Detects Theft**: When a package disappears while someone is present, triggers theft workflow
+7. **Creates Overlay**: Composites face and package thumbnails onto the video
 8. **Publishes Output**: Sends the annotated video to participants via `QueuedVideoTrack`
+
+### Package Theft Workflow
+
+When a package disappears from the frame:
+
+1. System identifies who was present when the package disappeared
+2. Waits 3 seconds to confirm the package is truly gone (not just a detection blip)
+3. Generates a "WANTED" poster with the suspect's face
+4. Displays the poster in the video call for 8 seconds
+5. Posts the poster to X with a caption
+6. Agent announces the theft and poster generation
 
 ### Video Overlay
 
 The right side of the video shows:
+
 - **Header**: "SECURITY CAMERA"
-- **Visitor Count**: Number of unique visitors in last 30 minutes
-- **Face Grid**: Thumbnails of unique visitors (up to 12 most recent)
-- **Detection Badges**: Small counters showing how many times each person was seen (e.g., "3x")
+- **Visitor Count**: Currently visible / total unique visitors
+- **Package Count**: Currently visible / total packages seen
+- **Legend**: Color coding for people (green) and packages (blue)
+- **Thumbnail Grid**: Up to 12 most recent faces and packages
+- **Detection Badges**: Show how many times each person/package was seen
 - **Timestamp**: Current date and time at bottom of frame
+
+Bounding boxes are drawn around detected faces (green) and packages (blue).
 
 ### LLM Integration
 
 The AI assistant has access to:
+
 - `get_visitor_count()`: Get count of unique visitors and total detections
 - `get_visitor_details()`: Get detailed info on each visitor (first seen, last seen, detection count)
-- Real-time processor state with timing information
-- Ability to answer detailed questions about security activity and specific visitors
+- `get_package_count()`: Get current and total package counts
+- `get_package_details()`: Get history of all packages including who picked them up
+- `get_activity_log()`: Get recent events (arrivals, packages detected, departures)
+- `remember_my_face(name)`: Register a face so it's recognized by name in the future
+- `get_known_faces()`: List all registered faces
 
 ## Setup
 
@@ -50,22 +72,26 @@ The AI assistant has access to:
 
 - Python 3.13+
 - Webcam/camera access
-- GetStream account for video transport
-- API keys for Gemini, Deepgram, and ElevenLabs
+- [GetStream](https://getstream.io) account for video transport
+- API keys for [Gemini](https://ai.google.dev), [Deepgram](https://deepgram.com), and [ElevenLabs](https://elevenlabs.io)
+- (Optional) [X Developer API](https://developer.x.com) credentials for posting wanted posters
 
 ### Installation
 
 1. Navigate to this directory:
+
 ```bash
 cd examples/04_security_camera_example
 ```
 
 2. Install dependencies using uv:
+
 ```bash
 uv sync
 ```
 
 3. Set up environment variables in `.env`:
+
 ```bash
 # Stream API credentials
 STREAM_API_KEY=your_stream_api_key
@@ -79,6 +105,12 @@ DEEPGRAM_API_KEY=your_deepgram_api_key
 
 # TTS API key
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
+
+# X (Twitter) API credentials (optional, for posting wanted posters)
+X_API_KEY=your_x_api_key
+X_API_SECRET=your_x_api_secret
+X_ACCESS_TOKEN=your_x_access_token
+X_ACCESS_TOKEN_SECRET=your_x_access_token_secret
 ```
 
 ## Usage
@@ -89,17 +121,28 @@ ELEVENLABS_API_KEY=your_elevenlabs_api_key
 uv run python security_camera_example.py
 ```
 
-The agent will join a call and start monitoring the video feed for faces.
+The agent will join a call and start monitoring the video feed for faces and packages.
 
 ### Interacting with the AI
 
-Once connected, you can ask questions like:
-- "How many unique people have visited in the last 30 minutes?"
-- "How many times has each person been seen?"
-- "When was the last person detected?"
-- "Who visited most recently?"
-- "Give me details on all visitors"
-- "Is the same person still there?"
+Once connected, you can ask say things like:
+
+- "How many people have visited?"
+- "What happened while I was away?"
+- "Did anyone come by?"
+- "Have any packages been delivered?"
+- "Who picked up the package?"
+- "Remember me as xxx"
+- "Who do you know?"
+
+### Package Theft Demo
+
+To trigger the theft workflow:
+
+1. Place a package (box, parcel) in view of the camera
+2. Wait for it to be detected (blue bounding box appears)
+3. Have someone pick up the package while their face is visible
+4. The system will generate a wanted poster and post it to X
 
 ### Configuration
 
@@ -107,11 +150,15 @@ You can adjust the processor parameters in `security_camera_example.py`:
 
 ```python
 security_processor = SecurityCameraProcessor(
-    fps=5,                      # Frames per second to process
-    time_window=1800,           # Time window in seconds (30 min)
-    thumbnail_size=80,          # Size of face thumbnails in pixels
-    detection_interval=2.0,     # Seconds between face detections
-    face_match_tolerance=0.6,   # Face matching tolerance (lower = stricter)
+    fps=5,                        # Frames per second to process
+    time_window=1800,             # Time window in seconds (30 min)
+    thumbnail_size=80,            # Size of thumbnails in pixels
+    detection_interval=2.0,       # Seconds between face detection with identity matching
+    bbox_update_interval=0.3,     # Seconds between fast bbox updates for tracking
+    model_path="weights_custom.pt",  # YOLO model for package detection
+    package_conf_threshold=0.7,   # Package detection confidence threshold
+    max_tracked_packages=1,       # Single-package mode for demo
+    face_match_tolerance=0.6,     # Face matching tolerance (lower = stricter)
 )
 ```
 
@@ -119,87 +166,106 @@ security_processor = SecurityCameraProcessor(
 
 ### Face Detection & Recognition
 
-Uses the `face_recognition` library (built on dlib) which:
+Uses the [face_recognition](https://github.com/ageitgey/face_recognition) library (built on dlib) which:
+
 - Provides state-of-the-art face detection accuracy
 - Generates 128-dimensional face encodings for recognition
 - Can identify the same person across different angles and lighting
-- Uses HOG (Histogram of Oriented Gradients) for detection
-- Automatically downloads pre-trained models on first use
-- More accurate than Haar Cascades, though slightly slower
+- Supports named face registration for persistent recognition
+
+### Package Detection
+
+Uses a custom [YOLOv11](https://docs.ultralytics.com/models/yolo11/) model (`weights_custom.pt`) trained to detect:
+
+- Box
+- Box_broken
+- Open_package
+- Package
+
+The model runs package detection at configurable intervals with IoU-based tracking to maintain package identity across frames.
+
+### About the Custom Model
+
+The `weights_custom.pt` file is a YOLOv11 object detection model we trained using [Roboflow](https://roboflow.com) with [SAM 3](https://blog.roboflow.com/sam3/) for assisted labeling. SAM 3's text-prompt segmentation made it fast to annotate packages and boxes accurately.
+
+**We are not distributing `weights_custom.pt`.** To run this demo, you'll need to provide your own YOLO model. 
+
+Options:
+- **Train your own**: Use [Roboflow](https://roboflow.com) to label a dataset and train a YOLOv11 model. See their [YOLOv11 training guide](https://blog.roboflow.com/yolov11-how-to-train-custom-data/).
+- **Find a pre-trained model**: Search [Roboflow Universe](https://universe.roboflow.com) for "package detection" datasets and models.
+
+Place your model weights at `weights_custom.pt` in this directory, or change the `model_path` parameter.
+
+### Wanted Poster Generation
+
+The `poster_generator.py` module:
+
+- Creates a stylized "WANTED" poster with the suspect's face
+- Uses PIL/Pillow for image composition
+- Optionally posts to X using the Twitter API v2
+
+### Event System
+
+The processor emits events that the agent subscribes to:
+
+- `PersonDetectedEvent`: New or returning person detected
+- `PersonDisappearedEvent`: Person left the frame
+- `PackageDetectedEvent`: New or returning package detected
+- `PackageDisappearedEvent`: Package disappeared (potential theft)
 
 ### Performance Optimization
 
 - **Threading**: CPU-intensive operations run in ThreadPoolExecutor
 - **Configurable FPS**: Process only N frames per second (default: 5)
-- **Detection Throttling**: Only detect faces every N seconds (default: 2s)
-- **Automatic Cleanup**: Old faces are removed efficiently
-
-### Memory Management
-
-- Face thumbnails are resized to 80x80 pixels to save memory
-- Sliding window automatically removes old detections
-- Maximum of 12 thumbnails displayed at once
-
-## Extending the Demo
-
-### Add Named Face Recognition
-
-To identify specific people by name (the system currently recognizes but doesn't name individuals):
-1. Create a database of known faces with names
-2. Generate and store encodings for each known person
-3. Compare new detections against known encodings
-4. Label faces with names in the overlay instead of showing generic IDs
-
-### Add Motion Detection
-
-To detect movement before face detection:
-1. Use OpenCV's background subtraction
-2. Only run face detection when motion is detected
-3. Reduce false positives and improve performance
-
-### Add Recording
-
-To save clips when faces are detected:
-1. Use OpenCV's VideoWriter
-2. Buffer frames around detection events
-3. Save short clips to disk with timestamps
-
-### Add Alerts
-
-To notify when faces are detected:
-1. Check visitor count thresholds
-2. Send notifications via email/SMS/webhook
-3. Trigger alerts for after-hours detections
+- **Detection Throttling**: Full face detection every 2s, fast bbox updates every 0.3s
+- **Automatic Cleanup**: Old faces/packages removed after time window
 
 ## Troubleshooting
 
 ### No faces detected
+
 - Ensure good lighting conditions
 - Position camera to show frontal faces clearly
 - The face_recognition library works best with direct face views
 - Try lowering `detection_interval`
-- Check that the camera is working properly
+
+### No packages detected
+
+- Ensure the package is clearly visible and well-lit
+- Check that `weights_custom.pt` is in the example directory (or train/download your own)
+- Try lowering `package_conf_threshold` (e.g., 0.5)
+- Check logs for YOLO model loading errors
 
 ### Performance issues
-- Reduce `fps` parameter (e.g., from 5 to 2-3)
-- Increase `detection_interval` (e.g., from 2 to 3-5 seconds)
-- Lower video resolution
-- Use fewer `max_workers`
-- Face recognition is more CPU-intensive than simple detection
 
-### Too many duplicate faces
-- Decrease `face_match_tolerance` (e.g., 0.5 instead of 0.6)
-- Increase `detection_interval` to give more time between checks
+- Reduce `fps` parameter (e.g., from 5 to 2-3)
+- Increase `detection_interval` and `bbox_update_interval`
+- Lower video resolution
+- Use a smaller YOLOv11 variant (nano instead of small)
+
+### Wanted poster not posting to X
+
+- Verify X API credentials are set correctly in `.env`
+- Check that you have write permissions on your X app
+- Look for error messages in the logs
 
 ### Same person not being recognized
+
 - Increase `face_match_tolerance` (e.g., 0.7 instead of 0.6)
 - Ensure consistent lighting and camera angle
 - Face encodings work better with clear, frontal face views
 
-### Video lag
-- Check network bandwidth
-- Reduce frame processing rate
-- Ensure camera has good connection
+## External Resources
+
+- [face_recognition](https://github.com/ageitgey/face_recognition): Python face recognition library
+- [Ultralytics YOLOv11](https://docs.ultralytics.com/models/yolo11/): Object detection model
+- [Roboflow](https://roboflow.com): Dataset management, labeling, and model training
+- [SAM 3 (Segment Anything 3)](https://blog.roboflow.com/sam3/): Foundation model for assisted labeling
+- [GetStream](https://getstream.io): Video transport infrastructure
+- [Deepgram](https://deepgram.com): Speech-to-text API
+- [ElevenLabs](https://elevenlabs.io): Text-to-speech API
+- [Google Gemini](https://ai.google.dev): LLM API
+- [X Developer Portal](https://developer.x.com): Twitter/X API
 
 ## License
 
