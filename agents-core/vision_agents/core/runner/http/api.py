@@ -166,7 +166,7 @@ async def get_session_metrics(
     session: Optional[AgentSession] = Depends(get_session),
 ) -> GetAgentSessionMetricsResponse:
     """
-    Get info about a running agent session.
+    Get metrics for the running agent session.
     """
 
     if session is None:
