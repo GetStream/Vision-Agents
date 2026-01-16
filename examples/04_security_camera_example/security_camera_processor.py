@@ -146,13 +146,16 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         max_workers: Number of worker threads (default: 10)
         time_window: Time window in seconds to track faces/packages (default: 1800 = 30 minutes)
         thumbnail_size: Size of face/package thumbnails in overlay (default: 80)
-        detection_interval: Minimum seconds between face detections (default: 2)
+        detection_interval: Minimum seconds between full face detection with identity matching (default: 2)
+        bbox_update_interval: Minimum seconds between fast bbox updates for tracking (default: 0.15)
         face_match_tolerance: Face recognition tolerance (default: 0.6, lower = stricter)
-        model_path: Path to YOLO model file (default: "yolo11n.pt")
+        model_path: Path to YOLO model file (default: "weights_custom.pt")
         device: Device to run YOLO model on (default: "cpu")
-        package_detection_interval: Minimum seconds between package detections (default: 3)
+        package_detection_interval: Minimum seconds between package detections (default: 0.5)
         package_fps: FPS for package detection (default: 1)
         package_conf_threshold: Confidence threshold for package detection (default: 0.3)
+        max_tracked_packages: Maximum packages to track (default: None = unlimited).
+            If set to 1, single-package mode: always update the existing package.
     """
 
     name = "security_camera"
@@ -164,30 +167,35 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         time_window: int = 1800,
         thumbnail_size: int = 80,
         detection_interval: float = 2.0,
+        bbox_update_interval: float = 0.3,
         face_match_tolerance: float = 0.6,
-        model_path: str = "weights.pt",
+        model_path: str = "weights_custom.pt",
         device: str = "cpu",
-        package_detection_interval: float = 3.0,
+        package_detection_interval: float = 0.4,
         package_fps: int = 1,
-        package_conf_threshold: float = 0.3,
+        package_conf_threshold: float = 0.6,
         package_min_area_ratio: float = 0.01,  # Minimum area as ratio of frame (1% of frame)
-        package_max_area_ratio: float = 0.9,  # Maximum area as ratio of frame (50% of frame)
+        package_max_area_ratio: float = 0.9,  # Maximum area as ratio of frame (90% of frame)
+        max_tracked_packages: Optional[int] = None,  # None = unlimited, 1 = single-package mode
     ):
         self.fps = fps
         self.max_workers = max_workers
         self.time_window = time_window
         self.thumbnail_size = thumbnail_size
         self.detection_interval = detection_interval
+        self.bbox_update_interval = bbox_update_interval
         self.face_match_tolerance = face_match_tolerance
         self.package_detection_interval = package_detection_interval
         self.package_fps = package_fps
         self.package_conf_threshold = package_conf_threshold
         self.package_min_area_ratio = package_min_area_ratio
         self.package_max_area_ratio = package_max_area_ratio
+        self.max_tracked_packages = max_tracked_packages
 
         # Storage for unique detected faces (keyed by face_id)
         self._detected_faces: Dict[str, FaceDetection] = {}
         self._last_detection_time = 0.0
+        self._last_bbox_update_time = 0.0
 
         # Storage for unique detected packages (keyed by package_id)
         self._detected_packages: Dict[str, PackageDetection] = {}
@@ -211,6 +219,10 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         # Video track for publishing
         self._video_track: QueuedVideoTrack = QueuedVideoTrack()
         self._video_forwarder: Optional[VideoForwarder] = None
+
+        # Shared image state (for temporarily displaying images in the call)
+        self._shared_image: Optional[av.VideoFrame] = None
+        self._shared_image_until: float = 0.0
 
         # Initialize YOLO model for package detection
         self.model_path = model_path
@@ -389,13 +401,40 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
 
         return inter_area / union_area
 
-    def _find_matching_package(
-        self, bbox: tuple, iou_threshold: float = 0.3
-    ) -> Optional[str]:
-        """Find matching package based on IoU overlap.
+    def _get_bbox_centroid(self, bbox: tuple) -> tuple[float, float]:
+        """Get the centroid of a bounding box.
 
         Args:
             bbox: (x, y, w, h) format
+
+        Returns:
+            (cx, cy) centroid coordinates
+        """
+        x, y, w, h = bbox
+        return (x + w / 2, y + h / 2)
+
+    def _calculate_centroid_distance(self, bbox1: tuple, bbox2: tuple) -> float:
+        """Calculate Euclidean distance between centroids of two bounding boxes.
+
+        Args:
+            bbox1: (x, y, w, h) format
+            bbox2: (x, y, w, h) format
+
+        Returns:
+            Distance in pixels
+        """
+        cx1, cy1 = self._get_bbox_centroid(bbox1)
+        cx2, cy2 = self._get_bbox_centroid(bbox2)
+        return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
+
+    def _find_matching_package(
+        self, bbox: tuple, frame_shape: tuple[int, int], iou_threshold: float = 0.3
+    ) -> Optional[str]:
+        """Find matching package based on IoU overlap, with centroid distance fallback.
+
+        Args:
+            bbox: (x, y, w, h) format
+            frame_shape: (height, width) of the frame for distance normalization
             iou_threshold: Minimum IoU to consider a match (default: 0.3)
 
         Returns:
@@ -404,13 +443,35 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         if not self._detected_packages:
             return None
 
+        # Single-package mode: if we're tracking exactly one package, always match it
+        # This handles cases where the package moves significantly between frames
+        if self.max_tracked_packages == 1 and len(self._detected_packages) == 1:
+            return next(iter(self._detected_packages.keys()))
+
         best_match_id = None
         best_iou = 0.0
 
+        # First try IoU matching
         for package_id, package in self._detected_packages.items():
             iou = self._calculate_iou(bbox, package.bbox)
             if iou > best_iou and iou >= iou_threshold:
                 best_iou = iou
+                best_match_id = package_id
+
+        if best_match_id is not None:
+            return best_match_id
+
+        # Fallback: centroid distance matching
+        # Use 25% of frame diagonal as max distance threshold
+        frame_h, frame_w = frame_shape
+        frame_diagonal = (frame_w ** 2 + frame_h ** 2) ** 0.5
+        max_centroid_distance = frame_diagonal * 0.25
+
+        best_distance = float("inf")
+        for package_id, package in self._detected_packages.items():
+            distance = self._calculate_centroid_distance(bbox, package.bbox)
+            if distance < best_distance and distance < max_centroid_distance:
+                best_distance = distance
                 best_match_id = package_id
 
         return best_match_id
@@ -478,6 +539,95 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 return known_names[i]
 
         return None
+
+    def _detect_face_locations_fast_sync(self, frame_rgb: np.ndarray) -> List[tuple]:
+        """Fast face location detection without encoding (for bbox tracking).
+
+        Returns:
+            List of bboxes in (x, y, w, h) format
+        """
+        face_locations = face_recognition.face_locations(frame_rgb, model="hog")
+
+        bboxes = []
+        for top, right, bottom, left in face_locations:
+            x, y = left, top
+            w, h = right - left, bottom - top
+            bboxes.append((x, y, w, h))
+
+        return bboxes
+
+    def _match_bbox_to_face(
+        self, bbox: tuple, frame_shape: tuple[int, int], max_distance_ratio: float = 0.15
+    ) -> Optional[str]:
+        """Match a detected bbox to an existing face based on proximity.
+
+        Args:
+            bbox: (x, y, w, h) format
+            frame_shape: (height, width) of the frame
+            max_distance_ratio: Maximum centroid distance as ratio of frame diagonal
+
+        Returns:
+            face_id if match found, None otherwise
+        """
+        if not self._detected_faces:
+            return None
+
+        # Only consider faces that haven't disappeared
+        active_faces = {
+            fid: f for fid, f in self._detected_faces.items() if f.disappeared_at is None
+        }
+        if not active_faces:
+            return None
+
+        frame_h, frame_w = frame_shape
+        frame_diagonal = (frame_w**2 + frame_h**2) ** 0.5
+        max_distance = frame_diagonal * max_distance_ratio
+
+        best_match_id = None
+        best_distance = float("inf")
+
+        for face_id, face in active_faces.items():
+            distance = self._calculate_centroid_distance(bbox, face.bbox)
+            if distance < best_distance and distance < max_distance:
+                best_distance = distance
+                best_match_id = face_id
+
+        return best_match_id
+
+    async def _update_face_bboxes_fast(
+        self, frame_bgr: np.ndarray, current_time: float
+    ) -> None:
+        """Fast bbox update for existing faces (no encoding, just location tracking)."""
+        if self._shutdown:
+            return
+
+        # Check if enough time has passed since last bbox update
+        if current_time - self._last_bbox_update_time < self.bbox_update_interval:
+            return
+
+        # Skip if no active faces to track
+        active_faces = [f for f in self._detected_faces.values() if f.disappeared_at is None]
+        if not active_faces:
+            return
+
+        # Convert to RGB for face_recognition
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+        # Run fast location detection
+        loop = asyncio.get_event_loop()
+        detected_bboxes = await loop.run_in_executor(
+            self.executor, self._detect_face_locations_fast_sync, frame_rgb
+        )
+
+        frame_shape = frame_bgr.shape[:2]  # (height, width)
+
+        # Update bboxes for matched faces
+        for bbox in detected_bboxes:
+            face_id = self._match_bbox_to_face(bbox, frame_shape)
+            if face_id:
+                self._detected_faces[face_id].bbox = bbox
+
+        self._last_bbox_update_time = current_time
 
     def _log_activity(
         self,
@@ -664,11 +814,11 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
 
         return new_faces
 
-    def _detect_packages_sync(self, frame_rgb: np.ndarray) -> List[Dict[str, Any]]:
+    def _detect_packages_sync(self, frame_bgr: np.ndarray) -> List[Dict[str, Any]]:
         """Run YOLO package detection synchronously.
 
         Args:
-            frame_rgb: Frame in RGB format
+            frame_bgr: Frame in BGR format (OpenCV/YOLO expects BGR)
 
         Returns:
             List of detection dicts with bbox and confidence
@@ -676,12 +826,12 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         if not self.yolo_model:
             return []
 
-        height, width = frame_rgb.shape[:2]
+        height, width = frame_bgr.shape[:2]
         all_detections = []
 
         try:
             results = self.yolo_model(
-                frame_rgb,
+                frame_bgr,
                 verbose=False,
                 conf=self.package_conf_threshold,
                 device=self.device,
@@ -766,13 +916,11 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         ):
             return 0
 
-        # Convert BGR to RGB for YOLO
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
         # Run detection in thread pool
+        # Note: YOLO expects BGR input (OpenCV format), not RGB
         loop = asyncio.get_event_loop()
         detected_packages = await loop.run_in_executor(
-            self.executor, self._detect_packages_sync, frame_rgb
+            self.executor, self._detect_packages_sync, frame_bgr
         )
 
         new_packages = 0
@@ -800,7 +948,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             )
 
             # Check if this package matches any existing package
-            matching_package_id = self._find_matching_package((x, y, w, h))
+            matching_package_id = self._find_matching_package((x, y, w, h), (height, width))
 
             if matching_package_id:
                 # Update existing package
@@ -1189,6 +1337,16 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         try:
             current_time = time.time()
 
+            # Check if we're currently sharing an image
+            if self._shared_image is not None and current_time < self._shared_image_until:
+                await self._video_track.add_frame(self._shared_image)
+                return
+            elif self._shared_image is not None:
+                # Clear expired shared image
+                self._shared_image = None
+                self._shared_image_until = 0.0
+                logger.info("📺 Shared image display ended, resuming camera feed")
+
             # Convert frame to BGR (OpenCV format)
             frame_rgb = frame.to_ndarray(format="rgb24")
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
@@ -1200,8 +1358,11 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             # Check if any packages were picked up
             self._check_for_picked_up_packages(current_time)
 
-            # Detect and store new faces
+            # Detect and store new faces (full detection with identity matching)
             await self._detect_and_store_faces(frame_bgr, current_time)
+
+            # Fast bbox update for responsive face tracking between full detections
+            await self._update_face_bboxes_fast(frame_bgr, current_time)
 
             # Detect and store new packages
             await self._detect_and_store_packages(frame_bgr, current_time)
@@ -1312,6 +1473,49 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         if face_id in self._detected_faces:
             return self._detected_faces[face_id].face_image
         return None
+
+    def share_image(
+        self,
+        image: bytes | np.ndarray,
+        duration: float = 5.0,
+    ) -> None:
+        """
+        Temporarily display an image in the video feed.
+
+        The image will be shown instead of the camera feed for the specified duration,
+        then automatically return to the normal camera view.
+
+        Args:
+            image: Image data as PNG/JPEG bytes or numpy array (BGR or RGB format)
+            duration: How long to display the image in seconds (default: 5.0)
+        """
+        # Convert bytes to numpy array if needed
+        if isinstance(image, bytes):
+            nparr = np.frombuffer(image, np.uint8)
+            img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        else:
+            img_bgr = image
+
+        # Resize to match video track dimensions (maintain aspect ratio)
+        track_width = self._video_track.width
+        track_height = self._video_track.height
+        h, w = img_bgr.shape[:2]
+        scale = min(track_width / w, track_height / h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        resized = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        # Center the image on a black background
+        canvas = np.zeros((track_height, track_width, 3), dtype=np.uint8)
+        x_offset = (track_width - new_w) // 2
+        y_offset = (track_height - new_h) // 2
+        canvas[y_offset : y_offset + new_h, x_offset : x_offset + new_w] = resized
+
+        # Convert to RGB and create av.VideoFrame
+        canvas_rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+        self._shared_image = av.VideoFrame.from_ndarray(canvas_rgb, format="rgb24")
+        self._shared_image_until = time.time() + duration
+
+        logger.info(f"📺 Sharing image in video feed for {duration}s")
 
     def get_visitor_count(self) -> int:
         """

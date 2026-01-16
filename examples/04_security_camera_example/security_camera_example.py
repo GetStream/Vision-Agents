@@ -33,8 +33,13 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-async def handle_package_theft(agent: Agent, face_image: np.ndarray, suspect_name: str) -> None:
-    """Generate a wanted poster and post it to X when a package is stolen."""
+async def handle_package_theft(
+    agent: Agent,
+    face_image: np.ndarray,
+    suspect_name: str,
+    processor: SecurityCameraProcessor,
+) -> None:
+    """Generate a wanted poster, display it in the call, and post it to X."""
     await agent.say(f"Alert! Package stolen by {suspect_name}! Generating wanted poster.")
     
     poster_bytes, tweet_url = await generate_and_post_poster(
@@ -49,9 +54,13 @@ async def handle_package_theft(agent: Agent, face_image: np.ndarray, suspect_nam
             f.write(poster_bytes)
         agent.logger.info("✅ Wanted poster saved")
         
+        # Share the poster in the video call for 8 seconds
+        processor.share_image(poster_bytes, duration=8.0)
+        await agent.say("Here's the wanted poster for the package thief!")
+        
         if tweet_url:
             agent.logger.info(f"🐦 Posted to X: {tweet_url}")
-            await agent.say("Wanted poster posted to X!")
+            await agent.say("Wanted poster also posted to X!")
         else:
             agent.logger.warning("⚠️ Failed to post to X (check credentials)")
     else:
@@ -76,7 +85,10 @@ async def create_agent(**kwargs) -> Agent:
         time_window=1800,
         thumbnail_size=80,
         detection_interval=2.0,
-        package_conf_threshold=0.75,
+        bbox_update_interval=0.3,  # Fast bbox updates for responsive face tracking
+        model_path="weights_custom.pt",
+        package_conf_threshold=0.7,
+        max_tracked_packages=1,  # Single-package mode: always update existing package
     )
 
     agent = Agent(
@@ -222,7 +234,7 @@ async def create_agent(**kwargs) -> Agent:
             if event.picker_face_id:
                 face_image = security_processor.get_face_image(event.picker_face_id)
                 if face_image is not None:
-                    await handle_package_theft(agent, face_image, picker_display)
+                    await handle_package_theft(agent, face_image, picker_display, security_processor)
 
         _pending_theft_tasks[event.package_id] = asyncio.create_task(delayed_theft_check())
 

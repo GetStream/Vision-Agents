@@ -45,7 +45,9 @@ WANTED_POSTER_PROMPT = """
 Create a vintage western wanted poster as a frame around the image.
 Use sepia tone and aged paper texture.
 You'll be given the name {name} to work with. 
-Add to it to give a silly nickname appropriate for a western wanted poster. Do not change the name. e.g. if the name is "John", you could say "Rattlesnake John".
+Add a western-style nickname to the name for the wanted poster. Do not change the name. 
+    e.g. if the name is "John", you could say "Rattlesnake John" or "Six-Gun John" or "Desperado John", etc.
+The nickname MUST MUST MUST be wild-west themed. Do not refer to silliness or sausages.
 Add text 'WANTED: {name}' at the top and 'FOR BEING A SILLY SAUSAGE ' at the bottom.
 Add 'REWARD: MY UNDYING GRATITUDE' at the bottom.
 Add no other text. Make it fun.
@@ -87,7 +89,7 @@ async def generate_and_post_poster(
     face_image: np.ndarray,
     name: str,
     post_to_x_enabled: bool = False,
-    tweet_caption: str = "🤠 WANTED: Another silly sausage spotted! #VisionAgents",
+    tweet_caption: str = "🤠 WANTED: This dangerous AI tester! #VisionAgents",
 ) -> tuple[Optional[bytes], Optional[str]]:
     """Generate a wanted poster and optionally post it to X."""
     image_data = await generate_wanted_poster(face_image, name)
