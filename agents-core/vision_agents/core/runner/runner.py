@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 # TODO Tests:
 #  - Auth permissions
 #  - Fastapi bypass
-#  - Routes
 
 asyncio_logger = logging.getLogger("asyncio")
 

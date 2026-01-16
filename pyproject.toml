@@ -74,16 +74,16 @@ members = [
     "plugins/nvidia",
 ]
 exclude = [
-"**/__pycache__",
-"**/tests/__pycache__",
-"**/*.pyc",
-"**/dist/",
-"**/*.egg-info/",
-"**/.pytest_cache/",
-"**/.mypy_cache/",
-"**/.ruff_cache/",
-"examples/",
-"**/test*",
+    "**/__pycache__",
+    "**/tests/__pycache__",
+    "**/*.pyc",
+    "**/dist/",
+    "**/*.egg-info/",
+    "**/.pytest_cache/",
+    "**/.mypy_cache/",
+    "**/.ruff_cache/",
+    "examples/",
+    "**/test*",
 ]
 
 [dependency-groups]
@@ -106,6 +106,7 @@ dev = [
     "aiofiles>=25.1.0",
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
+    "asgi-lifespan>=2.1.0",
 ]
 
 [tool.mypy]
@@ -119,4 +120,4 @@ explicit_package_bases = true
 
 [tool.hatch.version]
 source = "vcs"
-raw-options = {  search_parent_directories = true, fallback_version = "0.0.0" }
+raw-options = { search_parent_directories = true, fallback_version = "0.0.0" }

@@ -144,6 +144,10 @@ class AgentLauncher:
     def running(self) -> bool:
         return self._running
 
+    @property
+    def ready(self) -> bool:
+        return self.warmed_up and self.running
+
     async def launch(self, **kwargs) -> "Agent":
         """
         Launch the agent.

@@ -10,7 +10,6 @@ class JoinCallRequest(BaseModel):
 
     call_id: str = Field(..., description="Unique identifier of the call to join")
     call_type: str = Field(default="default", description="Type of the call to join")
-    user_id: str = Field(..., description="ID of the user requesting the agent")
 
 
 class JoinCallResponse(BaseModel):

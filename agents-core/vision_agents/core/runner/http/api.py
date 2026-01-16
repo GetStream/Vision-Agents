@@ -79,7 +79,7 @@ async def start_session(
 
 
 @router.delete(
-    "/session/{session_id}",
+    "/sessions/{session_id}",
     summary="Close the agent session and remove it from call",
     dependencies=[Depends(can_close_session)],
 )
@@ -97,7 +97,7 @@ async def close_session(
 
 
 @router.post(
-    "/sessions/{session_id}/leave",
+    "/sessions/{session_id}/close",
     summary="Close the agent session via sendBeacon (POST alternative to DELETE).",
     description="Alternative endpoint for agent leave via sendBeacon. "
     "sendBeacon only supports POST requests.",
@@ -199,7 +199,7 @@ async def ready(launcher: AgentLauncher = Depends(get_launcher)) -> Response:
     """
     Check if the server is ready to spawn new agents.
     """
-    if launcher.warmed_up and launcher.running:
+    if launcher.ready:
         return Response(status_code=200)
     else:
         raise HTTPException(
