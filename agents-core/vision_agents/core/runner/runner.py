@@ -46,10 +46,13 @@ class Runner:
     Examples:
         ```python
         # agent.py
+        from vision_agents.core import Runner, ServeOptions
+
         launcher = AgentLauncher(...)
+        runner = Runner(launcher=launcher, serve_options=ServeOptions())
 
         if __name__ == "__main__":
-            launcher.cli()
+            runner.cli()
 
         # `python agent.py serve` will start an HTTP server
         # `python agent.py run` with run a single agent as a console app
