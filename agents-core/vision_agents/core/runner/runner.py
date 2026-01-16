@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 #  - Auth permissions
 #  - Fastapi bypass
 #  - Routes
-#  - new Launcher methods
 
 asyncio_logger = logging.getLogger("asyncio")
 

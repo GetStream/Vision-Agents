@@ -191,7 +191,6 @@ class AgentLauncher:
         return session
 
     async def close_session(self, session_id: str, wait: bool = False) -> None:
-        # TODO: Test
         session = self._sessions.pop(session_id, None)
         if session is None:
             # The session is either closed or doesn't exist, exit early
@@ -204,7 +203,6 @@ class AgentLauncher:
             session.task.cancel()
 
     def get_session(self, session_id: str) -> Optional[AgentSession]:
-        # TODO: Test
         return self._sessions.get(session_id)
 
     async def _warmup_agent(self, agent: "Agent") -> None:
