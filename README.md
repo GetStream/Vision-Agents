@@ -55,7 +55,7 @@ agent = Agent(
 
 ### Security Camera with Package Theft Detection
 
-<!-- TODO: Add demo video here -->
+https://github.com/user-attachments/assets/92a2cdd8-909c-46d8-aab7-039a90efc186
 
 This example shows a security camera system that detects faces, tracks packages and detects when a package is stolen. It automatically generates "WANTED" posters, posting them to X in real-time.
 
