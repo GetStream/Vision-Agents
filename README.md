@@ -53,6 +53,32 @@ agent = Agent(
 )
 ```
 
+### Security Camera with Package Theft Detection
+
+https://github.com/user-attachments/assets/92a2cdd8-909c-46d8-aab7-039a90efc186
+
+This example shows a security camera system that detects faces, tracks packages and detects when a package is stolen. It automatically generates "WANTED" posters, posting them to X in real-time.
+
+It combines face recognition, YOLOv11 object detection, Nano Banana and Gemini for a complete security workflow with voice interaction.
+
+```python
+# partial example, full example: examples/04_security_camera_example/security_camera_example.py
+security_processor = SecurityCameraProcessor(
+    fps=5,
+    model_path="weights_custom.pt",  # YOLOv11 for package detection
+    package_conf_threshold=0.7,
+)
+
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=User(name="Security AI", id="agent"),
+    instructions="Read @instructions.md",
+    processors=[security_processor],
+    llm=gemini.LLM("gemini-2.5-flash-lite"),
+    tts=elevenlabs.TTS(),
+    stt=deepgram.STT(),
+)
+```
 
 ### Cluely style Invisible Assistant (coming soon)
 
@@ -162,6 +188,7 @@ Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai
 |  <br><h3>Golf Coach</h3>Using Gemini Live together with Vision Agents and Ultralytics YOLO, we're able to track the user's pose and provide realtime actionable feedback on their golf game.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• YOLO pose detection<br>• Gemini Live integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example) | <img src="assets/demo_gifs/golf.gif" width="320" alt="Golf Coach Demo">        |
 |  <br><h3>GeoGuesser</h3>Together with OpenAI Realtime and Vision Agents, we can take GeoGuesser to the next level by asking it to identify places in our real world surroundings.<br><br>• Real-world location identification<br>• OpenAI Realtime integration<br>• Visual scene understanding<br><br> [>Source Code and tutorial](https://visionagents.ai/integrations/openai#openai-realtime)| <img src="assets/demo_gifs/geoguesser.gif" width="320" alt="GeoGuesser Demo">  |
 |  <br><h3>Phone and RAG</h3>Interact with your Agent over the phone using Twilio. This example demonstrates how to use TurboPuffer for Retrieval Augmented Generation (RAG) to give your agent specialized knowledge.<br><br>• Inbound/Outbound telephony<br>• Twilio Media Streams integration<br>• Vector search with TurboPuffer<br>• Retrieval Augmented Generation<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) | <img src="assets/demo_gifs/va_phone.png" width="320" alt="Phone and RAG Demo"> |
+|  <br><h3>Security Camera</h3>A security camera with face recognition, package detection and automated theft response. Generates WANTED posters with Nano Banana and posts them to X when packages disappear.<br><br>• Face detection & named recognition<br>• YOLOv11 package detection<br>• Automated WANTED poster generation<br>• Real-time X posting<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/04_security_camera_example) | <img src="assets/demo_gifs/security_camera.gif" width="320" alt="Security Camera Demo"> |
 
 
 ## Development
