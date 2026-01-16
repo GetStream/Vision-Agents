@@ -20,8 +20,8 @@ from .dependencies import (
 from .models import (
     GetAgentSessionMetricsResponse,
     GetAgentSessionResponse,
-    JoinCallRequest,
-    JoinCallResponse,
+    StartSessionRequest,
+    StartSessionResponse,
 )
 
 __all__ = ["router", "lifespan"]
@@ -46,17 +46,17 @@ router = APIRouter()
 
 @router.post(
     "/sessions",
-    response_model=JoinCallResponse,
+    response_model=StartSessionResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Join call with an agent",
     description="Start a new agent and have it join the specified call.",
     dependencies=[Depends(can_start_session)],
 )
 async def start_session(
-    request: JoinCallRequest,
+    request: StartSessionRequest,
     launcher: AgentLauncher = Depends(get_launcher),
     user: Any = Depends(get_current_user),
-) -> JoinCallResponse:
+) -> StartSessionResponse:
     """Start an agent and join a call."""
 
     try:
@@ -70,7 +70,7 @@ async def start_session(
             detail=f"Failed to start agent: {str(e)}",
         ) from e
 
-    return JoinCallResponse(
+    return StartSessionResponse(
         session_id=session.id,
         call_id=session.call_id,
         session_started_at=session.started_at,
