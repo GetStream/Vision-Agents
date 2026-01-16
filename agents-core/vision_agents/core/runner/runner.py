@@ -27,9 +27,8 @@ from .http.options import ServeOptions
 logger = logging.getLogger(__name__)
 
 # TODO:
-#   7. Figure out how to serialize the agent config into some dict
-#   8. Docs
-#   10. Fix  WARNING  | AudioQueue buffer limit exceeded spamming the logs
+#   - Figure out how to serialize the agent config into some dict
+#   - Docs
 
 asyncio_logger = logging.getLogger("asyncio")
 
