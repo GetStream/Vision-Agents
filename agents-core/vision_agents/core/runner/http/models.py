@@ -22,7 +22,7 @@ class StartSessionResponse(BaseModel):
 
 
 class GetAgentSessionResponse(BaseModel):
-    """Details about about an active agent session."""
+    """Details about an active agent session."""
 
     session_id: str
     call_id: str

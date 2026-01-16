@@ -194,17 +194,30 @@ class AgentLauncher:
         logger.info(f"Start agent session with id {session.id}")
         return session
 
-    async def close_session(self, session_id: str, wait: bool = False) -> None:
+    async def close_session(self, session_id: str, wait: bool = False) -> bool:
+        """
+        Close session with id `session_id`.
+        Returns `True` if session was found and closed, `False` otherwise.
+
+        Args:
+            session_id: session id
+            wait: when True, wait for the underlying agent to finish.
+                Otherwise, just cancel the task and return.
+
+        Returns:
+            `True` if session was found and closed, `False` otherwise.
+        """
         session = self._sessions.pop(session_id, None)
         if session is None:
             # The session is either closed or doesn't exist, exit early
-            return
+            return False
 
         logger.info(f"Closing agent session with id {session.id}")
         if wait:
             await cancel_and_wait(session.task)
         else:
             session.task.cancel()
+        return True
 
     def get_session(self, session_id: str) -> Optional[AgentSession]:
         return self._sessions.get(session_id)

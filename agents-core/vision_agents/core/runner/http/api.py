@@ -91,7 +91,12 @@ async def close_session(
     Stop an agent and remove it from a call.
     """
 
-    await launcher.close_session(session_id)
+    closed = await launcher.close_session(session_id)
+    if not closed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session with id '{session_id}' not found",
+        )
 
     return Response(status_code=204)
 
@@ -111,7 +116,13 @@ async def close_session_beacon(
     Stop an agent via sendBeacon (POST alternative to DELETE).
     """
 
-    await launcher.close_session(session_id)
+    closed = await launcher.close_session(session_id)
+    if not closed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session with id '{session_id}' not found",
+        )
+
     return Response(status_code=200)
 
 

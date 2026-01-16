@@ -170,6 +170,15 @@ class TestRunnerServe:
             assert resp.status_code == 204
             assert agent_launcher.get_session(session_id) is None
 
+    async def test_close_session_doesnt_exist_fails(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.delete("/sessions/some-id")
+            assert resp.status_code == 404
+
     async def test_close_session_no_permissions_fail(
         self, agent_launcher, test_client_factory
     ) -> None:
@@ -213,6 +222,15 @@ class TestRunnerServe:
             resp = await client.post(f"/sessions/{session_id}/close")
             assert resp.status_code == 200
             assert agent_launcher.get_session(session_id) is None
+
+    async def test_close_session_beacon_doesnt_exist_fails(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post("/sessions/some-id/close")
+            assert resp.status_code == 404
 
     async def test_close_session_beacon_no_permissions_fail(
         self, agent_launcher, test_client_factory
