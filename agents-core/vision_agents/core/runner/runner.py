@@ -1,41 +1,43 @@
 import asyncio
 import logging
 import warnings
-from typing import Any, Iterable, Optional
+from typing import Optional
 from uuid import uuid4
 
 import click
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.params import Depends
 from vision_agents.core import AgentLauncher
 from vision_agents.core.utils.logging import (
     configure_fastapi_loggers,
     configure_sdk_logger,
 )
 
-from .http.api import router
+from .http.api import lifespan, router
+from .http.dependencies import (
+    can_close_session,
+    can_start_session,
+    can_view_metrics,
+    can_view_session,
+    get_current_user,
+)
+from .http.options import ServeOptions
 
 logger = logging.getLogger(__name__)
 
 # TODO:
-#   6. Metrics route
 #   7. Figure out how to serialize the agent config into some dict
 #   8. Docs
 #   10. Fix  WARNING  | AudioQueue buffer limit exceeded spamming the logs
 
 # TODO Tests:
-#  - Auth
+#  - Auth permissions
 #  - Fastapi bypass
 #  - Routes
 #  - new Launcher methods
 
 asyncio_logger = logging.getLogger("asyncio")
-
-
-def auth_noop() -> Any:
-    return None
 
 
 class Runner:
@@ -63,23 +65,28 @@ class Runner:
     def __init__(
         self,
         launcher: AgentLauncher,
-        fast_api_auth: Optional[Depends] = None,
-        fast_api: Optional[FastAPI] = None,
+        serve_options: Optional[ServeOptions] = None,
     ):
         """
         Init the Runner object.
 
         Args:
             launcher: instance of `AgentLauncher`
-            fast_api_auth: optional FastAPI `Depends` object to be used for authentication.
-            fast_api: optional `FastAPI` instance. Use it to fully customize the HTTP API.
-                This object is passed to `uvicorn.run()` as-is.
+            serve_options: instance of `ServeOptions` to configure behavior in `serve` mode.
+            run_options: instance of `RunOptions` to configure behavior in `run` mode.
         """
         self._launcher = launcher
-        self._fast_api_auth = fast_api_auth or Depends(auth_noop)
-        # If `fast_api` is passed, assume it's a custom one and it as-is.
-        self._fast_api_bypass = bool(fast_api)
-        self.fast_api = fast_api or FastAPI()
+        self._serve_options = serve_options or ServeOptions()
+
+        if self._serve_options.fast_api:
+            # If `fast_api` is passed, assume it's a custom one and it as-is.
+            logger.warning(
+                "A custom `fast_api` object is detected, skipping configuration step"
+            )
+            self.fast_api = self._serve_options.fast_api
+        else:
+            # Otherwise, initialize FastAPI ourselves
+            self.fast_api = self._create_fastapi_app(options=self._serve_options)
 
     def run(
         self,
@@ -173,10 +180,6 @@ class Runner:
         port: int = 8000,
         agents_log_level: str = "INFO",
         http_log_level: str = "INFO",
-        cors_allow_origins: Iterable[str] = ("*",),
-        cors_allow_methods: Iterable[str] = ("*",),
-        cors_allow_headers: Iterable[str] = ("*",),
-        cors_allow_credentials: bool = True,
     ):
         """
         Start the HTTP server that spawns agents to the calls.
@@ -186,21 +189,10 @@ class Runner:
             port:
             agents_log_level:
             http_log_level:
-            cors_allow_origins:
-            cors_allow_methods:
-            cors_allow_headers:
-            cors_allow_credentials:
 
         Returns:
 
         """
-        app = self._configure_fastapi_app(
-            cors_allow_origins=cors_allow_origins,
-            cors_allow_methods=cors_allow_methods,
-            cors_allow_headers=cors_allow_headers,
-            cors_allow_credentials=cors_allow_credentials,
-        )
-
         # Configure loggers if they're not already configured
         configure_sdk_logger(
             level=getattr(logging, agents_log_level.upper(), logging.INFO)
@@ -214,30 +206,28 @@ class Runner:
         warnings.filterwarnings(
             "ignore", category=RuntimeWarning, module="dataclasses_json.core"
         )
-        uvicorn.run(app, host=host, port=port, log_config=None)
+        uvicorn.run(self.fast_api, host=host, port=port, log_config=None)
 
-    def _configure_fastapi_app(
-        self,
-        cors_allow_origins: Iterable[str],
-        cors_allow_methods: Iterable[str],
-        cors_allow_headers: Iterable[str],
-        cors_allow_credentials: bool,
-    ) -> FastAPI:
-        app = self.fast_api
-        if self._fast_api_bypass:
-            logger.warning(
-                "A custom `fast_api` object is detected, skipping configuration step"
-            )
-            return app
-
+    def _create_fastapi_app(self, options: ServeOptions) -> FastAPI:
+        app = FastAPI(lifespan=lifespan)
         app.state.launcher = self._launcher
-        app.include_router(router, dependencies=[self._fast_api_auth])
+        app.state.options = self._serve_options
+
+        # Use dependency_overrides to allow passing free-form dependency functions
+        # via ServeOptions.
+        # This way, individual permission callables can define their own dependencies making them very flexible.
+        app.dependency_overrides[can_start_session] = options.can_start_session
+        app.dependency_overrides[can_close_session] = options.can_close_session
+        app.dependency_overrides[can_view_session] = options.can_view_session
+        app.dependency_overrides[can_view_metrics] = options.can_view_metrics
+        app.dependency_overrides[get_current_user] = options.get_current_user
+        app.include_router(router)
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=list(cors_allow_origins),
-            allow_credentials=cors_allow_credentials,
-            allow_methods=list(cors_allow_methods),
-            allow_headers=list(cors_allow_headers),
+            allow_origins=list(options.cors_allow_origins),
+            allow_credentials=options.cors_allow_credentials,
+            allow_methods=list(options.cors_allow_methods),
+            allow_headers=list(options.cors_allow_headers),
         )
         return app
 

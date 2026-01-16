@@ -1,12 +1,22 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import Response
 from vision_agents.core import AgentLauncher
-from vision_agents.core.agents.agent_launcher import SessionNotFoundError
+from vision_agents.core.agents.agent_launcher import AgentSession, SessionNotFoundError
 
+from .dependencies import (
+    can_close_session,
+    can_start_session,
+    can_view_metrics,
+    can_view_session,
+    get_current_user,
+    get_launcher,
+    get_session,
+)
 from .models import (
     GetAgentSessionMetricsResponse,
     GetAgentSessionResponse,
@@ -14,7 +24,7 @@ from .models import (
     JoinCallResponse,
 )
 
-__all__ = ["router"]
+__all__ = ["router", "lifespan"]
 
 
 logger = logging.getLogger(__name__)
@@ -31,17 +41,7 @@ async def lifespan(app: FastAPI):
         await launcher.stop()
 
 
-router = APIRouter(lifespan=lifespan)
-
-
-def _get_launcher(request: Request) -> AgentLauncher:
-    """
-    Get an agent launcher from the FastAPI app
-    """
-    return request.app.state.launcher
-
-
-AgentLauncherDependency = Depends(_get_launcher)
+router = APIRouter()
 
 
 @router.post(
@@ -50,15 +50,18 @@ AgentLauncherDependency = Depends(_get_launcher)
     status_code=status.HTTP_201_CREATED,
     summary="Join call with an agent",
     description="Start a new agent and have it join the specified call.",
+    dependencies=[Depends(can_start_session)],
 )
-async def join_call(
-    request: JoinCallRequest, launcher: AgentLauncher = AgentLauncherDependency
+async def start_session(
+    request: JoinCallRequest,
+    launcher: AgentLauncher = Depends(get_launcher),
+    user: Any = Depends(get_current_user),
 ) -> JoinCallResponse:
     """Start an agent and join a call."""
 
     try:
         session = await launcher.start_session(
-            call_id=request.call_id, call_type=request.call_type
+            call_id=request.call_id, call_type=request.call_type, created_by=user
         )
     except Exception as e:
         logger.exception("Failed to start agent")
@@ -78,10 +81,11 @@ async def join_call(
 @router.delete(
     "/session/{session_id}",
     summary="Close the agent session and remove it from call",
+    dependencies=[Depends(can_close_session)],
 )
 async def close_session(
     session_id: str,
-    launcher: AgentLauncher = AgentLauncherDependency,
+    launcher: AgentLauncher = Depends(get_launcher),
 ) -> Response:
     """
     Stop an agent and remove it from a call.
@@ -103,10 +107,11 @@ async def close_session(
     summary="Close the agent session via sendBeacon (POST alternative to DELETE).",
     description="Alternative endpoint for agent leave via sendBeacon. "
     "sendBeacon only supports POST requests.",
+    dependencies=[Depends(can_close_session)],
 )
 async def close_session_beacon(
     session_id: str,
-    launcher: AgentLauncher = AgentLauncherDependency,
+    launcher: AgentLauncher = Depends(get_launcher),
 ) -> Response:
     """
     Stop an agent via sendBeacon (POST alternative to DELETE).
@@ -126,22 +131,21 @@ async def close_session_beacon(
     "/sessions/{session_id}",
     response_model=GetAgentSessionResponse,
     summary="Get info about a running agent session",
+    dependencies=[Depends(can_view_session)],
 )
 async def get_session_info(
     session_id: str,
-    launcher: AgentLauncher = AgentLauncherDependency,
+    session: Optional[AgentSession] = Depends(get_session),
 ) -> GetAgentSessionResponse:
     """
     Get info about a running agent session.
     """
 
-    try:
-        session = launcher.get_session(session_id)
-    except SessionNotFoundError as exc:
+    if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session with id '{session_id}' not found",
-        ) from exc
+        )
 
     response = GetAgentSessionResponse(
         session_id=session.id,
@@ -156,22 +160,21 @@ async def get_session_info(
     "/sessions/{session_id}/metrics",
     response_model=GetAgentSessionMetricsResponse,
     summary="Get info about a running agent session",
+    dependencies=[Depends(can_view_metrics)],
 )
 async def get_session_metrics(
     session_id: str,
-    launcher: AgentLauncher = AgentLauncherDependency,
+    session: Optional[AgentSession] = Depends(get_session),
 ) -> GetAgentSessionMetricsResponse:
     """
     Get info about a running agent session.
     """
 
-    try:
-        session = launcher.get_session(session_id)
-    except SessionNotFoundError as exc:
+    if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session with id '{session_id}' not found",
-        ) from exc
+        )
 
     metrics_dict = session.agent.metrics.to_dict(
         fields=[
@@ -204,7 +207,7 @@ async def health() -> Response:
 
 
 @router.get("/ready")
-async def ready(launcher: AgentLauncher = Depends(_get_launcher)) -> Response:
+async def ready(launcher: AgentLauncher = Depends(get_launcher)) -> Response:
     """
     Check if the server is ready to spawn new agents.
     """

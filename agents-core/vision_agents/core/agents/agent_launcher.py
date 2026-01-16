@@ -33,6 +33,7 @@ class AgentSession:
     started_at: datetime
     task: asyncio.Task
     config: dict = field(default_factory=dict)
+    created_by: Optional[Any] = None
 
     @property
     def finished(self) -> bool:
@@ -165,6 +166,7 @@ class AgentLauncher:
         self,
         call_id: str,
         call_type: str = "default",
+        created_by: Optional[Any] = None,
         video_track_override_path: Optional[str] = None,
     ) -> AgentSession:
         agent: "Agent" = await self.launch()
@@ -185,6 +187,7 @@ class AgentLauncher:
             task=task,
             started_at=datetime.now(timezone.utc),
             call_id=call_id,
+            created_by=created_by,
         )
         self._sessions[agent.id] = session
         logger.info(f"Start agent session with id {session.id}")
@@ -194,7 +197,8 @@ class AgentLauncher:
         # TODO: Test
         session = self._sessions.pop(session_id, None)
         if session is None:
-            raise SessionNotFoundError(f"Session with id {session_id} not found")
+            # The session is either closed or doesn't exist, exit early
+            return
 
         logger.info(f"Closing agent session with id {session.id}")
         if wait:
@@ -202,12 +206,9 @@ class AgentLauncher:
         else:
             session.task.cancel()
 
-    def get_session(self, session_id: str) -> AgentSession:
+    def get_session(self, session_id: str) -> Optional[AgentSession]:
         # TODO: Test
-        session = self._sessions.get(session_id)
-        if session is None:
-            raise SessionNotFoundError(f"Session with id {session_id} not found")
-        return session
+        return self._sessions.get(session_id)
 
     async def _warmup_agent(self, agent: "Agent") -> None:
         """
