@@ -1,4 +1,5 @@
 """Security camera processor with face and package detection."""
+
 import asyncio
 import logging
 import time
@@ -26,7 +27,9 @@ logger = logging.getLogger(__name__)
 OVERLAY_WIDTH = 200
 GRID_COLS = 2
 MAX_THUMBNAILS = 12
-PICKUP_THRESHOLD_SECONDS = 5.0  # Reduced for faster demo cleanup (poster fires immediately anyway)
+PICKUP_THRESHOLD_SECONDS = (
+    5.0  # Reduced for faster demo cleanup (poster fires immediately anyway)
+)
 PICKUP_MAX_AGE_SECONDS = 300.0
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -176,7 +179,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         package_conf_threshold: float = 0.6,
         package_min_area_ratio: float = 0.01,  # Minimum area as ratio of frame (1% of frame)
         package_max_area_ratio: float = 0.9,  # Maximum area as ratio of frame (90% of frame)
-        max_tracked_packages: Optional[int] = None,  # None = unlimited, 1 = single-package mode
+        max_tracked_packages: Optional[
+            int
+        ] = None,  # None = unlimited, 1 = single-package mode
     ):
         self.fps = fps
         self.max_workers = max_workers
@@ -243,7 +248,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         self.events.register(PackageDisappearedEvent)
         self.events.register(PersonDisappearedEvent)
 
-        logger.info(f"🎥 Security Camera Processor initialized (window: {time_window // 60}min)")
+        logger.info(
+            f"🎥 Security Camera Processor initialized (window: {time_window // 60}min)"
+        )
 
     def _format_timestamp(self, timestamp: float) -> str:
         """Format a Unix timestamp as a human-readable string."""
@@ -253,7 +260,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         self, items: Dict[str, Any], current_time: float, item_type: str
     ) -> int:
         """Remove items whose last_seen is older than the time window.
-        
+
         Returns the number of items removed.
         """
         cutoff_time = current_time - self.time_window
@@ -282,7 +289,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             logger.info(f"✅ YOLO model loaded: {self.model_path}")
             return yolo_model
         except Exception as e:
-            logger.warning(f"⚠️ YOLO model failed to load: {e} - package detection disabled")
+            logger.warning(
+                f"⚠️ YOLO model failed to load: {e} - package detection disabled"
+            )
             return None
 
     def on_warmed_up(self, resource: Optional[Any]) -> None:
@@ -464,7 +473,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         # Fallback: centroid distance matching
         # Use 25% of frame diagonal as max distance threshold
         frame_h, frame_w = frame_shape
-        frame_diagonal = (frame_w ** 2 + frame_h ** 2) ** 0.5
+        frame_diagonal = (frame_w**2 + frame_h**2) ** 0.5
         max_centroid_distance = frame_diagonal * 0.25
 
         best_distance = float("inf")
@@ -557,7 +566,10 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         return bboxes
 
     def _match_bbox_to_face(
-        self, bbox: tuple, frame_shape: tuple[int, int], max_distance_ratio: float = 0.15
+        self,
+        bbox: tuple,
+        frame_shape: tuple[int, int],
+        max_distance_ratio: float = 0.15,
     ) -> Optional[str]:
         """Match a detected bbox to an existing face based on proximity.
 
@@ -574,7 +586,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
 
         # Only consider faces that haven't disappeared
         active_faces = {
-            fid: f for fid, f in self._detected_faces.items() if f.disappeared_at is None
+            fid: f
+            for fid, f in self._detected_faces.items()
+            if f.disappeared_at is None
         }
         if not active_faces:
             return None
@@ -606,7 +620,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             return
 
         # Skip if no active faces to track
-        active_faces = [f for f in self._detected_faces.values() if f.disappeared_at is None]
+        active_faces = [
+            f for f in self._detected_faces.values() if f.disappeared_at is None
+        ]
         if not active_faces:
             return
 
@@ -713,20 +729,24 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 # Update name if we now recognize them
                 if known_name and not face_detection.name:
                     face_detection.name = known_name
-                
+
                 # Only emit event if they returned after disappearing
                 if face_detection.disappeared_at is not None:
                     face_detection.detection_count += 1
                     updated_faces += 1
                     display_name = face_detection.name or matching_face_id[:8]
-                    logger.info(f"👤 Returning: {display_name} (visit #{face_detection.detection_count})")
+                    logger.info(
+                        f"👤 Returning: {display_name} (visit #{face_detection.detection_count})"
+                    )
                     self.events.send(
                         PersonDetectedEvent(
                             plugin_name="security_camera",
                             face_id=display_name,
                             is_new=False,
                             detection_count=face_detection.detection_count,
-                            first_seen=self._format_timestamp(face_detection.first_seen),
+                            first_seen=self._format_timestamp(
+                                face_detection.first_seen
+                            ),
                             last_seen=self._format_timestamp(current_time),
                         )
                     )
@@ -786,7 +806,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     face_detection.disappeared_at = current_time
                     display_name = face_detection.name or face_id[:8]
                     logger.info(f"👤 Person left: {display_name}")
-                    
+
                     # Log activity
                     self._log_activity(
                         event_type="person_left",
@@ -797,14 +817,16 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             "is_known": face_detection.name is not None,
                         },
                     )
-                    
+
                     # Emit event
                     self.events.send(
                         PersonDisappearedEvent(
                             plugin_name="security_camera",
                             face_id=face_id,
                             name=face_detection.name,
-                            first_seen=self._format_timestamp(face_detection.first_seen),
+                            first_seen=self._format_timestamp(
+                                face_detection.first_seen
+                            ),
                             last_seen=self._format_timestamp(current_time),
                         )
                     )
@@ -850,7 +872,6 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             class_ids = result.boxes.cls.cpu().numpy().astype(int)
             class_names = result.names
 
-
             for box, conf, cls_id in zip(boxes, confidences, class_ids):
                 class_name_original = class_names[cls_id]
                 class_name = class_name_original.lower()
@@ -880,14 +901,19 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     area_ratio = detection_area / frame_area
 
                     # Filter by size
-                    if area_ratio < self.package_min_area_ratio or area_ratio > self.package_max_area_ratio:
+                    if (
+                        area_ratio < self.package_min_area_ratio
+                        or area_ratio > self.package_max_area_ratio
+                    ):
                         continue
 
-                    all_detections.append({
-                        "bbox": (x, y, w, h),
-                        "confidence": float(conf),
-                        "label": class_name_original,
-                    })
+                    all_detections.append(
+                        {
+                            "bbox": (x, y, w, h),
+                            "confidence": float(conf),
+                            "label": class_name_original,
+                        }
+                    )
 
         except Exception as e:
             logger.warning(f"⚠️ Package detection failed: {e}")
@@ -948,7 +974,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             )
 
             # Check if this package matches any existing package
-            matching_package_id = self._find_matching_package((x, y, w, h), (height, width))
+            matching_package_id = self._find_matching_package(
+                (x, y, w, h), (height, width)
+            )
 
             if matching_package_id:
                 # Update existing package
@@ -960,7 +988,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                     package_detection.confidence, confidence
                 )
                 package_detection.package_image = package_thumbnail
-                
+
                 # Only emit event if package returned after disappearing
                 if package_detection.disappeared_at is not None:
                     package_detection.detection_count += 1
@@ -973,7 +1001,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             is_new=False,
                             detection_count=package_detection.detection_count,
                             confidence=package_detection.confidence,
-                            first_seen=self._format_timestamp(package_detection.first_seen),
+                            first_seen=self._format_timestamp(
+                                package_detection.first_seen
+                            ),
                             last_seen=self._format_timestamp(current_time),
                         )
                     )
@@ -1025,13 +1055,15 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 if package_detection.disappeared_at is None:
                     # First time disappearing - mark it and emit event
                     package_detection.disappeared_at = current_time
-                    
+
                     # Find who was present when package disappeared
                     picker = self._find_person_present_at(package_detection.last_seen)
                     picker_face_id = picker.face_id if picker else None
                     picker_name = picker.name if picker else None
-                    
-                    picker_display = picker_name or (picker_face_id[:8] if picker_face_id else "unknown")
+
+                    picker_display = picker_name or (
+                        picker_face_id[:8] if picker_face_id else "unknown"
+                    )
                     logger.info(
                         f"📦 Package disappeared: {package_id[:8]} (confidence: {package_detection.confidence:.2f}, picker: {picker_display})"
                     )
@@ -1040,7 +1072,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                             plugin_name="security_camera",
                             package_id=package_id[:8],
                             confidence=package_detection.confidence,
-                            first_seen=self._format_timestamp(package_detection.first_seen),
+                            first_seen=self._format_timestamp(
+                                package_detection.first_seen
+                            ),
                             last_seen=self._format_timestamp(current_time),
                             picker_face_id=picker_face_id,
                             picker_name=picker_name,
@@ -1232,28 +1266,32 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
 
         # Combine faces and packages, sorted by last_seen
         all_detections = []
-        
+
         # Add faces
         for face in self._detected_faces.values():
-            all_detections.append({
-                "type": "face",
-                "image": face.face_image,
-                "last_seen": face.last_seen,
-                "detection_count": face.detection_count,
-                "name": face.name or face.face_id[:8],
-            })
-        
+            all_detections.append(
+                {
+                    "type": "face",
+                    "image": face.face_image,
+                    "last_seen": face.last_seen,
+                    "detection_count": face.detection_count,
+                    "name": face.name or face.face_id[:8],
+                }
+            )
+
         # Add packages
         for package in self._detected_packages.values():
-            all_detections.append({
-                "type": "package",
-                "image": package.package_image,
-                "last_seen": package.last_seen,
-                "detection_count": package.detection_count,
-                "package_id": package.package_id[:8],
-                "confidence": package.confidence,
-            })
-        
+            all_detections.append(
+                {
+                    "type": "package",
+                    "image": package.package_image,
+                    "last_seen": package.last_seen,
+                    "detection_count": package.detection_count,
+                    "package_id": package.package_id[:8],
+                    "confidence": package.confidence,
+                }
+            )
+
         # Sort by last_seen (most recent first) and take top MAX_THUMBNAILS
         recent_detections = sorted(
             all_detections, key=lambda d: d["last_seen"], reverse=True
@@ -1277,7 +1315,9 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
                 ] = detection["image"]
 
                 # Draw colored border to distinguish type
-                border_color = (0, 255, 0) if detection["type"] == "face" else (255, 150, 150)  # Green for faces, blue for packages
+                border_color = (
+                    (0, 255, 0) if detection["type"] == "face" else (255, 150, 150)
+                )  # Green for faces, blue for packages
                 cv2.rectangle(
                     frame_with_overlay,
                     (x_pos, y_pos),
@@ -1338,7 +1378,10 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
             current_time = time.time()
 
             # Check if we're currently sharing an image
-            if self._shared_image is not None and current_time < self._shared_image_until:
+            if (
+                self._shared_image is not None
+                and current_time < self._shared_image_until
+            ):
                 await self._video_track.add_frame(self._shared_image)
                 return
             elif self._shared_image is not None:
@@ -1431,7 +1474,7 @@ class SecurityCameraProcessor(VideoProcessorPublisher, Warmable[Optional[Any]]):
         total_package_detections = sum(
             package.detection_count for package in self._detected_packages.values()
         )
-        
+
         # Count currently visible (not disappeared) items
         currently_visible_visitors = sum(
             1 for f in self._detected_faces.values() if f.disappeared_at is None

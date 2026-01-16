@@ -1,4 +1,5 @@
 """Wanted poster generation and X posting utilities."""
+
 import io
 import logging
 import os
@@ -24,7 +25,9 @@ async def post_to_x(image_data: bytes, caption: str) -> Optional[str]:
         logger.warning("⚠️ X credentials not configured")
         return None
 
-    auth = tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret)
+    auth = tweepy.OAuth1UserHandler(
+        consumer_key, consumer_secret, access_token, access_token_secret
+    )
     api_v1 = tweepy.API(auth)
     client_v2 = tweepy.Client(
         consumer_key=consumer_key,
@@ -40,6 +43,7 @@ async def post_to_x(image_data: bytes, caption: str) -> Optional[str]:
     tweet_url = f"https://x.com/{me.data.username}/status/{response.data['id']}"
     logger.info(f"🐦 Posted to X: {tweet_url}")
     return tweet_url
+
 
 WANTED_POSTER_PROMPT = """
 Create a vintage western wanted poster as a frame around the image.
@@ -77,7 +81,12 @@ async def generate_wanted_poster(face_image: np.ndarray, name: str) -> Optional[
 
     for part in response.candidates[0].content.parts or []:
         inline = part.inline_data
-        if inline and inline.mime_type and inline.mime_type.startswith("image/") and inline.data:
+        if (
+            inline
+            and inline.mime_type
+            and inline.mime_type.startswith("image/")
+            and inline.data
+        ):
             logger.info(f"✅ Got poster image ({len(inline.data)} bytes)")
             return inline.data
 
@@ -96,5 +105,7 @@ async def generate_and_post_poster(
     if image_data is None:
         return None, None
 
-    tweet_url = await post_to_x(image_data, tweet_caption) if post_to_x_enabled else None
+    tweet_url = (
+        await post_to_x(image_data, tweet_caption) if post_to_x_enabled else None
+    )
     return image_data, tweet_url

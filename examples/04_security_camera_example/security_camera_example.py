@@ -8,6 +8,7 @@ This example demonstrates:
 - LLM integration to answer questions about security activity
 - Package theft detection with wanted poster generation
 """
+
 import asyncio
 import logging
 from typing import Any, Dict
@@ -40,24 +41,26 @@ async def handle_package_theft(
     processor: SecurityCameraProcessor,
 ) -> None:
     """Generate a wanted poster, display it in the call, and post it to X."""
-    await agent.say(f"Alert! Package stolen by {suspect_name}! Generating wanted poster.")
-    
+    await agent.say(
+        f"Alert! Package stolen by {suspect_name}! Generating wanted poster."
+    )
+
     poster_bytes, tweet_url = await generate_and_post_poster(
         face_image,
         suspect_name,
         post_to_x_enabled=True,
-        tweet_caption=f"🚨 WANTED: {suspect_name} caught \"stealing\" a package! AI-powered security #VisionAgents",
+        tweet_caption=f'🚨 WANTED: {suspect_name} caught "stealing" a package! AI-powered security #VisionAgents',
     )
-    
+
     if poster_bytes:
         with open(f"wanted_poster_{suspect_name}.png", "wb") as f:
             f.write(poster_bytes)
         agent.logger.info("✅ Wanted poster saved")
-        
+
         # Share the poster in the video call for 8 seconds
         processor.share_image(poster_bytes, duration=8.0)
         await agent.say("Here's the wanted poster for the package thief!")
-        
+
         if tweet_url:
             agent.logger.info(f"🐦 Posted to X: {tweet_url}")
             await agent.say("Wanted poster also posted to X!")
@@ -73,7 +76,9 @@ PACKAGE_THEFT_DELAY_SECONDS = 3.0
 _pending_theft_tasks: Dict[str, asyncio.Task] = {}
 
 # Track package history (since processor deletes packages when they disappear)
-_package_history: Dict[str, Dict[str, Any]] = {}  # package_id -> {first_seen, last_seen, detection_count, picked_up_by}
+_package_history: Dict[
+    str, Dict[str, Any]
+] = {}  # package_id -> {first_seen, last_seen, detection_count, picked_up_by}
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -104,7 +109,9 @@ async def create_agent(**kwargs) -> Agent:
     # Merge processor events with agent events so subscriptions work
     agent.events.merge(security_processor.events)
 
-    @llm.register_function(description="Get the number of unique visitors detected in the last 30 minutes.")
+    @llm.register_function(
+        description="Get the number of unique visitors detected in the last 30 minutes."
+    )
     async def get_visitor_count() -> Dict[str, Any]:
         count = security_processor.get_visitor_count()
         state = security_processor.state()
@@ -115,7 +122,9 @@ async def create_agent(**kwargs) -> Agent:
             "last_detection": state["last_face_detection_time"],
         }
 
-    @llm.register_function(description="Get detailed information about all visitors including when they were first and last seen.")
+    @llm.register_function(
+        description="Get detailed information about all visitors including when they were first and last seen."
+    )
     async def get_visitor_details() -> Dict[str, Any]:
         details = security_processor.get_visitor_details()
         return {
@@ -123,7 +132,9 @@ async def create_agent(**kwargs) -> Agent:
             "total_unique_visitors": len(details),
         }
 
-    @llm.register_function(description="Get package statistics including total packages seen and how many were picked up.")
+    @llm.register_function(
+        description="Get package statistics including total packages seen and how many were picked up."
+    )
     async def get_package_count() -> Dict[str, Any]:
         currently_visible = security_processor.get_package_count()
         total_seen = len(_package_history)
@@ -134,14 +145,18 @@ async def create_agent(**kwargs) -> Agent:
             "packages_picked_up": picked_up,
         }
 
-    @llm.register_function(description="Get detailed history of all packages seen, including who picked them up.")
+    @llm.register_function(
+        description="Get detailed history of all packages seen, including who picked them up."
+    )
     async def get_package_details() -> Dict[str, Any]:
         return {
             "packages": list(_package_history.values()),
             "total_packages_seen": len(_package_history),
         }
 
-    @llm.register_function(description="Get recent activity log (people arriving, packages detected). Answers 'what happened?' or 'did anyone come by?'")
+    @llm.register_function(
+        description="Get recent activity log (people arriving, packages detected). Answers 'what happened?' or 'did anyone come by?'"
+    )
     async def get_activity_log(limit: int = 20) -> Dict[str, Any]:
         log = security_processor.get_activity_log(limit=limit)
         return {"activity_log": log, "total_entries": len(log)}
@@ -154,7 +169,9 @@ async def create_agent(**kwargs) -> Agent:
         result = security_processor.register_current_face_as(name)
         return result
 
-    @llm.register_function(description="Get a list of all registered faces that can be recognized by name.")
+    @llm.register_function(
+        description="Get a list of all registered faces that can be recognized by name."
+    )
     async def get_known_faces() -> Dict[str, Any]:
         faces = security_processor.get_known_faces()
         return {"known_faces": faces, "total_known": len(faces)}
@@ -201,7 +218,9 @@ async def create_agent(**kwargs) -> Agent:
                 "picked_up_by": None,
             }
         else:
-            _package_history[event.package_id]["last_seen"] = event.timestamp.isoformat()
+            _package_history[event.package_id]["last_seen"] = (
+                event.timestamp.isoformat()
+            )
             _package_history[event.package_id]["detection_count"] += 1
 
         if event.is_new:
@@ -215,7 +234,9 @@ async def create_agent(**kwargs) -> Agent:
 
     @agent.events.subscribe
     async def on_package_disappeared(event: PackageDisappearedEvent):
-        picker_display = event.picker_name or (event.picker_face_id[:8] if event.picker_face_id else "unknown")
+        picker_display = event.picker_name or (
+            event.picker_face_id[:8] if event.picker_face_id else "unknown"
+        )
         agent.logger.info(
             f"📦 Package {event.package_id} disappeared (suspect: {picker_display}) - "
             f"waiting {PACKAGE_THEFT_DELAY_SECONDS}s to confirm"
@@ -225,7 +246,9 @@ async def create_agent(**kwargs) -> Agent:
             await asyncio.sleep(PACKAGE_THEFT_DELAY_SECONDS)
             # If we get here, package didn't reappear
             del _pending_theft_tasks[event.package_id]
-            agent.logger.info(f"📦 Package {event.package_id} confirmed gone - triggering theft workflow")
+            agent.logger.info(
+                f"📦 Package {event.package_id} confirmed gone - triggering theft workflow"
+            )
 
             # Record who picked up the package in our history
             if event.package_id in _package_history:
@@ -234,9 +257,13 @@ async def create_agent(**kwargs) -> Agent:
             if event.picker_face_id:
                 face_image = security_processor.get_face_image(event.picker_face_id)
                 if face_image is not None:
-                    await handle_package_theft(agent, face_image, picker_display, security_processor)
+                    await handle_package_theft(
+                        agent, face_image, picker_display, security_processor
+                    )
 
-        _pending_theft_tasks[event.package_id] = asyncio.create_task(delayed_theft_check())
+        _pending_theft_tasks[event.package_id] = asyncio.create_task(
+            delayed_theft_check()
+        )
 
     return agent
 
