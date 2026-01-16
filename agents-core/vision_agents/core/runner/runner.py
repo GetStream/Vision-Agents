@@ -31,10 +31,6 @@ logger = logging.getLogger(__name__)
 #   8. Docs
 #   10. Fix  WARNING  | AudioQueue buffer limit exceeded spamming the logs
 
-# TODO Tests:
-#  - Auth permissions
-#  - Fastapi bypass
-
 asyncio_logger = logging.getLogger("asyncio")
 
 
