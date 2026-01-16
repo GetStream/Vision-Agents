@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'stream-agents-monitor'
+
+scrape_configs:
+  # Scrape metrics from Stream Agents application
+  - job_name: 'stream-agents'
+    static_configs:
+      - targets: ['host.docker.internal:9464']
+        labels:
+          service: 'stream-agents'
+          environment: 'development'
+    scrape_interval: 5s
+    scrape_timeout: 5s
+
+  # Scrape Prometheus self-metrics
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

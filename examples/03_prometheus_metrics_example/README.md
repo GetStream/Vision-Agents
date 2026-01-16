@@ -1,6 +1,6 @@
 # Prometheus Metrics Example
 
-Export real metrics from Stream Agents to Prometheus using OpenTelemetry.
+Export real metrics from Stream Agents to Prometheus using OpenTelemetry, with optional Grafana visualization.
 
 ## Overview
 
@@ -8,8 +8,11 @@ This example demonstrates how to:
 1. Configure OpenTelemetry with a Prometheus exporter
 2. Attach `MetricsCollector` to an agent for opt-in metrics collection
 3. Scrape metrics from the `/metrics` endpoint during a live video call
+4. Visualize metrics in Grafana with pre-built dashboards
 
-## Running the Example
+## Quick Start
+
+### Option 1: Metrics endpoint only
 
 ```bash
 cd examples/03_prometheus_metrics_example
@@ -17,7 +20,51 @@ uv sync
 uv run python prometheus_metrics_example.py --call-type default --call-id test-metrics
 ```
 
-Then open http://localhost:9464/metrics in your browser to see real-time metrics as you talk to the agent.
+Then open http://localhost:9464/metrics in your browser to see raw metrics as you talk to the agent.
+
+### Option 2: Full observability stack (Prometheus + Grafana)
+
+1. Start the observability stack:
+
+```bash
+cd examples/03_prometheus_metrics_example
+docker compose up -d
+```
+
+2. Run the agent:
+
+```bash
+uv sync
+uv run python prometheus_metrics_example.py --call-type default --call-id test-metrics
+```
+
+3. Open Grafana at http://localhost:3000 (no login required - anonymous access enabled)
+
+The pre-configured dashboard shows:
+- LLM latency (p50, p95, p99)
+- STT latency (p50, p95, p99)
+- TTS latency (p50, p95, p99)
+- Turn detection latency
+- VAD latency
+- Error rates
+
+4. Stop the stack when done:
+
+```bash
+docker compose down
+```
+
+## Architecture
+
+```
+┌─────────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Stream Agent      │────▶│   Prometheus    │────▶│    Grafana      │
+│  (port 9464)        │     │   (port 9090)   │     │   (port 3000)   │
+│                     │     │                 │     │                 │
+│  Metrics endpoint:  │     │  Scrapes every  │     │  Pre-built      │
+│  /metrics           │     │  5 seconds      │     │  dashboards     │
+└─────────────────────┘     └─────────────────┘     └─────────────────┘
+```
 
 ## Metrics Available
 
@@ -53,21 +100,15 @@ Then open http://localhost:9464/metrics in your browser to see real-time metrics
 - `realtime_responses` - Responses received (counter)
 - `realtime_errors` - Realtime errors (counter)
 
-## Prometheus Configuration
-
-Add this to your `prometheus.yml`:
-
-```yaml
-scrape_configs:
-  - job_name: 'stream-agents'
-    static_configs:
-      - targets: ['localhost:9464']
-    scrape_interval: 15s
-```
-
 ## Grafana Dashboard
 
-Example PromQL queries:
+The included dashboard (`observability/grafana/dashboards/stream-agents.json`) provides real-time visualization of all key metrics with:
+
+- Time-series graphs for latency percentiles
+- Error rate monitoring
+- Auto-refresh every 5 seconds
+
+### Example PromQL Queries
 
 ```promql
 # Average LLM latency over time
@@ -78,6 +119,9 @@ rate(llm_tokens_input[5m]) + rate(llm_tokens_output[5m])
 
 # Error rate
 rate(llm_errors[5m])
+
+# 95th percentile latency
+histogram_quantile(0.95, sum(rate(llm_latency_ms_bucket[5m])) by (le))
 ```
 
 ## Code Structure
@@ -106,6 +150,27 @@ agent = Agent(...)
 collector = MetricsCollector(agent)
 ```
 
+## Files
+
+```
+03_prometheus_metrics_example/
+├── prometheus_metrics_example.py   # Main example code
+├── docker-compose.yml              # Prometheus + Grafana stack
+├── observability/
+│   ├── prometheus/
+│   │   └── prometheus.yml          # Prometheus config
+│   └── grafana/
+│       ├── dashboards/
+│       │   └── stream-agents.json  # Pre-built dashboard
+│       ├── provisioning/
+│       │   ├── dashboards/
+│       │   │   └── default.yml     # Dashboard provisioning
+│       │   └── datasources/
+│       │       └── prometheus.yml  # Datasource config
+│       └── init-home-dashboard.sh  # Sets home dashboard
+└── README.md
+```
+
 ## Environment Variables
 
 Set these in your `.env` file:
@@ -117,3 +182,14 @@ ELEVENLABS_API_KEY=your_key
 STREAM_API_KEY=your_key
 STREAM_API_SECRET=your_secret
 ```
+
+## Troubleshooting
+
+### Prometheus can't scrape metrics
+- Make sure the agent is running before Prometheus starts, or restart Prometheus after starting the agent
+- On macOS, `host.docker.internal` should work. On Linux, you may need to use `--network="host"` or configure the target differently
+
+### Grafana shows no data
+- Wait a few seconds for metrics to be scraped
+- Check Prometheus targets at http://localhost:9090/targets
+- Ensure the agent is actively processing (make a call and talk to it)
