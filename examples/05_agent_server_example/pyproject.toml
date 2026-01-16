@@ -1,7 +1,7 @@
 [project]
 name = "agent-server-example"
 version = "0.0.0"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 
 # Dependencies that the example actually uses
 dependencies = [
