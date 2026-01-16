@@ -67,7 +67,6 @@ class Runner:
         Args:
             launcher: instance of `AgentLauncher`
             serve_options: instance of `ServeOptions` to configure behavior in `serve` mode.
-            run_options: instance of `RunOptions` to configure behavior in `run` mode.
         """
         self._launcher = launcher
         self._serve_options = serve_options or ServeOptions()
