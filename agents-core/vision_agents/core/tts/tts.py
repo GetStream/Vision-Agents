@@ -252,7 +252,6 @@ class TTS(abc.ABC):
                 if estimated_audio_duration_ms > 0
                 else None
             )
-            print(estimated_audio_duration_ms)
             self.events.send(
                 TTSSynthesisCompleteEvent(
                     session_id=self.session_id,
