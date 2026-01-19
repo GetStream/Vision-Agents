@@ -242,15 +242,21 @@ Our favorite people & projects to follow for vision AI
 - Improved openAI & Gemini realtime performance
 - Audio & Video utilities
 
-### 0.3 - Demos - Early Dec
+### 0.3 - Examples and Deploys- Jan
+- Production-grade HTTP API for agent deployment (`uv run <agent.py> serve`)
+- Metrics & Observability stack
+- Phone/voice integration with RAG capabilities
+- 10 new LLM plugins ([AWS Nova 2](plugins/aws), [Qwen 3 Realtime](plugins/qwen), [NVIDIA Cosmos 2](plugins/nvidia), [Pocket TTS](plugins/pocket), [Deepgram TTS](plugins/deepgram), [OpenRouter](plugins/openrouter), [HuggingFace Inference](plugins/huggingface), [Roboflow](plugins/roboflow), [Twilio](plugins/twilio), [Turbopuffer](plugins/turbopuffer))
+- Real-world examples ([security camera](examples/05_security_camera_example), [phone integration](examples/03_phone_and_rag_example), [football commentator](examples/04_football_commentator_example), [Docker deployment with GPU support](examples/07_deploy_example), [agent server](examples/08_agent_server_example))
+- Stability: Fixes for participant sync, video frame handling, agent lifecycle, and screen sharing
 
-- Mirage, Roboflow, Facial recognition. Nicer demos
-- Deepgram Flux & Elevenlabs Scribe improvements
+### 0.4 Documentation/polish
+- Excellence on documentation/polish
+- Better Roboflow annotation docs
+- Automated workflows for maintenance
+- Local camera/audio support AND/OR WebRTC connection
+- Embedded/robotics examples
 
-### 0.4 - Deploys - December
-
-- Tips on deploying agents at scale, monitoring them etc.
-- Guides on SIP & RAG
 
 ## Vision AI limitations
 
