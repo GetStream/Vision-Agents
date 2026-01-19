@@ -1,5 +1,7 @@
 import abc
+import dataclasses
 from dataclasses import dataclass, field
+from typing import Iterable
 
 
 class _Metric(abc.ABC):
@@ -143,3 +145,25 @@ class AgentMetrics:
     video_processing_latency_ms__avg: Average = field(
         default_factory=lambda: Average("Average video frame processing latency")
     )
+
+    def to_dict(self, fields: Iterable[str] = ()) -> dict[str, int | float | None]:
+        """
+        Convert metrics into a dictionary {<metric>: <value>}.
+
+        Args:
+            fields: optional list of fields to extract. If empty, extract all fields.
+
+        Returns:
+            a dictionary {<metric>: <value>}
+
+        """
+        all_fields = dataclasses.asdict(self)
+        result = {}
+        fields = fields or list(all_fields.keys())
+
+        for field_name in fields:
+            field_ = all_fields.get(field_name)
+            if field_ is None:
+                raise ValueError(f"Unknown field: {field_name}")
+            result[field_name] = field_.value()
+        return result

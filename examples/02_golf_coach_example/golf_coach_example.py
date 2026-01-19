@@ -1,8 +1,7 @@
 import logging
 
 from dotenv import load_dotenv
-
-from vision_agents.core import User, Agent, cli
+from vision_agents.core import Agent, User, cli
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, ultralytics, gemini
 

@@ -40,6 +40,11 @@ async def stream_edge_mock() -> MagicMock:
     return mock
 
 
+async def join_call_noop(
+    agent: Agent, call_type: str, call_id: str, **kwargs
+) -> None: ...
+
+
 class TestAgentLauncher:
     async def test_warmup(self, stream_edge_mock):
         llm = DummyLLM()
@@ -53,7 +58,7 @@ class TestAgentLauncher:
                 agent_user=User(name="test"),
             )
 
-        launcher = AgentLauncher(create_agent=create_agent)
+        launcher = AgentLauncher(create_agent=create_agent, join_call=join_call_noop)
         await launcher.warmup()
         assert llm.warmed_up
 
@@ -69,7 +74,7 @@ class TestAgentLauncher:
                 agent_user=User(name="test"),
             )
 
-        launcher = AgentLauncher(create_agent=create_agent)
+        launcher = AgentLauncher(create_agent=create_agent, join_call=join_call_noop)
         agent = await launcher.launch()
         assert agent
 
@@ -87,6 +92,7 @@ class TestAgentLauncher:
 
         launcher = AgentLauncher(
             create_agent=create_agent,
+            join_call=join_call_noop,
             agent_idle_timeout=1.0,
             agent_idle_cleanup_interval=0.5,
         )
@@ -117,6 +123,7 @@ class TestAgentLauncher:
 
         launcher = AgentLauncher(
             create_agent=create_agent,
+            join_call=join_call_noop,
             agent_idle_timeout=0,
         )
         with patch.object(Agent, "idle_for", return_value=10):
@@ -146,6 +153,7 @@ class TestAgentLauncher:
 
         launcher = AgentLauncher(
             create_agent=create_agent,
+            join_call=join_call_noop,
             agent_idle_timeout=1.0,
             agent_idle_cleanup_interval=0.5,
         )
@@ -161,3 +169,105 @@ class TestAgentLauncher:
         # The agents must not be closed
         assert not agent1.closed
         assert not agent2.closed
+
+    async def test_start_session(self, stream_edge_mock):
+        llm = DummyLLM()
+        tts = DummyTTS()
+
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=llm,
+                tts=tts,
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        async def join_call(
+            agent: Agent, call_type: str, call_id: str, **kwargs
+        ) -> None:
+            await asyncio.sleep(2)
+
+        launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
+        session = await launcher.start_session(call_id="test", call_type="default")
+        assert session
+        assert session.id
+        assert session.call_id
+        assert session.agent
+        assert session.started_at
+        assert session.created_by is None
+        assert not session.finished
+
+        assert launcher.get_session(session_id=session.id)
+
+        # Wait for session to stop (it just sleeps)
+        await session.wait()
+        assert session.finished
+        assert not launcher.get_session(session_id=session.id)
+
+    async def test_close_session_exists(self, stream_edge_mock):
+        llm = DummyLLM()
+        tts = DummyTTS()
+
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=llm,
+                tts=tts,
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        async def join_call(
+            agent: Agent, call_type: str, call_id: str, **kwargs
+        ) -> None:
+            await asyncio.sleep(10)
+
+        launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
+        session = await launcher.start_session(call_id="test", call_type="default")
+        assert session
+
+        await launcher.close_session(session_id=session.id, wait=True)
+        assert session.finished
+        assert session.task.done()
+        assert not launcher.get_session(session_id=session.id)
+
+    async def test_close_session_doesnt_exist(self, stream_edge_mock):
+        llm = DummyLLM()
+        tts = DummyTTS()
+
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=llm,
+                tts=tts,
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        async def join_call(
+            agent: Agent, call_type: str, call_id: str, **kwargs
+        ) -> None:
+            await asyncio.sleep(10)
+
+        launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
+        # Closing a non-existing session doesn't fail
+        await launcher.close_session(session_id="session-id", wait=True)
+
+    async def test_get_session_doesnt_exist(self, stream_edge_mock):
+        llm = DummyLLM()
+        tts = DummyTTS()
+
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=llm,
+                tts=tts,
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        async def join_call(
+            agent: Agent, call_type: str, call_id: str, **kwargs
+        ) -> None:
+            await asyncio.sleep(10)
+
+        launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
+        session = launcher.get_session(session_id="session-id")
+        assert session is None

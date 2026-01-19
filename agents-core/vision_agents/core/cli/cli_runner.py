@@ -121,15 +121,11 @@ def cli(launcher: "AgentLauncher") -> None:
                     await agent.edge.open_demo_for_agent(agent, call_type, call_id)
 
                 # Join call if join_call function is provided
-                if launcher.join_call:
-                    logger.info(f"📞 Joining call: {call_type}/{call_id}")
-                    result = launcher.join_call(agent, call_type, call_id)
-                    if asyncio.iscoroutine(result):
-                        await result
-                else:
-                    logger.warning(
-                        '⚠️ No "join_call" function provided; the agent is created but will not join the call'
-                    )
+                logger.info(f"📞 Joining call: {call_type}/{call_id}")
+                session = await launcher.start_session(
+                    call_id, call_type, video_track_override_path=video_track_override
+                )
+                await session.wait()
             except KeyboardInterrupt:
                 logger.info("🛑 Received interrupt signal, shutting down gracefully...")
             except Exception as e:
