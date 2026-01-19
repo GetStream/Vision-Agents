@@ -271,3 +271,30 @@ class TestAgentLauncher:
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
         session = launcher.get_session(session_id="session-id")
         assert session is None
+
+    async def test_stop_multiple_sessions(self, stream_edge_mock):
+        llm = DummyLLM()
+        tts = DummyTTS()
+
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=llm,
+                tts=tts,
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        async def join_call(
+            agent: Agent, call_type: str, call_id: str, **kwargs
+        ) -> None:
+            await asyncio.sleep(10)
+
+        launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
+        session1 = await launcher.start_session(call_id="test", call_type="default")
+        session2 = await launcher.start_session(call_id="test", call_type="default")
+        session3 = await launcher.start_session(call_id="test", call_type="default")
+
+        await launcher.stop()
+        assert session1.finished
+        assert session2.finished
+        assert session3.finished

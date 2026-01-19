@@ -1,17 +1,14 @@
 import asyncio
 import logging
 import weakref
-from asyncio import Task
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncIterator,
     Callable,
     Coroutine,
     Optional,
-    cast,
 )
 
 from vision_agents.core.utils.utils import await_or_run, cancel_and_wait
@@ -109,9 +106,11 @@ class AgentLauncher:
             await cancel_and_wait(self._cleanup_task)
 
         coros = [cancel_and_wait(s.task) for s in self._sessions.values()]
-        async for result in cast(AsyncIterator[Task], asyncio.as_completed(coros)):
-            if result.done() and not result.cancelled() and result.exception():
-                logger.error(f"Failed to cancel the agent task: {result.exception()}")
+        for result in asyncio.as_completed(coros):
+            try:
+                await result
+            except Exception as exc:
+                logger.error(f"Failed to cancel the agent task: {exc}")
 
         logger.debug("AgentLauncher stopped")
 
