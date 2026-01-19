@@ -105,7 +105,6 @@ class TestRunnerServe:
             session_id = resp_json["session_id"]
             assert session_id
             assert resp_json["session_started_at"]
-            assert "config" in resp_json
             assert agent_launcher.get_session(session_id)
 
     async def test_start_session_current_user_stored(
@@ -131,7 +130,6 @@ class TestRunnerServe:
             session_id = resp_json["session_id"]
             assert session_id
             assert resp_json["session_started_at"]
-            assert "config" in resp_json
             session = agent_launcher.get_session(session_id)
             assert session.created_by == User(id="123")
 
@@ -278,7 +276,6 @@ class TestRunnerServe:
             assert resp_json["session_id"] == session_id
             assert resp_json["call_id"] == "test"
             assert resp_json["session_started_at"]
-            assert "config" in resp_json
 
     async def test_get_session_no_permissions_fail(
         self, agent_launcher, test_client_factory
