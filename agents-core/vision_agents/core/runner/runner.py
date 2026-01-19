@@ -336,8 +336,8 @@ class Runner:
             return self.serve(
                 host=host,
                 port=port,
-                agents_log_level=agents_log_level,
-                http_log_level=http_log_level,
+                agents_log_level=agents_log_level.upper(),
+                http_log_level=http_log_level.upper(),
             )
 
         cli_()
