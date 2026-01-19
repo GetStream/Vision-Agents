@@ -47,8 +47,6 @@ In this example, we will cover the HTTP server mode which allows you to:
 
 ## Running Agent HTTP Server
 
-## Code Structure
-
 ### Creating the Agent
 
 The `create_agent` function defines how agents are configured:
@@ -97,7 +95,7 @@ if __name__ == "__main__":
     ).cli()
 ```
 
-## Configuration (ServeOptions)
+## Configuration
 
 Customize the HTTP server behavior with `ServeOptions`:
 
@@ -215,30 +213,26 @@ The value returned by `get_current_user` is stored in `AgentSession.created_by`.
 - Audit session creation
 
 ```python
+from typing import Optional
+
+from fastapi import Depends, HTTPException
+
+from vision_agents.core import AgentSession
+from vision_agents.core.runner.http.dependencies import get_session
+
+
 # In your permission callbacks, you can access the session creator
 async def can_close_session(
     session_id: str,
     current_user=Depends(get_current_user),
-    launcher: AgentLauncher = Depends(get_launcher),
+    session: Optional[AgentSession] = Depends(get_session),
 ):
     """Only allow users to close their own sessions."""
-    session = launcher.get_session(session_id)
     if session and session.created_by != current_user.id:
         raise HTTPException(
             status_code=403, detail="Cannot close another user's session"
         )
 ```
-
-**Granular Permissions**
-
-Each endpoint has its own permission callback, giving you fine-grained control:
-
-| Callback            | Protects                     |
-|---------------------|------------------------------|
-| `can_start_session` | `POST /sessions`             |
-| `can_close_session` | `DELETE /sessions/{id}`      |
-| `can_view_session`  | `GET /sessions/{id}`         |
-| `can_view_metrics`  | `GET /sessions/{id}/metrics` |
 
 ### API Reference
 
