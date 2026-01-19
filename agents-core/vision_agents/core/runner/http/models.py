@@ -17,7 +17,6 @@ class StartSessionResponse(BaseModel):
 
     session_id: str = Field(..., description="The ID of the agent session")
     call_id: str = Field(..., description="The ID of the call")
-    config: dict
     session_started_at: datetime
 
 
@@ -26,7 +25,6 @@ class GetAgentSessionResponse(BaseModel):
 
     session_id: str
     call_id: str
-    config: dict
     session_started_at: datetime
 
 

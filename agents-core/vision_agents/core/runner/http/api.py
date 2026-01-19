@@ -74,7 +74,6 @@ async def start_session(
         session_id=session.id,
         call_id=session.call_id,
         session_started_at=session.started_at,
-        config=session.config,
     )
 
 
@@ -149,7 +148,6 @@ async def get_session_info(
     response = GetAgentSessionResponse(
         session_id=session.id,
         call_id=session.call_id,
-        config=session.config,
         session_started_at=session.started_at,
     )
     return response

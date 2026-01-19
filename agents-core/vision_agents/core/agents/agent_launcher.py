@@ -26,7 +26,6 @@ class AgentSession:
     call_id: str
     started_at: datetime
     task: asyncio.Task
-    config: dict = field(default_factory=dict)
     created_by: Optional[Any] = None
 
     @property
