@@ -25,7 +25,7 @@ from vision_agents.plugins import huggingface
 
 llm = huggingface.LLM(
     model="meta-llama/Meta-Llama-3-8B-Instruct",
-    provider="together",  # optional: auto-selects if omitted. You can also pass "fastest" and "cheapest" here if interested in throughput-efficiency or cost-efficiency
+    provider="together",  # optional: use "auto" or omit to let HuggingFace auto-select based on your settings
 )
 
 response = await llm.simple_response("Hello, how are you?")

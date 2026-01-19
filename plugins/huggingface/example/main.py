@@ -36,7 +36,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="HuggingFace Agent", id="agent"),
         instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
         llm=huggingface.LLM(
-            model="meta-llama/Meta-Llama-3-8B-Instruct", provider="fastest"
+            model="meta-llama/Meta-Llama-3-8B-Instruct", provider="auto"
         ),
         tts=deepgram.TTS(),
         stt=deepgram.STT(),
