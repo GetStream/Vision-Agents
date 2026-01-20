@@ -38,12 +38,12 @@ The plugin constructor should:
 
 ## Testing and examples
 
-- Look at `plugins/fish/tests/test_fish_tts.py` as a reference of what tests for a TTS plugins should look like
+- Look at `plugins/deepgram/tests/test_deepgram_tts.py` as a reference of what tests for a TTS plugins should look like
 - Add pytest tests at `plugins/<provider>/tests/test_tts.py`. Keep them simple: assert that `stream_audio` yields
   `PcmData` and that `send()` emits `TTSAudioEvent`.
 - Do not write spec tests with mocks, this is usually not necessary
-- Make sure to write at least a couple of integration tests, use `TTSSession` to avoid boiler-plate code in testing
-- Include a minimal example in `plugins/<provider>/example/` (see `fish_tts_example.py`).
+- Make sure to write at least a couple of integration tests, use `TTSSession` to avoid boilerplate code in testing
+- Include a minimal example in `plugins/<provider>/example/` (see `deepgram_tts_example.py`).
 
 ## PCM / Audio management
 
