@@ -182,11 +182,10 @@ They take care of the hard stuff, like:
 
 Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai/).
 
-**Quickstart:** [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
-**Quickstart:** [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
-**Tutorial:
-** [Building real-time sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
-**Tutorial:** [Building a real-time meeting assistant](https://github.com/GetStream/Vision-Agents#)
+- **Quickstart:** [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
+- **Quickstart:** [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
+- **Tutorial:** [Building a real-time meeting assistant](https://github.com/GetStream/Vision-Agents/tree/main/examples/01_simple_agent_example)
+- **Tutorial:** [Building real-time sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
 
 ## Examples
 
