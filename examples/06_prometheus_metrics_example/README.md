@@ -13,7 +13,7 @@ This example demonstrates how to:
 ## Running the Example
 
 ```bash
-cd examples/03_prometheus_metrics_example
+cd examples/06_prometheus_metrics_example
 uv sync
 uv run python prometheus_metrics_example.py run --call-type default --call-id test-metrics
 ```
@@ -67,7 +67,7 @@ Add this to your `prometheus.yml`:
 scrape_configs:
   - job_name: 'stream-agents'
     static_configs:
-      - targets: ['localhost:9464']
+      - targets: [ 'localhost:9464' ]
     scrape_interval: 15s
 ```
 

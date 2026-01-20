@@ -11,7 +11,7 @@ Realtime and Roboflow object detection.
 
 2. **Configure environment:**
    ```bash
-   cd examples/03_football_commentator_example
+   cd examples/04_football_commentator_example
    cp env.example .env
    # Edit .env with your actual API keys
    ```
