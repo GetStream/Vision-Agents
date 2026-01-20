@@ -13,7 +13,7 @@ Setup:
 
 Run with:
     cd examples/06_prometheus_metrics_example
-    uv run python prometheus_metrics_example.py --call-type default --call-id test-metrics
+    uv run python prometheus_metrics_example.py run --call-type default --call-id test-metrics
 
 Then open http://localhost:9464/metrics to see real-time metrics as you talk to the agent.
 """
