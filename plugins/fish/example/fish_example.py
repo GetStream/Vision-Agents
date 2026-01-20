@@ -18,11 +18,9 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
-
-from vision_agents.core import User, Agent, cli
+from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import fish, getstream, smart_turn, gemini
-
+from vision_agents.plugins import fish, gemini, getstream, smart_turn
 
 logger = logging.getLogger(__name__)
 
@@ -66,4 +64,4 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
-    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()

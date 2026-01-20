@@ -1,11 +1,11 @@
-
 ## TODO / improvements
 
 - merge monitoring and HTTP efforts into this
 
 # Tips
 
-* US-east. Services like Stream run a global edge network. But many providers default to US-east. So you typically want to run in US-east for optimal latency
+* US-east. Services like Stream run a global edge network. But many providers default to US-east. So you typically want
+  to run in US-east for optimal latency
 * CPU build is quick to get up and running. GPU/CUDA takes hours.
 * This guide uses Nebius, but you could do this with other K8 enabled clouds quite easily
 * GPU setup needs more checks/testing
@@ -21,7 +21,7 @@ cp .env.example .env
 Next fill in the required variables and run the example locally to verify everything works
 
 ```
-uv run deploy_example.py
+uv run deploy_example.py run
 ```
 
 # Requirements
@@ -106,10 +106,12 @@ nebius mk8s node-group create \
 ```
 
 Available GPU presets:
+
 - `1gpu-16vcpu-200gb` - 1x H200, 16 vCPU, 200GB RAM
 - `8gpu-128vcpu-1600gb` - 8x H200, 128 vCPU, 1.6TB RAM
 
 Available driver presets (see [Nebius GPU docs](https://docs.nebius.com/kubernetes/gpu/set-up)):
+
 - `cuda12` - CUDA 12.4 (default)
 - `cuda12.4` - CUDA 12.4
 - `cuda12.8` - CUDA 12.8
@@ -124,6 +126,7 @@ kubectl get nodes  # verify connection
 # 1. Build the Docker image
 
 There are two Dockerfiles:
+
 - `Dockerfile` - CPU version (python:3.13-slim, ~150MB)
 - `Dockerfile.gpu` - GPU version (pytorch:2.9.1-cuda12.8, ~8GB)
 
@@ -193,6 +196,7 @@ kubectl create secret generic vision-agent-env --from-env-file=.env
 ```
 
 To update secrets:
+
 ```
 kubectl delete secret vision-agent-env
 kubectl create secret generic vision-agent-env --from-env-file=.env

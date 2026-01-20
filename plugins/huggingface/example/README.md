@@ -1,6 +1,7 @@
 # HuggingFace LLM Example
 
-This example demonstrates how to use HuggingFace's Inference Providers API with Vision Agents to create a conversational voice agent.
+This example demonstrates how to use HuggingFace's Inference Providers API with Vision Agents to create a conversational
+voice agent.
 
 ## Setup
 
@@ -12,6 +13,7 @@ cp .env.example .env
 ```
 
 Required environment variables:
+
 - `HF_TOKEN` - Your HuggingFace API token
 - `STREAM_API_KEY` - Your Stream API key
 - `STREAM_API_SECRET` - Your Stream API secret
@@ -26,7 +28,7 @@ uv sync
 3. Run the example:
 
 ```bash
-uv run main.py dev
+uv run main.py run
 ```
 
 ## Features

@@ -4,7 +4,8 @@ This directory contains an example demonstrating how to use the Kokoro TTS plugi
 
 ## Overview
 
-Kokoro is an open-weight, offline TTS model that runs locally without requiring API keys. This makes it ideal for privacy-focused applications or environments without internet access.
+Kokoro is an open-weight, offline TTS model that runs locally without requiring API keys. This makes it ideal for
+privacy-focused applications or environments without internet access.
 
 ## Features
 
@@ -30,12 +31,14 @@ Kokoro is an open-weight, offline TTS model that runs locally without requiring 
 ## Setup
 
 1. Install dependencies:
+
 ```bash
 cd plugins/kokoro/example
 uv sync
 ```
 
 2. Create a `.env` file with your API keys:
+
 ```bash
 # Required for GetStream
 STREAM_API_KEY=your_stream_api_key
@@ -48,10 +51,11 @@ OPENAI_API_KEY=your_openai_api_key
 ## Running the Example
 
 ```bash
-uv run kokoro_example.py
+uv run kokoro_example.py run
 ```
 
 The agent will:
+
 1. Connect to the GetStream edge network
 2. Initialize Kokoro TTS (downloads model on first run)
 3. Join a call and greet participants when they join
@@ -73,7 +77,8 @@ tts = kokoro.TTS(speed=1.2)
 
 ### Available Voices
 
-See the [Kokoro model card](https://huggingface.co/NeuML/kokoro-int8-onnx#speaker-reference) for available voice presets.
+See the [Kokoro model card](https://huggingface.co/NeuML/kokoro-int8-onnx#speaker-reference) for available voice
+presets.
 
 ## Architecture
 
@@ -92,15 +97,18 @@ User Hears Greeting
 ## Troubleshooting
 
 ### No audio output
+
 - Verify espeak-ng is installed: `espeak-ng --version`
 - Check that the Kokoro model downloaded successfully
 - Ensure GetStream connection is established
 
 ### Model download issues
+
 - First run downloads the model (~300MB)
 - Ensure you have internet access for the initial download
 - Models are cached locally after first download
 
 ### Audio quality
+
 - Kokoro outputs at 24kHz sample rate
 - Ensure your audio track uses matching sample rate

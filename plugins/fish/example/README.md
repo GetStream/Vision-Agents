@@ -5,20 +5,24 @@ This directory contains examples demonstrating how to use the Fish Audio TTS plu
 ## Examples
 
 ### 1. Simple TTS Example (`simple_tts_example.py`)
+
 Basic usage of Fish Audio TTS without a full agent setup. Perfect for testing or simple integrations.
 
 ### 2. Full Agent Example (`fish_tts_example.py`)
+
 Complete agent setup with Fish Audio TTS, Deepgram STT, and real-time communication.
 
 ## Setup
 
 1. Install dependencies:
+
 ```bash
 cd plugins/fish/example
 uv sync
 ```
 
 2. Create a `.env` file with your API keys:
+
 ```bash
 # Required for Fish Audio TTS
 FISH_AUDIO_API_KEY=your_fish_audio_api_key
@@ -31,19 +35,16 @@ STREAM_API_SECRET=your_stream_api_secret
 
 ## Running the Examples
 
-### Simple TTS Example
-```bash
-uv run simple_tts_example.py
-```
-
 ### Full Agent Example
+
 ```bash
-uv run fish_tts_example.py
+uv run fish_example.py run
 ```
 
 ## What it does
 
 The example creates an AI agent that:
+
 - Uses **Fish Audio** for high-quality text-to-speech synthesis
 - Uses **Deepgram** for speech-to-text transcription
 - Uses **GetStream** for real-time communication

@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, AgentLauncher, User, cli
+from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import (
     deepgram,
@@ -77,4 +77,4 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
-    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()

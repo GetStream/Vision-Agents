@@ -1,11 +1,13 @@
 # Moondream Plugin
 
 This plugin provides Moondream 3 vision capabilities for vision-agents, including:
+
 - **Object Detection**: Real-time zero-shot object detection on video streams
 - **Visual Question Answering (VQA)**: Answer questions about video frames
 - **Image Captioning**: Generate descriptions of video frames
 
-Choose between cloud-hosted or local processing depending on your needs. When running locally, we recommend you do so on CUDA enabled devices.
+Choose between cloud-hosted or local processing depending on your needs. When running locally, we recommend you do so on
+CUDA enabled devices.
 
 ## Installation
 
@@ -18,26 +20,31 @@ uv add vision-agents[moondream]
 ### Detection Processors
 
 #### CloudDetectionProcessor (Recommended for Most Users)
+
 - **Use when:** You want a simple setup with no infrastructure management
 - **Pros:** No model download, no GPU required, automatic updates
 - **Cons:** Requires API key, 2 RPS rate limit by default (can be increased)
 - **Best for:** Development, testing, low-to-medium volume applications
 
 #### LocalDetectionProcessor (For Advanced Users)
+
 - **Use when:** You need higher throughput, have your own GPU infrastructure, or want to avoid rate limits
 - **Pros:** No rate limits, no API costs, full control over hardware
 - **Cons:** Requires GPU for best performance, model download on first use, infrastructure management
-- **Best for:** Production deployments, high-volume applications, Digital Ocean Gradient AI GPUs, or custom infrastructure
+- **Best for:** Production deployments, high-volume applications, Digital Ocean Gradient AI GPUs, or custom
+  infrastructure
 
 ### Vision Language Models (VLM)
 
 #### CloudVLM (Recommended for Most Users)
+
 - **Use when:** You want visual question answering or captioning without managing infrastructure
 - **Pros:** No model download, no GPU required, automatic updates
 - **Cons:** Requires API key, rate limits apply
 - **Best for:** Development, testing, applications requiring VQA or captioning
 
 #### LocalVLM (For Advanced Users)
+
 - **Use when:** You need VQA or captioning with higher throughput or want to avoid rate limits
 - **Pros:** No rate limits, no API costs, full control over hardware
 - **Cons:** Requires GPU for best performance, model download on first use, infrastructure management
@@ -47,7 +54,8 @@ uv add vision-agents[moondream]
 
 ### Using CloudDetectionProcessor (Hosted)
 
-The `CloudDetectionProcessor` uses Moondream's hosted API. By default it has a 2 RPS (requests per second) rate limit and requires an API key. The rate limit can be adjusted by contacting the Moondream team to request a higher limit.
+The `CloudDetectionProcessor` uses Moondream's hosted API. By default it has a 2 RPS (requests per second) rate limit
+and requires an API key. The rate limit can be adjusted by contacting the Moondream team to request a higher limit.
 
 ```python
 from vision_agents.plugins import moondream
@@ -70,9 +78,12 @@ agent = Agent(
 
 ### Using LocalDetectionProcessor (On-Device)
 
-If you are running on your own infrastructure or using a service like Digital Ocean's Gradient AI GPUs, you can use the `LocalDetectionProcessor` which downloads the model from HuggingFace and runs on device. By default it will use CUDA for best performance. Performance will vary depending on your specific hardware configuration.
+If you are running on your own infrastructure or using a service like Digital Ocean's Gradient AI GPUs, you can use the
+`LocalDetectionProcessor` which downloads the model from HuggingFace and runs on device. By default it will use CUDA for
+best performance. Performance will vary depending on your specific hardware configuration.
 
 **Note:** The moondream3-preview model is gated and requires HuggingFace authentication:
+
 - Request access at https://huggingface.co/moondream/moondream3-preview
 - Set `HF_TOKEN` environment variable: `export HF_TOKEN=your_token_here`
 - Or run: `huggingface-cli login`
@@ -112,18 +123,20 @@ processor = moondream.CloudDetectionProcessor(
 
 ### Using CloudVLM (Hosted)
 
-The `CloudVLM` uses Moondream's hosted API for visual question answering and captioning. It automatically processes video frames and responds to questions asked via STT (Speech-to-Text).
+The `CloudVLM` uses Moondream's hosted API for visual question answering and captioning. It automatically processes
+video frames and responds to questions asked via STT (Speech-to-Text).
 
 ```python
 import asyncio
 import os
 from dotenv import load_dotenv
-from vision_agents.core import User, Agent, cli
+from vision_agents.core import User, Agent, Runner
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, getstream, elevenlabs, moondream
 from vision_agents.core.events import CallSessionParticipantJoinedEvent
 
 load_dotenv()
+
 
 async def create_agent(**kwargs) -> Agent:
     # Create a cloud VLM for visual question answering
@@ -131,7 +144,7 @@ async def create_agent(**kwargs) -> Agent:
         api_key=os.getenv("MOONDREAM_API_KEY"),  # or set MOONDREAM_API_KEY env var
         mode="vqa",  # or "caption" for image captioning
     )
-    
+
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="My happy AI friend", id="agent"),
@@ -140,6 +153,7 @@ async def create_agent(**kwargs) -> Agent:
         stt=deepgram.STT(),
     )
     return agent
+
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     await agent.create_user()
@@ -155,8 +169,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     async with agent.join(call):
         await agent.finish()
 
+
 if __name__ == "__main__":
-    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
 ```
 
 ### Using LocalVLM (On-Device)
@@ -164,6 +179,7 @@ if __name__ == "__main__":
 The `LocalVLM` downloads the model from HuggingFace and runs on device. It supports both VQA and captioning modes.
 
 **Note:** The moondream3-preview model is gated and requires HuggingFace authentication:
+
 - Request access at https://huggingface.co/moondream/moondream3-preview
 - Set `HF_TOKEN` environment variable: `export HF_TOKEN=your_token_here`
 - Or run: `huggingface-cli login`
@@ -212,45 +228,59 @@ llm = moondream.CloudVLM(
 
 ### CloudDetectionProcessor Parameters
 
-- `api_key`: str - API key for Moondream Cloud API. If not provided, will attempt to read from `MOONDREAM_API_KEY` environment variable.
-- `detect_objects`: str | List[str] - Object(s) to detect using zero-shot detection. Can be any object name like "person", "car", "basketball". Default: `"person"`
+- `api_key`: str - API key for Moondream Cloud API. If not provided, will attempt to read from `MOONDREAM_API_KEY`
+  environment variable.
+- `detect_objects`: str | List[str] - Object(s) to detect using zero-shot detection. Can be any object name like "
+  person", "car", "basketball". Default: `"person"`
 - `conf_threshold`: float - Confidence threshold for detections (default: 0.3)
 - `fps`: int - Frame processing rate (default: 30)
 - `interval`: int - Processing interval in seconds (default: 0)
 - `max_workers`: int - Thread pool size for CPU-intensive operations (default: 10)
 
-**Rate Limits:** By default, the Moondream Cloud API has a 2rps (requests per second) rate limit. Contact the Moondream team to request a higher limit.
+**Rate Limits:** By default, the Moondream Cloud API has a 2rps (requests per second) rate limit. Contact the Moondream
+team to request a higher limit.
 
 ### LocalDetectionProcessor Parameters
 
-- `detect_objects`: str | List[str] - Object(s) to detect using zero-shot detection. Can be any object name like "person", "car", "basketball". Default: `"person"`
+- `detect_objects`: str | List[str] - Object(s) to detect using zero-shot detection. Can be any object name like "
+  person", "car", "basketball". Default: `"person"`
 - `conf_threshold`: float - Confidence threshold for detections (default: 0.3)
 - `fps`: int - Frame processing rate (default: 30)
 - `interval`: int - Processing interval in seconds (default: 0)
 - `max_workers`: int - Thread pool size for CPU-intensive operations (default: 10)
-- `force_cpu`: bool - If True, force CPU usage even if CUDA/MPS is available. Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU. We recommend running on CUDA for best performance. (default: False)
+- `force_cpu`: bool - If True, force CPU usage even if CUDA/MPS is available. Auto-detects CUDA, then MPS (Apple
+  Silicon), then defaults to CPU. We recommend running on CUDA for best performance. (default: False)
 - `model_name`: str - Hugging Face model identifier (default: "moondream/moondream3-preview")
-- `options`: AgentOptions - Model directory configuration. If not provided, uses default which defaults to tempfile.gettempdir()
+- `options`: AgentOptions - Model directory configuration. If not provided, uses default which defaults to
+  tempfile.gettempdir()
 
-**Performance:** Performance will vary depending on your hardware configuration. CUDA is recommended for best performance on NVIDIA GPUs. The model will be downloaded from HuggingFace on first use.
+**Performance:** Performance will vary depending on your hardware configuration. CUDA is recommended for best
+performance on NVIDIA GPUs. The model will be downloaded from HuggingFace on first use.
 
 ### CloudVLM Parameters
 
-- `api_key`: str - API key for Moondream Cloud API. If not provided, will attempt to read from `MOONDREAM_API_KEY` environment variable.
-- `mode`: Literal["vqa", "caption"] - "vqa" for visual question answering or "caption" for image captioning (default: "vqa")
+- `api_key`: str - API key for Moondream Cloud API. If not provided, will attempt to read from `MOONDREAM_API_KEY`
+  environment variable.
+- `mode`: Literal["vqa", "caption"] - "vqa" for visual question answering or "caption" for image captioning (default: "
+  vqa")
 - `max_workers`: int - Thread pool size for CPU-intensive operations (default: 10)
 
-**Rate Limits:** By default, the Moondream Cloud API has rate limits. Contact the Moondream team to request higher limits.
+**Rate Limits:** By default, the Moondream Cloud API has rate limits. Contact the Moondream team to request higher
+limits.
 
 ### LocalVLM Parameters
 
-- `mode`: Literal["vqa", "caption"] - "vqa" for visual question answering or "caption" for image captioning (default: "vqa")
+- `mode`: Literal["vqa", "caption"] - "vqa" for visual question answering or "caption" for image captioning (default: "
+  vqa")
 - `max_workers`: int - Thread pool size for async operations (default: 10)
-- `force_cpu`: bool - If True, force CPU usage even if CUDA/MPS is available. Auto-detects CUDA, then MPS (Apple Silicon), then defaults to CPU. Note: MPS is automatically converted to CPU due to model compatibility. We recommend running on CUDA for best performance. (default: False)
+- `force_cpu`: bool - If True, force CPU usage even if CUDA/MPS is available. Auto-detects CUDA, then MPS (Apple
+  Silicon), then defaults to CPU. Note: MPS is automatically converted to CPU due to model compatibility. We recommend
+  running on CUDA for best performance. (default: False)
 - `model_name`: str - Hugging Face model identifier (default: "moondream/moondream3-preview")
 - `options`: AgentOptions - Model directory configuration. If not provided, uses default_agent_options()
 
-**Performance:** Performance will vary depending on your hardware configuration. CUDA is recommended for best performance on NVIDIA GPUs. The model will be downloaded from HuggingFace on first use.
+**Performance:** Performance will vary depending on your hardware configuration. CUDA is recommended for best
+performance on NVIDIA GPUs. The model will be downloaded from HuggingFace on first use.
 
 ## Video Publishing
 
@@ -284,6 +314,7 @@ pytest plugins/moondream/tests/ -k "annotation" -v
 ## Dependencies
 
 ### Required
+
 - `vision-agents` - Core framework
 - `moondream` - Moondream SDK for cloud API (CloudDetectionProcessor and CloudVLM)
 - `numpy>=2.0.0` - Array operations
@@ -292,10 +323,12 @@ pytest plugins/moondream/tests/ -k "annotation" -v
 - `aiortc` - WebRTC support
 
 ### Local Components Additional Dependencies
+
 - `torch` - PyTorch for model inference
 - `transformers` - HuggingFace transformers library for model loading
 
-**Note:** LocalDetectionProcessor and LocalVLM both require these dependencies. We recommend only running the model locally on CUDA devices. 
+**Note:** LocalDetectionProcessor and LocalVLM both require these dependencies. We recommend only running the model
+locally on CUDA devices.
 
 ## Links
 
