@@ -21,10 +21,11 @@ cp env.example .env
 ## Running the Example
 
 ```bash
-uv run roboflow_example.py
+uv run roboflow_example.py run
 ```
 
 The agent will:
+
 1. Connect to GetStream
 2. Join a video call with object detection enabled
 3. Process video frames at 5 FPS using RF-DETR

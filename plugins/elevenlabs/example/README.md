@@ -1,10 +1,12 @@
 # ElevenLabs TTS and STT Example
 
-This directory contains an example demonstrating how to use the ElevenLabs TTS and Scribe v2 STT plugins with Vision Agents.
+This directory contains an example demonstrating how to use the ElevenLabs TTS and Scribe v2 STT plugins with Vision
+Agents.
 
 ## Overview
 
-This example creates an AI agent that uses ElevenLabs' state-of-the-art voice technology for both speech synthesis and recognition.
+This example creates an AI agent that uses ElevenLabs' state-of-the-art voice technology for both speech synthesis and
+recognition.
 
 ## Features
 
@@ -17,12 +19,14 @@ This example creates an AI agent that uses ElevenLabs' state-of-the-art voice te
 ## Setup
 
 1. Install dependencies:
+
 ```bash
 cd plugins/elevenlabs/example
 uv sync
 ```
 
 2. Create a `.env` file with your API keys:
+
 ```bash
 # Required for ElevenLabs TTS and STT
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
@@ -38,10 +42,11 @@ GEMINI_API_KEY=your_gemini_api_key
 ## Running the Example
 
 ```bash
-uv run elevenlabs_example.py
+uv run elevenlabs_example.py run
 ```
 
 The agent will:
+
 1. Connect to the GetStream edge network
 2. Initialize ElevenLabs TTS and Scribe v2 STT
 3. Join a call and greet you
@@ -82,19 +87,21 @@ Adjust turn detection sensitivity:
 
 ```python
 turn_detection = smart_turn.TurnDetection(
-    buffer_in_seconds=2.0,      # How long to wait for speech
-    confidence_threshold=0.5,    # How confident to be before ending turn
+    buffer_in_seconds=2.0,  # How long to wait for speech
+    confidence_threshold=0.5,  # How confident to be before ending turn
 )
 ```
 
 ## ElevenLabs Models
 
 ### TTS Models
+
 - `eleven_multilingual_v2`: High-quality, emotionally rich (default)
 - `eleven_flash_v2_5`: Ultra-fast with low latency (~75ms)
 - `eleven_turbo_v2_5`: Balanced quality and speed
 
 ### STT Model
+
 - `scribe_v2_realtime`: Real-time transcription with 99 language support
 
 ## Architecture
@@ -121,16 +128,19 @@ User Hears Response
 ## Troubleshooting
 
 ### No audio output
+
 - Verify your `ELEVENLABS_API_KEY` is valid
 - Check your audio device settings
 - Ensure GetStream connection is established
 
 ### Poor transcription quality
+
 - Use 16kHz sample rate audio for optimal results
 - Speak clearly and avoid background noise
 - Adjust `vad_threshold` if needed
 
 ### High latency
+
 - Consider using `eleven_flash_v2_5` for TTS
 - Check your network connection
 - Reduce `buffer_in_seconds` in turn detection

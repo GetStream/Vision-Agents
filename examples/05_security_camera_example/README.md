@@ -1,11 +1,14 @@
 # Security Camera Demo
 
-A real-time security camera demo with face recognition, package detection, and automated package theft response - including wanted poster generation and posting to X.
+A real-time security camera demo with face recognition, package detection, and automated package theft response -
+including wanted poster generation and posting to X.
 
 ## Features
 
-- 🎥 **Real-time Face Detection**: Uses [face_recognition](https://github.com/ageitgey/face_recognition) library for accurate face detection and recognition
-- 📦 **Package Detection**: [YOLOv11](https://docs.ultralytics.com/models/yolo11/)-based object detection for packages and boxes
+- 🎥 **Real-time Face Detection**: Uses [face_recognition](https://github.com/ageitgey/face_recognition) library for
+  accurate face detection and recognition
+- 📦 **Package Detection**: [YOLOv11](https://docs.ultralytics.com/models/yolo11/)-based object detection for packages
+  and boxes
 - 🚨 **Package Theft Detection**: Detects when a package disappears and identifies the suspect
 - 🖼️ **Wanted Poster Generation**: Automatically creates a wanted poster when a package is "stolen"
 - 🐦 **X Integration**: Posts wanted posters to [X](https://developer.x.com) automatically
@@ -73,7 +76,8 @@ The AI assistant has access to:
 - Python 3.13+
 - Webcam/camera access
 - [GetStream](https://getstream.io) account for video transport
-- API keys for [Gemini](https://ai.google.dev), [Deepgram](https://deepgram.com), and [ElevenLabs](https://elevenlabs.io)
+- API keys for [Gemini](https://ai.google.dev), [Deepgram](https://deepgram.com),
+  and [ElevenLabs](https://elevenlabs.io)
 - (Optional) [X Developer API](https://developer.x.com) credentials for posting wanted posters
 
 ### Installation
@@ -118,7 +122,7 @@ X_ACCESS_TOKEN_SECRET=your_x_access_token_secret
 ### Running the Demo
 
 ```bash
-uv run security_camera_example.py
+uv run security_camera_example.py run
 ```
 
 The agent will join a call and start monitoring the video feed for faces and packages.
@@ -150,15 +154,15 @@ You can adjust the processor parameters in `security_camera_example.py`:
 
 ```python
 security_processor = SecurityCameraProcessor(
-    fps=5,                        # Frames per second to process
-    time_window=1800,             # Time window in seconds (30 min)
-    thumbnail_size=80,            # Size of thumbnails in pixels
-    detection_interval=2.0,       # Seconds between face detection with identity matching
-    bbox_update_interval=0.3,     # Seconds between fast bbox updates for tracking
+    fps=5,  # Frames per second to process
+    time_window=1800,  # Time window in seconds (30 min)
+    thumbnail_size=80,  # Size of thumbnails in pixels
+    detection_interval=2.0,  # Seconds between face detection with identity matching
+    bbox_update_interval=0.3,  # Seconds between fast bbox updates for tracking
     model_path="weights_custom.pt",  # YOLO model for package detection
-    package_conf_threshold=0.7,   # Package detection confidence threshold
-    max_tracked_packages=1,       # Single-package mode for demo
-    face_match_tolerance=0.6,     # Face matching tolerance (lower = stricter)
+    package_conf_threshold=0.7,  # Package detection confidence threshold
+    max_tracked_packages=1,  # Single-package mode for demo
+    face_match_tolerance=0.6,  # Face matching tolerance (lower = stricter)
 )
 ```
 
@@ -182,17 +186,23 @@ Uses a custom [YOLOv11](https://docs.ultralytics.com/models/yolo11/) model (`wei
 - Open_package
 - Package
 
-The model runs package detection at configurable intervals with IoU-based tracking to maintain package identity across frames.
+The model runs package detection at configurable intervals with IoU-based tracking to maintain package identity across
+frames.
 
 ### About the Custom Model
 
-The `weights_custom.pt` file is a YOLOv11 object detection model we trained using [Roboflow](https://roboflow.com) with [SAM 3](https://blog.roboflow.com/sam3/) for assisted labeling. SAM 3's text-prompt segmentation made it fast to annotate packages and boxes accurately.
+The `weights_custom.pt` file is a YOLOv11 object detection model we trained using [Roboflow](https://roboflow.com)
+with [SAM 3](https://blog.roboflow.com/sam3/) for assisted labeling. SAM 3's text-prompt segmentation made it fast to
+annotate packages and boxes accurately.
 
-**We are not distributing `weights_custom.pt`.** To run this demo, you'll need to provide your own YOLO model. 
+**We are not distributing `weights_custom.pt`.** To run this demo, you'll need to provide your own YOLO model.
 
 Options:
-- **Train your own**: Use [Roboflow](https://roboflow.com) to label a dataset and train a YOLOv11 model. See their [YOLOv11 training guide](https://blog.roboflow.com/yolov11-how-to-train-custom-data/).
-- **Find a pre-trained model**: Search [Roboflow Universe](https://universe.roboflow.com) for "package detection" datasets and models.
+
+- **Train your own**: Use [Roboflow](https://roboflow.com) to label a dataset and train a YOLOv11 model. See
+  their [YOLOv11 training guide](https://blog.roboflow.com/yolov11-how-to-train-custom-data/).
+- **Find a pre-trained model**: Search [Roboflow Universe](https://universe.roboflow.com) for "package detection"
+  datasets and models.
 
 Place your model weights at `weights_custom.pt` in this directory, or change the `model_path` parameter.
 

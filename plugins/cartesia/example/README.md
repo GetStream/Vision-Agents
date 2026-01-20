@@ -1,6 +1,7 @@
 # Stream + Cartesia TTS Bot Example
 
-This example demonstrates how to build a text-to-speech bot that joins a Stream video call and greets participants using [Cartesia's](https://cartesia.ai/?utm_medium=partner&utm_source=getstream) Sonic voices.
+This example demonstrates how to build a text-to-speech bot that joins a Stream video call and greets participants
+using [Cartesia's](https://cartesia.ai/?utm_medium=partner&utm_source=getstream) Sonic voices.
 
 ## What it does
 
@@ -35,6 +36,7 @@ You can use your preferred package manager, but we recommend [`uv`](https://docs
 ## Usage
 
 Run the example:
+
 ```bash
-uv run main.py
+uv run main.py run
 ```

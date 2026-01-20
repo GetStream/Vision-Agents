@@ -15,4 +15,4 @@ EXPOSE 8080
 ENV UV_LINK_MODE=copy
 
 # Install deps at startup (faster push, slower cold start)
-CMD ["sh", "-c", "uv sync --frozen -v && uv run deploy_example.py"]
+CMD ["sh", "-c", "uv sync --frozen -v && uv run deploy_example.py run"]

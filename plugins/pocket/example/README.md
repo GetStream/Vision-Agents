@@ -11,6 +11,7 @@ A Vision Agents example using Pocket TTS for local text-to-speech.
 ## Requirements
 
 Set the following environment variables:
+
 - `DEEPGRAM_API_KEY` - for speech-to-text
 - `STREAM_API_KEY` and `STREAM_API_SECRET` - for real-time communication
 - `GOOGLE_API_KEY` - for Gemini LLM
@@ -19,5 +20,5 @@ Set the following environment variables:
 
 ```bash
 cd plugins/pocket/example
-uv run pocket_example.py
+uv run pocket_example.py run
 ```

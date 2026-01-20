@@ -1,23 +1,24 @@
 # Football Commentator Example
 
-A real-time AI sports commentator that watches football footage and provides play-by-play commentary using OpenAI Realtime and Roboflow object detection.
+A real-time AI sports commentator that watches football footage and provides play-by-play commentary using OpenAI
+Realtime and Roboflow object detection.
 
 ## Setup
 
 1. **Get API keys:**
-   - OpenAI API key: https://platform.openai.com/api-keys
-   - GetStream API key: https://getstream.io
+    - OpenAI API key: https://platform.openai.com/api-keys
+    - GetStream API key: https://getstream.io
 
 2. **Configure environment:**
    ```bash
-   cd examples/03_football_commentator_example
+   cd examples/04_football_commentator_example
    cp env.example .env
    # Edit .env with your actual API keys
    ```
 
 3. **Run the example:**
    ```bash
-   uv run football_commentator_example.py
+   uv run football_commentator_example.py run
    ```
 
 ## What It Does
@@ -38,8 +39,9 @@ The agent:
 4. Watch the annotated video and listen to the AI commentary
 
 To use a local video file instead of screen sharing:
+
 ```bash
-uv run football_commentator_example.py --video-track-override path/to/football.mp4
+uv run football_commentator_example.py run --video-track-override path/to/football.mp4
 ```
 
 ## Configuration
@@ -49,8 +51,8 @@ Edit `football_commentator_example.py` to customize:
 ```python
 roboflow.RoboflowLocalDetectionProcessor(
     classes=["person", "sports ball"],  # Objects to detect
-    conf_threshold=0.5,                  # Detection confidence (0-1)
-    fps=5,                               # Detection frame rate
+    conf_threshold=0.5,  # Detection confidence (0-1)
+    fps=5,  # Detection frame rate
 )
 ```
 

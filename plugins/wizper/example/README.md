@@ -15,12 +15,14 @@ Wizper is a speech-to-text service provided by [FAL.ai](https://fal.ai) with bui
 ## Setup
 
 1. Install dependencies:
+
 ```bash
 cd plugins/wizper/example
 uv sync
 ```
 
 2. Create a `.env` file with your API keys:
+
 ```bash
 # Required for Wizper STT
 FAL_KEY=your_fal_api_key
@@ -36,10 +38,11 @@ OPENAI_API_KEY=your_openai_api_key
 ## Running the Example
 
 ```bash
-uv run wizper_example.py
+uv run wizper_example.py run
 ```
 
 The agent will:
+
 1. Connect to the GetStream edge network
 2. Initialize Wizper STT
 3. Join a call and transcribe (and optionally translate) speech
@@ -90,10 +93,12 @@ Handler logs/processes transcript
 ## Troubleshooting
 
 ### No transcriptions
+
 - Verify your `FAL_KEY` is valid
 - Check that GetStream connection is established
 - Ensure audio is being captured properly
 
 ### Translation issues
+
 - Use valid ISO-639-1 language codes (e.g., "fr", "es", "de")
 - Check FAL.ai supported languages

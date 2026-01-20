@@ -2,15 +2,15 @@
 
 Run with:
     cd examples/02_golf_coach_example
-    uv run python golf_coach_with_metrics.py --call-type default --call-id test-metrics
+    uv run python golf_coach_with_metrics.py run --call-type default --call-id test-metrics
 
 Then open http://localhost:9464/metrics to see real-time metrics.
 """
 
 # Configure OpenTelemetry BEFORE importing vision_agents
 from opentelemetry import metrics
-from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from opentelemetry.sdk.metrics import MeterProvider
 from prometheus_client import start_http_server
 
 # Start Prometheus HTTP server on port 9464
@@ -26,11 +26,10 @@ metrics.set_meter_provider(provider)
 import logging  # noqa: E402
 
 from dotenv import load_dotenv  # noqa: E402
-
-from vision_agents.core import User, Agent, cli  # noqa: E402
+from vision_agents.core import Agent, Runner, User  # noqa: E402
 from vision_agents.core.agents import AgentLauncher  # noqa: E402
 from vision_agents.core.observability import MetricsCollector  # noqa: E402
-from vision_agents.plugins import getstream, ultralytics, openai  # noqa: E402
+from vision_agents.plugins import getstream, openai, ultralytics  # noqa: E402
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -85,4 +84,4 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
-    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()

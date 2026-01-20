@@ -37,10 +37,11 @@ ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ## Running the Example
 
 ```bash
-uv run main.py
+uv run main.py run
 ```
 
 The agent will:
+
 1. Join a video call
 2. Automatically buffer video frames
 3. Respond to user questions about what it sees in the video
@@ -49,6 +50,7 @@ The agent will:
 ## Usage
 
 Once the agent joins the call:
+
 - Speak to the agent and ask questions about what it sees
 - The agent will analyze the video frames and respond
 - Example questions: "What do you see?", "Describe the scene", "What's happening?"
