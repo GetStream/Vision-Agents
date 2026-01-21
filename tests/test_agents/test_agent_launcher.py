@@ -417,7 +417,7 @@ class TestAgentLauncher:
         )
         async with launcher:
             session1 = await launcher.start_session(call_id="call1")
-            session2 = await launcher.start_session(call_id="call2")
+            await launcher.start_session(call_id="call2")
 
             with pytest.raises(MaxConcurrentSessionsExceeded):
                 await launcher.start_session(call_id="call3")
@@ -448,7 +448,7 @@ class TestAgentLauncher:
         )
         async with launcher:
             session1 = await launcher.start_session(call_id="call1")
-            session2 = await launcher.start_session(call_id="call2")
+            await launcher.start_session(call_id="call2")
             with pytest.raises(MaxConcurrentSessionsExceeded):
                 await launcher.start_session(call_id="call3")
 
@@ -474,7 +474,7 @@ class TestAgentLauncher:
         )
         async with launcher:
             session1 = await launcher.start_session(call_id="same_call")
-            session2 = await launcher.start_session(call_id="same_call")
+            await launcher.start_session(call_id="same_call")
 
             with pytest.raises(MaxSessionsPerCallExceeded):
                 await launcher.start_session(call_id="same_call")
@@ -511,7 +511,7 @@ class TestAgentLauncher:
         )
         async with launcher:
             session1 = await launcher.start_session(call_id="same_call")
-            session2 = await launcher.start_session(call_id="same_call")
+            await launcher.start_session(call_id="same_call")
 
             with pytest.raises(MaxSessionsPerCallExceeded):
                 await launcher.start_session(call_id="same_call")
