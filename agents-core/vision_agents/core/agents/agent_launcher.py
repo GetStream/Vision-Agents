@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AgentSession:
+    """
+    Represents an active agent session within a call.
+
+    An AgentSession wraps an Agent instance along with metadata about the session,
+    including when it started, which call it belongs to, and the async task running
+    the agent's call handler.
+    """
+
     agent: "Agent"
     call_id: str
     started_at: datetime
@@ -32,10 +40,12 @@ class AgentSession:
 
     @property
     def finished(self) -> bool:
+        """Return True if the session task has completed."""
         return self.task.done()
 
     @property
     def id(self) -> str:
+        """Return the session ID (same as the agent ID)."""
         return self.agent.id
 
     async def wait(self):
@@ -43,6 +53,25 @@ class AgentSession:
         Wait for the session task to finish running.
         """
         return await self.task
+
+    def on_call_for(self) -> float:
+        """
+        Return the number of seconds for how long the agent has been on the call.
+        Returns 0.0 if the agent has not joined a call yet.
+
+        Returns:
+            Duration in seconds since the agent joined the call, or 0.0 if not on a call.
+        """
+        return self.agent.on_call_for()
+
+    def idle_for(self) -> float:
+        """
+        Return the idle time for this session if there are no other participants except the agent.
+
+        Returns:
+            Idle time in seconds, or 0.0 if the session is active.
+        """
+        return self.agent.idle_for()
 
 
 # TODO: Rename to `AgentManager`.
@@ -59,7 +88,7 @@ class AgentLauncher:
         create_agent: Callable[..., "Agent" | Coroutine[Any, Any, "Agent"]],
         join_call: Callable[["Agent", str, str], Coroutine],
         agent_idle_timeout: float = 60.0,
-        max_concurrent_sessions: Optional[int] = 50,
+        max_concurrent_sessions: Optional[int] = None,
         max_sessions_per_call: Optional[int] = None,
         max_session_duration_seconds: Optional[float] = None,
         cleanup_interval: float = 5.0,
@@ -68,11 +97,19 @@ class AgentLauncher:
         Initialize the agent launcher.
 
         Args:
-            create_agent: A function that creates and returns an Agent instance
-            join_call: Optional function that handles joining a call with the agent
-            agent_idle_timeout: Optional timeout in seconds for agent to stay alone on the call. Default - `60.0`.
-                `0` means idle agents won't leave the call until it's ended.
-
+            create_agent: A function that creates and returns an Agent instance.
+            join_call: A coroutine function that handles joining a call with the agent.
+            agent_idle_timeout: Timeout in seconds for an agent to stay alone on a call
+                before being automatically closed. Default is 60.0 seconds.
+                Set to 0 to disable idle timeout (agents won't leave until the call ends).
+            max_concurrent_sessions: Maximum number of concurrent sessions allowed across
+                all calls. Default is None (unlimited).
+            max_sessions_per_call: Maximum number of sessions allowed per call_id.
+                Default is None (unlimited).
+            max_session_duration_seconds: Maximum duration in seconds for a session
+                before it is automatically closed. Default is None (unlimited).
+            cleanup_interval: Interval in seconds between cleanup checks for idle
+                or expired sessions. Default is 5.0 seconds.
         """
         self._create_agent = create_agent
         self._join_call = join_call
@@ -106,16 +143,31 @@ class AgentLauncher:
         self._sessions: dict[str, AgentSession] = {}
         self._calls: dict[str, set[str]] = {}
 
-    async def start(self):
+    async def start(self) -> None:
+        """
+        Start the agent launcher.
+
+        This method warms up the agent components and starts the background
+        cleanup task for managing idle and expired sessions.
+
+        Raises:
+            RuntimeError: If the launcher is already running.
+        """
         if self._running:
             raise RuntimeError("AgentLauncher is already running")
         logger.debug("Starting AgentLauncher")
         self._running = True
         await self.warmup()
-        self._cleanup_task = asyncio.create_task(self._cleanup_idle_agents())
+        self._cleanup_task = asyncio.create_task(self._cleanup_idle_sessions())
         logger.debug("AgentLauncher started")
 
-    async def stop(self):
+    async def stop(self) -> None:
+        """
+        Stop the agent launcher and close all active sessions.
+
+        This method cancels the cleanup task, then cancels and waits for
+        all active session tasks to complete.
+        """
         logger.debug("Stopping AgentLauncher")
         self._running = False
         if self._cleanup_task:
@@ -153,14 +205,17 @@ class AgentLauncher:
 
     @property
     def warmed_up(self) -> bool:
+        """Return True if the agent components have been warmed up."""
         return self._warmed_up
 
     @property
     def running(self) -> bool:
+        """Return True if the launcher is currently running."""
         return self._running
 
     @property
     def ready(self) -> bool:
+        """Return True if the launcher is warmed up and running."""
         return self.warmed_up and self.running
 
     async def launch(self, **kwargs) -> "Agent":
@@ -184,6 +239,28 @@ class AgentLauncher:
         created_by: Optional[Any] = None,
         video_track_override_path: Optional[str] = None,
     ) -> AgentSession:
+        """
+        Start a new agent session for a call.
+
+        Creates a new agent, joins the specified call, and returns an AgentSession
+        object to track the session.
+
+        Args:
+            call_id: Unique identifier for the call to join.
+            call_type: Type of call. Default is "default".
+            created_by: Optional metadata about who/what created this session.
+            video_track_override_path: Optional path to a video file to use
+                instead of a live video track.
+
+        Returns:
+            An AgentSession object representing the new session.
+
+        Raises:
+            MaxConcurrentSessionsExceeded: If the maximum number of concurrent
+                sessions has been reached.
+            MaxSessionsPerCallExceeded: If the maximum number of sessions for
+                this call_id has been reached.
+        """
         sessions_total = len(self._sessions)
         if len(self._sessions) == self._max_concurrent_sessions:
             raise MaxConcurrentSessionsExceeded(
@@ -258,6 +335,15 @@ class AgentLauncher:
         return True
 
     def get_session(self, session_id: str) -> Optional[AgentSession]:
+        """
+        Get a session by its ID.
+
+        Args:
+            session_id: The session ID to look up.
+
+        Returns:
+            The AgentSession if found, None otherwise.
+        """
         return self._sessions.get(session_id)
 
     async def _warmup_agent(self, agent: "Agent") -> None:
@@ -299,40 +385,55 @@ class AgentLauncher:
         if warmup_tasks:
             await asyncio.gather(*warmup_tasks)
 
-    async def _cleanup_idle_agents(self) -> None:
-        if not self._agent_idle_timeout:
+    async def _cleanup_idle_sessions(self) -> None:
+        if not self._agent_idle_timeout and not self._max_session_duration_seconds:
             return
 
         while self._running:
             # Collect idle agents first to close them all at once
-            idle_agents = []
+            to_close = []
             for session in self._sessions.values():
                 agent = session.agent
-                agent_idle_for = agent.idle_for()
-                if agent_idle_for >= self._agent_idle_timeout:
+                on_call_for = agent.on_call_for()
+                idle_for = agent.idle_for()
+                if idle_for >= self._agent_idle_timeout:
                     logger.info(
-                        f'Agent with user_id "{agent.agent_user.id}" is idle for {round(agent_idle_for, 2)}s, '
-                        f"closing it after {self._agent_idle_timeout}s timeout"
+                        f'Closing session "{session.id}" with '
+                        f'user_id "{agent.agent_user.id}" after being '
+                        f"idle for {round(idle_for, 2)}s "
+                        f"(idle timeout is {self._agent_idle_timeout}s)"
                     )
-                    idle_agents.append(agent)
+                    to_close.append(agent)
+                elif on_call_for >= self._max_session_duration_seconds:
+                    logger.info(
+                        f'Closing session "{session.id}" with user_id "{agent.agent_user.id}" '
+                        f"after reaching the maximum session "
+                        f"duration of {self._max_session_duration_seconds}s"
+                    )
+                    to_close.append(agent)
 
-            if idle_agents:
-                coros = [asyncio.shield(a.close()) for a in idle_agents]
+            if to_close:
+                coros = [
+                    asyncio.shield(self.close_session(s.id, wait=False))
+                    for s in to_close
+                ]
                 result = await asyncio.shield(
                     asyncio.gather(*coros, return_exceptions=True)
                 )
-                for agent, r in zip(idle_agents, result):
+                for agent, r in zip(to_close, result):
                     if isinstance(r, Exception):
                         logger.error(
-                            f"Failed to close idle agent with user_id {agent.agent_user.id}",
+                            f"Failed to close agent with user_id {agent.agent_user.id}",
                             exc_info=r,
                         )
 
             await asyncio.sleep(self._cleanup_interval)
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "AgentLauncher":
+        """Enter the async context manager, starting the launcher."""
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit the async context manager, stopping the launcher."""
         await self.stop()

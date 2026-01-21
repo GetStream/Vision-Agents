@@ -652,6 +652,18 @@ class Agent:
         idle_since_adjusted = max(idle_since, self._joined_at)
         return time.time() - idle_since_adjusted
 
+    def on_call_for(self) -> float:
+        """
+        Return the number of seconds for how long the agent has been on the call.
+        Returns 0.0 if the agent has not joined a call yet.
+
+        Returns:
+            Duration in seconds since the agent joined the call, or 0.0 if not on a call.
+        """
+        if not self._joined_at:
+            return 0.0
+        return time.time() - self._joined_at
+
     async def finish(self):
         """
         Wait for the call to end gracefully.

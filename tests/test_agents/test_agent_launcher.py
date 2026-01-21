@@ -110,8 +110,8 @@ class TestAgentLauncher:
                 await asyncio.sleep(2)
 
         # The agents must be closed
-        assert session1.agent.closed
-        assert session2.agent.closed
+        assert session1.finished
+        assert session2.finished
 
     async def test_idle_sessions_alive_with_idle_timeout_zero(self, stream_edge_mock):
         llm = DummyLLM()
@@ -567,3 +567,89 @@ class TestAgentLauncher:
                 sessions.append(session)
 
             assert len(sessions) == 10
+
+    async def test_max_session_duration_seconds_invalid(self, stream_edge_mock):
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        with pytest.raises(
+            ValueError, match="max_session_duration_seconds must be > 0"
+        ):
+            AgentLauncher(
+                create_agent=create_agent,
+                join_call=join_call_noop,
+                max_session_duration_seconds=0,
+            )
+
+        with pytest.raises(
+            ValueError, match="max_session_duration_seconds must be > 0"
+        ):
+            AgentLauncher(
+                create_agent=create_agent,
+                join_call=join_call_noop,
+                max_session_duration_seconds=-1,
+            )
+
+    async def test_max_session_duration_exceeded(self, stream_edge_mock):
+        llm = DummyLLM()
+        tts = DummyTTS()
+
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=llm,
+                tts=tts,
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        launcher = AgentLauncher(
+            create_agent=create_agent,
+            join_call=join_call_noop,
+            max_session_duration_seconds=1.0,
+            agent_idle_timeout=0,  # Disable idle timeout
+            cleanup_interval=0.5,
+        )
+        with patch.object(Agent, "on_call_for", return_value=10):
+            async with launcher:
+                session1 = await launcher.start_session(call_id="1")
+                session2 = await launcher.start_session(call_id="2")
+                # Sleep to let the launcher clean up the sessions
+                await asyncio.sleep(2)
+
+        # The sessions must be closed due to max duration exceeded
+        assert session1.finished
+        assert session2.finished
+
+    async def test_sessions_alive_with_max_session_duration_none(self, stream_edge_mock):
+        llm = DummyLLM()
+        tts = DummyTTS()
+
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=llm,
+                tts=tts,
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        launcher = AgentLauncher(
+            create_agent=create_agent,
+            join_call=join_call_noop,
+            max_session_duration_seconds=None,
+            agent_idle_timeout=0,  # Disable idle timeout
+        )
+        with patch.object(Agent, "on_call_for", return_value=10):
+            async with launcher:
+                agent1 = await launcher.launch()
+                agent2 = await launcher.launch()
+                # Sleep to give cleanup a chance to run
+                await asyncio.sleep(2)
+
+        # The agents must NOT be closed because max_session_duration_seconds=None
+        assert not agent1.closed
+        assert not agent2.closed
