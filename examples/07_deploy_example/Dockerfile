@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
+FROM python:3.13-slim
 
 WORKDIR /app
 
@@ -15,4 +15,4 @@ EXPOSE 8080
 ENV UV_LINK_MODE=copy
 
 # Install deps at startup (faster push, slower cold start)
-CMD ["sh", "-c", "uv sync --frozen -v && uv run deploy_example.py"]
+CMD ["sh", "-c", "uv sync --frozen -v && uv run deploy_example.py run"]

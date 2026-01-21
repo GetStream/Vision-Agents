@@ -2,24 +2,23 @@ import abc
 import logging
 import time
 import uuid
-from typing import Optional, Dict, Union, Iterator, AsyncIterator, AsyncGenerator, Any
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, Optional, Union
 
 import av
-
+from vision_agents.core.events import (
+    AudioFormat,
+    PluginClosedEvent,
+)
 from vision_agents.core.events.manager import EventManager
 
+from ..edge.types import PcmData
 from . import events
 from .events import (
     TTSAudioEvent,
-    TTSSynthesisStartEvent,
-    TTSSynthesisCompleteEvent,
     TTSErrorEvent,
+    TTSSynthesisCompleteEvent,
+    TTSSynthesisStartEvent,
 )
-from vision_agents.core.events import (
-    PluginClosedEvent,
-    AudioFormat,
-)
-from ..edge.types import PcmData
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +197,7 @@ class TTS(abc.ABC):
             **kwargs: Additional keyword arguments
         """
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         synthesis_id = str(uuid.uuid4())
 
         logger.debug(
@@ -220,13 +219,12 @@ class TTS(abc.ABC):
             response = await self.stream_audio(text, *args, **kwargs)
 
             # Calculate synthesis setup time
-            synthesis_time = time.time() - start_time
-
             total_audio_bytes = 0
             total_audio_ms = 0.0
             chunk_index = 0
 
             # Fast-path: single buffer -> mark final
+            synthesis_time = time.perf_counter() - start_time
             if isinstance(response, (PcmData,)):
                 bytes_len, dur_ms = self._emit_chunk(
                     response, 0, True, synthesis_id, text, user
@@ -236,6 +234,9 @@ class TTS(abc.ABC):
                 chunk_index = 1
             else:
                 async for pcm in self._iter_pcm(response):
+                    # Register the synthesis time only when we get the first chunk
+                    if chunk_index == 0:
+                        synthesis_time = time.perf_counter() - start_time
                     bytes_len, dur_ms = self._emit_chunk(
                         pcm, chunk_index, False, synthesis_id, text, user
                     )
@@ -251,7 +252,6 @@ class TTS(abc.ABC):
                 if estimated_audio_duration_ms > 0
                 else None
             )
-
             self.events.send(
                 TTSSynthesisCompleteEvent(
                     session_id=self.session_id,

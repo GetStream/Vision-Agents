@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.13.*"
 
 [[package]]
@@ -500,7 +500,7 @@ wheels = [
 
 [[package]]
 name = "google-genai"
-version = "1.57.0"
+version = "1.59.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -514,9 +514,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/b4/8251c2d2576224a4b51a8ab6159820f9200b8da28ff555c78ee15607096e/google_genai-1.57.0.tar.gz", hash = "sha256:0ff9c36b8d68abfbdbd13b703ece926de5f3e67955666b36315ecf669b94a826", size = 485648, upload-time = "2026-01-07T20:38:20.271Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/34/c03bcbc759d67ac3d96077838cdc1eac85417de6ea3b65b313fe53043eee/google_genai-1.59.0.tar.gz", hash = "sha256:0b7a2dc24582850ae57294209d8dfc2c4f5fcfde0a3f11d81dc5aca75fb619e2", size = 487374, upload-time = "2026-01-15T20:29:46.619Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/02/858bdae08e2184b6afe0b18bc3113318522c9cf326a5a1698055edd31f88/google_genai-1.57.0-py3-none-any.whl", hash = "sha256:d63c7a89a1f549c4d14032f41a0cdb4b6fe3f565e2eee6b5e0907a0aeceabefd", size = 713323, upload-time = "2026-01-07T20:38:18.051Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/53/6d00692fe50d73409b3406ae90c71bc4499c8ae7fac377ba16e283da917c/google_genai-1.59.0-py3-none-any.whl", hash = "sha256:59fc01a225d074fe9d1e626c3433da292f33249dadce4deb34edea698305a6df", size = 719099, upload-time = "2026-01-15T20:29:44.604Z" },
 ]
 
 [[package]]
@@ -1201,11 +1201,11 @@ wheels = [
 
 [[package]]
 name = "pyasn1"
-version = "0.6.1"
+version = "0.6.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ba/e9/01f1a64245b89f039897cb0130016d79f77d52669aae6ee7b159a6c4c018/pyasn1-0.6.1.tar.gz", hash = "sha256:6f580d2bdd84365380830acf45550f2511469f673cb4a5ae3857a3170128b034", size = 145322, upload-time = "2024-09-10T22:41:42.55Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/b6/6e630dff89739fcd427e3f72b3d905ce0acb85a45d4ec3e2678718a3487f/pyasn1-0.6.2.tar.gz", hash = "sha256:9b59a2b25ba7e4f8197db7686c09fb33e658b98339fadb826e9512629017833b", size = 146586, upload-time = "2026-01-16T18:04:18.534Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/f1/d6a797abb14f6283c0ddff96bbdd46937f64122b8c925cab503dd37f8214/pyasn1-0.6.1-py3-none-any.whl", hash = "sha256:0d632f46f2ba09143da3a8afe9e33fb6f92fa2320ab7e886e2d0f7672af84629", size = 83135, upload-time = "2024-09-11T16:00:36.122Z" },
+    { url = "https://files.pythonhosted.org/packages/44/b5/a96872e5184f354da9c84ae119971a0a4c221fe9b27a4d94bd43f2596727/pyasn1-0.6.2-py3-none-any.whl", hash = "sha256:1eb26d860996a18e9b6ed05e7aae0e9fc21619fcee6af91cca9bad4fbea224bf", size = 83371, upload-time = "2026-01-16T18:04:17.174Z" },
 ]
 
 [[package]]
@@ -1881,25 +1881,31 @@ name = "vision-agents"
 source = { editable = "../../agents-core" }
 dependencies = [
     { name = "colorlog" },
+    { name = "fastapi" },
     { name = "getstream", extra = ["telemetry", "webrtc"] },
     { name = "mcp" },
     { name = "numpy" },
     { name = "pillow" },
     { name = "python-dotenv" },
+    { name = "urllib3" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
+    { name = "fastapi", specifier = ">=0.128.0" },
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.16" },
-    { name = "mcp", specifier = ">=1.16.0" },
+    { name = "mcp", specifier = ">=1.23.3" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "pillow", specifier = ">=10.4.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruff", marker = "extra == 'dev'" },
+    { name = "urllib3", specifier = ">=2.6.3" },
+    { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'all-plugins'", editable = "../../plugins/anthropic" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "../../plugins/anthropic" },
     { name = "vision-agents-plugins-aws", marker = "extra == 'all-plugins'", editable = "../../plugins/aws" },
@@ -1938,6 +1944,8 @@ requires-dist = [
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "../../plugins/openai" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'all-plugins'", editable = "../../plugins/openrouter" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'openrouter'", editable = "../../plugins/openrouter" },
+    { name = "vision-agents-plugins-pocket", marker = "extra == 'all-plugins'", editable = "../../plugins/pocket" },
+    { name = "vision-agents-plugins-pocket", marker = "extra == 'pocket'", editable = "../../plugins/pocket" },
     { name = "vision-agents-plugins-qwen", marker = "extra == 'all-plugins'", editable = "../../plugins/qwen" },
     { name = "vision-agents-plugins-qwen", marker = "extra == 'qwen'", editable = "../../plugins/qwen" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'all-plugins'", editable = "../../plugins/roboflow" },
@@ -1957,7 +1965,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "../../plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "../../plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "nvidia", "openai", "openrouter", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-phone"
@@ -2052,7 +2060,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "google-genai", specifier = ">=1.55.0" },
+    { name = "google-genai", specifier = ">=1.59.0" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "vision-agents", editable = "../../agents-core" },
 ]
@@ -2074,7 +2082,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.20" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.21" },
     { name = "vision-agents", editable = "../../agents-core" },
 ]
 

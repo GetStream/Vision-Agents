@@ -20,9 +20,8 @@ The script looks for the following env vars (see `env.example`):
 import logging
 
 from dotenv import load_dotenv
-
+from vision_agents.core import Runner
 from vision_agents.core.agents import Agent, AgentLauncher
-from vision_agents.core import cli
 from vision_agents.core.edge.types import User
 from vision_agents.plugins import cartesia, getstream, openai
 
@@ -57,4 +56,4 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
-    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()

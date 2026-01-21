@@ -25,8 +25,11 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "pillow>=10.4.0", # Compatible with moondream SDK (<11.0.0)
     "numpy>=1.24.0",
-    "mcp>=1.16.0",
+    "mcp>=1.23.3",
     "colorlog>=6.10.1",
+    "fastapi>=0.128.0",
+    "uvicorn>=0.38.0",
+    "urllib3>=2.6.3",
 ]
 
 [project.urls]

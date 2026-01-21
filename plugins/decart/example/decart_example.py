@@ -1,7 +1,7 @@
 import logging
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, User, cli
+from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import decart, deepgram, elevenlabs, getstream, openai
 
@@ -54,4 +54,4 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
-    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()

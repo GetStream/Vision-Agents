@@ -431,31 +431,33 @@ class GeminiLLM(LLM):
             events.GeminiResponseEvent(plugin_name="gemini", response_chunk=chunk)
         )
 
-        # Check if response has text content
-        if hasattr(chunk, "text") and chunk.text:
-            # Check if this is the first text chunk
-            is_first = len(text_parts) == 0
-            ttft_ms = None
-            if (
-                is_first
-                and first_token_time is not None
-                and request_start_time is not None
-            ):
-                ttft_ms = (first_token_time - request_start_time) * 1000
-
+        # Extract text directly from parts to avoid SDK warning when function_calls are present
+        # Using .text triggers "Warning: there are non-text parts in the response"
+        chunk_text = self._extract_text_from_chunk(chunk)
+        if chunk_text:
             self.events.send(
                 LLMResponseChunkEvent(
                     plugin_name="gemini",
                     content_index=idx,
                     item_id=item_id,
-                    delta=chunk.text,
-                    is_first_chunk=is_first,
-                    time_to_first_token_ms=ttft_ms,
+                    delta=chunk_text,
                 )
             )
-            text_parts.append(chunk.text)
+            text_parts.append(chunk_text)
 
         return None
+
+    @staticmethod
+    def _extract_text_from_chunk(chunk: GenerateContentResponse) -> str:
+        """Extract text from response chunk without triggering SDK warning."""
+        texts = []
+        if chunk.candidates:
+            for candidate in chunk.candidates:
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if part.text:
+                            texts.append(part.text)
+        return "".join(texts)
 
     def _convert_tools_to_provider_format(
         self, tools: List[ToolSchema]

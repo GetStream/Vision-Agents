@@ -1,23 +1,26 @@
 # Golf Coach Example
 
-This example shows you how to build a real-time golf coaching AI using [Vision Agents](https://visionagents.ai/). The agent uses video processing to watch golf swings and provide feedback through voice conversation.
+This example shows you how to build a real-time golf coaching AI using [Vision Agents](https://visionagents.ai/). The
+agent uses video processing to watch golf swings and provide feedback through voice conversation.
 
 In this example, the AI golf coach will:
+
 - Watches video of the user's golf swing
 - Uses [YOLO](https://www.ultralytics.com/yolo) pose detection to analyze body position and movement
 - Processes the video in real-time with an LLM (Large Language Model)
 - Provides voice feedback on the swing technique
 - Runs on Stream's low-latency edge network
 
-This approach combines a fast object detection model (YOLO) with a full realtime AI. You can apply this pattern to other video AI use cases like sports coaching, physical therapy, workout coaching, or drone monitoring.
+This approach combines a fast object detection model (YOLO) with a full realtime AI. You can apply this pattern to other
+video AI use cases like sports coaching, physical therapy, workout coaching, or drone monitoring.
 
 ## Prerequisites
 
 - Python 3.13 or higher
 - API keys for:
-  - [Gemini](https://ai.google.dev/) (for realtime LLM with vision)
-  - [Stream](https://getstream.io/) (for video/audio infrastructure)
-  - Alternatively: [OpenAI](https://openai.com) (if using OpenAI Realtime instead)
+    - [Gemini](https://ai.google.dev/) (for realtime LLM with vision)
+    - [Stream](https://getstream.io/) (for video/audio infrastructure)
+    - Alternatively: [OpenAI](https://openai.com) (if using OpenAI Realtime instead)
 
 ## Installation
 
@@ -25,7 +28,7 @@ This approach combines a fast object detection model (YOLO) with a full realtime
     ```bash
     cd examples/02_golf_coach_example
     ```
-   
+
 2. Install dependencies using uv:
    ```bash
    uv sync
@@ -46,11 +49,13 @@ This approach combines a fast object detection model (YOLO) with a full realtime
 ## Running the Example
 
 Run the agent:
+
 ```bash
-uv run golf_coach_example.py
+uv run golf_coach_example.py run
 ```
 
 The agent will:
+
 1. Create a video call
 2. Open a demo UI in your browser
 3. Join the call and start watching
@@ -74,6 +79,7 @@ agent = Agent(
 ```
 
 **Components:**
+
 - `edge`: Handles low-latency audio/video transport
 - `agent_user`: Sets the agent's name and ID
 - `instructions`: Loads coaching instructions from `golf_coach.md`
@@ -82,14 +88,16 @@ agent = Agent(
 
 ### Understanding Processors
 
-Processors enable the agent to analyze video in real-time. The `YOLOPoseProcessor` detects human poses and body positions in each video frame. This information is sent to the LLM so it can understand the user's body movement during the golf swing.
+Processors enable the agent to analyze video in real-time. The `YOLOPoseProcessor` detects human poses and body
+positions in each video frame. This information is sent to the LLM so it can understand the user's body movement during
+the golf swing.
 
 The `fps=10` parameter means the LLM processes 10 frames per second. Higher FPS gives more detail but costs more.
-
 
 ### Instructions File
 
 The `golf_coach.md` file contains detailed coaching guidelines. It tells the agent:
+
 - How to behave (personality and tone)
 - What to look for in a golf swing
 - How to provide feedback
@@ -102,14 +110,16 @@ You can modify this file to change the coaching style or add more specific guida
 ### Change the FPS
 
 Adjust how many frames per second the LLM processes:
+
 ```python
-llm=gemini.Realtime(fps=5)  # Lower FPS = less expensive
-llm=gemini.Realtime(fps=15)  # Higher FPS = more detailed analysis
+llm = gemini.Realtime(fps=5)  # Lower FPS = less expensive
+llm = gemini.Realtime(fps=15)  # Higher FPS = more detailed analysis
 ```
 
 ### Use OpenAI Instead of Gemini
 
 Switch to OpenAI's realtime API:
+
 ```python
 agent = Agent(
     edge=getstream.Edge(),
@@ -124,6 +134,7 @@ Both models support video processing with YOLO.
 ### Modify the Coaching Style
 
 Edit the `golf_coach.md` file to change:
+
 - The agent's personality
 - The coaching focus areas
 - The level of detail in feedback
@@ -132,6 +143,7 @@ Edit the `golf_coach.md` file to change:
 ### Use Different YOLO Models
 
 Try other YOLO models for different use cases:
+
 ```python
 # For general object detection
 ultralytics.YOLOProcessor(model_path="yolo11n.pt")
@@ -147,7 +159,6 @@ ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt")
 3. **LLM Processing**: The realtime LLM receives both the video and pose data
 4. **Analysis**: The LLM watches the swing and evaluates technique
 5. **Feedback**: The agent speaks feedback based on coaching guidelines
-
 
 ## Learn More
 

@@ -12,6 +12,7 @@ cp .env.example .env
 ```
 
 Required environment variables:
+
 - `DEEPGRAM_API_KEY` - Your Deepgram API key
 - `STREAM_API_KEY` - Your Stream API key
 - `STREAM_API_SECRET` - Your Stream API secret
@@ -26,7 +27,7 @@ uv sync
 3. Run the example:
 
 ```bash
-uv run python deepgram_tts_example.py dev --call-type audio_room --call-id test
+uv run python deepgram_tts_example.py run --call-type audio_room --call-id test
 ```
 
 ## Features
@@ -42,7 +43,7 @@ Deepgram offers various Aura voice models. You can customize the voice by passin
 
 ```python
 tts = deepgram.TTS(model="aura-2-thalia-en")  # Default female voice
-tts = deepgram.TTS(model="aura-2-orion-en")   # Male voice
+tts = deepgram.TTS(model="aura-2-orion-en")  # Male voice
 ```
 
 See [Deepgram TTS Models](https://developers.deepgram.com/docs/tts-models) for all available voices.

@@ -11,18 +11,27 @@ pre-commit install
 ```
 
 To setup your .env
+
 ```bash
 cp env.example .env
 ```
 
 ## Running
+
 ```bash
-uv run examples/01_simple_agent_example/simple_agent_example.py
+uv run examples/01_simple_agent_example/simple_agent_example.py run
 ```
 
 ### Running with a video file as input
+
 ```bash
-uv run <path-to-example> --video-track-override <path-to-video>
+uv run <path-to-example> run --video-track-override <path-to-video>
+```
+
+### Running as an HTTP server
+
+```bash
+uv run <path-to-example> serve --host=<host> --port=<port>
 ```
 
 ## Tests
@@ -34,6 +43,7 @@ uv run py.test -m "not integration" -n auto
 ```
 
 Integration test. (requires secrets in place, see .env setup)
+
 ```
 uv run py.test -m "integration" -n auto
 ```
@@ -59,7 +69,6 @@ uv run ruff check --fix
 ```
 
 ### Mypy type checks
-
 
 ```
 uv run mypy --install-types --non-interactive -p vision_agents
@@ -119,8 +128,10 @@ To see how the agent work open up agents.py
 Some important things about audio inside the library:
 
 1. WebRTC uses Opus 48khz stereo but inside the library audio is always in PCM format
-2. Plugins / AI models work with different PCM formats, passing bytes around without a container type leads to kaos and is forbidden
-3. PCM data is always passed around using the `PcmData` object which contains information about sample rate, channels and format
+2. Plugins / AI models work with different PCM formats, passing bytes around without a container type leads to kaos and
+   is forbidden
+3. PCM data is always passed around using the `PcmData` object which contains information about sample rate, channels
+   and format
 4. Audio resampling can be done using `PcmData.resample` method
 5. Adjusting from stereo to mono and vice-versa can be done using the `PcmData.resample` method
 6. `PcmData` comes with convenience constructor methods to build from bytes, iterators, ndarray, ...
@@ -131,6 +142,7 @@ Some important things about audio inside the library:
 import asyncio
 from getstream.video.rtc.track_util import PcmData
 from openai import AsyncOpenAI
+
 
 async def example():
     client = AsyncOpenAI(api_key="sk-42")
@@ -162,6 +174,7 @@ async def example():
 
     await play_pcm_with_ffplay(resampled_pcm)
 
+
 if __name__ == "__main__":
     asyncio.run(example())
 ```
@@ -177,6 +190,7 @@ Sometimes you need to test audio manually, here's some tips:
 ## Creating PcmData
 
 ### from_bytes
+
 Build from raw PCM bytes
 
 ```python
@@ -186,6 +200,7 @@ PcmData.from_bytes(audio_bytes, sample_rate=16000, format=AudioFormat.S16, chann
 ```
 
 ### from_numpy
+
 Build from numpy arrays with automatic dtype/shape conversion
 
 ```python
@@ -194,6 +209,7 @@ PcmData.from_numpy(np.array([1, 2], np.int16), sample_rate=16000, format=AudioFo
 ```
 
 ### from_response
+
 Construct from API response (bytes, iterators, async iterators, objects with .data)
 
 ```python
@@ -204,6 +220,7 @@ PcmData.from_response(
 ```
 
 ### from_av_frame
+
 Create from PyAV AudioFrame
 
 ```python
@@ -213,6 +230,7 @@ PcmData.from_av_frame(frame)
 ## Converting Format
 
 ### to_float32
+
 Convert samples to float32 in [-1, 1]
 
 ```python
@@ -220,6 +238,7 @@ pcm_f32 = pcm.to_float32()
 ```
 
 ### to_int16
+
 Convert samples to int16 PCM format
 
 ```python
@@ -227,6 +246,7 @@ pcm_s16 = pcm.to_int16()
 ```
 
 ### to_bytes
+
 Return interleaved PCM bytes
 
 ```python
@@ -234,6 +254,7 @@ audio_bytes = pcm.to_bytes()
 ```
 
 ### to_wav_bytes
+
 Return WAV file bytes (header + frames)
 
 ```python
@@ -253,6 +274,7 @@ pcm = pcm.resample(16000, target_channels=1)  # to 16khz, mono
 ## Manipulating Audio
 
 ### append
+
 Append another PcmData in-place (adjusts format/rate automatically)
 
 ```python
@@ -260,6 +282,7 @@ pcm.append(other_pcm)
 ```
 
 ### copy
+
 Create a deep copy
 
 ```python
@@ -267,6 +290,7 @@ pcm_copy = pcm.copy()
 ```
 
 ### clear
+
 Clear all samples in-place (keeps metadata)
 
 ```python
@@ -276,6 +300,7 @@ pcm.clear()
 ## Slicing and Chunking
 
 ### head
+
 Keep only the first N seconds
 
 ```python
@@ -283,6 +308,7 @@ pcm_head = pcm.head(duration_s=3.0)
 ```
 
 ### tail
+
 Keep only the last N seconds
 
 ```python
@@ -290,6 +316,7 @@ pcm_tail = pcm.tail(duration_s=5.0)
 ```
 
 ### chunks
+
 Iterate over fixed-size chunks with optional overlap
 
 ```python
@@ -318,7 +345,8 @@ pcm = await queue.get_duration(100)
 
 # AudioTrack
 
-Use `getstream.video.rtc.AudioTrack` if you need to publish audio using PyAV, this class ensures that `recv` paces audio correctly every 20ms.
+Use `getstream.video.rtc.AudioTrack` if you need to publish audio using PyAV, this class ensures that `recv` paces audio
+correctly every 20ms.
 
 - Use `.write()` method to enqueue audio (PcmData)
 - Use `.flush()` to empty all the enqueued audio (eg. barge-in event)
@@ -347,8 +375,10 @@ This prevents mistakes related to handling audio with different formats, sample 
 
 ### Testing
 
-Many of the underlying APIs change daily. To ensure things work we keep 2 sets of tests. Integration tests and unit tests.
-Integration tests run once a day to verify that changes to underlying APIs didn't break the framework. Some testing guidelines
+Many of the underlying APIs change daily. To ensure things work we keep 2 sets of tests. Integration tests and unit
+tests.
+Integration tests run once a day to verify that changes to underlying APIs didn't break the framework. Some testing
+guidelines
 
 - Every plugin needs an integration test
 - Limit usage of response capturing style testing. (since they diverge from reality)
@@ -442,11 +472,13 @@ metrics.set_meter_provider(
 start_http_server(port=9464)
 ```
 
-You can now see the metrics at `http://localhost:9464/metrics` (make sure that your Python program keeps running), after this you can setup your Prometheus server to scrape this endpoint.
+You can now see the metrics at `http://localhost:9464/metrics` (make sure that your Python program keeps running), after
+this you can setup your Prometheus server to scrape this endpoint.
 
 ### Profiling
 
-The `Profiler` class uses `pyinstrument` to profile your agent's performance and generate an HTML report showing where time is spent during execution.
+The `Profiler` class uses `pyinstrument` to profile your agent's performance and generate an HTML report showing where
+time is spent during execution.
 
 #### Example usage:
 
@@ -455,6 +487,7 @@ from uuid import uuid4
 from vision_agents.core import User, Agent
 from vision_agents.core.profiling import Profiler
 from vision_agents.plugins import getstream, gemini, deepgram, elevenlabs, vogent
+
 
 async def start_agent() -> None:
     agent = Agent(
@@ -475,12 +508,13 @@ async def start_agent() -> None:
 ```
 
 The profiler automatically:
+
 - Starts profiling when the agent is created
 - Stops profiling when the agent finishes (on `AgentFinishEvent`)
 - Saves an HTML report to the specified output path (default: `./profile.html`)
 
-You can open the generated HTML file in a browser to view the performance profile, which shows a timeline of function calls and where time is spent during agent execution.
-
+You can open the generated HTML file in a browser to view the performance profile, which shows a timeline of function
+calls and where time is spent during agent execution.
 
 ### Queuing
 
@@ -498,13 +532,15 @@ You can open the generated HTML file in a browser to view the performance profil
 
 ### Video Frames & Tracks
 
-- Track.recv errors will fail silently. The API is to return a frame. Never return None. and wait till the next frame is available
-- When using frame.to_ndarray(format="rgb24") specify the format. Typically you want rgb24 when connecting/sending to Yolo etc
+- Track.recv errors will fail silently. The API is to return a frame. Never return None. and wait till the next frame is
+  available
+- When using frame.to_ndarray(format="rgb24") specify the format. Typically you want rgb24 when connecting/sending to
+  Yolo etc
 - QueuedVideoTrack is a writable/queued video track implementation which is useful when forwarding video
 
-
 ### Loading Resources in Plugins (aka "warmup")
-Some plugins require to download and use external resources like models to work.  
+
+Some plugins require to download and use external resources like models to work.
 
 For example:
 
@@ -512,7 +548,7 @@ For example:
 - Video processors using `YOLO` models
 
 In order to standardise how these resources are loaded and to make it performant, the framework provides a special ABC
-`vision_agents.core.warmup.Warmable`.  
+`vision_agents.core.warmup.Warmable`.
 
 To use it, simply subclass it and define the required methods.  
 Note that `Warmable` supports generics to leverage type checking.
@@ -551,11 +587,9 @@ class FasterWhisperSTT(STT, Warmable[WhisperModel]):
         # This method will be called every time a new agent is initialized.
         # The warmup process is now complete.
         self._whisper_model = whisper
-    
+
     ...
 ```
-
-
 
 ## Onboarding Plan for new contributors
 

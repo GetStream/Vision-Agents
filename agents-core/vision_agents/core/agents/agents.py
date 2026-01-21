@@ -49,6 +49,7 @@ from ..llm.events import (
 from ..llm.llm import LLM, AudioLLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..mcp import MCPBaseServer, MCPManager
+from ..observability import MetricsCollector
 from ..observability.agent import AgentMetrics
 from ..processors.base_processor import (
     AudioProcessor,
@@ -148,6 +149,7 @@ class Agent:
         if not self.agent_user.id:
             self.agent_user.id = f"agent-{uuid4()}"
 
+        self._id = str(uuid4())
         self._pending_turn: Optional[LLMTurn] = None
         self.call: Optional[Call] = None
 
@@ -254,6 +256,11 @@ class Agent:
         self._close_lock = asyncio.Lock()
         self._closed = False
         self._metrics = AgentMetrics()
+        self._collector = MetricsCollector(self)
+
+    @property
+    def id(self) -> str:
+        return self._id
 
     async def _finish_llm_turn(self):
         if self._pending_turn is None or self._pending_turn.response is None:
@@ -439,7 +446,8 @@ class Agent:
 
         @self.llm.events.subscribe
         async def on_llm_response_sync_conversation(event: LLMResponseCompletedEvent):
-            self.logger.info(f"🤖 [LLM response]: {event.text}")
+            if event.text:
+                self.logger.info(f"🤖 [LLM response]: {event.text}")
 
             if self.conversation is None:
                 return

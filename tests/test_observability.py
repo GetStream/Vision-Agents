@@ -5,6 +5,7 @@ when handling various events. Since the EventManager requires a running
 event loop and complex type resolution, we test the handler methods directly.
 """
 
+import dataclasses
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -415,3 +416,22 @@ class TestMetricsCollector:
         )
         attrs = collector._base_attributes(event)
         assert attrs == {}
+
+
+class TestAgentMetrics:
+    def test_to_dict_all_fields_success(self):
+        metrics = AgentMetrics()
+        metrics_dict = metrics.to_dict()
+        all_fields = [f.name for f in dataclasses.fields(AgentMetrics)]
+        assert set(all_fields) == set(metrics_dict.keys())
+
+    def test_to_dict_some_fields_success(self):
+        metrics = AgentMetrics()
+        some_fields = ["realtime_agent_transcriptions__total", "tts_characters__total"]
+        metrics_dict = metrics.to_dict(fields=some_fields)
+        assert set(some_fields) == set(metrics_dict.keys())
+
+    def test_to_dict_some_fields_missing_fail(self):
+        metrics = AgentMetrics()
+        with pytest.raises(ValueError, match="Unknown field: unknown_field"):
+            metrics.to_dict(fields=["unknown_field"])
