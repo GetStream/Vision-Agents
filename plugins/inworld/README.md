@@ -20,7 +20,7 @@ tts = inworld.TTS()
 tts = inworld.TTS(
     api_key="your_inworld_api_key",
     voice_id="Dennis",
-    model_id="inworld-tts-1",
+    model_id="inworld-tts-1.5-max",
     temperature=1.1
 )
 
@@ -40,7 +40,7 @@ agent = Agent(
 
 - `api_key`: Inworld AI API key (default: reads from `INWORLD_API_KEY` environment variable)
 - `voice_id`: The voice ID to use for synthesis (default: "Dennis")
-- `model_id`: The model ID to use for synthesis. Options: "inworld-tts-1", "inworld-tts-1-max" (default: "inworld-tts-1")
+- `model_id`: The model ID to use for synthesis. Options: "inworld-tts-1.5-max", "inworld-tts-1.5-min" "inworld-tts-1", "inworld-tts-1-max" (default: "inworld-tts-1.5-max")
 - `temperature`: Determines the degree of randomness when sampling audio tokens. Accepts values between 0 and 2 (default: 1.1)
 
 ## Requirements
