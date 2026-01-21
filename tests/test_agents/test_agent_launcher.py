@@ -79,8 +79,9 @@ class TestAgentLauncher:
             )
 
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call_noop)
-        agent = await launcher.launch()
-        assert agent
+        async with launcher:
+            agent = await launcher.launch()
+            assert agent
 
     async def test_idle_sessions_stopped(self, stream_edge_mock):
         llm = DummyLLM()
@@ -109,9 +110,9 @@ class TestAgentLauncher:
                 # Sleep 2s to let the launcher clean up the agents
                 await asyncio.sleep(2)
 
-        # The agents must be closed
-        assert session1.finished
-        assert session2.finished
+                # The agents must be closed
+                assert session1.finished
+                assert session2.finished
 
     async def test_idle_sessions_alive_with_idle_timeout_zero(self, stream_edge_mock):
         llm = DummyLLM()
@@ -129,19 +130,20 @@ class TestAgentLauncher:
             create_agent=create_agent,
             join_call=join_call_noop,
             agent_idle_timeout=0,
+            cleanup_interval=0.5,
         )
         with patch.object(Agent, "idle_for", return_value=10):
             # Start the launcher internals
             async with launcher:
                 # Launch a couple of idle agents
-                agent1 = await launcher.launch()
-                agent2 = await launcher.launch()
+                session1 = await launcher.start_session(call_id="call")
+                session2 = await launcher.start_session(call_id="call")
                 # Sleep 2s to let the launcher clean up the agents
                 await asyncio.sleep(2)
 
-        # The agents must not be closed because agent_idle_timeout=0
-        assert not agent1.closed
-        assert not agent2.closed
+                # The agents must not be closed because agent_idle_timeout=0
+                assert not session1.finished
+                assert not session2.finished
 
     async def test_active_agents_alive(self, stream_edge_mock):
         llm = DummyLLM()
@@ -165,14 +167,14 @@ class TestAgentLauncher:
             # Start the launcher internals
             async with launcher:
                 # Launch a couple of active agents (idle_for=0)
-                agent1 = await launcher.launch()
-                agent2 = await launcher.launch()
+                session1 = await launcher.start_session(call_id="call")
+                session2 = await launcher.start_session(call_id="call")
                 # Sleep 2s to let the launcher clean up the agents
                 await asyncio.sleep(2)
 
-        # The agents must not be closed
-        assert not agent1.closed
-        assert not agent2.closed
+                # The agents must not be closed
+                assert not session1.finished
+                assert not session2.finished
 
     async def test_start_session(self, stream_edge_mock):
         llm = DummyLLM()
@@ -192,21 +194,22 @@ class TestAgentLauncher:
             await asyncio.sleep(2)
 
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
-        session = await launcher.start_session(call_id="test", call_type="default")
-        assert session
-        assert session.id
-        assert session.call_id
-        assert session.agent
-        assert session.started_at
-        assert session.created_by is None
-        assert not session.finished
+        async with launcher:
+            session = await launcher.start_session(call_id="test", call_type="default")
+            assert session
+            assert session.id
+            assert session.call_id
+            assert session.agent
+            assert session.started_at
+            assert session.created_by is None
+            assert not session.finished
 
-        assert launcher.get_session(session_id=session.id)
+            assert launcher.get_session(session_id=session.id)
 
-        # Wait for session to stop (it just sleeps)
-        await session.wait()
-        assert session.finished
-        assert not launcher.get_session(session_id=session.id)
+            # Wait for session to stop (it just sleeps)
+            await session.wait()
+            assert session.finished
+            assert not launcher.get_session(session_id=session.id)
 
     async def test_close_session_exists(self, stream_edge_mock):
         llm = DummyLLM()
@@ -226,13 +229,14 @@ class TestAgentLauncher:
             await asyncio.sleep(10)
 
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
-        session = await launcher.start_session(call_id="test", call_type="default")
-        assert session
+        async with launcher:
+            session = await launcher.start_session(call_id="test", call_type="default")
+            assert session
 
-        await launcher.close_session(session_id=session.id, wait=True)
-        assert session.finished
-        assert session.task.done()
-        assert not launcher.get_session(session_id=session.id)
+            await launcher.close_session(session_id=session.id, wait=True)
+            assert session.finished
+            assert session.task.done()
+            assert not launcher.get_session(session_id=session.id)
 
     async def test_close_session_doesnt_exist(self, stream_edge_mock):
         llm = DummyLLM()
@@ -273,8 +277,9 @@ class TestAgentLauncher:
             await asyncio.sleep(10)
 
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
-        session = launcher.get_session(session_id="session-id")
-        assert session is None
+        async with launcher:
+            session = launcher.get_session(session_id="session-id")
+            assert session is None
 
     async def test_stop_multiple_sessions(self, stream_edge_mock):
         llm = DummyLLM()
@@ -299,6 +304,7 @@ class TestAgentLauncher:
             session2 = await launcher.start_session(call_id="test", call_type="default")
             session3 = await launcher.start_session(call_id="test", call_type="default")
 
+        # Sessions must be stopped when the launcher context manager exits
         assert session1.finished
         assert session2.finished
         assert session3.finished
@@ -321,13 +327,14 @@ class TestAgentLauncher:
             await asyncio.sleep(1)
 
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
-        session = await launcher.start_session(call_id="test", call_type="default")
-        assert session
+        async with launcher:
+            session = await launcher.start_session(call_id="test", call_type="default")
+            assert session
 
-        await session.wait()
-        assert session.finished
-        # The session becomes unavailable after it's done
-        assert launcher.get_session(session_id=session.id) is None
+            await session.wait()
+            assert session.finished
+            # The session becomes unavailable after it's done
+            assert launcher.get_session(session_id=session.id) is None
 
     async def test_session_cleaned_up_after_cancel(self, stream_edge_mock):
         llm = DummyLLM()
@@ -621,11 +628,13 @@ class TestAgentLauncher:
                 # Sleep to let the launcher clean up the sessions
                 await asyncio.sleep(2)
 
-        # The sessions must be closed due to max duration exceeded
-        assert session1.finished
-        assert session2.finished
+                # The sessions must be closed due to max duration exceeded
+                assert session1.finished
+                assert session2.finished
 
-    async def test_sessions_alive_with_max_session_duration_none(self, stream_edge_mock):
+    async def test_sessions_alive_with_max_session_duration_none(
+        self, stream_edge_mock
+    ):
         llm = DummyLLM()
         tts = DummyTTS()
 
@@ -641,15 +650,16 @@ class TestAgentLauncher:
             create_agent=create_agent,
             join_call=join_call_noop,
             max_session_duration_seconds=None,
-            agent_idle_timeout=0,  # Disable idle timeout
+            agent_idle_timeout=10,
+            cleanup_interval=0.5,
         )
         with patch.object(Agent, "on_call_for", return_value=10):
             async with launcher:
-                agent1 = await launcher.launch()
-                agent2 = await launcher.launch()
+                session1 = await launcher.start_session(call_id="1")
+                session2 = await launcher.start_session(call_id="2")
                 # Sleep to give cleanup a chance to run
                 await asyncio.sleep(2)
 
-        # The agents must NOT be closed because max_session_duration_seconds=None
-        assert not agent1.closed
-        assert not agent2.closed
+                # The agents must NOT be closed because max_session_duration_seconds=None
+                assert not session1.finished
+                assert not session2.finished

@@ -262,14 +262,20 @@ class AgentLauncher:
                 this call_id has been reached.
         """
         sessions_total = len(self._sessions)
-        if len(self._sessions) == self._max_concurrent_sessions:
+        if (
+            self._max_concurrent_sessions
+            and len(self._sessions) == self._max_concurrent_sessions
+        ):
             raise MaxConcurrentSessionsExceeded(
                 f"Maximum concurrent sessions exceeded:"
                 f" {sessions_total}/{self._max_concurrent_sessions} sessions active"
             )
 
         call_sessions_total = len(self._calls.get(call_id, set()))
-        if call_sessions_total == self._max_sessions_per_call:
+        if (
+            self._max_sessions_per_call
+            and call_sessions_total == self._max_sessions_per_call
+        ):
             raise MaxSessionsPerCallExceeded(
                 f"Maximum sessions exceeded for call "
                 f"'{call_id}': {call_sessions_total}/{self._max_sessions_per_call}"
@@ -388,6 +394,9 @@ class AgentLauncher:
     async def _cleanup_idle_sessions(self) -> None:
         if not self._agent_idle_timeout and not self._max_session_duration_seconds:
             return
+        max_session_duration_seconds = self._max_session_duration_seconds or float(
+            "inf"
+        )
 
         while self._running:
             # Collect idle agents first to close them all at once
@@ -404,11 +413,11 @@ class AgentLauncher:
                         f"(idle timeout is {self._agent_idle_timeout}s)"
                     )
                     to_close.append(agent)
-                elif on_call_for >= self._max_session_duration_seconds:
+                elif on_call_for >= max_session_duration_seconds:
                     logger.info(
                         f'Closing session "{session.id}" with user_id "{agent.agent_user.id}" '
                         f"after reaching the maximum session "
-                        f"duration of {self._max_session_duration_seconds}s"
+                        f"duration of {max_session_duration_seconds}s"
                     )
                     to_close.append(agent)
 
