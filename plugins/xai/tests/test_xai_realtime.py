@@ -84,7 +84,6 @@ class TestXAIRealtime:
         await asyncio.sleep(8.0)
         assert len(events) > 0, "Expected audio output events after sending audio"
 
-
     @pytest.mark.integration
     @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
     async def test_function_calling(self, realtime):

@@ -17,8 +17,6 @@ import logging
 import os
 from asyncio import CancelledError
 from typing import Any, Optional
-from xai_sdk.tools import web_search, x_search
-
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -191,7 +189,9 @@ class XAIRealtime(realtime.Realtime):
                 if not token:
                     raise ValueError("No token in response")
                 self._ephemeral_token = token
-                logger.debug("Fetched ephemeral token (expires in %d seconds)", expires_seconds)
+                logger.debug(
+                    "Fetched ephemeral token (expires in %d seconds)", expires_seconds
+                )
                 return token
 
     async def connect(self, use_ephemeral_token: bool = False):
@@ -214,6 +214,8 @@ class XAIRealtime(realtime.Realtime):
         if use_ephemeral_token:
             auth_token = await self.get_ephemeral_token()
         else:
+            # _api_key is guaranteed to be set if client was not provided (checked in __init__)
+            assert self._api_key is not None
             auth_token = self._api_key
 
         try:
@@ -371,9 +373,7 @@ class XAIRealtime(realtime.Realtime):
         self._current_participant = participant
 
         # Resample audio to target sample rate if needed
-        resampled = pcm.resample(
-            target_sample_rate=self.sample_rate, target_channels=1
-        )
+        resampled = pcm.resample(target_sample_rate=self.sample_rate, target_channels=1)
         audio_bytes = resampled.samples.tobytes()
         audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
 
@@ -634,7 +634,9 @@ class XAIRealtime(realtime.Realtime):
 
         This method is a no-op for API compatibility.
         """
-        logger.warning("xAI realtime does not support video input - ignoring video track")
+        logger.warning(
+            "xAI realtime does not support video input - ignoring video track"
+        )
 
     async def stop_watching_video_track(self) -> None:
         """Stop watching video track (no-op for xAI)."""
