@@ -1,8 +1,8 @@
 import asyncio
 import logging
-import weakref
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -13,6 +13,8 @@ from typing import (
 
 from vision_agents.core.utils.utils import await_or_run, cancel_and_wait
 from vision_agents.core.warmup import Warmable, WarmupCache
+
+from .exceptions import MaxConcurrentSessionsExceeded, MaxSessionsPerCallExceeded
 
 if TYPE_CHECKING:
     from .agents import Agent
@@ -57,7 +59,10 @@ class AgentLauncher:
         create_agent: Callable[..., "Agent" | Coroutine[Any, Any, "Agent"]],
         join_call: Callable[["Agent", str, str], Coroutine],
         agent_idle_timeout: float = 60.0,
-        agent_idle_cleanup_interval: float = 5.0,
+        max_concurrent_sessions: Optional[int] = 50,
+        max_sessions_per_call: Optional[int] = None,
+        max_session_duration_seconds: Optional[float] = None,
+        cleanup_interval: float = 5.0,
     ):
         """
         Initialize the agent launcher.
@@ -74,20 +79,32 @@ class AgentLauncher:
         self._warmup_lock = asyncio.Lock()
         self._warmup_cache = WarmupCache()
 
+        if max_concurrent_sessions is not None and max_concurrent_sessions <= 0:
+            raise ValueError("max_concurrent_sessions must be > 0 or None")
+        self._max_concurrent_sessions = max_concurrent_sessions
+        if max_sessions_per_call is not None and max_sessions_per_call <= 0:
+            raise ValueError("max_sessions_per_call must be > 0 or None")
+        self._max_sessions_per_call = max_sessions_per_call
+        if (
+            max_session_duration_seconds is not None
+            and max_session_duration_seconds <= 0
+        ):
+            raise ValueError("max_session_duration_seconds must be > 0 or None")
+        self._max_session_duration_seconds = max_session_duration_seconds
+
         if agent_idle_timeout < 0:
             raise ValueError("agent_idle_timeout must be >= 0")
         self._agent_idle_timeout = agent_idle_timeout
 
-        if agent_idle_cleanup_interval <= 0:
-            raise ValueError("agent_idle_cleanup_interval must be > 0")
-        self._agent_idle_cleanup_interval = agent_idle_cleanup_interval
-
-        self._active_agents: weakref.WeakSet[Agent] = weakref.WeakSet()
+        if cleanup_interval <= 0:
+            raise ValueError("cleanup_interval must be > 0")
+        self._cleanup_interval: float = cleanup_interval
 
         self._running = False
         self._cleanup_task: Optional[asyncio.Task] = None
         self._warmed_up: bool = False
         self._sessions: dict[str, AgentSession] = {}
+        self._calls: dict[str, set[str]] = {}
 
     async def start(self):
         if self._running:
@@ -158,7 +175,6 @@ class AgentLauncher:
         """
         agent: "Agent" = await await_or_run(self._create_agent, **kwargs)
         await self._warmup_agent(agent)
-        self._active_agents.add(agent)
         return agent
 
     async def start_session(
@@ -168,6 +184,20 @@ class AgentLauncher:
         created_by: Optional[Any] = None,
         video_track_override_path: Optional[str] = None,
     ) -> AgentSession:
+        sessions_total = len(self._sessions)
+        if len(self._sessions) == self._max_concurrent_sessions:
+            raise MaxConcurrentSessionsExceeded(
+                f"Maximum concurrent sessions exceeded:"
+                f" {sessions_total}/{self._max_concurrent_sessions} sessions active"
+            )
+
+        call_sessions_total = len(self._calls.get(call_id, set()))
+        if call_sessions_total == self._max_sessions_per_call:
+            raise MaxSessionsPerCallExceeded(
+                f"Maximum sessions exceeded for call "
+                f"'{call_id}': {call_sessions_total}/{self._max_sessions_per_call}"
+            )
+
         agent: "Agent" = await self.launch()
         if video_track_override_path:
             agent.set_video_track_override_path(video_track_override_path)
@@ -177,10 +207,16 @@ class AgentLauncher:
         )
 
         # Remove the session when the task is done
-        def _done_cb(_, agent_id_=agent.id):
-            self._sessions.pop(agent_id_, None)
+        # or when the AgentSession is garbage-collected
+        # in case the done callback wasn't fired
+        def _finalizer(session_id_: str, call_id_: str, *_):
+            session_ = self._sessions.pop(session_id_, None)
+            if session_ is not None:
+                call_sessions = self._calls.get(call_id_, set())
+                if call_sessions:
+                    call_sessions.discard(session_id_)
 
-        task.add_done_callback(_done_cb)
+        task.add_done_callback(partial(_finalizer, agent.id, call_id))
         session = AgentSession(
             agent=agent,
             task=task,
@@ -189,6 +225,7 @@ class AgentLauncher:
             created_by=created_by,
         )
         self._sessions[agent.id] = session
+        self._calls.setdefault(call_id, set()).add(agent.id)
         logger.info(f"Start agent session with id {session.id}")
         return session
 
@@ -209,6 +246,9 @@ class AgentLauncher:
         if session is None:
             # The session is either closed or doesn't exist, exit early
             return False
+        call_sessions = self._calls.get(session.call_id)
+        if call_sessions:
+            call_sessions.discard(session.id)
 
         logger.info(f"Closing agent session with id {session.id}")
         if wait:
@@ -266,7 +306,8 @@ class AgentLauncher:
         while self._running:
             # Collect idle agents first to close them all at once
             idle_agents = []
-            for agent in self._active_agents:
+            for session in self._sessions.values():
+                agent = session.agent
                 agent_idle_for = agent.idle_for()
                 if agent_idle_for >= self._agent_idle_timeout:
                     logger.info(
@@ -287,7 +328,7 @@ class AgentLauncher:
                             exc_info=r,
                         )
 
-            await asyncio.sleep(self._agent_idle_cleanup_interval)
+            await asyncio.sleep(self._cleanup_interval)
 
     async def __aenter__(self):
         await self.start()
