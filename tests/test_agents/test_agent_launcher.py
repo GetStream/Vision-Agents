@@ -294,11 +294,11 @@ class TestAgentLauncher:
             await asyncio.sleep(10)
 
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
-        session1 = await launcher.start_session(call_id="test", call_type="default")
-        session2 = await launcher.start_session(call_id="test", call_type="default")
-        session3 = await launcher.start_session(call_id="test", call_type="default")
+        async with launcher:
+            session1 = await launcher.start_session(call_id="test", call_type="default")
+            session2 = await launcher.start_session(call_id="test", call_type="default")
+            session3 = await launcher.start_session(call_id="test", call_type="default")
 
-        await launcher.stop()
         assert session1.finished
         assert session2.finished
         assert session3.finished
@@ -347,14 +347,14 @@ class TestAgentLauncher:
             await asyncio.sleep(1)
 
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
-        session = await launcher.start_session(call_id="test", call_type="default")
-        assert session
+        async with launcher:
+            session = await launcher.start_session(call_id="test", call_type="default")
+            assert session
 
-        await cancel_and_wait(session.task)
-        assert session.finished
-        # The session becomes unavailable if it was cancelled
-        assert launcher.get_session(session_id=session.id) is None
-        await launcher.stop()
+            await cancel_and_wait(session.task)
+            assert session.finished
+            # The session becomes unavailable if it was cancelled
+            assert launcher.get_session(session_id=session.id) is None
 
     async def test_max_concurrent_agents_invalid(self, stream_edge_mock):
         async def create_agent(**kwargs) -> Agent:
@@ -365,14 +365,14 @@ class TestAgentLauncher:
                 agent_user=User(name="test"),
             )
 
-        with pytest.raises(ValueError, match="max_concurrent_agents must be > 0"):
+        with pytest.raises(ValueError, match="max_concurrent_sessions must be > 0"):
             AgentLauncher(
                 create_agent=create_agent,
                 join_call=join_call_noop,
                 max_concurrent_sessions=0,
             )
 
-        with pytest.raises(ValueError, match="max_concurrent_agents must be > 0"):
+        with pytest.raises(ValueError, match="max_concurrent_sessions must be > 0"):
             AgentLauncher(
                 create_agent=create_agent,
                 join_call=join_call_noop,
@@ -415,17 +415,17 @@ class TestAgentLauncher:
             join_call=join_call_noop,
             max_concurrent_sessions=2,
         )
-        session1 = await launcher.start_session(call_id="call1")
-        session2 = await launcher.start_session(call_id="call2")
+        async with launcher:
+            session1 = await launcher.start_session(call_id="call1")
+            session2 = await launcher.start_session(call_id="call2")
 
-        with pytest.raises(MaxConcurrentSessionsExceeded):
-            await launcher.start_session(call_id="call3")
+            with pytest.raises(MaxConcurrentSessionsExceeded):
+                await launcher.start_session(call_id="call3")
 
-        # Close one session and try to create a new one again
-        await launcher.close_session(session_id=session1.id)
-        session3 = await launcher.start_session(call_id="call3")
-        assert session3 is not None
-        await launcher.stop()
+            # Close one session and try to create a new one again
+            await launcher.close_session(session_id=session1.id)
+            session3 = await launcher.start_session(call_id="call3")
+            assert session3 is not None
 
     async def test_max_concurrent_agents_can_create_after_session_ends(
         self, stream_edge_mock
@@ -446,17 +446,17 @@ class TestAgentLauncher:
             join_call=join_call,
             max_concurrent_sessions=2,
         )
-        session1 = await launcher.start_session(call_id="call1")
-        session2 = await launcher.start_session(call_id="call2")
-        with pytest.raises(MaxConcurrentSessionsExceeded):
-            await launcher.start_session(call_id="call3")
+        async with launcher:
+            session1 = await launcher.start_session(call_id="call1")
+            session2 = await launcher.start_session(call_id="call2")
+            with pytest.raises(MaxConcurrentSessionsExceeded):
+                await launcher.start_session(call_id="call3")
 
-        await session1.wait()
+            await session1.wait()
 
-        # Can create a new session when the previous one ends
-        session3 = await launcher.start_session(call_id="call3")
-        assert session3 is not None
-        await launcher.stop()
+            # Can create a new session when the previous one ends
+            session3 = await launcher.start_session(call_id="call3")
+            assert session3 is not None
 
     async def test_max_sessions_per_call_exceeded(self, stream_edge_mock):
         async def create_agent(**kwargs) -> Agent:
@@ -472,24 +472,23 @@ class TestAgentLauncher:
             join_call=join_call_noop,
             max_sessions_per_call=2,
         )
-        session1 = await launcher.start_session(call_id="same_call")
-        session2 = await launcher.start_session(call_id="same_call")
+        async with launcher:
+            session1 = await launcher.start_session(call_id="same_call")
+            session2 = await launcher.start_session(call_id="same_call")
 
-        with pytest.raises(MaxSessionsPerCallExceeded):
-            await launcher.start_session(call_id="same_call")
+            with pytest.raises(MaxSessionsPerCallExceeded):
+                await launcher.start_session(call_id="same_call")
 
-        # Different call should still work
-        session3 = await launcher.start_session(call_id="call2")
-        assert session3 is not None
+            # Different call should still work
+            session3 = await launcher.start_session(call_id="call2")
+            assert session3 is not None
 
-        # Close one session
-        await launcher.close_session(session_id=session1.id, wait=True)
+            # Close one session
+            await launcher.close_session(session_id=session1.id, wait=True)
 
-        # Now we should be able to start a new session for the same call
-        session4 = await launcher.start_session(call_id="same_call")
-        assert session4 is not None
-
-        await launcher.stop()
+            # Now we should be able to start a new session for the same call
+            session4 = await launcher.start_session(call_id="same_call")
+            assert session4 is not None
 
     async def test_max_sessions_per_call_can_create_after_session_ends(
         self, stream_edge_mock
@@ -510,18 +509,17 @@ class TestAgentLauncher:
             join_call=join_call,
             max_sessions_per_call=2,
         )
-        session1 = await launcher.start_session(call_id="same_call")
-        session2 = await launcher.start_session(call_id="same_call")
+        async with launcher:
+            session1 = await launcher.start_session(call_id="same_call")
+            session2 = await launcher.start_session(call_id="same_call")
 
-        with pytest.raises(MaxSessionsPerCallExceeded):
-            await launcher.start_session(call_id="same_call")
+            with pytest.raises(MaxSessionsPerCallExceeded):
+                await launcher.start_session(call_id="same_call")
 
-        await session1.wait()
-        # Different call should still work
-        session3 = await launcher.start_session(call_id="same_call")
-        assert session3 is not None
-
-        await launcher.stop()
+            await session1.wait()
+            # Can create a new session when the previous one ends
+            session3 = await launcher.start_session(call_id="same_call")
+            assert session3 is not None
 
     async def test_max_concurrent_agents_none_allows_unlimited(self, stream_edge_mock):
         async def create_agent(**kwargs) -> Agent:
@@ -537,15 +535,14 @@ class TestAgentLauncher:
             join_call=join_call_noop,
             max_concurrent_sessions=None,
         )
-        # Start many sessions - should not raise
-        sessions = []
-        for i in range(10):
-            session = await launcher.start_session(call_id=f"call{i}")
-            sessions.append(session)
+        async with launcher:
+            # Start many sessions - should not raise
+            sessions = []
+            for i in range(10):
+                session = await launcher.start_session(call_id=f"call{i}")
+                sessions.append(session)
 
-        assert len(sessions) == 10
-
-        await launcher.stop()
+            assert len(sessions) == 10
 
     async def test_max_sessions_per_call_none_allows_unlimited(self, stream_edge_mock):
         async def create_agent(**kwargs) -> Agent:
@@ -562,12 +559,11 @@ class TestAgentLauncher:
             max_concurrent_sessions=None,
             max_sessions_per_call=None,
         )
-        # Start many sessions for the same call - should not raise
-        sessions = []
-        for i in range(10):
-            session = await launcher.start_session(call_id="same_call")
-            sessions.append(session)
+        async with launcher:
+            # Start many sessions for the same call - should not raise
+            sessions = []
+            for i in range(10):
+                session = await launcher.start_session(call_id="same_call")
+                sessions.append(session)
 
-        assert len(sessions) == 10
-
-        await launcher.stop()
+            assert len(sessions) == 10
