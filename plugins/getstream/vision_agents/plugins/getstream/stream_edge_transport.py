@@ -27,6 +27,7 @@ from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.types import PcmData, TrackType
 from vision_agents.core.utils import get_vision_agents_version
+from vision_agents.plugins.getstream.adapters import adapt_pcm_data, adapt_track_type
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
 if TYPE_CHECKING:
@@ -153,29 +154,20 @@ class StreamEdge(EdgeTransport):
             return "video"
 
     def _convert_track_type(self, stream_track_type_int: int) -> TrackType:
-        """Convert GetStream TrackType integer to core TrackType enum."""
-        if stream_track_type_int in (
-            StreamTrackType.TRACK_TYPE_AUDIO,
-            StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
-        ):
-            return TrackType.AUDIO
-        elif stream_track_type_int == StreamTrackType.TRACK_TYPE_SCREEN_SHARE:
-            return TrackType.SCREENSHARE
-        elif stream_track_type_int == StreamTrackType.TRACK_TYPE_VIDEO:
-            return TrackType.VIDEO
-        else:
-            # Default to video for unknown types
-            return TrackType.VIDEO
+        """Convert GetStream TrackType integer to core TrackType enum.
+
+        Deprecated: Use adapt_track_type() from adapters module instead.
+        This method delegates to the adapter for backwards compatibility.
+        """
+        return adapt_track_type(stream_track_type_int)
 
     def _convert_pcm_data(self, stream_pcm: StreamPcmData) -> PcmData:
-        """Convert GetStream PcmData to core PcmData."""
-        return PcmData(
-            data=stream_pcm.data,
-            sample_rate=stream_pcm.sample_rate,
-            channels=stream_pcm.channels,
-            bit_depth=stream_pcm.bit_depth,
-            timestamp=getattr(stream_pcm, "timestamp", None),
-        )
+        """Convert GetStream PcmData to core PcmData.
+
+        Deprecated: Use adapt_pcm_data() from adapters module instead.
+        This method delegates to the adapter for backwards compatibility.
+        """
+        return adapt_pcm_data(stream_pcm)
 
     async def _on_track_published(self, event: sfu_events.TrackPublishedEvent):
         """Handle track published events from SFU - spawn TrackAddedEvent with correct type."""
