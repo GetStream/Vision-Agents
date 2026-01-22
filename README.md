@@ -187,6 +187,590 @@ Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai
 - **Tutorial:** [Building a real-time meeting assistant](https://github.com/GetStream/Vision-Agents/tree/main/examples/01_simple_agent_example)
 - **Tutorial:** [Building real-time sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
 
+---
+
+## External WebRTC Integration Guide
+
+Vision Agents supports **external WebRTC providers** in addition to Stream's edge network. This allows you to integrate local devices, custom RTC infrastructure, or embedded systems directly into your Vision AI agents.
+
+### Architecture Overview
+
+```
+┌─────────────────┐          ┌──────────────────┐          ┌─────────────────┐
+│   Local Edge    │          │   EdgeTransport  │          │   LLM Provider  │
+│  (Your Device)  │  ◄──────►│   (localrtc)     │  ◄──────►│  (Gemini/GPT)   │
+│                 │          │                  │          │                 │
+│  • Microphone   │   Audio  │  • Format        │  Audio   │  • Realtime API │
+│  • Camera       │   Video  │    Negotiation   │  Video   │  • STT/TTS      │
+│  • Speakers     │          │  • GStreamer     │  Text    │  • Vision       │
+└─────────────────┘          └──────────────────┘          └─────────────────┘
+```
+
+**Data Flow:**
+1. **Local Edge** captures audio/video from your devices (microphone, camera)
+2. **EdgeTransport** negotiates audio formats and manages media streams
+3. **LLM Provider** receives streams, processes with AI, and sends responses back
+4. **Local Edge** plays audio responses through speakers
+
+### Quick Start
+
+**Install the localrtc plugin:**
+
+```bash
+uv add vision-agents-plugin-localrtc
+```
+
+**Basic example:**
+
+```python
+from vision_agents.core import Agent, User
+from vision_agents.plugins import localrtc, gemini
+
+# Create local edge transport
+edge = localrtc.Edge(
+    audio_device="default",    # System default microphone
+    speaker_device="default",  # System default speakers
+    video_device=0,            # First camera
+    sample_rate=16000,         # 16kHz input (output auto-negotiated)
+    channels=1,                # Mono audio
+)
+
+# Create agent with local devices
+agent = Agent(
+    edge=edge,
+    agent_user=User(name="Local AI", id="agent"),
+    instructions="You're a helpful voice AI assistant.",
+    llm=gemini.Realtime(),  # Output format auto-negotiated to 24kHz mono
+)
+
+# Join and run
+call = await agent.create_call("default", "my-call")
+async with agent.join(call):
+    await agent.simple_response("Say hello!")
+    await agent.finish()
+```
+
+### Configuration Reference
+
+#### Environment Variables
+
+All configuration values can be set via environment variables or programmatically:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| **Audio Input** |
+| `VA_AUDIO_INPUT_SAMPLE_RATE` | `16000` | Sample rate for microphone capture (Hz) |
+| `VA_AUDIO_INPUT_CHANNELS` | `1` | Number of input channels (1=mono, 2=stereo) |
+| `VA_AUDIO_INPUT_BUFFER_DURATION` | `2.0` | Input buffer duration (seconds) |
+| `VA_AUDIO_CAPTURE_CHUNK_DURATION` | `0.1` | Audio capture chunk size (seconds) |
+| **Audio Output** |
+| `VA_AUDIO_OUTPUT_SAMPLE_RATE` | `24000` | Default output sample rate (Hz, auto-negotiated) |
+| `VA_AUDIO_OUTPUT_CHANNELS` | `1` | Default output channels (auto-negotiated) |
+| `VA_AUDIO_OUTPUT_BUFFER_SIZE_MS` | `10000` | Output buffer size (milliseconds) |
+| `VA_AUDIO_PLAYBACK_CHUNK_DURATION` | `0.05` | Audio playback chunk size (seconds) |
+| **Audio Timing** |
+| `VA_AUDIO_LOOP_SLEEP_INTERVAL` | `0.001` | Loop sleep interval (seconds) |
+| `VA_AUDIO_FLUSH_POLL_INTERVAL` | `0.01` | Flush polling interval (seconds) |
+| `VA_AUDIO_ERROR_RETRY_DELAY` | `0.1` | Error retry delay (seconds) |
+| `VA_AUDIO_THREAD_JOIN_TIMEOUT` | `2.0` | Thread join timeout (seconds) |
+| `VA_AUDIO_EOS_WAIT_TIME` | `0.1` | End-of-stream wait time (seconds) |
+| **Video** |
+| `VA_VIDEO_DEFAULT_WIDTH` | `640` | Default video width (pixels) |
+| `VA_VIDEO_DEFAULT_HEIGHT` | `480` | Default video height (pixels) |
+| `VA_VIDEO_DEFAULT_FPS` | `30` | Default video frame rate (fps) |
+| `VA_VIDEO_FORMAT` | `"BGR"` | Video color format |
+| `VA_VIDEO_MAX_BUFFERS` | `1` | Maximum video buffer count |
+| **GStreamer** |
+| `VA_AUDIO_BIT_DEPTH` | `16` | Audio bit depth (16 or 24) |
+| `VA_GSTREAMER_APPSINK_NAME` | `"sink"` | GStreamer appsink element name |
+| `VA_GSTREAMER_APPSRC_NAME` | `"src"` | GStreamer appsrc element name |
+| `VA_GSTREAMER_AUDIO_LAYOUT` | `"interleaved"` | Audio channel layout |
+
+#### Programmatic Configuration
+
+```python
+# Using LocalEdge directly
+from vision_agents.plugins.localrtc import Edge, LocalEdgeConfig, AudioConfig, VideoConfig
+
+# Method 1: Use environment variables (recommended for production)
+edge = localrtc.Edge(
+    audio_device="default",
+    speaker_device="default",
+    video_device=0,
+)
+
+# Method 2: Explicit configuration
+config = LocalEdgeConfig(
+    audio=AudioConfig(
+        input_sample_rate=16000,
+        output_sample_rate=24000,
+        input_channels=1,
+        output_channels=1,
+    ),
+    video=VideoConfig(
+        default_width=1280,
+        default_height=720,
+        default_fps=30,
+    ),
+)
+edge = localrtc.Edge(config=config)
+
+# Method 3: Override defaults programmatically
+edge = localrtc.Edge(
+    sample_rate=16000,  # Input sample rate
+    channels=1,          # Input channels
+    # Output format is auto-negotiated with LLM provider
+)
+```
+
+### Audio Format Negotiation
+
+Vision Agents automatically negotiates audio formats between your local device and the LLM provider to ensure compatibility.
+
+**How it works:**
+
+1. You configure **input** format (microphone capture):
+   ```python
+   edge = localrtc.Edge(
+       sample_rate=16000,  # 16kHz input
+       channels=1,         # Mono input
+   )
+   ```
+
+2. During `agent.join()`, the system queries the LLM's audio requirements:
+   ```python
+   # Gemini Realtime requires 24kHz mono
+   gemini.Realtime().get_audio_requirements()
+   # Returns: AudioFormat(sample_rate=24000, channels=1)
+   ```
+
+3. Output format is automatically configured to match the LLM:
+   - **Gemini Realtime**: 24kHz mono
+   - **GetStream**: 48kHz stereo
+   - **Custom providers**: Queries `llm.get_audio_requirements()`
+
+4. GStreamer handles resampling automatically:
+   ```
+   Input (16kHz mono) → GStreamer audioresample → Output (24kHz mono) → Gemini
+   ```
+
+**Provider-specific formats:**
+
+| Provider | Input (Recommended) | Output (Auto) | Notes |
+|----------|---------------------|---------------|-------|
+| Gemini Realtime | 16kHz mono | 24kHz mono | Native Gemini format |
+| OpenAI Realtime | 16kHz mono | 24kHz mono | Compatible with Gemini |
+| GetStream Edge | 16kHz mono | 48kHz stereo | High-quality WebRTC |
+| Custom LLM | 16kHz mono | Via `get_audio_requirements()` | Implement method |
+
+### Custom GStreamer Pipelines
+
+For advanced use cases like Raspberry Pi, embedded systems, or custom hardware, you can specify custom GStreamer pipelines:
+
+```python
+# Raspberry Pi with ALSA and V4L2
+custom_pipeline = {
+    "audio_source": "alsasrc device=hw:1,0 ! audioconvert ! audioresample",
+    "video_source": "v4l2src device=/dev/video0 ! videoconvert",
+    "audio_sink": "alsasink device=hw:0,0",
+}
+
+edge = localrtc.Edge(
+    sample_rate=16000,
+    channels=1,
+    custom_pipeline=custom_pipeline,
+)
+```
+
+**GStreamer pipeline elements:**
+
+- **`alsasrc`**: ALSA audio input (Linux)
+- **`alsasink`**: ALSA audio output (Linux)
+- **`v4l2src`**: Video4Linux2 camera (Linux)
+- **`audioconvert`**: Audio format conversion
+- **`audioresample`**: Sample rate conversion
+- **`videoconvert`**: Video format conversion
+- **`appsrc`/`appsink`**: Application source/sink (automatically added)
+
+See [examples/localrtc/raspberry_pi_gstreamer.py](examples/localrtc/raspberry_pi_gstreamer.py) for a complete Raspberry Pi example.
+
+### Device Discovery
+
+**List available devices:**
+
+```python
+from vision_agents.plugins import localrtc
+
+devices = localrtc.Edge.list_devices()
+
+# Audio inputs (microphones)
+for device in devices["audio_inputs"]:
+    print(f"{device['index']}: {device['name']}")
+# Output: 0: Built-in Microphone
+#         1: USB Audio Device
+
+# Audio outputs (speakers)
+for device in devices["audio_outputs"]:
+    print(f"{device['index']}: {device['name']}")
+# Output: 0: Built-in Speakers
+#         1: HDMI Audio
+
+# Video inputs (cameras)
+for device in devices["video_inputs"]:
+    print(f"{device['index']}: {device['name']}")
+# Output: 0: FaceTime HD Camera
+#         1: USB Webcam
+```
+
+**Use specific device:**
+
+```python
+# By index (integer)
+edge = localrtc.Edge(
+    audio_device=1,       # Second microphone
+    speaker_device=0,     # First speaker
+    video_device=1,       # Second camera
+)
+
+# By name (string)
+edge = localrtc.Edge(
+    audio_device="USB Audio Device",
+    speaker_device="Built-in Speakers",
+    video_device=0,
+)
+
+# Use "default" for system default
+edge = localrtc.Edge(
+    audio_device="default",
+    speaker_device="default",
+)
+```
+
+### Troubleshooting Guide
+
+#### Common GStreamer Errors
+
+**Error: "GStreamer is not available"**
+```bash
+# Ubuntu/Debian
+sudo apt-get install python3-gi gstreamer1.0-tools gstreamer1.0-plugins-good
+
+# macOS
+brew install gstreamer gst-plugins-good gst-plugins-bad pygobject3
+
+# Verify installation
+gst-inspect-1.0 --version
+```
+
+**Error: "No such device" (ALSA)**
+```bash
+# List ALSA devices
+arecord -L  # Input devices
+aplay -L    # Output devices
+
+# Test microphone
+arecord -D hw:1,0 -f S16_LE -r 16000 -c 1 -d 5 test.wav
+
+# Test speaker
+aplay -D hw:0,0 test.wav
+```
+
+**Error: "Cannot open video device"**
+```bash
+# List video devices
+v4l2-ctl --list-devices
+
+# Check device permissions
+ls -l /dev/video0
+sudo usermod -a -G video $USER  # Add user to video group
+
+# Test camera
+gst-launch-1.0 v4l2src device=/dev/video0 ! autovideosink
+```
+
+#### Audio Format Mismatches
+
+**Symptom: Distorted or choppy audio**
+
+Check for format mismatch warnings in logs:
+```
+WARNING: Audio format mismatch detected
+  LLM requires: 24000 Hz, 1 channel
+  Edge configured: 16000 Hz, 1 channel
+  Resampling will be applied
+```
+
+**Solution:**
+```python
+# Ensure input format is correctly set
+edge = localrtc.Edge(
+    sample_rate=16000,  # Match your microphone
+    channels=1,         # Use mono for voice
+)
+# Output format is automatically negotiated - no action needed
+```
+
+#### High CPU Usage
+
+**Symptom: Agent consumes excessive CPU**
+
+**Solutions:**
+1. Lower video frame rate:
+   ```python
+   agent = Agent(
+       edge=edge,
+       llm=gemini.Realtime(fps=1),  # 1 frame/second instead of 10
+   )
+   ```
+
+2. Disable video entirely:
+   ```python
+   edge = localrtc.Edge(
+       audio_device="default",
+       speaker_device="default",
+       # video_device=None,  # No video
+   )
+   ```
+
+3. Use hardware acceleration (Raspberry Pi):
+   ```python
+   custom_pipeline = {
+       "video_source": "v4l2src device=/dev/video0 ! omxh264enc ! videoconvert",
+   }
+   ```
+
+#### No Audio Output
+
+**Symptom: Agent doesn't speak**
+
+1. Check audio format negotiation:
+   ```python
+   # Enable debug logging
+   import logging
+   logging.basicConfig(level=logging.DEBUG)
+   ```
+
+2. Verify speaker device:
+   ```python
+   devices = localrtc.Edge.list_devices()
+   print("Available speakers:", devices["audio_outputs"])
+   ```
+
+3. Test speaker directly:
+   ```bash
+   # Generate test tone
+   gst-launch-1.0 audiotestsrc ! audioconvert ! autoaudiosink
+   ```
+
+4. Check volume and mute:
+   ```bash
+   # Linux
+   alsamixer
+
+   # macOS
+   # Use System Preferences > Sound
+   ```
+
+### Production Deployment Checklist
+
+#### Security
+
+- [ ] **API Keys**: Store LLM API keys in environment variables, not in code
+  ```bash
+  export GOOGLE_API_KEY="your-key-here"
+  export OPENAI_API_KEY="your-key-here"
+  ```
+
+- [ ] **Device Permissions**: Request user permission before accessing microphone/camera
+  ```python
+  # Inform users which devices will be accessed
+  print("This app will access:")
+  print("- Microphone for voice input")
+  print("- Camera for video (optional)")
+  print("- Speakers for audio output")
+  ```
+
+- [ ] **Data Privacy**: Document what data is sent to LLM providers
+  - Audio/video streams sent to Gemini/OpenAI
+  - No data stored locally by default
+  - Check LLM provider's data retention policies
+
+- [ ] **Network Security**: Use HTTPS for all API communications
+  - Gemini/OpenAI APIs use HTTPS by default
+  - Verify SSL certificates are validated
+
+#### Performance
+
+- [ ] **Audio Configuration**: Optimize for voice use cases
+  ```python
+  edge = localrtc.Edge(
+      sample_rate=16000,  # 16kHz is sufficient for voice
+      channels=1,         # Mono reduces bandwidth by 50%
+  )
+  ```
+
+- [ ] **Video Frame Rate**: Set appropriate FPS for your use case
+  ```python
+  # Real-time coaching: 3-10 fps
+  llm = gemini.Realtime(fps=5)
+
+  # Security camera: 1-3 fps
+  llm = gemini.Realtime(fps=1)
+
+  # Voice-only: no video
+  llm = gemini.Realtime(fps=0)
+  ```
+
+- [ ] **Buffer Sizes**: Tune for latency vs reliability
+  ```bash
+  # Low latency (50ms)
+  export VA_AUDIO_OUTPUT_BUFFER_SIZE_MS=50
+
+  # Balanced (100ms, default)
+  export VA_AUDIO_OUTPUT_BUFFER_SIZE_MS=100
+
+  # High reliability (500ms)
+  export VA_AUDIO_OUTPUT_BUFFER_SIZE_MS=500
+  ```
+
+- [ ] **Resource Limits**: Monitor CPU/memory usage
+  ```python
+  import psutil
+
+  # Log resource usage
+  cpu_percent = psutil.cpu_percent(interval=1)
+  memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
+  print(f"CPU: {cpu_percent}%, Memory: {memory_mb:.1f} MB")
+  ```
+
+#### Monitoring
+
+- [ ] **Logging**: Enable appropriate log levels
+  ```python
+  import logging
+
+  # Production: INFO level
+  logging.basicConfig(level=logging.INFO)
+
+  # Debug issues: DEBUG level
+  logging.basicConfig(level=logging.DEBUG)
+  ```
+
+- [ ] **Error Handling**: Implement graceful error recovery
+  ```python
+  try:
+      async with agent.join(call):
+          await agent.finish()
+  except Exception as e:
+      logger.error(f"Agent error: {e}")
+      # Notify user, restart agent, etc.
+  ```
+
+- [ ] **Health Checks**: Monitor agent status
+  ```python
+  # Check if agent is still responsive
+  async def health_check():
+      try:
+          await agent.send_text("ping")
+          return True
+      except:
+          return False
+  ```
+
+- [ ] **Metrics Collection**: Track usage and performance
+  - Audio/video stream duration
+  - LLM response latency
+  - Error rates and types
+  - Device availability
+
+#### Testing
+
+- [ ] **Device Compatibility**: Test on target hardware
+  - Test all microphone/speaker/camera combinations
+  - Verify GStreamer pipeline compatibility
+  - Check OS-specific device paths
+
+- [ ] **Format Negotiation**: Verify with your LLM provider
+  ```python
+  # Log negotiated format
+  edge = localrtc.Edge(sample_rate=16000, channels=1)
+  agent = Agent(edge=edge, llm=your_llm)
+
+  # Check logs for:
+  # "Negotiated output format: 24000 Hz, 1 channel"
+  ```
+
+- [ ] **Network Conditions**: Test with various connectivity
+  - High latency networks (>100ms)
+  - Low bandwidth (<1 Mbps)
+  - Intermittent connectivity
+
+- [ ] **Load Testing**: Verify performance under load
+  - Multiple concurrent agents
+  - Long-running sessions (>1 hour)
+  - Rapid agent creation/destruction
+
+#### Deployment
+
+- [ ] **Dependencies**: Document all requirements
+  ```txt
+  # requirements.txt
+  vision-agents-stream>=0.3
+  vision-agents-plugin-localrtc>=0.3
+  vision-agents-plugin-gemini>=0.3  # or your LLM plugin
+  python-dotenv
+  ```
+
+- [ ] **Environment Setup**: Create deployment guide
+  ```bash
+  # Install system dependencies
+  sudo apt-get install gstreamer1.0-tools python3-gi
+
+  # Install Python packages
+  pip install -r requirements.txt
+
+  # Configure environment
+  cp .env.example .env
+  # Edit .env with your API keys
+  ```
+
+- [ ] **Process Management**: Use a process supervisor
+  ```bash
+  # systemd (Linux)
+  sudo systemctl enable my-agent.service
+  sudo systemctl start my-agent.service
+
+  # pm2 (Node.js)
+  pm2 start agent.py --interpreter python3
+  ```
+
+- [ ] **Auto-restart**: Handle crashes and restarts
+  ```python
+  # Automatic retry on failure
+  MAX_RETRIES = 3
+  for attempt in range(MAX_RETRIES):
+      try:
+          await run_agent()
+          break
+      except Exception as e:
+          logger.error(f"Attempt {attempt+1} failed: {e}")
+          if attempt < MAX_RETRIES - 1:
+              await asyncio.sleep(5)  # Wait before retry
+  ```
+
+### Example Applications
+
+**Basic agent** - Minimal setup with default devices:
+[examples/localrtc/basic_agent.py](examples/localrtc/basic_agent.py)
+
+**Multi-component agent** - Separate LLM, STT, and TTS:
+[examples/localrtc/multi_component_agent.py](examples/localrtc/multi_component_agent.py)
+
+**Raspberry Pi with GStreamer** - Custom pipelines for embedded systems:
+[examples/localrtc/raspberry_pi_gstreamer.py](examples/localrtc/raspberry_pi_gstreamer.py)
+
+---
+
 ## Examples
 
 | 🔮 Demo Applications                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |                                                                                         |
