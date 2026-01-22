@@ -107,7 +107,7 @@ class StreamEdge(EdgeTransport):
         # Initialize Stream client
         super().__init__()
         version = get_vision_agents_version()
-        self.client = AsyncStream(user_agent=f"vision-agents-{version}")
+        self.client = AsyncStream(user_agent=f"stream-vision-agents-{version}")
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(sfu_events)
