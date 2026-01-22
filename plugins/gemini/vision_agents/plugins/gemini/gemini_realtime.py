@@ -39,6 +39,7 @@ from vision_agents.core.llm.events import (
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.llm.llm_types import ToolSchema
 from vision_agents.core.processors import Processor
+from vision_agents.core.types import AudioCapabilities
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_png_bytes
 
@@ -363,6 +364,27 @@ class GeminiRealtime(realtime.Realtime):
             logger.debug("No tools available")
 
         return config
+
+    def get_audio_requirements(self) -> Optional[AudioCapabilities]:
+        """Get the audio format requirements for Gemini Realtime API.
+
+        Gemini Live API specifications:
+        - Audio output always uses 24kHz sample rate
+        - Input audio is natively 16kHz, but resampling is supported
+        - Audio data is always raw, little-endian, 16-bit PCM
+        - Mono (1 channel) only
+
+        Returns:
+            AudioCapabilities defining Gemini's audio format requirements
+        """
+        return AudioCapabilities(
+            sample_rate=24000,  # Output is always 24kHz
+            channels=1,  # Mono only
+            bit_depth=16,  # 16-bit PCM
+            supported_sample_rates=[16000, 24000],  # Native 16kHz, output 24kHz
+            supported_channels=[1],  # Mono only
+            encoding="pcm"
+        )
 
     async def _start_processing_task(self) -> None:
         self._processing_task = asyncio.create_task(self._processing_loop())

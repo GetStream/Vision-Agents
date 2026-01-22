@@ -12,7 +12,7 @@ from vision_agents.core.edge.edge_transport import EdgeTransport
 from vision_agents.core.edge.types import OutputAudioTrack, Participant, User
 from vision_agents.core.events import EventManager
 from vision_agents.core.protocols import Room
-from vision_agents.core.types import PcmData, TrackType
+from vision_agents.core.types import AudioCapabilities, PcmData, TrackType
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,10 @@ class LocalEdge(EdgeTransport):
         self._audio_capture_thread: Optional[threading.Thread] = None
         self._audio_capture_running: bool = False
 
+        # Audio format negotiation
+        self._negotiated_output_sample_rate: Optional[int] = None
+        self._negotiated_output_channels: Optional[int] = None
+
         # GStreamer pipeline state
         self._gst_audio_pipeline: Optional[Any] = None
         self._gst_video_pipeline: Optional[Any] = None
@@ -205,10 +209,15 @@ class LocalEdge(EdgeTransport):
             An OutputAudioTrack instance for audio streaming.
         """
         if self._audio_output_track is None:
-            # For local playback, use 24000Hz mono to match Gemini's native format
-            # This avoids resampling artifacts that can occur with real-time conversion
-            local_sample_rate = 24000
-            local_channels = 1
+            # Use negotiated format if available, otherwise default to 24000Hz mono
+            # for backward compatibility (Gemini's native format)
+            local_sample_rate = self._negotiated_output_sample_rate or 24000
+            local_channels = self._negotiated_output_channels or 1
+
+            logger.info(
+                f"[LOCALRTC] Creating AudioOutputTrack: "
+                f"sample_rate={local_sample_rate}, channels={local_channels}"
+            )
 
             if self.custom_pipeline and "audio_sink" in self.custom_pipeline:
                 # Use GStreamer pipeline
@@ -286,16 +295,88 @@ class LocalEdge(EdgeTransport):
 
         return self._rooms[call_id]
 
+    def _negotiate_audio_format(self, agent: Any) -> None:
+        """Negotiate audio format with LLM provider.
+
+        Queries the LLM provider's audio requirements and configures output
+        audio format accordingly. If the provider doesn't specify requirements,
+        uses default format (24kHz mono for Gemini compatibility).
+
+        Args:
+            agent: Agent instance containing the LLM to query for requirements
+        """
+        # Try to get audio requirements from LLM provider
+        audio_requirements: Optional[AudioCapabilities] = None
+        if hasattr(agent, "llm") and hasattr(agent.llm, "get_audio_requirements"):
+            audio_requirements = agent.llm.get_audio_requirements()
+
+        if audio_requirements is not None:
+            # Negotiate output format based on provider requirements
+            self._negotiated_output_sample_rate = audio_requirements.sample_rate
+            self._negotiated_output_channels = audio_requirements.channels
+
+            logger.info(
+                f"[AUDIO NEGOTIATION] Provider requires: "
+                f"{audio_requirements.sample_rate}Hz, "
+                f"{audio_requirements.channels}ch, "
+                f"{audio_requirements.bit_depth}-bit {audio_requirements.encoding}"
+            )
+            logger.info(
+                f"[AUDIO NEGOTIATION] Supported formats: "
+                f"sample_rates={audio_requirements.supported_sample_rates}, "
+                f"channels={audio_requirements.supported_channels}"
+            )
+
+            # Check if our input format is supported
+            if not audio_requirements.supports_format(self.sample_rate, self.channels):
+                closest_rate = audio_requirements.get_closest_sample_rate(self.sample_rate)
+                closest_channels = audio_requirements.get_closest_channels(self.channels)
+                logger.warning(
+                    f"[AUDIO FORMAT MISMATCH] Input format {self.sample_rate}Hz, "
+                    f"{self.channels}ch is not directly supported by provider. "
+                    f"Will use closest supported format: {closest_rate}Hz, {closest_channels}ch"
+                )
+        else:
+            # Default to 24kHz mono for backward compatibility (Gemini default)
+            self._negotiated_output_sample_rate = 24000
+            self._negotiated_output_channels = 1
+            logger.info(
+                "[AUDIO NEGOTIATION] No provider requirements found, "
+                "using default output format: 24000Hz, 1ch"
+            )
+
+        logger.info(
+            f"[AUDIO NEGOTIATION] Configured output format: "
+            f"{self._negotiated_output_sample_rate}Hz, "
+            f"{self._negotiated_output_channels}ch"
+        )
+
     async def join(self, *args: Any, **kwargs: Any) -> Room:
         """Join a room.
 
         Args:
             *args: Positional arguments for join configuration.
+                First positional argument can be the Agent instance for format negotiation.
             **kwargs: Keyword arguments for join configuration.
 
         Returns:
             A Room instance representing the joined room.
         """
+        # Extract agent from args if provided (new Agent API passes agent as first arg)
+        agent = args[0] if args and hasattr(args[0], "llm") else None
+
+        # Negotiate audio format with LLM provider if agent is available
+        if agent is not None:
+            self._negotiate_audio_format(agent)
+        else:
+            # Set default values when no agent is provided
+            self._negotiated_output_sample_rate = 24000
+            self._negotiated_output_channels = 1
+            logger.info(
+                "[AUDIO NEGOTIATION] No agent provided, "
+                "using default output format: 24000Hz, 1ch"
+            )
+
         room_id = kwargs.get("room_id", "local-room")
         room_type = kwargs.get("room_type", "default")
 

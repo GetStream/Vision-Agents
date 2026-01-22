@@ -28,6 +28,7 @@ from getstream.video.rtc import PcmData
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.processors import Processor
+from vision_agents.core.types import AudioCapabilities
 
 from ..utils.video_forwarder import VideoForwarder
 from .function_registry import FunctionRegistry
@@ -394,6 +395,29 @@ class LLM(abc.ABC):
         else:
             s = json.dumps(value)
         return (s[:max_chars] + "…") if len(s) > max_chars else s
+
+    def get_audio_requirements(self) -> Optional[AudioCapabilities]:
+        """Get the audio format requirements for this LLM provider.
+
+        This method should be overridden by LLM implementations that have
+        specific audio format requirements. It enables automatic format
+        negotiation between LocalEdge and the LLM provider.
+
+        Returns:
+            AudioCapabilities object defining the required audio format,
+            or None if the provider has no specific requirements.
+
+        Example - Override in provider implementation:
+            >>> def get_audio_requirements(self) -> Optional[AudioCapabilities]:
+            ...     return AudioCapabilities(
+            ...         sample_rate=24000,
+            ...         channels=1,
+            ...         bit_depth=16,
+            ...         supported_sample_rates=[16000, 24000],
+            ...         supported_channels=[1]
+            ...     )
+        """
+        return None
 
 
 class AudioLLM(LLM, metaclass=abc.ABCMeta):

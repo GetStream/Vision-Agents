@@ -6,7 +6,7 @@ transport-specific implementations (e.g., GetStream RTC types).
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 
 
 class TrackType(str, Enum):
@@ -24,6 +24,120 @@ class TrackType(str, Enum):
     AUDIO = "audio"
     VIDEO = "video"
     SCREENSHARE = "screenshare"
+
+
+@dataclass
+class AudioCapabilities:
+    """Audio format capabilities and requirements for LLM providers.
+
+    This class defines the audio format requirements and supported formats
+    for LLM providers to enable automatic format negotiation between
+    LocalEdge and providers without hardcoding.
+
+    The negotiation system allows each provider to specify its optimal
+    audio format, and LocalEdge will automatically configure the audio
+    pipeline to match these requirements.
+
+    Attributes:
+        sample_rate: Preferred audio sampling rate in Hz (e.g., 16000, 24000, 48000)
+        channels: Number of audio channels (1 for mono, 2 for stereo)
+        bit_depth: Bits per sample (default: 16). Common values are 8, 16, 24, 32
+        supported_sample_rates: List of all sample rates the provider can accept.
+                               If empty, only sample_rate is supported.
+        supported_channels: List of all channel configurations the provider can accept.
+                           If empty, only channels is supported.
+        encoding: Audio encoding format (default: "pcm"). Currently only "pcm" is supported.
+
+    Example - Gemini Provider Requirements:
+        >>> capabilities = AudioCapabilities(
+        ...     sample_rate=24000,
+        ...     channels=1,
+        ...     bit_depth=16,
+        ...     supported_sample_rates=[16000, 24000],
+        ...     supported_channels=[1]
+        ... )
+
+    Example - GetStream Provider Requirements:
+        >>> capabilities = AudioCapabilities(
+        ...     sample_rate=48000,
+        ...     channels=2,
+        ...     bit_depth=16,
+        ...     supported_sample_rates=[48000],
+        ...     supported_channels=[1, 2]
+        ... )
+
+    Example - Format Negotiation:
+        >>> def negotiate_format(provider_caps: AudioCapabilities,
+        ...                      available_rate: int) -> int:
+        ...     '''Select best matching sample rate.'''
+        ...     if available_rate in provider_caps.supported_sample_rates:
+        ...         return available_rate
+        ...     # Use preferred rate if exact match not found
+        ...     return provider_caps.sample_rate
+
+    See Also:
+        - PcmData: Audio data container with format information
+        - LLM.get_audio_requirements(): Method to retrieve provider's audio requirements
+    """
+
+    sample_rate: int
+    channels: int
+    bit_depth: int = 16
+    supported_sample_rates: Optional[List[int]] = None
+    supported_channels: Optional[List[int]] = None
+    encoding: str = "pcm"
+
+    def __post_init__(self) -> None:
+        """Initialize default values for optional list fields."""
+        if self.supported_sample_rates is None:
+            object.__setattr__(self, 'supported_sample_rates', [self.sample_rate])
+        if self.supported_channels is None:
+            object.__setattr__(self, 'supported_channels', [self.channels])
+
+    def supports_format(self, sample_rate: int, channels: int) -> bool:
+        """Check if the given format is supported.
+
+        Args:
+            sample_rate: Sample rate to check
+            channels: Number of channels to check
+
+        Returns:
+            True if the format is supported, False otherwise
+        """
+        return (sample_rate in self.supported_sample_rates and
+                channels in self.supported_channels)
+
+    def get_closest_sample_rate(self, target_rate: int) -> int:
+        """Find the closest supported sample rate to the target.
+
+        Args:
+            target_rate: Desired sample rate
+
+        Returns:
+            Closest supported sample rate
+        """
+        if target_rate in self.supported_sample_rates:
+            return target_rate
+
+        # Find closest by minimum absolute difference
+        return min(self.supported_sample_rates,
+                   key=lambda rate: abs(rate - target_rate))
+
+    def get_closest_channels(self, target_channels: int) -> int:
+        """Find the closest supported channel configuration to the target.
+
+        Args:
+            target_channels: Desired number of channels
+
+        Returns:
+            Closest supported channel configuration
+        """
+        if target_channels in self.supported_channels:
+            return target_channels
+
+        # Find closest by minimum absolute difference
+        return min(self.supported_channels,
+                   key=lambda ch: abs(ch - target_channels))
 
 
 @dataclass
