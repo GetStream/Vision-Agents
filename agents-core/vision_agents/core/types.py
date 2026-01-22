@@ -5,7 +5,25 @@ transport-specific implementations (e.g., GetStream RTC types).
 """
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
+
+
+class TrackType(str, Enum):
+    """Media track type enumeration.
+
+    This is a framework-native enumeration for representing different types of
+    media tracks, decoupled from any specific transport layer implementation.
+
+    Values:
+        AUDIO: Audio track type for voice or sound data
+        VIDEO: Video track type for camera or visual content
+        SCREENSHARE: Screen sharing track type for desktop/window capture
+    """
+
+    AUDIO = "audio"
+    VIDEO = "video"
+    SCREENSHARE = "screenshare"
 
 
 @dataclass
