@@ -4,12 +4,14 @@ Abstraction for stream vs other services here
 
 import abc
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import aiortc
 from pyee.asyncio import AsyncIOEventEmitter
 
 from vision_agents.core.edge.types import User, OutputAudioTrack
+from vision_agents.core.types import PcmData
+from vision_agents.core.protocols import Room
 
 if TYPE_CHECKING:
     pass
@@ -43,11 +45,11 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def join(self, *args, **kwargs):
+    async def join(self, *args, **kwargs) -> Room:
         pass
 
     @abc.abstractmethod
-    async def publish_tracks(self, audio_track, video_track):
+    async def publish_tracks(self, room: Room, audio_track, video_track):
         pass
 
     @abc.abstractmethod
@@ -56,6 +58,6 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
 
     @abc.abstractmethod
     def add_track_subscriber(
-        self, track_id: str
+        self, track_id: str, callback: Callable[[PcmData], None]
     ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
         pass
