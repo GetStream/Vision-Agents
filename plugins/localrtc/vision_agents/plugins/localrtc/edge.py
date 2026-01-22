@@ -11,7 +11,25 @@ from vision_agents.core.types import PcmData, TrackType
 
 from .devices import DeviceInfo, list_audio_inputs, list_audio_outputs, list_video_inputs
 from .room import LocalRoom
-from .tracks import AudioInputTrack, AudioOutputTrack, VideoInputTrack
+from .tracks import (
+    AudioInputTrack,
+    AudioOutputTrack,
+    VideoInputTrack,
+    GStreamerAudioInputTrack,
+    GStreamerAudioOutputTrack,
+    GStreamerVideoInputTrack,
+)
+
+# Try to import GStreamer
+try:
+    import gi
+    gi.require_version('Gst', '1.0')
+    from gi.repository import Gst
+    Gst.init(None)
+    GST_AVAILABLE = True
+except (ImportError, ValueError):
+    GST_AVAILABLE = False
+    Gst = None  # type: ignore
 
 
 class LocalEdge(EdgeTransport):
@@ -26,6 +44,7 @@ class LocalEdge(EdgeTransport):
         speaker_device: Audio output device identifier
         sample_rate: Audio sampling rate in Hz
         channels: Number of audio channels
+        custom_pipeline: Optional GStreamer pipeline configuration
     """
 
     def __init__(
@@ -35,6 +54,7 @@ class LocalEdge(EdgeTransport):
         speaker_device: Union[str, int] = "default",
         sample_rate: int = 16000,
         channels: int = 1,
+        custom_pipeline: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Initialize the local edge transport.
 
@@ -44,23 +64,63 @@ class LocalEdge(EdgeTransport):
             speaker_device: Audio output device identifier (default: "default")
             sample_rate: Audio sampling rate in Hz (default: 16000)
             channels: Number of audio channels (default: 1)
+            custom_pipeline: Optional GStreamer pipeline configuration. When provided,
+                uses GStreamer instead of default device access. Dictionary with keys:
+                - audio_source: GStreamer pipeline string for audio input
+                  Example: "pulsesrc ! audioconvert ! audioresample"
+                - video_source: GStreamer pipeline string for video input
+                  Example: "v4l2src device=/dev/video0 ! videoconvert"
+                - audio_sink: GStreamer pipeline string for audio output
+                  Example: "autoaudiosink"
+                Note: Requires PyGObject (gi) and GStreamer to be installed.
+
+        Raises:
+            RuntimeError: If custom_pipeline is provided but GStreamer is not available
+
+        Example:
+            >>> # Using default device access
+            >>> edge = Edge(audio_device="default", video_device=0)
+            >>>
+            >>> # Using custom GStreamer pipelines
+            >>> pipeline = {
+            ...     "audio_source": "alsasrc device=hw:0 ! audioconvert ! audioresample",
+            ...     "video_source": "v4l2src device=/dev/video0 ! videoconvert",
+            ...     "audio_sink": "alsasink device=hw:0"
+            ... }
+            >>> edge = Edge(custom_pipeline=pipeline)
         """
         super().__init__()
+
+        # Validate GStreamer availability if custom_pipeline is provided
+        if custom_pipeline is not None and not GST_AVAILABLE:
+            raise RuntimeError(
+                "GStreamer is not available. To use custom pipelines, install PyGObject and GStreamer:\n"
+                "  Ubuntu/Debian: sudo apt-get install python3-gi gstreamer1.0-tools gstreamer1.0-plugins-base\n"
+                "  Fedora: sudo dnf install python3-gobject gstreamer1-tools gstreamer1-plugins-base\n"
+                "  macOS: brew install pygobject3 gstreamer"
+            )
+
         self.audio_device = audio_device
         self.video_device = video_device
         self.speaker_device = speaker_device
         self.sample_rate = sample_rate
         self.channels = channels
+        self.custom_pipeline = custom_pipeline
 
         # Track state
         self._user: Optional[User] = None
-        self._audio_input_track: Optional[AudioInputTrack] = None
-        self._audio_output_track: Optional[AudioOutputTrack] = None
-        self._video_input_track: Optional[VideoInputTrack] = None
+        self._audio_input_track: Optional[Union[AudioInputTrack, GStreamerAudioInputTrack]] = None
+        self._audio_output_track: Optional[Union[AudioOutputTrack, GStreamerAudioOutputTrack]] = None
+        self._video_input_track: Optional[Union[VideoInputTrack, GStreamerVideoInputTrack]] = None
         self._rooms: Dict[str, LocalRoom] = {}
         self._track_subscribers: Dict[str, List[Callable[[PcmData], None]]] = {}
         self._audio_capture_thread: Optional[threading.Thread] = None
         self._audio_capture_running: bool = False
+
+        # GStreamer pipeline state
+        self._gst_audio_pipeline: Optional[Any] = None
+        self._gst_video_pipeline: Optional[Any] = None
+        self._gst_audio_sink_pipeline: Optional[Any] = None
 
     @staticmethod
     def list_devices() -> Dict[str, List[DeviceInfo]]:
@@ -110,15 +170,27 @@ class LocalEdge(EdgeTransport):
     def create_audio_track(self) -> OutputAudioTrack:
         """Create an output audio track.
 
+        Uses GStreamer if custom_pipeline is configured with audio_sink,
+        otherwise uses default device access.
+
         Returns:
             An OutputAudioTrack instance for audio streaming.
         """
         if self._audio_output_track is None:
-            self._audio_output_track = AudioOutputTrack(
-                device=self.speaker_device,
-                sample_rate=self.sample_rate,
-                channels=self.channels,
-            )
+            if self.custom_pipeline and "audio_sink" in self.custom_pipeline:
+                # Use GStreamer pipeline
+                self._audio_output_track = GStreamerAudioOutputTrack(
+                    pipeline=self.custom_pipeline["audio_sink"],
+                    sample_rate=self.sample_rate,
+                    channels=self.channels,
+                )
+            else:
+                # Use default device access
+                self._audio_output_track = AudioOutputTrack(
+                    device=self.speaker_device,
+                    sample_rate=self.sample_rate,
+                    channels=self.channels,
+                )
         return self._audio_output_track
 
     async def close(self) -> None:
