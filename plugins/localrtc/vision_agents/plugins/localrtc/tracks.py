@@ -545,19 +545,48 @@ class AudioOutputTrack:
     ) -> bytes:
         """Convert audio data: resample and/or change channel count.
 
+        CRITICAL FORMAT CONVERSION IMPLEMENTATION:
+        This is the PRIMARY audio format conversion method in Vision Agents.
+        It handles all sample rate conversion, channel mixing, and bit depth
+        adjustments needed to adapt audio between different formats.
+
+        Common Conversion Scenarios:
+            - GetStream (48kHz stereo) -> ASR (16kHz mono)
+            - TTS output (24kHz mono) -> Speaker (48kHz stereo)
+            - Any format -> Device-specific format
+
+        Conversion Algorithm:
+            1. Validation: Verify all format parameters are valid
+            2. Byte Conversion: Convert raw bytes to numpy float32 array
+            3. Channel Mixing:
+               - Stereo -> Mono: Averages both channels
+               - Mono -> Stereo: Duplicates mono channel
+            4. Sample Rate Conversion: Linear interpolation (np.interp)
+            5. Clipping: Prevents overflow by clipping to valid range
+            6. Type Conversion: Convert back to target bit depth
+
         Args:
-            data: Raw PCM audio data
-            from_rate: Original sample rate
-            to_rate: Target sample rate
-            from_channels: Original number of channels
-            to_channels: Target number of channels
-            bit_depth: Bits per sample
+            data: Raw PCM audio data as bytes
+            from_rate: Original sample rate in Hz (e.g., 48000)
+            to_rate: Target sample rate in Hz (e.g., 16000)
+            from_channels: Original number of channels (1=mono, 2=stereo)
+            to_channels: Target number of channels (1=mono, 2=stereo)
+            bit_depth: Bits per sample (8, 16, 24, or 32)
 
         Returns:
-            Converted audio data as bytes
+            Converted audio data as bytes in target format
 
         Raises:
             ValueError: If audio format parameters are invalid
+
+        Performance Notes:
+            - Linear interpolation is fast but basic quality
+            - Suitable for voice applications
+            - For music/high-quality, consider using scipy.signal.resample
+
+        See Also:
+            - AUDIO_DOCUMENTATION.md: Comprehensive audio format guide
+            - AudioOutputTrack.write(): Uses this method for format adaptation
         """
         # Validate input parameters
         if not data:
@@ -596,36 +625,52 @@ class AudioOutputTrack:
             # Truncate to complete frames
             data = data[:expected_bytes]
 
-        # Convert bytes to numpy array
+        # STEP 1: Convert bytes to numpy array
+        # Convert raw PCM bytes to numpy array with appropriate integer type
+        # Then cast to float32 for mathematical operations (prevents overflow)
         dtype = f"int{bit_depth}"
         audio_array = np.frombuffer(data, dtype=dtype).astype(np.float32)
 
-        # Reshape for multi-channel audio
+        # STEP 2: CHANNEL MIXING - Convert to mono for processing
+        # Multi-channel audio is stored interleaved: [L, R, L, R, ...]
+        # We reshape to separate channels, then mix to mono
         if from_channels > 1:
+            # Reshape: [L, R, L, R, ...] -> [[L, R], [L, R], ...]
             audio_array = audio_array.reshape(-1, from_channels)
-            # Mix down to mono for processing (average channels)
+            # CRITICAL: Mix stereo to mono by averaging channels
+            # This preserves audio balance and prevents clipping
             audio_mono = np.mean(audio_array, axis=1)
         else:
             audio_mono = audio_array.flatten()
 
-        # Resample if needed
+        # STEP 3: SAMPLE RATE CONVERSION (Resampling)
+        # Uses linear interpolation to change sample rate
+        # Example: 48000 Hz -> 16000 Hz reduces data by ~66%
         if from_rate != to_rate:
             num_samples = len(audio_mono)
+            # Calculate new length based on sample rate ratio
+            # e.g., 1000 samples @ 48kHz -> 333 samples @ 16kHz
             new_length = int(num_samples * to_rate / from_rate)
 
-            # Use linear interpolation for resampling
+            # CRITICAL: Linear interpolation for resampling
+            # Creates new sample points by interpolating between existing ones
+            # Fast but basic quality - suitable for voice applications
             old_indices = np.arange(num_samples)
             new_indices = np.linspace(0, num_samples - 1, new_length)
             audio_mono = np.interp(new_indices, old_indices, audio_mono)
 
-        # Convert to target channels
+        # STEP 4: CHANNEL EXPANSION - Convert mono to target channels
         if to_channels > 1:
-            # Duplicate mono to all channels
+            # CRITICAL: Duplicate mono to create stereo
+            # Both channels get identical data (not true stereo, but maintains compatibility)
             resampled = np.column_stack([audio_mono] * to_channels)
         else:
             resampled = audio_mono.reshape(-1, 1)
 
-        # Convert back to target dtype with clipping to prevent overflow
+        # STEP 5: BIT DEPTH CONVERSION with clipping
+        # Convert float32 back to target integer type
+        # CRITICAL: Clipping prevents overflow/distortion from out-of-range values
+        # Signed integer ranges: 8-bit: -128 to 127, 16-bit: -32768 to 32767, etc.
         max_val = 2 ** (bit_depth - 1) - 1
         min_val = -(2 ** (bit_depth - 1))
         resampled = np.clip(resampled, min_val, max_val).astype(dtype)

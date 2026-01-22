@@ -422,6 +422,43 @@ class StreamEdge(EdgeTransport):
     def create_audio_track(
         self, framerate: int = 48000, stereo: bool = True
     ) -> OutputAudioTrack:
+        """Create an audio track for publishing to the GetStream connection.
+
+        This method creates an AudioStreamTrack configured for the GetStream transport layer.
+        The default configuration (48kHz stereo) is optimized for high-quality audio streaming
+        over WebRTC.
+
+        Audio Format Specifications:
+            - Default sample rate: 48000 Hz (CD-quality, WebRTC standard)
+            - Default channels: 2 (stereo) or 1 (mono if stereo=False)
+            - Bit depth: 16-bit signed integer (hardcoded in AudioStreamTrack)
+            - Buffer size: 300 seconds (300,000 ms) for long-running streams
+
+        Args:
+            framerate: Audio sample rate in Hz. Default is 48000 (WebRTC standard).
+                      Common values: 8000, 16000, 24000, 48000
+            stereo: If True, creates stereo (2-channel) track. If False, creates mono (1-channel).
+                   Default is True.
+
+        Returns:
+            OutputAudioTrack: An AudioStreamTrack instance ready for publishing.
+
+        Example:
+            # Create default high-quality audio track (48kHz stereo)
+            audio_track = edge.create_audio_track()
+
+            # Create voice-optimized track (16kHz mono)
+            voice_track = edge.create_audio_track(framerate=16000, stereo=False)
+
+        Note:
+            The AudioStreamTrack will automatically handle format conversion if needed.
+            For voice applications (ASR/TTS), consider using 16kHz mono for better
+            compatibility and reduced bandwidth.
+
+        See Also:
+            - AUDIO_DOCUMENTATION.md for comprehensive audio configuration guide
+            - AudioStreamTrack class for internal implementation details
+        """
         return audio_track.AudioStreamTrack(
             audio_buffer_size_ms=300_000,
             sample_rate=framerate,
@@ -502,6 +539,23 @@ class StreamEdge(EdgeTransport):
     async def close(self):
         # Note: Not calling super().close() as it's an abstract method with trivial body
         pass
+
+    async def create_call(self, call_type: str, call_id: str) -> Call:
+        """Create a call/room with the given type and ID.
+
+        This method creates a new GetStream Call instance that can be used
+        for joining and managing RTC sessions.
+
+        Args:
+            call_type: The type of call (e.g., "default", "video", "audio")
+            call_id: Unique identifier for the call
+
+        Returns:
+            A Call instance representing the created call
+        """
+        call = self.client.video.call(call_type, call_id)
+        await call.get_or_create(data={"created_by_id": self.agent_user_id})
+        return call
 
     @tracer.start_as_current_span("stream_edge.open_demo")
     async def open_demo_for_agent(
