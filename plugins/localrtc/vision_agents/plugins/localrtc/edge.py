@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import aiortc
 from vision_agents.core.edge.edge_transport import EdgeTransport
 from vision_agents.core.edge.types import OutputAudioTrack, User
+from vision_agents.core.events import EventManager
 from vision_agents.core.protocols import Room
 from vision_agents.core.types import PcmData, TrackType
 
@@ -91,6 +92,9 @@ class LocalEdge(EdgeTransport):
         """
         super().__init__()
 
+        # Initialize event manager for edge transport events
+        self.events = EventManager()
+
         # Validate GStreamer availability if custom_pipeline is provided
         if custom_pipeline is not None and not GST_AVAILABLE:
             raise RuntimeError(
@@ -167,11 +171,14 @@ class LocalEdge(EdgeTransport):
         """
         self._user = user
 
-    def create_audio_track(self) -> OutputAudioTrack:
+    def create_audio_track(self, **kwargs) -> OutputAudioTrack:
         """Create an output audio track.
 
         Uses GStreamer if custom_pipeline is configured with audio_sink,
         otherwise uses default device access.
+
+        Args:
+            **kwargs: Additional parameters (ignored, for compatibility with EdgeTransport interface).
 
         Returns:
             An OutputAudioTrack instance for audio streaming.

@@ -46,3 +46,21 @@ class LocalRoom:
         """
         self._active = False
         self._tracks.clear()
+
+    async def wait_for_participant(self, timeout: float = 30.0) -> None:
+        """Wait for a participant to join the room.
+
+        For local rooms, this is a no-op since there's no concept of remote participants.
+
+        Args:
+            timeout: Maximum time to wait in seconds (ignored for local rooms).
+        """
+        # Local rooms don't have remote participants, so this is a no-op
+        pass
+
+    async def close(self) -> None:
+        """Close the room connection.
+
+        This method is called during cleanup. For local rooms, it's equivalent to leave().
+        """
+        await self.leave()
