@@ -33,28 +33,37 @@ class DummyLLM(LLM, Warmable[bool]):
     async def on_warmup(self) -> bool:
         return True
 
-    async def on_warmed_up(self, *_) -> None:
+    def on_warmed_up(self, *_) -> None:
         self.warmed_up = True
 
 
 @pytest.fixture()
-async def agent_launcher():
-    async def create_agent(**kwargs) -> Agent:
-        stream_edge_mock = MagicMock()
-        stream_edge_mock.events = EventManager()
+def agent_launcher_factory():
+    def factory(**launcher_kwargs) -> AgentLauncher:
+        async def create_agent(**kwargs) -> Agent:
+            stream_edge_mock = MagicMock()
+            stream_edge_mock.events = EventManager()
 
-        return Agent(
-            llm=DummyLLM(),
-            tts=DummyTTS(),
-            edge=stream_edge_mock,
-            agent_user=User(name="test"),
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        async def join_call(*args, **kwargs):
+            await asyncio.sleep(10)
+
+        return AgentLauncher(
+            create_agent=create_agent, join_call=join_call, **launcher_kwargs
         )
 
-    async def join_call(*args, **kwargs):
-        await asyncio.sleep(10)
+    return factory
 
-    launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
-    return launcher
+
+@pytest.fixture()
+def agent_launcher(agent_launcher_factory):
+    return agent_launcher_factory()
 
 
 @pytest.fixture()
@@ -403,3 +412,39 @@ class TestRunnerServe:
             resp = await client.get("/hello-world")
             assert resp.status_code == 200
             assert resp.content.decode() == "Hello world"
+
+    async def test_start_session_max_concurrent_sessions_exceeded(
+        self, agent_launcher_factory, test_client_factory
+    ) -> None:
+        launcher = agent_launcher_factory(max_concurrent_sessions=1)
+        runner = Runner(launcher=launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post(
+                "/sessions", json={"call_id": "test-1", "call_type": "default"}
+            )
+            assert resp.status_code == 201
+
+            resp = await client.post(
+                "/sessions", json={"call_id": "test-2", "call_type": "default"}
+            )
+            assert resp.status_code == 429
+            assert "Reached maximum concurrent sessions of" in resp.json()["detail"]
+
+    async def test_start_session_max_sessions_per_call_exceeded(
+        self, agent_launcher_factory, test_client_factory
+    ) -> None:
+        launcher = agent_launcher_factory(max_sessions_per_call=1)
+        runner = Runner(launcher=launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post(
+                "/sessions", json={"call_id": "test", "call_type": "default"}
+            )
+            assert resp.status_code == 201
+
+            resp = await client.post(
+                "/sessions", json={"call_id": "test", "call_type": "default"}
+            )
+            assert resp.status_code == 429
+            assert "Reached maximum sessions per call of" in resp.json()["detail"]

@@ -261,14 +261,12 @@ class AgentLauncher:
             MaxSessionsPerCallExceeded: If the maximum number of sessions for
                 this call_id has been reached.
         """
-        sessions_total = len(self._sessions)
         if (
             self._max_concurrent_sessions
             and len(self._sessions) == self._max_concurrent_sessions
         ):
             raise MaxConcurrentSessionsExceeded(
-                f"Maximum concurrent sessions exceeded:"
-                f" {sessions_total}/{self._max_concurrent_sessions} sessions active"
+                f"Reached maximum concurrent sessions of {self._max_concurrent_sessions}"
             )
 
         call_sessions_total = len(self._calls.get(call_id, set()))
@@ -277,8 +275,7 @@ class AgentLauncher:
             and call_sessions_total == self._max_sessions_per_call
         ):
             raise MaxSessionsPerCallExceeded(
-                f"Maximum sessions exceeded for call "
-                f"'{call_id}': {call_sessions_total}/{self._max_sessions_per_call}"
+                f"Reached maximum sessions per call of {self._max_sessions_per_call}"
             )
 
         agent: "Agent" = await self.launch()
