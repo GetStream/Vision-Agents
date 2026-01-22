@@ -115,6 +115,7 @@ class AgentLauncher:
         self._join_call = join_call
         self._warmup_lock = asyncio.Lock()
         self._warmup_cache = WarmupCache()
+        self._start_lock = asyncio.Lock()
 
         if max_concurrent_sessions is not None and max_concurrent_sessions <= 0:
             raise ValueError("max_concurrent_sessions must be > 0 or None")
@@ -261,52 +262,53 @@ class AgentLauncher:
             MaxSessionsPerCallExceeded: If the maximum number of sessions for
                 this call_id has been reached.
         """
-        if (
-            self._max_concurrent_sessions
-            and len(self._sessions) == self._max_concurrent_sessions
-        ):
-            raise MaxConcurrentSessionsExceeded(
-                f"Reached maximum concurrent sessions of {self._max_concurrent_sessions}"
+        async with self._start_lock:
+            if (
+                self._max_concurrent_sessions
+                and len(self._sessions) >= self._max_concurrent_sessions
+            ):
+                raise MaxConcurrentSessionsExceeded(
+                    f"Reached maximum concurrent sessions of {self._max_concurrent_sessions}"
+                )
+
+            call_sessions_total = len(self._calls.get(call_id, set()))
+            if (
+                self._max_sessions_per_call
+                and call_sessions_total >= self._max_sessions_per_call
+            ):
+                raise MaxSessionsPerCallExceeded(
+                    f"Reached maximum sessions per call of {self._max_sessions_per_call}"
+                )
+
+            agent: "Agent" = await self.launch()
+            if video_track_override_path:
+                agent.set_video_track_override_path(video_track_override_path)
+
+            task = asyncio.create_task(
+                self._join_call(agent, call_type, call_id), name=f"agent-{agent.id}"
             )
 
-        call_sessions_total = len(self._calls.get(call_id, set()))
-        if (
-            self._max_sessions_per_call
-            and call_sessions_total == self._max_sessions_per_call
-        ):
-            raise MaxSessionsPerCallExceeded(
-                f"Reached maximum sessions per call of {self._max_sessions_per_call}"
+            # Remove the session when the task is done
+            # or when the AgentSession is garbage-collected
+            # in case the done callback wasn't fired
+            def _finalizer(session_id_: str, call_id_: str, *_):
+                session_ = self._sessions.pop(session_id_, None)
+                if session_ is not None:
+                    call_sessions = self._calls.get(call_id_, set())
+                    if call_sessions:
+                        call_sessions.discard(session_id_)
+
+            task.add_done_callback(partial(_finalizer, agent.id, call_id))
+            session = AgentSession(
+                agent=agent,
+                task=task,
+                started_at=datetime.now(timezone.utc),
+                call_id=call_id,
+                created_by=created_by,
             )
-
-        agent: "Agent" = await self.launch()
-        if video_track_override_path:
-            agent.set_video_track_override_path(video_track_override_path)
-
-        task = asyncio.create_task(
-            self._join_call(agent, call_type, call_id), name=f"agent-{agent.id}"
-        )
-
-        # Remove the session when the task is done
-        # or when the AgentSession is garbage-collected
-        # in case the done callback wasn't fired
-        def _finalizer(session_id_: str, call_id_: str, *_):
-            session_ = self._sessions.pop(session_id_, None)
-            if session_ is not None:
-                call_sessions = self._calls.get(call_id_, set())
-                if call_sessions:
-                    call_sessions.discard(session_id_)
-
-        task.add_done_callback(partial(_finalizer, agent.id, call_id))
-        session = AgentSession(
-            agent=agent,
-            task=task,
-            started_at=datetime.now(timezone.utc),
-            call_id=call_id,
-            created_by=created_by,
-        )
-        self._sessions[agent.id] = session
-        self._calls.setdefault(call_id, set()).add(agent.id)
-        logger.info(f"Start agent session with id {session.id}")
+            self._sessions[agent.id] = session
+            self._calls.setdefault(call_id, set()).add(agent.id)
+            logger.info(f"Started agent session with id {session.id}")
         return session
 
     async def close_session(self, session_id: str, wait: bool = False) -> bool:
