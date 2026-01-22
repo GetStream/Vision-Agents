@@ -83,7 +83,7 @@ async def create_agent(**kwargs) -> Agent:
        - audio_device="default": System default microphone
        - speaker_device="default": System default speakers
        - video_device=0: First available camera (optional, for video support)
-       - sample_rate=16000: 16kHz audio (standard for voice applications)
+       - sample_rate=16000: 16kHz audio input (output auto-configured to 24kHz)
        - channels=1: Mono audio (sufficient for voice, reduces bandwidth)
 
     2. OpenAI LLM: Provides language understanding and generation
@@ -125,7 +125,7 @@ async def create_agent(**kwargs) -> Agent:
         audio_device="default",  # Use system default microphone
         video_device=0,  # Use first available camera (optional for this voice-focused example)
         speaker_device="default",  # Use system default speakers
-        sample_rate=16000,  # 16kHz audio sampling rate (optimal for voice)
+        sample_rate=16000,  # Input: 16kHz for voice (Output: auto 24kHz for compatibility)
         channels=1,  # Mono audio (sufficient for voice, more efficient than stereo)
     )
 

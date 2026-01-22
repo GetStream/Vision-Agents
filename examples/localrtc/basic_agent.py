@@ -51,7 +51,7 @@ async def create_agent(**kwargs) -> Agent:
         audio_device="default",  # Use system default microphone
         video_device=0,          # Use first available camera
         speaker_device="default", # Use system default speakers
-        sample_rate=16000,       # 16kHz audio (standard for voice)
+        sample_rate=16000,       # Input: 16kHz for voice (Output: auto 24kHz for Gemini)
         channels=1,              # Mono audio
     )
 

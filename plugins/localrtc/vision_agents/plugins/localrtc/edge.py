@@ -63,7 +63,9 @@ class LocalEdge(EdgeTransport):
             audio_device: Audio input device identifier (default: "default")
             video_device: Video input device identifier (default: 0)
             speaker_device: Audio output device identifier (default: "default")
-            sample_rate: Audio sampling rate in Hz (default: 16000)
+            sample_rate: Audio input sampling rate in Hz (default: 16000)
+                Note: Audio output is automatically set to 24000 Hz to match
+                Gemini Realtime API's native format and avoid resampling issues.
             channels: Number of audio channels (default: 1)
             custom_pipeline: Optional GStreamer pipeline configuration. When provided,
                 uses GStreamer instead of default device access. Dictionary with keys:
@@ -171,32 +173,45 @@ class LocalEdge(EdgeTransport):
         """
         self._user = user
 
-    def create_audio_track(self, **kwargs) -> OutputAudioTrack:
+    def create_audio_track(
+        self, framerate: int = 48000, stereo: bool = True, **kwargs
+    ) -> OutputAudioTrack:
         """Create an output audio track.
 
         Uses GStreamer if custom_pipeline is configured with audio_sink,
         otherwise uses default device access.
 
+        Note: For LocalRTC, we use 24000Hz mono to match Gemini's native output
+        format and avoid resampling issues. The framerate/stereo parameters
+        are accepted for API compatibility but may be adjusted for local playback.
+
         Args:
-            **kwargs: Additional parameters (ignored, for compatibility with EdgeTransport interface).
+            framerate: Audio sample rate in Hz (default: 48000 for WebRTC compatibility)
+            stereo: Whether to use stereo (2 channels) or mono (1 channel)
+            **kwargs: Additional parameters for future compatibility.
 
         Returns:
             An OutputAudioTrack instance for audio streaming.
         """
         if self._audio_output_track is None:
+            # For local playback, use 24000Hz mono to match Gemini's native format
+            # This avoids resampling artifacts that can occur with real-time conversion
+            local_sample_rate = 24000
+            local_channels = 1
+
             if self.custom_pipeline and "audio_sink" in self.custom_pipeline:
                 # Use GStreamer pipeline
                 self._audio_output_track = GStreamerAudioOutputTrack(
                     pipeline=self.custom_pipeline["audio_sink"],
-                    sample_rate=self.sample_rate,
-                    channels=self.channels,
+                    sample_rate=local_sample_rate,
+                    channels=local_channels,
                 )
             else:
                 # Use default device access
                 self._audio_output_track = AudioOutputTrack(
                     device=self.speaker_device,
-                    sample_rate=self.sample_rate,
-                    channels=self.channels,
+                    sample_rate=local_sample_rate,
+                    channels=local_channels,
                 )
         return self._audio_output_track
 
@@ -239,6 +254,25 @@ class LocalEdge(EdgeTransport):
         # For local edge, demo mode is a no-op since we're always in "demo" mode
         pass
 
+    async def create_call(self, call_type: str, call_id: str) -> Room:
+        """Create a call/room with the given type and ID.
+
+        For LocalEdge, this creates a LocalRoom instance that manages
+        local audio/video streams without external RTC infrastructure.
+
+        Args:
+            call_type: The type of call (used as room_type)
+            call_id: Unique identifier for the call (used as room_id)
+
+        Returns:
+            A LocalRoom instance representing the created call
+        """
+        # Create or get existing room
+        if call_id not in self._rooms:
+            self._rooms[call_id] = LocalRoom(room_id=call_id, room_type=call_type)
+
+        return self._rooms[call_id]
+
     async def join(self, *args: Any, **kwargs: Any) -> Room:
         """Join a room.
 
@@ -259,26 +293,52 @@ class LocalEdge(EdgeTransport):
         return self._rooms[room_id]
 
     async def publish_tracks(
-        self, room: Room, audio_track: Any, video_track: Any
+        self, room: Any, audio_track: Any = None, video_track: Any = None
     ) -> None:
         """Publish audio and video tracks to the room.
 
-        Args:
-            room: The room to publish tracks to.
-            audio_track: Audio track to publish.
-            video_track: Video track to publish.
-        """
-        # Store references to the tracks
-        if isinstance(room, LocalRoom):
-            if audio_track is not None:
-                if isinstance(audio_track, AudioInputTrack):
-                    self._audio_input_track = audio_track
-                room._tracks[TrackType.AUDIO] = audio_track
+        This method supports both calling conventions:
+        - Legacy: publish_tracks(audio_track, video_track)
+        - New: publish_tracks(room, audio_track, video_track)
 
-            if video_track is not None:
-                if isinstance(video_track, VideoInputTrack):
-                    self._video_input_track = video_track
-                room._tracks[TrackType.VIDEO] = video_track
+        Args:
+            room: The room to publish tracks to (new) or audio_track (legacy).
+            audio_track: Audio track to publish (new) or video_track (legacy).
+            video_track: Video track to publish (new) or None (legacy).
+        """
+        # Handle both calling conventions
+        if audio_track is None and video_track is None:
+            # Legacy calling convention: publish_tracks(audio, video)
+            # room parameter actually contains audio_track
+            actual_audio = room
+            actual_video = None
+            actual_room = None
+        elif video_track is None:
+            # Legacy calling convention: publish_tracks(audio, video)
+            # room contains audio, audio_track contains video
+            actual_audio = room
+            actual_video = audio_track
+            actual_room = None
+        else:
+            # New calling convention: publish_tracks(room, audio, video)
+            actual_audio = audio_track
+            actual_video = video_track
+            actual_room = room
+
+        # Store references to the tracks
+        if actual_audio is not None:
+            if isinstance(actual_audio, AudioInputTrack):
+                self._audio_input_track = actual_audio
+            # Store in room if provided
+            if isinstance(actual_room, LocalRoom):
+                actual_room._tracks[TrackType.AUDIO] = actual_audio
+
+        if actual_video is not None:
+            if isinstance(actual_video, VideoInputTrack):
+                self._video_input_track = actual_video
+            # Store in room if provided
+            if isinstance(actual_room, LocalRoom):
+                actual_room._tracks[TrackType.VIDEO] = actual_video
 
     async def create_conversation(
         self, call: Any, user: User, instructions: Any

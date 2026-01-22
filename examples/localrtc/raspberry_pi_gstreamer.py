@@ -280,7 +280,7 @@ async def create_agent(**kwargs) -> Agent:
 
     # Create the Local RTC Edge transport with custom GStreamer pipelines
     edge = localrtc.Edge(
-        sample_rate=16000,       # 16kHz audio (standard for voice)
+        sample_rate=16000,       # Input: 16kHz for voice (Output: auto 24kHz for Gemini)
         channels=1,              # Mono audio (sufficient for voice)
         custom_pipeline=custom_pipeline,  # Use our Raspberry Pi GStreamer configuration
     )
