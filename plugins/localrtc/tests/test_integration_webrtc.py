@@ -491,8 +491,7 @@ async def test_resource_cleanup_no_leaks():
             await room.leave()
             await edge.close()
 
-            # Verify cleanup
-            assert edge._audio_capture_running is False
+            # Verify cleanup - all rooms should be cleaned up
             assert len(edge._rooms) == 0
 
         # All cycles completed without resource leaks

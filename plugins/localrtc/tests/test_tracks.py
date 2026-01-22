@@ -373,7 +373,7 @@ def test_audio_output_track_init_default_device():
     """Test AudioOutputTrack initialization with default device."""
     with patch("vision_agents.plugins.localrtc.tracks.sd"):
         track = AudioOutputTrack(device="default")
-        assert track.sample_rate == 16000
+        assert track.sample_rate == 24000  # Changed to 24kHz (Gemini default) in US-002
         assert track.channels == 1
         assert track.bit_depth == 16
         assert track._device_index is None

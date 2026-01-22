@@ -52,9 +52,9 @@ def test_list_devices_static_method():
         {"name": "Camera 1", "index": 0},
     ]
 
-    with patch("vision_agents.plugins.localrtc.edge.list_audio_inputs") as mock_ai, \
-         patch("vision_agents.plugins.localrtc.edge.list_audio_outputs") as mock_ao, \
-         patch("vision_agents.plugins.localrtc.edge.list_video_inputs") as mock_vi:
+    with patch("vision_agents.plugins.localrtc.devices.list_audio_inputs") as mock_ai, \
+         patch("vision_agents.plugins.localrtc.devices.list_audio_outputs") as mock_ao, \
+         patch("vision_agents.plugins.localrtc.devices.list_video_inputs") as mock_vi:
 
         mock_ai.return_value = mock_audio_inputs
         mock_ao.return_value = mock_audio_outputs
@@ -73,9 +73,9 @@ def test_list_devices_static_method():
 
 def test_list_devices_empty_devices():
     """Test Edge.list_devices() with no devices available."""
-    with patch("vision_agents.plugins.localrtc.edge.list_audio_inputs") as mock_ai, \
-         patch("vision_agents.plugins.localrtc.edge.list_audio_outputs") as mock_ao, \
-         patch("vision_agents.plugins.localrtc.edge.list_video_inputs") as mock_vi:
+    with patch("vision_agents.plugins.localrtc.devices.list_audio_inputs") as mock_ai, \
+         patch("vision_agents.plugins.localrtc.devices.list_audio_outputs") as mock_ao, \
+         patch("vision_agents.plugins.localrtc.devices.list_video_inputs") as mock_vi:
 
         mock_ai.return_value = []
         mock_ao.return_value = []
@@ -91,9 +91,9 @@ def test_list_devices_empty_devices():
 def test_list_devices_is_static():
     """Test that list_devices can be called without an instance."""
     # Should be callable without creating an Edge instance
-    with patch("vision_agents.plugins.localrtc.edge.list_audio_inputs") as mock_ai, \
-         patch("vision_agents.plugins.localrtc.edge.list_audio_outputs") as mock_ao, \
-         patch("vision_agents.plugins.localrtc.edge.list_video_inputs") as mock_vi:
+    with patch("vision_agents.plugins.localrtc.devices.list_audio_inputs") as mock_ai, \
+         patch("vision_agents.plugins.localrtc.devices.list_audio_outputs") as mock_ao, \
+         patch("vision_agents.plugins.localrtc.devices.list_video_inputs") as mock_vi:
 
         mock_ai.return_value = []
         mock_ao.return_value = []
