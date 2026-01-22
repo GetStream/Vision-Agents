@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 from vision_agents.core.types import PcmData
-from vision_agents.plugins.localrtc.tracks import AudioInputTrack, AudioOutputTrack
+from vision_agents.plugins.localrtc.tracks import (
+    AudioInputTrack,
+    AudioOutputTrack,
+    VideoInputTrack,
+)
 
 
 def test_audio_input_track_init_default_device():
@@ -621,3 +625,295 @@ def test_audio_output_track_find_device_by_name_exception():
 
         with pytest.raises(ValueError, match="Error searching for device"):
             AudioOutputTrack(device="TestSpeaker")
+
+
+# VideoInputTrack tests
+
+
+def test_video_input_track_init_default_device():
+    """Test VideoInputTrack initialization with default device."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2"):
+        track = VideoInputTrack(device=0)
+        assert track.device == 0
+        assert track.width == 640
+        assert track.height == 480
+        assert track.fps == 30
+
+
+def test_video_input_track_init_custom_params():
+    """Test VideoInputTrack initialization with custom parameters."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2"):
+        track = VideoInputTrack(device=1, width=1920, height=1080, fps=60)
+        assert track.device == 1
+        assert track.width == 1920
+        assert track.height == 1080
+        assert track.fps == 60
+
+
+def test_video_input_track_init_string_device():
+    """Test VideoInputTrack initialization with device path."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2"):
+        track = VideoInputTrack(device="/dev/video0")
+        assert track.device == "/dev/video0"
+
+
+def test_video_input_track_init_no_cv2():
+    """Test VideoInputTrack initialization when cv2 is not available."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2", None):
+        with pytest.raises(RuntimeError, match="opencv-python is not available"):
+            VideoInputTrack()
+
+
+def test_video_input_track_init_invalid_width():
+    """Test VideoInputTrack initialization with invalid width."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2"):
+        with pytest.raises(ValueError, match="Width must be positive"):
+            VideoInputTrack(width=0)
+
+        with pytest.raises(ValueError, match="Width must be positive"):
+            VideoInputTrack(width=-100)
+
+
+def test_video_input_track_init_invalid_height():
+    """Test VideoInputTrack initialization with invalid height."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2"):
+        with pytest.raises(ValueError, match="Height must be positive"):
+            VideoInputTrack(height=0)
+
+        with pytest.raises(ValueError, match="Height must be positive"):
+            VideoInputTrack(height=-100)
+
+
+def test_video_input_track_init_invalid_fps():
+    """Test VideoInputTrack initialization with invalid fps."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2"):
+        with pytest.raises(ValueError, match="FPS must be positive"):
+            VideoInputTrack(fps=0)
+
+        with pytest.raises(ValueError, match="FPS must be positive"):
+            VideoInputTrack(fps=-30)
+
+
+def test_video_input_track_open_device_success():
+    """Test VideoInputTrack._open_device successfully opens device."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = True
+        mock_capture.get.side_effect = lambda prop: {
+            mock_cv2.CAP_PROP_FRAME_WIDTH: 640,
+            mock_cv2.CAP_PROP_FRAME_HEIGHT: 480,
+            mock_cv2.CAP_PROP_FPS: 30,
+        }.get(prop, 0)
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0)
+        track._open_device()
+
+        assert track._capture is not None
+        mock_cv2.VideoCapture.assert_called_once_with(0)
+        mock_capture.set.assert_any_call(mock_cv2.CAP_PROP_FRAME_WIDTH, 640)
+        mock_capture.set.assert_any_call(mock_cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        mock_capture.set.assert_any_call(mock_cv2.CAP_PROP_FPS, 30)
+
+
+def test_video_input_track_open_device_failed():
+    """Test VideoInputTrack._open_device handles device open failure."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = False
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0)
+
+        with pytest.raises(RuntimeError, match="Failed to open video device"):
+            track._open_device()
+
+        mock_capture.release.assert_called_once()
+
+
+def test_video_input_track_open_device_exception():
+    """Test VideoInputTrack._open_device handles exceptions."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_cv2.VideoCapture.side_effect = Exception("Device error")
+
+        track = VideoInputTrack(device=0)
+
+        with pytest.raises(RuntimeError, match="Error opening video device"):
+            track._open_device()
+
+
+def test_video_input_track_start_no_callback():
+    """Test VideoInputTrack.start raises error when callback is None."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2"):
+        track = VideoInputTrack(device=0)
+
+        with pytest.raises(ValueError, match="Callback cannot be None"):
+            track.start(callback=None)  # type: ignore
+
+
+def test_video_input_track_start_already_running():
+    """Test VideoInputTrack.start raises error when already running."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = True
+        mock_capture.get.return_value = 640
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0)
+
+        def callback(frame: np.ndarray, timestamp: float):
+            pass
+
+        track.start(callback=callback)
+
+        with pytest.raises(RuntimeError, match="already running"):
+            track.start(callback=callback)
+
+        track.stop()
+
+
+def test_video_input_track_start_and_stop():
+    """Test VideoInputTrack.start and stop lifecycle."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = True
+        mock_capture.get.return_value = 640
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0)
+
+        def callback(frame: np.ndarray, timestamp: float):
+            pass
+
+        track.start(callback=callback)
+        assert track._running is True
+        assert track._capture is not None
+
+        track.stop()
+        assert track._running is False
+        mock_capture.release.assert_called_once()
+
+
+def test_video_input_track_stop_multiple_times():
+    """Test VideoInputTrack.stop can be called multiple times safely."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = True
+        mock_capture.get.return_value = 640
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0)
+
+        def callback(frame: np.ndarray, timestamp: float):
+            pass
+
+        track.start(callback=callback)
+        track.stop()
+        track.stop()  # Should not raise error
+
+
+def test_video_input_track_capture_frame():
+    """Test VideoInputTrack.capture_frame captures a single frame."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = True
+        mock_capture.get.return_value = 640
+
+        # Create mock frame
+        mock_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        mock_capture.read.return_value = (True, mock_frame)
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0, width=640, height=480)
+
+        start_time = time.time()
+        frame, timestamp = track.capture_frame()
+        end_time = time.time()
+
+        assert isinstance(frame, np.ndarray)
+        assert frame.shape == (480, 640, 3)
+        assert start_time <= timestamp <= end_time
+        mock_capture.release.assert_called_once()
+
+
+def test_video_input_track_capture_frame_failed():
+    """Test VideoInputTrack.capture_frame handles read failure."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = True
+        mock_capture.get.return_value = 640
+        mock_capture.read.return_value = (False, None)
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0)
+
+        with pytest.raises(RuntimeError, match="Failed to read frame"):
+            track.capture_frame()
+
+
+def test_video_input_track_capture_loop():
+    """Test VideoInputTrack._capture_loop delivers frames via callback."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = True
+        mock_capture.get.return_value = 640
+
+        # Create mock frames
+        mock_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        mock_capture.read.return_value = (True, mock_frame)
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0, width=640, height=480, fps=30)
+
+        # Track callback invocations
+        frames_received = []
+
+        def callback(frame: np.ndarray, timestamp: float):
+            frames_received.append((frame, timestamp))
+
+        track.start(callback=callback)
+
+        # Let it run for a short time
+        time.sleep(0.2)
+
+        track.stop()
+
+        # Should have received at least one frame
+        assert len(frames_received) > 0
+
+        # Verify frame structure
+        frame, timestamp = frames_received[0]
+        assert isinstance(frame, np.ndarray)
+        assert isinstance(timestamp, float)
+
+
+def test_video_input_track_capture_loop_read_error():
+    """Test VideoInputTrack._capture_loop handles read errors gracefully."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2") as mock_cv2:
+        mock_capture = MagicMock()
+        mock_capture.isOpened.return_value = True
+        mock_capture.get.return_value = 640
+        mock_capture.read.return_value = (False, None)
+        mock_cv2.VideoCapture.return_value = mock_capture
+
+        track = VideoInputTrack(device=0, width=640, height=480, fps=30)
+
+        def callback(frame: np.ndarray, timestamp: float):
+            pass
+
+        # Redirect print to avoid test output noise
+        with patch("builtins.print"):
+            track.start(callback=callback)
+
+            # Let it run briefly - should handle error without crashing
+            time.sleep(0.1)
+
+            track.stop()
+
+
+def test_video_input_track_stop_when_not_running():
+    """Test VideoInputTrack.stop when not running does nothing."""
+    with patch("vision_agents.plugins.localrtc.tracks.cv2"):
+        track = VideoInputTrack(device=0)
+        track.stop()  # Should not raise error
+        assert track._running is False

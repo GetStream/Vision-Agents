@@ -15,6 +15,7 @@ dependencies = [
     "sounddevice>=0.4.6",
     "numpy>=1.24.0",
     "aiortc>=1.14.0",
+    "opencv-python>=4.8.0",
 ]
 
 [project.urls]

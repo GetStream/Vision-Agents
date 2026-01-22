@@ -1,8 +1,9 @@
 """Audio and video track implementations for local RTC."""
 
 import asyncio
+import threading
 import time
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import numpy as np
 
@@ -12,6 +13,11 @@ try:
     import sounddevice as sd
 except ImportError:
     sd = None  # type: ignore
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # type: ignore
 
 
 class AudioInputTrack:
@@ -489,3 +495,249 @@ class AudioOutputTrack:
         except Exception:
             # Ignore errors during stop
             pass
+
+
+class VideoInputTrack:
+    """Video input track that captures frames from a camera.
+
+    This class captures video frames from a camera device using OpenCV (cv2).
+    It supports device selection by index or path and provides callback-based
+    frame delivery.
+
+    Attributes:
+        device: Device identifier (index or path)
+        width: Video frame width in pixels (default: 640)
+        height: Video frame height in pixels (default: 480)
+        fps: Frames per second (default: 30)
+
+    Example:
+        >>> def on_frame(frame: np.ndarray, timestamp: float):
+        ...     print(f"Received frame at {timestamp}")
+        >>> track = VideoInputTrack(device=0, width=640, height=480)
+        >>> track.start(callback=on_frame)
+        >>> # Frames will be delivered via callback
+        >>> track.stop()
+    """
+
+    def __init__(
+        self,
+        device: Union[int, str] = 0,
+        width: int = 640,
+        height: int = 480,
+        fps: int = 30,
+    ) -> None:
+        """Initialize the video input track.
+
+        Args:
+            device: Device identifier - can be:
+                - int: Device index (e.g., 0 for first camera)
+                - str: Device path (e.g., '/dev/video0')
+            width: Video frame width in pixels (default: 640)
+            height: Video frame height in pixels (default: 480)
+            fps: Frames per second (default: 30)
+
+        Raises:
+            RuntimeError: If cv2 (opencv-python) is not available
+            ValueError: If device is invalid or parameters are out of range
+        """
+        if cv2 is None:
+            raise RuntimeError(
+                "opencv-python is not available. Install it with: pip install opencv-python"
+            )
+
+        if width <= 0:
+            raise ValueError(f"Width must be positive, got {width}")
+        if height <= 0:
+            raise ValueError(f"Height must be positive, got {height}")
+        if fps <= 0:
+            raise ValueError(f"FPS must be positive, got {fps}")
+
+        self.device = device
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self._capture: Optional[cv2.VideoCapture] = None
+        self._running = False
+        self._capture_thread: Optional[threading.Thread] = None
+        self._callback: Optional[Callable[[np.ndarray, float], None]] = None
+
+    def _open_device(self) -> None:
+        """Open the video capture device.
+
+        Raises:
+            RuntimeError: If device cannot be opened
+        """
+        try:
+            # Open device
+            self._capture = cv2.VideoCapture(self.device)
+
+            if not self._capture.isOpened():
+                device_str = str(self.device)
+                raise RuntimeError(
+                    f"Failed to open video device {device_str}. "
+                    "Check that the device exists and is not in use."
+                )
+
+            # Set capture properties
+            self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            self._capture.set(cv2.CAP_PROP_FPS, self.fps)
+
+            # Verify actual settings (devices may not support requested values)
+            actual_width = int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_height = int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            actual_fps = int(self._capture.get(cv2.CAP_PROP_FPS))
+
+            # Update to actual values
+            self.width = actual_width
+            self.height = actual_height
+            # Only update fps if device reported a valid value
+            if actual_fps > 0:
+                self.fps = actual_fps
+
+        except Exception as e:
+            if self._capture is not None:
+                self._capture.release()
+                self._capture = None
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"Error opening video device {self.device}: {e}")
+
+    def _capture_loop(self) -> None:
+        """Internal capture loop that reads frames and invokes callback.
+
+        This runs continuously while the track is started, reading frames
+        from the camera and invoking the callback for each frame.
+        """
+        frame_duration = 1.0 / self.fps
+        last_frame_time = time.time()
+
+        while self._running and self._capture is not None:
+            try:
+                # Calculate time to next frame
+                current_time = time.time()
+                elapsed = current_time - last_frame_time
+                sleep_time = max(0, frame_duration - elapsed)
+
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+
+                # Read frame
+                ret, frame = self._capture.read()
+
+                if not ret:
+                    # Failed to read frame - device may be disconnected
+                    raise RuntimeError("Failed to read frame from video device")
+
+                # Invoke callback
+                timestamp = time.time()
+                last_frame_time = timestamp
+
+                if self._callback is not None:
+                    self._callback(frame, timestamp)
+
+            except Exception as e:
+                # Log error but continue capturing
+                # In production, you might want to emit an error event
+                if self._running:  # Only print if we're still supposed to be running
+                    print(f"Error in video capture loop: {e}")
+                    time.sleep(0.1)  # Brief pause before retry
+                else:
+                    # We're shutting down, exit gracefully
+                    break
+
+    def start(self, callback: Callable[[np.ndarray, float], None]) -> None:
+        """Start capturing video frames.
+
+        Opens the camera device and begins capturing frames. Each captured
+        frame is delivered to the provided callback function.
+
+        Args:
+            callback: Function to call for each frame. Signature:
+                callback(frame: np.ndarray, timestamp: float)
+                - frame: Video frame as numpy array (BGR format)
+                - timestamp: Timestamp in seconds since epoch
+
+        Raises:
+            RuntimeError: If device cannot be opened or track is already running
+            ValueError: If callback is None
+        """
+        if self._running:
+            raise RuntimeError("VideoInputTrack is already running")
+
+        if callback is None:
+            raise ValueError("Callback cannot be None")
+
+        self._callback = callback
+
+        # Open device
+        self._open_device()
+
+        # Start capture loop in background thread
+        self._running = True
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._capture_thread.start()
+
+    def stop(self) -> None:
+        """Stop capturing video frames and release the camera device.
+
+        This method stops the capture loop, releases the camera device,
+        and cleans up resources. It can be called multiple times safely.
+        """
+        if not self._running:
+            return
+
+        self._running = False
+
+        # Wait for capture thread to finish
+        if self._capture_thread is not None and self._capture_thread.is_alive():
+            self._capture_thread.join(timeout=2.0)
+            self._capture_thread = None
+
+        # Release capture device
+        if self._capture is not None:
+            try:
+                self._capture.release()
+            except Exception:
+                # Ignore errors during release
+                pass
+            self._capture = None
+
+        self._callback = None
+
+    def capture_frame(self) -> tuple[np.ndarray, float]:
+        """Capture a single frame synchronously.
+
+        This is a convenience method for capturing a single frame without
+        starting the continuous capture loop.
+
+        Returns:
+            Tuple of (frame, timestamp) where:
+                - frame: Video frame as numpy array (BGR format)
+                - timestamp: Timestamp in seconds since epoch
+
+        Raises:
+            RuntimeError: If device cannot be opened or frame capture fails
+        """
+        # Open device if not already open
+        was_closed = self._capture is None
+        if was_closed:
+            self._open_device()
+
+        try:
+            if self._capture is None:
+                raise RuntimeError("Video capture device is not open")
+
+            ret, frame = self._capture.read()
+
+            if not ret:
+                raise RuntimeError("Failed to read frame from video device")
+
+            timestamp = time.time()
+            return frame, timestamp
+
+        finally:
+            # Close device if we opened it
+            if was_closed and self._capture is not None:
+                self._capture.release()
+                self._capture = None
