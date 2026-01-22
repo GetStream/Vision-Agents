@@ -527,12 +527,12 @@ class LocalEdge(EdgeTransport):
                         callback(pcm_data)
                     except Exception as e:
                         # Log error but continue processing other callbacks
-                        print(f"Error in audio track subscriber callback: {e}")
+                        logger.error(f"Error in audio track subscriber callback: {e}")
 
             except Exception as e:
                 if self._audio_capture_running:
                     # Only log if we're still supposed to be running
-                    print(f"Error in audio capture loop: {e}")
+                    logger.error(f"Error in audio capture loop: {e}")
                     import time
                     time.sleep(0.1)  # Brief pause before retry
                 else:

@@ -12,8 +12,8 @@ from vision_agents.core.types import PcmData as CorePcmData
 
 logger = logging.getLogger(__name__)
 
-# Check if audio debugging is enabled via environment variable
-_DEBUG_AUDIO = os.environ.get("VISION_AGENTS_DEBUG_AUDIO", "").lower() in ("true", "1", "yes")
+# Check if development mode is enabled via environment variable
+_VISION_AGENT_DEV = os.environ.get("VISION_AGENT_DEV", "").lower() in ("true", "1", "yes")
 
 # Import getstream PcmData for compatibility with Gemini plugin
 try:
@@ -284,7 +284,7 @@ class AudioInputTrack:
         bytes_per_sample = self.bit_depth // 8
         required_bytes = int(duration * self.sample_rate * self.channels * bytes_per_sample)
 
-        if _DEBUG_AUDIO:
+        if _VISION_AGENT_DEV:
             logger.debug(
                 f"[AUDIO DEBUG] Capturing audio from input device - "
                 f"device_index={self._device_index}, duration={duration}s, "
@@ -322,7 +322,7 @@ class AudioInputTrack:
 
         timestamp = time.time()
 
-        if _DEBUG_AUDIO:
+        if _VISION_AGENT_DEV:
             logger.debug(
                 f"[AUDIO DEBUG] Captured audio from input device - "
                 f"data_size={len(audio_bytes)} bytes, timestamp={timestamp}"
@@ -798,7 +798,7 @@ class AudioOutputTrack:
                 channels = data.channels
                 bit_depth = data.bit_depth
 
-                if _DEBUG_AUDIO:
+                if _VISION_AGENT_DEV:
                     logger.debug(
                         f"[AUDIO DEBUG] Ingesting CorePcmData - "
                         f"sample_rate={sample_rate}Hz, channels={channels}, "
@@ -808,10 +808,11 @@ class AudioOutputTrack:
                 # GetStream PcmData stores samples as numpy array
                 # Use samples directly and convert to bytes
                 samples = data.samples
-                logger.debug(
-                    f"StreamPcmData: samples.shape={samples.shape}, "
-                    f"dtype={samples.dtype}, rate={data.sample_rate}, ch={data.channels}"
-                )
+                if _VISION_AGENT_DEV:
+                    logger.debug(
+                        f"StreamPcmData: samples.shape={samples.shape}, "
+                        f"dtype={samples.dtype}, rate={data.sample_rate}, ch={data.channels}"
+                    )
                 if samples.dtype == np.float32:
                     # Convert float32 [-1, 1] to int16
                     samples = (samples * 32767).astype(np.int16)
@@ -822,26 +823,19 @@ class AudioOutputTrack:
                 channels = data.channels
                 bit_depth = 16
 
-                if _DEBUG_AUDIO:
+                if _VISION_AGENT_DEV:
                     logger.debug(
                         f"[AUDIO DEBUG] Ingesting StreamPcmData - "
                         f"sample_rate={sample_rate}Hz, channels={channels}, "
                         f"bit_depth={bit_depth}, data_size={len(audio_data)} bytes, "
                         f"samples_shape={data.samples.shape}, dtype={data.samples.dtype}"
                     )
-
-                # Debug: save first chunk to file
-                if not hasattr(self, '_debug_file'):
-                    self._debug_file = open('/tmp/gemini_audio_raw.pcm', 'wb')
-                    logger.info("Saving raw audio to /tmp/gemini_audio_raw.pcm")
-                self._debug_file.write(audio_data)
-                self._debug_file.flush()
             else:
                 raise ValueError(f"Unsupported PcmData type: {type(data)}")
 
             # Validate and convert sample rate and/or channels if needed
             if sample_rate != self.sample_rate or channels != self.channels:
-                if _DEBUG_AUDIO:
+                if _VISION_AGENT_DEV:
                     logger.debug(
                         f"[AUDIO DEBUG] Format conversion required - "
                         f"from {sample_rate}Hz/{channels}ch to {self.sample_rate}Hz/{self.channels}ch"
@@ -873,12 +867,12 @@ class AudioOutputTrack:
                     bit_depth=bit_depth,
                 )
 
-                if _DEBUG_AUDIO:
+                if _VISION_AGENT_DEV:
                     logger.debug(
                         f"[AUDIO DEBUG] Format conversion completed - "
                         f"output data_size={len(audio_data)} bytes"
                     )
-            elif _DEBUG_AUDIO:
+            elif _VISION_AGENT_DEV:
                 logger.debug(
                     f"[AUDIO DEBUG] No format conversion needed - "
                     f"format matches output track ({self.sample_rate}Hz/{self.channels}ch)"
@@ -889,7 +883,7 @@ class AudioOutputTrack:
             # should be created from a consistent thread context
             self._ensure_stream_started()
 
-            if _DEBUG_AUDIO:
+            if _VISION_AGENT_DEV:
                 logger.debug(
                     f"[AUDIO DEBUG] Writing to output device - "
                     f"device_index={self._device_index}, sample_rate={self.sample_rate}Hz, "
@@ -904,7 +898,7 @@ class AudioOutputTrack:
                 if len(self._buffer) > self._buffer_size_bytes:
                     excess = len(self._buffer) - self._buffer_size_bytes + len(audio_data)
                     if excess > 0:
-                        if _DEBUG_AUDIO:
+                        if _VISION_AGENT_DEV:
                             logger.warning(
                                 f"[AUDIO DEBUG] Buffer overflow - removing {excess} bytes "
                                 f"(buffer_size={len(self._buffer)}, limit={self._buffer_size_bytes})"
@@ -912,7 +906,7 @@ class AudioOutputTrack:
                         del self._buffer[:excess]
                 self._buffer.extend(audio_data)
 
-                if _DEBUG_AUDIO:
+                if _VISION_AGENT_DEV:
                     logger.debug(
                         f"[AUDIO DEBUG] Buffer updated - "
                         f"buffer_size_after={len(self._buffer)} bytes"
@@ -937,7 +931,7 @@ class AudioOutputTrack:
                 f"  - Data type: {type(data).__name__}"
             )
 
-            if _DEBUG_AUDIO:
+            if _VISION_AGENT_DEV:
                 logger.error(f"[AUDIO DEBUG] {error_msg}")
 
             raise RuntimeError(error_msg)
@@ -986,10 +980,6 @@ class AudioOutputTrack:
             # Clear the buffer
             with self._buffer_lock:
                 self._buffer.clear()
-
-            # Close debug file if open
-            if hasattr(self, '_debug_file') and self._debug_file:
-                self._debug_file.close()
         except Exception:
             # Ignore errors during stop
             pass
@@ -1137,8 +1127,8 @@ class VideoInputTrack:
             except Exception as e:
                 # Log error but continue capturing
                 # In production, you might want to emit an error event
-                if self._running:  # Only print if we're still supposed to be running
-                    print(f"Error in video capture loop: {e}")
+                if self._running:  # Only log if we're still supposed to be running
+                    logger.error(f"Error in video capture loop: {e}")
                     time.sleep(0.1)  # Brief pause before retry
                 else:
                     # We're shutting down, exit gracefully
@@ -1485,7 +1475,7 @@ class GStreamerVideoInputTrack:
 
             except Exception as e:
                 if self._running:
-                    print(f"Error in GStreamer video capture loop: {e}")
+                    logger.error(f"Error in GStreamer video capture loop: {e}")
                     time.sleep(0.1)
                 else:
                     break
