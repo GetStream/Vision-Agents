@@ -18,9 +18,7 @@ from typing import (
 )
 from uuid import uuid4
 
-import getstream.models
 from aiortc import VideoStreamTrack
-from getstream.video.rtc import Call
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.context import Token
@@ -35,6 +33,7 @@ from ..edge.events import (
     TrackRemovedEvent,
 )
 from ..edge.types import OutputAudioTrack, Participant, User
+from ..protocols import Room
 from ..types import PcmData, TrackType
 from ..events.manager import EventManager
 from ..instructions import Instructions
@@ -151,7 +150,7 @@ class Agent:
 
         self._id = str(uuid4())
         self._pending_turn: Optional[LLMTurn] = None
-        self.call: Optional[Call] = None
+        self.call: Optional[Room] = None
 
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
@@ -175,7 +174,6 @@ class Agent:
         self.logger = _AgentLoggerAdapter(logger, {"agent_id": self.agent_user.id})
 
         self.events = EventManager()
-        self.events.register_events_from_module(getstream.models, "call.")
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(llm_events)
@@ -518,7 +516,7 @@ class Agent:
 
     @asynccontextmanager
     async def join(
-        self, call: Call, participant_wait_timeout: Optional[float] = 10.0
+        self, call: Room, participant_wait_timeout: Optional[float] = 10.0
     ) -> AsyncIterator[None]:
         """
         Join the given call.
@@ -674,7 +672,7 @@ class Agent:
         with self.tracer.start_as_current_span(name, context=self._root_ctx) as span:
             yield span
 
-    def _start_tracing(self, call: Call) -> None:
+    def _start_tracing(self, call: Room) -> None:
         self._root_span = self.tracer.start_span("join").__enter__()
         self._root_span.set_attribute("call_id", call.id)
         if self.agent_user.id:
@@ -823,7 +821,7 @@ class Agent:
 
         return None
 
-    async def create_call(self, call_type: str, call_id: str) -> Call:
+    async def create_call(self, call_type: str, call_id: str) -> Room:
         """Shortcut for creating a call/room etc."""
         call = self.edge.client.video.call(call_type, call_id)
         await call.get_or_create(data={"created_by_id": self.agent_user.id})
