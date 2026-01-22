@@ -15,7 +15,12 @@ def test_local_room_creation():
     """Test LocalRoom creation."""
     room = LocalRoom(room_id="test-room")
     assert room.id == "test-room"
-    assert room.type == "local"
+    assert room.type == "default"
+
+    # Test with custom room_type
+    room_custom = LocalRoom(room_id="test-room-2", room_type="local")
+    assert room_custom.id == "test-room-2"
+    assert room_custom.type == "local"
 
 
 @pytest.mark.asyncio

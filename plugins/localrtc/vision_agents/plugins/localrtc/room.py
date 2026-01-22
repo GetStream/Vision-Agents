@@ -1,17 +1,24 @@
 """Local RTC room implementation."""
 
+from typing import Any, Dict
+
+from vision_agents.core.types import TrackType
+
 
 class LocalRoom:
     """Local RTC room for managing local audio/video streams."""
 
-    def __init__(self, room_id: str) -> None:
+    def __init__(self, room_id: str, room_type: str = "default") -> None:
         """Initialize the local room.
 
         Args:
             room_id: Unique identifier for this room instance.
+            room_type: Type or category of the room (default: 'default').
         """
         self._id = room_id
-        self._type = "local"
+        self._type = room_type
+        self._active = True
+        self._tracks: Dict[TrackType, Any] = {}
 
     @property
     def id(self) -> str:
@@ -37,4 +44,5 @@ class LocalRoom:
         This method gracefully disconnects from the room, cleaning up
         any resources such as media tracks and event listeners.
         """
-        pass
+        self._active = False
+        self._tracks.clear()
