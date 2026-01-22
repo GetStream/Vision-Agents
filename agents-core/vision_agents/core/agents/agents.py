@@ -21,7 +21,6 @@ from uuid import uuid4
 import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.context import Token
@@ -35,7 +34,8 @@ from ..edge.events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import OutputAudioTrack, Participant, PcmData, User
+from ..edge.types import OutputAudioTrack, Participant, User
+from ..types import PcmData, TrackType
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -1006,17 +1006,17 @@ class Agent:
                 )
 
     async def _on_track_removed(
-        self, track_id: str, track_type: int, participant: Participant
+        self, track_id: str, track_type: TrackType, participant: Participant
     ):
         # We only process video tracks (camera video or screenshare)
         if track_type not in (
-            TrackType.TRACK_TYPE_VIDEO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE,
+            TrackType.VIDEO,
+            TrackType.SCREENSHARE,
         ):
             return
         track_type_name = (
             "SCREEN_SHARE"
-            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            if track_type == TrackType.SCREENSHARE
             else "VIDEO"
         )
         self.logger.info(
@@ -1068,18 +1068,18 @@ class Agent:
             )
 
     async def _on_track_added(
-        self, track_id: str, track_type: int, participant: Participant
+        self, track_id: str, track_type: TrackType, participant: Participant
     ):
         # We only process video tracks (camera video or screenshare)
         if track_type not in (
-            TrackType.TRACK_TYPE_VIDEO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE,
+            TrackType.VIDEO,
+            TrackType.SCREENSHARE,
         ):
             return
 
         track_type_name = (
             "SCREEN_SHARE"
-            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
+            if track_type == TrackType.SCREENSHARE
             else "VIDEO"
         )
         self.logger.info(
@@ -1111,7 +1111,7 @@ class Agent:
             processor="",
             track=track,
             participant=participant,
-            priority=1 if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE else 0,
+            priority=1 if track_type == TrackType.SCREENSHARE else 0,
             forwarder=forwarder,
         )
 
@@ -1374,7 +1374,7 @@ class Agent:
             )
             self._active_video_tracks[self._video_track.id] = TrackInfo(
                 id=self._video_track.id,
-                type=TrackType.TRACK_TYPE_VIDEO,
+                type=TrackType.VIDEO,
                 processor=video_publisher.name,
                 track=self._video_track,
                 participant=None,

@@ -8,6 +8,7 @@ import aiortc.mediastreams
 
 from ..edge.types import Participant
 from ..llm.events import LLMResponseCompletedEvent
+from ..types import TrackType
 from ..utils.video_forwarder import VideoForwarder
 
 
@@ -36,7 +37,7 @@ def default_agent_options():
 @dataclass
 class TrackInfo:
     id: str
-    type: int
+    type: TrackType
     processor: str
     priority: int  # higher goes first
     participant: Optional[Participant]

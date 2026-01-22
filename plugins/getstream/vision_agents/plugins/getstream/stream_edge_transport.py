@@ -17,14 +17,15 @@ from getstream.video.rtc import ConnectionManager, audio_track
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
     Participant,
-    TrackType,
+    TrackType as StreamTrackType,
 )
-from getstream.video.rtc.track_util import PcmData
+from getstream.video.rtc.track_util import PcmData as StreamPcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.agents.agents import tracer
 from vision_agents.core.edge import EdgeTransport, events, sfu_events
 from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
 from vision_agents.core.events.manager import EventManager
+from vision_agents.core.types import PcmData, TrackType
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
@@ -115,7 +116,7 @@ class StreamEdge(EdgeTransport):
         self.channel_type = "messaging"
         self.agent_user_id: str | None = None
         # Track mapping: (user_id, session_id, track_type_int) -> {"track_id": str, "published": bool}
-        # track_type_int is from TrackType enum (e.g., TrackType.TRACK_TYPE_AUDIO)
+        # track_type_int is from StreamTrackType enum (e.g., StreamTrackType.TRACK_TYPE_AUDIO)
         self._track_map: dict = {}
         # Temporary storage for tracks before SFU confirms their type
         # track_id -> (user_id, session_id, webrtc_type_string)
@@ -138,18 +139,43 @@ class StreamEdge(EdgeTransport):
         """Get the expected WebRTC kind (audio/video) for a SFU track type."""
         # Map SFU track types to WebRTC kinds
         if track_type_int in (
-            TrackType.TRACK_TYPE_AUDIO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
+            StreamTrackType.TRACK_TYPE_AUDIO,
+            StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
         ):
             return "audio"
         elif track_type_int in (
-            TrackType.TRACK_TYPE_VIDEO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE,
+            StreamTrackType.TRACK_TYPE_VIDEO,
+            StreamTrackType.TRACK_TYPE_SCREEN_SHARE,
         ):
             return "video"
         else:
             # Default to video for unknown types
             return "video"
+
+    def _convert_track_type(self, stream_track_type_int: int) -> TrackType:
+        """Convert GetStream TrackType integer to core TrackType enum."""
+        if stream_track_type_int in (
+            StreamTrackType.TRACK_TYPE_AUDIO,
+            StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
+        ):
+            return TrackType.AUDIO
+        elif stream_track_type_int == StreamTrackType.TRACK_TYPE_SCREEN_SHARE:
+            return TrackType.SCREENSHARE
+        elif stream_track_type_int == StreamTrackType.TRACK_TYPE_VIDEO:
+            return TrackType.VIDEO
+        else:
+            # Default to video for unknown types
+            return TrackType.VIDEO
+
+    def _convert_pcm_data(self, stream_pcm: StreamPcmData) -> PcmData:
+        """Convert GetStream PcmData to core PcmData."""
+        return PcmData(
+            data=stream_pcm.data,
+            sample_rate=stream_pcm.sample_rate,
+            channels=stream_pcm.channels,
+            bit_depth=stream_pcm.bit_depth,
+            timestamp=getattr(stream_pcm, "timestamp", None),
+        )
 
     async def _on_track_published(self, event: sfu_events.TrackPublishedEvent):
         """Handle track published events from SFU - spawn TrackAddedEvent with correct type."""
@@ -183,7 +209,7 @@ class StreamEdge(EdgeTransport):
                 events.TrackAddedEvent(
                     plugin_name="getstream",
                     track_id=track_id,
-                    track_type=track_type_int,
+                    track_type=self._convert_track_type(track_type_int),
                     user=event.participant,
                 )
             )
@@ -228,7 +254,7 @@ class StreamEdge(EdgeTransport):
                     events.TrackAddedEvent(
                         plugin_name="getstream",
                         track_id=track_id,
-                        track_type=track_type_int,
+                        track_type=self._convert_track_type(track_type_int),
                         user=event.participant,
                         participant=event.participant,
                     )
@@ -270,7 +296,7 @@ class StreamEdge(EdgeTransport):
             ) or []
             event_desc = "Participant left"
 
-        track_names = [TrackType.Name(t) for t in tracks_to_remove]
+        track_names = [StreamTrackType.Name(t) for t in tracks_to_remove]
         logger.info(f"{event_desc}: {user_id}, tracks: {track_names}")
 
         # Mark each track as unpublished and send TrackRemovedEvent
@@ -284,7 +310,7 @@ class StreamEdge(EdgeTransport):
                     events.TrackRemovedEvent(
                         plugin_name="getstream",
                         track_id=track_id,
-                        track_type=track_type_int,
+                        track_type=self._convert_track_type(track_type_int),
                         user=participant,
                         # TODO: user=participant?
                         participant=participant,
@@ -355,11 +381,11 @@ class StreamEdge(EdgeTransport):
         self.events.silent(events.AudioReceivedEvent)
 
         @connection.on("audio")
-        async def on_audio_received(pcm: PcmData):
+        async def on_audio_received(pcm: StreamPcmData):
             self.events.send(
                 events.AudioReceivedEvent(
                     plugin_name="getstream",
-                    pcm_data=pcm,
+                    pcm_data=self._convert_pcm_data(pcm),
                     participant=pcm.participant,
                 )
             )
@@ -413,10 +439,10 @@ class StreamEdge(EdgeTransport):
     def _get_subscription_config(self):
         return TrackSubscriptionConfig(
             track_types=[
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_AUDIO,
-                TrackType.TRACK_TYPE_SCREEN_SHARE,
-                TrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
+                StreamTrackType.TRACK_TYPE_VIDEO,
+                StreamTrackType.TRACK_TYPE_AUDIO,
+                StreamTrackType.TRACK_TYPE_SCREEN_SHARE,
+                StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
             ]
         )
 

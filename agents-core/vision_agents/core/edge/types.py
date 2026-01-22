@@ -6,9 +6,8 @@ from typing import (
     runtime_checkable,
 )
 
-
-from getstream.video.rtc import PcmData
 from pyee.asyncio import AsyncIOEventEmitter
+from vision_agents.core.types import PcmData
 
 
 @dataclass
