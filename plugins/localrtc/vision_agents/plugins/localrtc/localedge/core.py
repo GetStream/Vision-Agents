@@ -1,41 +1,30 @@
-"""Local RTC Edge Transport implementation."""
+"""Local RTC Edge Transport core implementation."""
 
 import logging
-import threading
 import warnings
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import aiortc
-import numpy as np
-from getstream.video.rtc.track_util import PcmData as StreamPcmData, AudioFormat
 from vision_agents.core.edge import events
 from vision_agents.core.edge.edge_transport import EdgeTransport
-from vision_agents.core.edge.types import OutputAudioTrack, Participant, User
+from vision_agents.core.edge.types import OutputAudioTrack, User
 from vision_agents.core.events import EventManager
 from vision_agents.core.protocols import Room
-from vision_agents.core.types import AudioCapabilities, PcmData, TrackType
+from vision_agents.core.types import PcmData, TrackType
+
+from .audio_handler import AudioHandler
+from .format_negotiation import AudioFormatNegotiator
+from .video_handler import VideoHandler
 
 logger = logging.getLogger(__name__)
-
-# Constant user ID for local audio (microphone input from human user)
-LOCAL_USER_ID = "local-user"
-
-from .devices import DeviceInfo, list_audio_inputs, list_audio_outputs, list_video_inputs
-from .room import LocalRoom
-from .tracks import (
-    AudioInputTrack,
-    AudioOutputTrack,
-    VideoInputTrack,
-    GStreamerAudioInputTrack,
-    GStreamerAudioOutputTrack,
-    GStreamerVideoInputTrack,
-)
 
 # Try to import GStreamer
 try:
     import gi
-    gi.require_version('Gst', '1.0')
+
+    gi.require_version("Gst", "1.0")
     from gi.repository import Gst
+
     Gst.init(None)
     GST_AVAILABLE = True
 except (ImportError, ValueError):
@@ -92,7 +81,7 @@ class LocalEdge(EdgeTransport):
 
         Example:
             >>> # Using default device access
-            >>> edge = Edge(audio_device="default", video_device=0)
+            >>> edge = LocalEdge(audio_device="default", video_device=0)
             >>>
             >>> # Using custom GStreamer pipelines
             >>> pipeline = {
@@ -100,7 +89,7 @@ class LocalEdge(EdgeTransport):
             ...     "video_source": "v4l2src device=/dev/video0 ! videoconvert",
             ...     "audio_sink": "alsasink device=hw:0"
             ... }
-            >>> edge = Edge(custom_pipeline=pipeline)
+            >>> edge = LocalEdge(custom_pipeline=pipeline)
         """
         super().__init__()
 
@@ -125,27 +114,42 @@ class LocalEdge(EdgeTransport):
         self.channels = channels
         self.custom_pipeline = custom_pipeline
 
+        # Initialize handlers
+        self._audio_handler = AudioHandler(
+            audio_device=audio_device,
+            speaker_device=speaker_device,
+            sample_rate=sample_rate,
+            channels=channels,
+            custom_pipeline=custom_pipeline,
+            events=self.events,
+        )
+
+        self._video_handler = VideoHandler(
+            video_device=video_device,
+            custom_pipeline=custom_pipeline,
+        )
+
+        self._format_negotiator = AudioFormatNegotiator(
+            input_sample_rate=sample_rate,
+            input_channels=channels,
+        )
+
         # Track state
         self._user: Optional[User] = None
-        self._audio_input_track: Optional[Union[AudioInputTrack, GStreamerAudioInputTrack]] = None
-        self._audio_output_track: Optional[Union[AudioOutputTrack, GStreamerAudioOutputTrack]] = None
-        self._video_input_track: Optional[Union[VideoInputTrack, GStreamerVideoInputTrack]] = None
-        self._rooms: Dict[str, LocalRoom] = {}
-        self._track_subscribers: Dict[str, List[Callable[[PcmData], None]]] = {}
-        self._audio_capture_thread: Optional[threading.Thread] = None
-        self._audio_capture_running: bool = False
+        self._rooms: Dict[str, Any] = {}
 
-        # Audio format negotiation
-        self._negotiated_output_sample_rate: Optional[int] = None
-        self._negotiated_output_channels: Optional[int] = None
+    @property
+    def _negotiated_output_sample_rate(self) -> Optional[int]:
+        """Get negotiated output sample rate (backward compatibility)."""
+        return self._format_negotiator.output_sample_rate
 
-        # GStreamer pipeline state
-        self._gst_audio_pipeline: Optional[Any] = None
-        self._gst_video_pipeline: Optional[Any] = None
-        self._gst_audio_sink_pipeline: Optional[Any] = None
+    @property
+    def _negotiated_output_channels(self) -> Optional[int]:
+        """Get negotiated output channels (backward compatibility)."""
+        return self._format_negotiator.output_channels
 
     @staticmethod
-    def list_devices() -> Dict[str, List[DeviceInfo]]:
+    def list_devices() -> Dict[str, List[Dict[str, Any]]]:
         """List all available audio and video devices.
 
         This static method discovers and returns all available audio input,
@@ -160,7 +164,7 @@ class LocalEdge(EdgeTransport):
             Each device is a dict with 'name' and 'index' keys.
 
         Example:
-            >>> devices = Edge.list_devices()
+            >>> devices = LocalEdge.list_devices()
             >>> print("Audio inputs:")
             >>> for device in devices["audio_inputs"]:
             ...     print(f"  {device['index']}: {device['name']}")
@@ -175,6 +179,8 @@ class LocalEdge(EdgeTransport):
             Video device enumeration is not yet fully implemented and may
             return an empty list on some platforms.
         """
+        from ..devices import list_audio_inputs, list_audio_outputs, list_video_inputs
+
         return {
             "audio_inputs": list_audio_inputs(),
             "audio_outputs": list_audio_outputs(),
@@ -190,7 +196,7 @@ class LocalEdge(EdgeTransport):
         self._user = user
 
     def create_audio_track(
-        self, framerate: int = 48000, stereo: bool = True, **kwargs
+        self, framerate: int = 48000, stereo: bool = True, **kwargs: Any
     ) -> OutputAudioTrack:
         """Create an output audio track.
 
@@ -209,60 +215,24 @@ class LocalEdge(EdgeTransport):
         Returns:
             An OutputAudioTrack instance for audio streaming.
         """
-        if self._audio_output_track is None:
-            # Use negotiated format if available, otherwise default to 24000Hz mono
-            # for backward compatibility (Gemini's native format)
-            local_sample_rate = self._negotiated_output_sample_rate or 24000
-            local_channels = self._negotiated_output_channels or 1
+        # Get negotiated format or use defaults
+        output_sample_rate, output_channels = self._format_negotiator.get_output_format()
 
-            logger.info(
-                f"[LOCALRTC] Creating AudioOutputTrack: "
-                f"sample_rate={local_sample_rate}, channels={local_channels}"
-            )
-
-            if self.custom_pipeline and "audio_sink" in self.custom_pipeline:
-                # Use GStreamer pipeline
-                self._audio_output_track = GStreamerAudioOutputTrack(
-                    pipeline=self.custom_pipeline["audio_sink"],
-                    sample_rate=local_sample_rate,
-                    channels=local_channels,
-                )
-            else:
-                # Use default device access
-                self._audio_output_track = AudioOutputTrack(
-                    device=self.speaker_device,
-                    sample_rate=local_sample_rate,
-                    channels=local_channels,
-                )
-        return self._audio_output_track
+        return self._audio_handler.create_audio_output_track(
+            output_sample_rate=output_sample_rate,
+            output_channels=output_channels,
+        )
 
     async def close(self) -> None:
         """Close the edge transport and clean up resources."""
-        # Stop audio capture streaming
-        self._stop_audio_capture_stream()
-
-        # Stop and cleanup audio output track
-        if self._audio_output_track is not None:
-            self._audio_output_track.stop()
-            self._audio_output_track = None
-
-        # Stop and cleanup video input track
-        if self._video_input_track is not None:
-            self._video_input_track.stop()
-            self._video_input_track = None
-
-        # Stop and cleanup audio input track
-        if self._audio_input_track is not None:
-            self._audio_input_track.stop()
-            self._audio_input_track = None
+        # Stop all audio/video tracks
+        self._audio_handler.stop_all_tracks()
+        self._video_handler.stop_all_tracks()
 
         # Leave all rooms
         for room in list(self._rooms.values()):
             await room.leave()
         self._rooms.clear()
-
-        # Clear subscribers
-        self._track_subscribers.clear()
 
         # Clear user
         self._user = None
@@ -290,67 +260,13 @@ class LocalEdge(EdgeTransport):
         Returns:
             A LocalRoom instance representing the created call
         """
+        from ..room import LocalRoom
+
         # Create or get existing room
         if call_id not in self._rooms:
             self._rooms[call_id] = LocalRoom(room_id=call_id, room_type=call_type)
 
         return self._rooms[call_id]
-
-    def _negotiate_audio_format(self, agent: Any) -> None:
-        """Negotiate audio format with LLM provider.
-
-        Queries the LLM provider's audio requirements and configures output
-        audio format accordingly. If the provider doesn't specify requirements,
-        uses default format (24kHz mono for Gemini compatibility).
-
-        Args:
-            agent: Agent instance containing the LLM to query for requirements
-        """
-        # Try to get audio requirements from LLM provider
-        audio_requirements: Optional[AudioCapabilities] = None
-        if hasattr(agent, "llm") and hasattr(agent.llm, "get_audio_requirements"):
-            audio_requirements = agent.llm.get_audio_requirements()
-
-        if audio_requirements is not None:
-            # Negotiate output format based on provider requirements
-            self._negotiated_output_sample_rate = audio_requirements.sample_rate
-            self._negotiated_output_channels = audio_requirements.channels
-
-            logger.info(
-                f"[AUDIO NEGOTIATION] Provider requires: "
-                f"{audio_requirements.sample_rate}Hz, "
-                f"{audio_requirements.channels}ch, "
-                f"{audio_requirements.bit_depth}-bit {audio_requirements.encoding}"
-            )
-            logger.info(
-                f"[AUDIO NEGOTIATION] Supported formats: "
-                f"sample_rates={audio_requirements.supported_sample_rates}, "
-                f"channels={audio_requirements.supported_channels}"
-            )
-
-            # Check if our input format is supported
-            if not audio_requirements.supports_format(self.sample_rate, self.channels):
-                closest_rate = audio_requirements.get_closest_sample_rate(self.sample_rate)
-                closest_channels = audio_requirements.get_closest_channels(self.channels)
-                logger.warning(
-                    f"[AUDIO FORMAT MISMATCH] Input format {self.sample_rate}Hz, "
-                    f"{self.channels}ch is not directly supported by provider. "
-                    f"Will use closest supported format: {closest_rate}Hz, {closest_channels}ch"
-                )
-        else:
-            # Default to 24kHz mono for backward compatibility (Gemini default)
-            self._negotiated_output_sample_rate = 24000
-            self._negotiated_output_channels = 1
-            logger.info(
-                "[AUDIO NEGOTIATION] No provider requirements found, "
-                "using default output format: 24000Hz, 1ch"
-            )
-
-        logger.info(
-            f"[AUDIO NEGOTIATION] Configured output format: "
-            f"{self._negotiated_output_sample_rate}Hz, "
-            f"{self._negotiated_output_channels}ch"
-        )
 
     async def join(self, *args: Any, **kwargs: Any) -> Room:
         """Join a room and start device capture.
@@ -382,24 +298,29 @@ class LocalEdge(EdgeTransport):
             the agent instance to enable automatic audio format negotiation.
 
         Example:
-            >>> edge = localrtc.Edge(audio_device="default")
+            >>> edge = LocalEdge(audio_device="default")
             >>> agent = Agent(edge=edge, llm=gemini.Realtime())
             >>> call = await agent.create_call("default", "my-call")
             >>> room = await edge.join(agent, room_id="my-call")
         """
+        from ..room import LocalRoom
+
         # Extract agent from args if provided (new Agent API passes agent as first arg)
         agent = args[0] if args and hasattr(args[0], "llm") else None
 
         # Negotiate audio format with LLM provider if agent is available
         if agent is not None:
-            self._negotiate_audio_format(agent)
+            self._format_negotiator.negotiate_format(agent)
+            logger.info("[AUDIO NEGOTIATION] Format negotiated with agent")
         else:
             # Set default values when no agent is provided
-            self._negotiated_output_sample_rate = 24000
-            self._negotiated_output_channels = 1
+            # Create a mock agent without LLM to trigger default negotiation
+            class _MockAgent:
+                pass
+
+            self._format_negotiator.negotiate_format(_MockAgent())
             logger.info(
-                "[AUDIO NEGOTIATION] No agent provided, "
-                "using default output format: 24000Hz, 1ch"
+                "[AUDIO NEGOTIATION] No agent provided, using default output format"
             )
 
         room_id = kwargs.get("room_id", "local-room")
@@ -412,19 +333,10 @@ class LocalEdge(EdgeTransport):
         # Create and start audio input track for microphone capture
         # This is necessary for LocalRTC because there's no external RTC infrastructure
         # pushing audio to us - we need to capture it locally
-        if self._audio_input_track is None and self.audio_device is not None:
-            logger.info(f"[LOCALRTC] Creating AudioInputTrack: device={self.audio_device}, "
-                       f"sample_rate={self.sample_rate}, channels={self.channels}")
-            self._audio_input_track = AudioInputTrack(
-                device=self.audio_device,
-                sample_rate=self.sample_rate,
-                channels=self.channels,
-            )
-            # Start the persistent audio input stream
-            self._audio_input_track.start()
-            # Start the capture loop to emit AudioReceivedEvents
-            self._start_audio_capture_stream()
-            logger.info("[LOCALRTC] Audio capture started")
+        self._audio_handler.create_audio_input_track()
+        # Start the capture loop to emit AudioReceivedEvents
+        self._audio_handler.start_audio_capture_stream()
+        logger.info("[LOCALRTC] Audio capture started")
 
         return self._rooms[room_id]
 
@@ -455,12 +367,15 @@ class LocalEdge(EdgeTransport):
             code to use the new convention with explicit room parameter.
 
         Example:
-            >>> edge = localrtc.Edge()
+            >>> edge = LocalEdge()
             >>> room = await edge.join(agent, room_id="my-call")
             >>> audio = AudioInputTrack(device="default")
             >>> video = VideoInputTrack(device=0)
             >>> await edge.publish_tracks(room, audio_track=audio, video_track=video)
         """
+        from ..room import LocalRoom
+        from ..tracks import AudioInputTrack, VideoInputTrack
+
         # Detect legacy calling convention and issue deprecation warning
         is_legacy = False
         if audio_track is None and video_track is None:
@@ -503,10 +418,9 @@ class LocalEdge(EdgeTransport):
         # Store references to the tracks
         if actual_audio is not None:
             if isinstance(actual_audio, AudioInputTrack):
-                self._audio_input_track = actual_audio
                 # Start the audio capture loop to emit AudioReceivedEvents
                 # This is necessary because the Agent subscribes to events, not callbacks
-                self._start_audio_capture_stream()
+                self._audio_handler.start_audio_capture_stream()
                 logger.info("[LOCALRTC] Audio capture started via publish_tracks")
             # Store in room if provided
             if isinstance(actual_room, LocalRoom):
@@ -514,7 +428,7 @@ class LocalEdge(EdgeTransport):
 
         if actual_video is not None:
             if isinstance(actual_video, VideoInputTrack):
-                self._video_input_track = actual_video
+                pass  # Video track reference is stored in video handler
             # Store in room if provided
             if isinstance(actual_room, LocalRoom):
                 actual_room._tracks[TrackType.VIDEO] = actual_video
@@ -552,19 +466,12 @@ class LocalEdge(EdgeTransport):
             A MediaStreamTrack if available (None for local edge as we don't use
             aiortc MediaStreamTracks).
         """
-        # Initialize subscriber list for this track_id if not exists
-        if track_id not in self._track_subscribers:
-            self._track_subscribers[track_id] = []
-
-        # Add callback to subscribers list
-        self._track_subscribers[track_id].append(callback)
-
         # Determine track type from track_id
         track_type = self._get_track_type_from_id(track_id)
 
-        # Start streaming for audio tracks
-        if track_type == TrackType.AUDIO and not self._audio_capture_running:
-            self._start_audio_capture_stream()
+        # Delegate to audio handler for audio tracks
+        if track_type == TrackType.AUDIO:
+            self._audio_handler.add_track_subscriber(track_id, callback)
 
         # For video tracks, they use their own callback mechanism via start()
         # Video tracks are not managed through add_track_subscriber callbacks
@@ -581,6 +488,8 @@ class LocalEdge(EdgeTransport):
         Returns:
             TrackType if determinable, None otherwise
         """
+        from ..room import LocalRoom
+
         # Check if track_id matches TrackType enum values
         track_id_lower = track_id.lower()
         if track_id_lower == "audio" or "audio" in track_id_lower:
@@ -598,88 +507,3 @@ class LocalEdge(EdgeTransport):
                         return track_type
 
         return None
-
-    def _start_audio_capture_stream(self) -> None:
-        """Start continuous audio capture stream for subscribed callbacks."""
-        if self._audio_capture_running or self._audio_input_track is None:
-            return
-
-        self._audio_capture_running = True
-        self._audio_capture_thread = threading.Thread(
-            target=self._audio_capture_loop, daemon=True
-        )
-        self._audio_capture_thread.start()
-
-    def _stop_audio_capture_stream(self) -> None:
-        """Stop continuous audio capture stream."""
-        if not self._audio_capture_running:
-            return
-
-        self._audio_capture_running = False
-
-        if self._audio_capture_thread is not None and self._audio_capture_thread.is_alive():
-            self._audio_capture_thread.join(timeout=2.0)
-            self._audio_capture_thread = None
-
-    def _audio_capture_loop(self) -> None:
-        """Continuous audio capture loop that invokes subscriber callbacks.
-
-        This runs in a background thread and continuously captures audio chunks,
-        then invokes all registered callbacks with PcmData.
-        """
-        if self._audio_input_track is None:
-            return
-
-        # Capture audio in 100ms chunks
-        chunk_duration = 0.1  # seconds
-
-        # Create a participant for local audio (represents the human user)
-        local_participant = Participant(original=None, user_id=LOCAL_USER_ID)
-
-        while self._audio_capture_running:
-            try:
-                # Capture audio chunk (returns core PcmData with bytes)
-                pcm_data = self._audio_input_track.capture(duration=chunk_duration)
-
-                # Convert core PcmData (bytes) to StreamPcmData (numpy) for AudioQueue compatibility
-                # The AudioQueue and Agent pipeline expect GetStream's PcmData format
-                audio_samples = np.frombuffer(pcm_data.data, dtype=np.int16)
-                stream_pcm = StreamPcmData(
-                    sample_rate=pcm_data.sample_rate,
-                    format=AudioFormat.S16,
-                    samples=audio_samples,
-                    channels=pcm_data.channels,
-                    participant=local_participant,
-                )
-
-                # Emit AudioReceivedEvent for Agent subscription
-                # This is the primary mechanism for delivering audio to the Agent
-                logger.debug(f"[LOCALRTC] Captured {len(pcm_data.data)} bytes, emitting AudioReceivedEvent")
-                self.events.send(
-                    events.AudioReceivedEvent(
-                        plugin_name="localrtc",
-                        pcm_data=stream_pcm,
-                        participant=local_participant,
-                    )
-                )
-
-                # Invoke all audio subscribers (legacy callback mechanism)
-                audio_subscribers = self._track_subscribers.get("audio", [])
-                audio_subscribers.extend(self._track_subscribers.get(str(TrackType.AUDIO), []))
-
-                for callback in audio_subscribers:
-                    try:
-                        callback(pcm_data)
-                    except Exception as e:
-                        # Log error but continue processing other callbacks
-                        logger.error(f"Error in audio track subscriber callback: {e}")
-
-            except Exception as e:
-                if self._audio_capture_running:
-                    # Only log if we're still supposed to be running
-                    logger.error(f"Error in audio capture loop: {e}")
-                    import time
-                    time.sleep(0.1)  # Brief pause before retry
-                else:
-                    # Shutting down, exit gracefully
-                    break
