@@ -147,6 +147,8 @@ class Runner:
                     call_id, call_type, video_track_override_path=video_track_override
                 )
                 await session.wait()
+            except asyncio.CancelledError:
+                logger.info("The session is cancelled, shutting down gracefully...")
             except KeyboardInterrupt:
                 logger.info("🛑 Received interrupt signal, shutting down gracefully...")
             except Exception as e:

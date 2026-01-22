@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import Response
 from vision_agents.core import AgentLauncher
 from vision_agents.core.agents.agent_launcher import AgentSession
+from vision_agents.core.agents.exceptions import SessionLimitExceeded
 
 from .dependencies import (
     can_close_session,
@@ -50,6 +51,22 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Join call with an agent",
     description="Start a new agent and have it join the specified call.",
+    responses={
+        201: {
+            "description": "Session created successfully",
+            "model": StartSessionResponse,
+        },
+        429: {
+            "description": "Session limits exceeded",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Reached maximum concurrent sessions of X",
+                    }
+                }
+            },
+        },
+    },
     dependencies=[Depends(can_start_session)],
 )
 async def start_session(
@@ -63,6 +80,8 @@ async def start_session(
         session = await launcher.start_session(
             call_id=request.call_id, call_type=request.call_type, created_by=user
         )
+    except SessionLimitExceeded as e:
+        raise HTTPException(status_code=429, detail=str(e)) from e
     except Exception as e:
         logger.exception("Failed to start agent")
         raise HTTPException(
