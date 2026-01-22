@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import time
+from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional, Union
 
 import numpy as np
@@ -1231,7 +1232,106 @@ class VideoInputTrack:
                 self._capture = None
 
 
-class GStreamerAudioInputTrack:
+class BaseGStreamerTrack(ABC):
+    """Base class for GStreamer-based track implementations.
+
+    This abstract base class provides common pipeline initialization, teardown,
+    threading, buffer handling, and error handling patterns for all GStreamer tracks.
+
+    Attributes:
+        pipeline_str: GStreamer pipeline string
+        _pipeline: GStreamer pipeline instance
+        _running: Flag indicating if the track is running
+        _pipeline_thread: Background thread for pipeline operations
+    """
+
+    def __init__(self, pipeline: str) -> None:
+        """Initialize the base GStreamer track.
+
+        Args:
+            pipeline: GStreamer pipeline string
+
+        Raises:
+            RuntimeError: If GStreamer is not available
+        """
+        if not GST_AVAILABLE:
+            raise RuntimeError(
+                "GStreamer is not available. Install PyGObject and GStreamer."
+            )
+
+        self.pipeline_str = pipeline
+        self._pipeline: Optional[Any] = None
+        self._running = False
+        self._pipeline_thread: Optional[threading.Thread] = None
+
+    @abstractmethod
+    def _create_pipeline(self) -> None:
+        """Create and configure the GStreamer pipeline.
+
+        Subclasses must implement this method to create their specific pipeline
+        configuration with appropriate sources, sinks, and elements.
+
+        Raises:
+            RuntimeError: If pipeline creation fails
+        """
+        pass
+
+    def _start_pipeline(self) -> None:
+        """Start the GStreamer pipeline.
+
+        This method sets the pipeline state to PLAYING. It should be called
+        after _create_pipeline() and before starting any capture/playback operations.
+
+        Raises:
+            RuntimeError: If pipeline is not created or fails to start
+        """
+        if self._pipeline is None:
+            raise RuntimeError("Pipeline not created. Call _create_pipeline() first.")
+
+        ret = self._pipeline.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("Failed to start GStreamer pipeline")
+
+    def _stop_pipeline(self) -> None:
+        """Stop the GStreamer pipeline and release resources.
+
+        This method sets the pipeline state to NULL and cleans up the pipeline
+        instance. It handles errors gracefully and can be called multiple times safely.
+        """
+        if self._pipeline is not None:
+            try:
+                self._pipeline.set_state(Gst.State.NULL)
+            except Exception as e:
+                logger.warning(f"Error stopping pipeline: {e}")
+            finally:
+                self._pipeline = None
+
+    def _wait_for_thread(self, timeout: float = 2.0) -> None:
+        """Wait for the pipeline thread to finish.
+
+        Args:
+            timeout: Maximum time to wait in seconds (default: 2.0)
+        """
+        if self._pipeline_thread is not None and self._pipeline_thread.is_alive():
+            self._pipeline_thread.join(timeout=timeout)
+            self._pipeline_thread = None
+
+    def _handle_pipeline_error(self, error: Exception, operation: str) -> RuntimeError:
+        """Handle and format pipeline errors consistently.
+
+        Args:
+            error: The exception that occurred
+            operation: Description of the operation that failed
+
+        Returns:
+            RuntimeError with formatted error message
+        """
+        error_msg = f"GStreamer pipeline error during {operation}: {error}"
+        logger.error(error_msg)
+        return RuntimeError(error_msg)
+
+
+class GStreamerAudioInputTrack(BaseGStreamerTrack):
     """Audio input track using GStreamer pipeline.
 
     This class captures audio using a custom GStreamer pipeline and converts
@@ -1268,16 +1368,10 @@ class GStreamerAudioInputTrack:
         Raises:
             RuntimeError: If GStreamer is not available
         """
-        if not GST_AVAILABLE:
-            raise RuntimeError(
-                "GStreamer is not available. Install PyGObject and GStreamer."
-            )
-
-        self.pipeline_str = pipeline
+        super().__init__(pipeline)
         self.sample_rate = sample_rate
         self.channels = channels
         self.bit_depth = bit_depth
-        self._pipeline: Optional[Any] = None
         self._appsink: Optional[Any] = None
 
     def _create_pipeline(self) -> None:
@@ -1315,8 +1409,8 @@ class GStreamerAudioInputTrack:
             assert self._pipeline is not None
             assert self._appsink is not None
 
-            # Start pipeline
-            self._pipeline.set_state(Gst.State.PLAYING)
+            # Start pipeline using base class method
+            self._start_pipeline()
 
             # Calculate expected bytes
             bytes_per_sample = self.bit_depth // 8
@@ -1340,8 +1434,8 @@ class GStreamerAudioInputTrack:
                         captured_data.extend(map_info.data)
                         buffer.unmap(map_info)
 
-            # Stop pipeline
-            self._pipeline.set_state(Gst.State.NULL)
+            # Stop pipeline using base class method
+            self._stop_pipeline()
 
             # Return exactly the requested duration
             final_data = bytes(captured_data[:expected_bytes])
@@ -1354,9 +1448,8 @@ class GStreamerAudioInputTrack:
                 timestamp=timestamp,
             )
         except Exception as e:
-            if self._pipeline:
-                self._pipeline.set_state(Gst.State.NULL)
-            raise RuntimeError(f"Failed to capture audio from GStreamer pipeline: {e}")
+            self._stop_pipeline()
+            raise self._handle_pipeline_error(e, "audio capture")
 
     async def capture_async(self, duration: float) -> PcmData:
         """Asynchronously capture audio from the GStreamer pipeline.
@@ -1374,7 +1467,7 @@ class GStreamerAudioInputTrack:
         return await asyncio.to_thread(self.capture, duration)
 
 
-class GStreamerVideoInputTrack:
+class GStreamerVideoInputTrack(BaseGStreamerTrack):
     """Video input track using GStreamer pipeline.
 
     This class captures video using a custom GStreamer pipeline and provides
@@ -1415,11 +1508,6 @@ class GStreamerVideoInputTrack:
             RuntimeError: If GStreamer is not available
             ValueError: If parameters are out of range
         """
-        if not GST_AVAILABLE:
-            raise RuntimeError(
-                "GStreamer is not available. Install PyGObject and GStreamer."
-            )
-
         if width <= 0:
             raise ValueError(f"Width must be positive, got {width}")
         if height <= 0:
@@ -1427,14 +1515,11 @@ class GStreamerVideoInputTrack:
         if fps <= 0:
             raise ValueError(f"FPS must be positive, got {fps}")
 
-        self.pipeline_str = pipeline
+        super().__init__(pipeline)
         self.width = width
         self.height = height
         self.fps = fps
-        self._pipeline: Optional[Any] = None
         self._appsink: Optional[Any] = None
-        self._running = False
-        self._capture_thread: Optional[threading.Thread] = None
         self._callback: Optional[Callable[[np.ndarray, float], None]] = None
 
     def _create_pipeline(self) -> None:
@@ -1509,13 +1594,13 @@ class GStreamerVideoInputTrack:
 
         assert self._pipeline is not None
 
-        # Start pipeline
-        self._pipeline.set_state(Gst.State.PLAYING)
+        # Start pipeline using base class method
+        self._start_pipeline()
 
         # Start capture loop in background thread
         self._running = True
-        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self._capture_thread.start()
+        self._pipeline_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._pipeline_thread.start()
 
     def stop(self) -> None:
         """Stop capturing video frames and release the pipeline.
@@ -1528,18 +1613,11 @@ class GStreamerVideoInputTrack:
 
         self._running = False
 
-        # Wait for capture thread to finish
-        if self._capture_thread is not None and self._capture_thread.is_alive():
-            self._capture_thread.join(timeout=2.0)
-            self._capture_thread = None
+        # Wait for capture thread to finish using base class method
+        self._wait_for_thread()
 
-        # Stop pipeline
-        if self._pipeline is not None:
-            try:
-                self._pipeline.set_state(Gst.State.NULL)
-            except Exception:
-                pass
-            self._pipeline = None
+        # Stop pipeline using base class method
+        self._stop_pipeline()
 
         self._appsink = None
         self._callback = None
@@ -1562,7 +1640,7 @@ class GStreamerVideoInputTrack:
         if was_closed:
             self._create_pipeline()
             assert self._pipeline is not None
-            self._pipeline.set_state(Gst.State.PLAYING)
+            self._start_pipeline()
 
         try:
             if self._appsink is None:
@@ -1588,13 +1666,12 @@ class GStreamerVideoInputTrack:
 
         finally:
             # Stop pipeline if we created it
-            if was_closed and self._pipeline is not None:
-                self._pipeline.set_state(Gst.State.NULL)
-                self._pipeline = None
+            if was_closed:
+                self._stop_pipeline()
                 self._appsink = None
 
 
-class GStreamerAudioOutputTrack:
+class GStreamerAudioOutputTrack(BaseGStreamerTrack):
     """Audio output track using GStreamer pipeline.
 
     This class plays audio using a custom GStreamer pipeline from PcmData objects.
@@ -1631,16 +1708,10 @@ class GStreamerAudioOutputTrack:
         Raises:
             RuntimeError: If GStreamer is not available
         """
-        if not GST_AVAILABLE:
-            raise RuntimeError(
-                "GStreamer is not available. Install PyGObject and GStreamer."
-            )
-
-        self.pipeline_str = pipeline
+        super().__init__(pipeline)
         self.sample_rate = sample_rate
         self.channels = channels
         self.bit_depth = bit_depth
-        self._pipeline: Optional[Any] = None
         self._appsrc: Optional[Any] = None
         self._stopped = False
 
@@ -1660,8 +1731,8 @@ class GStreamerAudioOutputTrack:
         self._appsrc.set_property("format", Gst.Format.TIME)
         self._appsrc.set_property("is-live", True)
 
-        # Start pipeline
-        self._pipeline.set_state(Gst.State.PLAYING)
+        # Start pipeline using base class method
+        self._start_pipeline()
 
     async def write(self, data: PcmData) -> None:
         """Write PCM audio data to the output device.
@@ -1694,7 +1765,7 @@ class GStreamerAudioOutputTrack:
                 raise RuntimeError(f"Failed to push buffer to GStreamer: {ret}")
 
         except Exception as e:
-            raise RuntimeError(f"Failed to play audio through GStreamer: {e}")
+            raise self._handle_pipeline_error(e, "audio playback")
 
     async def flush(self) -> None:
         """Flush any buffered audio data and wait for playback to complete."""
@@ -1717,10 +1788,6 @@ class GStreamerAudioOutputTrack:
 
         self._stopped = True
 
-        try:
-            if self._pipeline is not None:
-                self._pipeline.set_state(Gst.State.NULL)
-                self._pipeline = None
-            self._appsrc = None
-        except Exception:
-            pass
+        # Stop pipeline using base class method
+        self._stop_pipeline()
+        self._appsrc = None
