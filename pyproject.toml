@@ -109,6 +109,7 @@ dev = [
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
     "asgi-lifespan>=2.1.0",
+    "pytest-cov>=7.0.0",
 ]
 
 [tool.mypy]
