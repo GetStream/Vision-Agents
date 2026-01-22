@@ -1,26 +1,25 @@
 import json
 import time
-from typing import Optional, List, Any, TYPE_CHECKING, Dict
-from xai_sdk import AsyncClient
-from xai_sdk.chat import system, user, Response, Chunk, tool_result, tool
-from xai_sdk.proto import chat_pb2
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.processors import Processor
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
+from vision_agents.core.processors import Processor
+from xai_sdk import AsyncClient
+from xai_sdk.chat import Chunk, Response, system, tool, tool_result, user
+from xai_sdk.proto import chat_pb2
+
 from . import events
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
-    from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
     from xai_sdk.aio.chat import Chat
-else:
-    from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 
 
 class XAILLM(LLM):

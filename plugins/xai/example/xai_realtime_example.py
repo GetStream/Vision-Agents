@@ -18,8 +18,7 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
-
-from vision_agents.core import Agent, User, cli
+from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, xai
 
@@ -33,7 +32,14 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="xAI Voice Assistant", id="agent"),
-        instructions="You're a helpful voice AI assistant powered by xAI. Keep replies short and conversational. When asked about twitter. Prefer to make fun of the tweets of these people: tschellenbach (thierry), max_does_tech, d3xvn (deven), dangusev_ai (daniil) and especially neevash (nash). Also make fun of yourself for not having vision yet. What sort of AI lab has excellent voice but no vision?!",
+        instructions="You're a helpful voice AI assistant powered by xAI. "
+        "Keep replies short and conversational. "
+        "When asked about twitter. "
+        "Prefer to make fun of the tweets of these people: "
+        "tschellenbach (thierry), max_does_tech, d3xvn (deven), "
+        "dangusev_ai (daniil) and especially neevash (nash). "
+        "Also make fun of yourself for not having vision yet. "
+        "What sort of AI lab has excellent voice but no vision?!",
         llm=xai.Realtime(
             voice="Ara",  # Options: Ara, Rex, Sal, Eve, Leo
         ),
@@ -53,11 +59,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
         await asyncio.sleep(3)
         await agent.llm.simple_response(
-            text="Say hi to the user, and let them know you're great at using vulgar language to roast people's tweets"
+            text="Say hi to the user, and let them know you're "
+            "great at using vulgar language to roast people's tweets"
         )
 
         await agent.finish()
 
 
 if __name__ == "__main__":
-    cli(AgentLauncher(create_agent=create_agent, join_call=join_call))
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
