@@ -14,6 +14,7 @@ dependencies = [
     "vision-agents",
     "sounddevice>=0.4.6",
     "numpy>=1.24.0",
+    "aiortc>=1.14.0",
 ]
 
 [project.urls]
