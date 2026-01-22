@@ -80,6 +80,9 @@ class DummyEdge(EdgeTransport):
     def add_track_subscriber(self, track_id: str):
         pass
 
+    async def create_call(self, call_type: str, call_id: str):
+        return Call(call_id=call_id, call_type=call_type, client=AsyncMock())
+
 
 @pytest.fixture
 def call():

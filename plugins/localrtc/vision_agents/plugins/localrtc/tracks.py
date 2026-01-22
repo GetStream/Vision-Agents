@@ -54,6 +54,9 @@ class AudioInputTrack:
     This class captures audio from a microphone device and converts it to the
     core PcmData format for processing by Vision Agents.
 
+    Uses a persistent InputStream with callback-based capture to avoid the
+    sounddevice errors that occur when repeatedly creating/destroying streams.
+
     Attributes:
         device: Device identifier (name, index, or 'default')
         sample_rate: Audio sampling rate in Hz (default: 16000)
@@ -62,8 +65,10 @@ class AudioInputTrack:
 
     Example:
         >>> track = AudioInputTrack(device='default', sample_rate=16000)
+        >>> track.start()
         >>> audio_data = track.capture(duration=1.0)
         >>> print(f"Captured {len(audio_data.data)} bytes")
+        >>> track.stop()
     """
 
     def __init__(
@@ -72,6 +77,7 @@ class AudioInputTrack:
         sample_rate: int = 16000,
         channels: int = 1,
         bit_depth: int = 16,
+        buffer_duration: float = 2.0,
     ) -> None:
         """Initialize the audio input track.
 
@@ -83,6 +89,7 @@ class AudioInputTrack:
             sample_rate: Audio sampling rate in Hz (default: 16000)
             channels: Number of audio channels (default: 1 for mono)
             bit_depth: Bits per sample (default: 16)
+            buffer_duration: Duration of the circular buffer in seconds (default: 2.0)
 
         Raises:
             RuntimeError: If sounddevice is not available
@@ -97,6 +104,15 @@ class AudioInputTrack:
         self.channels = channels
         self.bit_depth = bit_depth
         self._device_index: Optional[int] = None
+
+        # Persistent stream state
+        self._stream: Optional[sd.InputStream] = None
+        self._buffer_lock = threading.Lock()
+        self._buffer: bytearray = bytearray()
+        self._buffer_max_bytes = int(
+            buffer_duration * sample_rate * channels * (bit_depth // 8)
+        )
+        self._started = False
 
         # Resolve device to index
         if device == "default":
@@ -183,6 +199,67 @@ class AudioInputTrack:
                 raise
             raise ValueError(f"Error searching for device '{name}': {e}")
 
+    def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
+        """Callback for the persistent input stream.
+
+        Args:
+            indata: Input audio data as numpy array
+            frames: Number of frames
+            time_info: Time information from PortAudio
+            status: Stream status flags
+        """
+        if status:
+            logger.warning(f"[LOCALRTC] Audio input status: {status}")
+
+        # Convert to bytes and add to buffer
+        audio_bytes = indata.tobytes()
+
+        with self._buffer_lock:
+            self._buffer.extend(audio_bytes)
+            # Trim buffer if it exceeds max size (keep most recent data)
+            if len(self._buffer) > self._buffer_max_bytes:
+                excess = len(self._buffer) - self._buffer_max_bytes
+                del self._buffer[:excess]
+
+    def start(self) -> None:
+        """Start the persistent audio input stream.
+
+        This method creates and starts the InputStream. Call this before
+        using capture(). The stream will run continuously until stop() is called.
+        """
+        if self._started:
+            return
+
+        dtype = f"int{self.bit_depth}"
+
+        self._stream = sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=self.channels,
+            dtype=dtype,
+            device=self._device_index,
+            callback=self._audio_callback,
+        )
+        self._stream.start()
+        self._started = True
+
+    def stop(self) -> None:
+        """Stop the persistent audio input stream and release resources."""
+        if not self._started:
+            return
+
+        self._started = False
+
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+        with self._buffer_lock:
+            self._buffer.clear()
+
     def capture(self, duration: float) -> PcmData:
         """Capture audio from the microphone for a specified duration.
 
@@ -193,60 +270,71 @@ class AudioInputTrack:
             PcmData object containing the captured audio
 
         Raises:
-            RuntimeError: If audio capture fails
+            RuntimeError: If audio capture fails or stream not started
             ValueError: If duration is invalid
         """
         if duration <= 0:
             raise ValueError(f"Duration must be positive, got {duration}")
 
-        try:
-            # Calculate number of frames to capture
-            frames = int(duration * self.sample_rate)
+        # Auto-start stream if not started
+        if not self._started:
+            self.start()
 
-            if _DEBUG_AUDIO:
-                logger.debug(
-                    f"[AUDIO DEBUG] Capturing audio from input device - "
-                    f"device_index={self._device_index}, duration={duration}s, "
-                    f"sample_rate={self.sample_rate}Hz, channels={self.channels}, "
-                    f"bit_depth={self.bit_depth}, frames={frames}"
-                )
+        # Calculate required bytes
+        bytes_per_sample = self.bit_depth // 8
+        required_bytes = int(duration * self.sample_rate * self.channels * bytes_per_sample)
 
-            # Capture audio
-            timestamp = time.time()
-            recording = sd.rec(
-                frames=frames,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=f"int{self.bit_depth}",
-                device=self._device_index,
+        if _DEBUG_AUDIO:
+            logger.debug(
+                f"[AUDIO DEBUG] Capturing audio from input device - "
+                f"device_index={self._device_index}, duration={duration}s, "
+                f"sample_rate={self.sample_rate}Hz, channels={self.channels}, "
+                f"bit_depth={self.bit_depth}, required_bytes={required_bytes}"
             )
-            sd.wait()  # Wait for recording to complete
 
-            # Convert numpy array to bytes
-            audio_bytes = recording.tobytes()
+        # Wait for enough data to accumulate
+        timeout = duration + 0.5  # Give a bit of extra time
+        start_time = time.time()
 
-            if _DEBUG_AUDIO:
-                logger.debug(
-                    f"[AUDIO DEBUG] Captured audio from input device - "
-                    f"data_size={len(audio_bytes)} bytes, timestamp={timestamp}"
-                )
+        while True:
+            with self._buffer_lock:
+                if len(self._buffer) >= required_bytes:
+                    # Extract the required audio data
+                    audio_bytes = bytes(self._buffer[:required_bytes])
+                    del self._buffer[:required_bytes]
+                    break
 
-            return PcmData(
-                data=audio_bytes,
-                sample_rate=self.sample_rate,
-                channels=self.channels,
-                bit_depth=self.bit_depth,
-                timestamp=timestamp,
+            # Check timeout
+            if time.time() - start_time > timeout:
+                # Return whatever we have
+                with self._buffer_lock:
+                    if len(self._buffer) > 0:
+                        audio_bytes = bytes(self._buffer)
+                        self._buffer.clear()
+                        break
+                    else:
+                        raise RuntimeError(
+                            f"Timeout waiting for audio data after {timeout}s"
+                        )
+
+            # Brief sleep to avoid busy-waiting
+            time.sleep(0.01)
+
+        timestamp = time.time()
+
+        if _DEBUG_AUDIO:
+            logger.debug(
+                f"[AUDIO DEBUG] Captured audio from input device - "
+                f"data_size={len(audio_bytes)} bytes, timestamp={timestamp}"
             )
-        except Exception as e:
-            device_info = (
-                f"device {self._device_index}"
-                if self._device_index is not None
-                else "default device"
-            )
-            raise RuntimeError(
-                f"Failed to capture audio from {device_info}: {e}"
-            )
+
+        return PcmData(
+            data=audio_bytes,
+            sample_rate=self.sample_rate,
+            channels=self.channels,
+            bit_depth=self.bit_depth,
+            timestamp=timestamp,
+        )
 
     async def capture_async(self, duration: float) -> PcmData:
         """Asynchronously capture audio from the microphone.
@@ -298,7 +386,7 @@ class AudioOutputTrack:
         sample_rate: int = 16000,
         channels: int = 1,
         bit_depth: int = 16,
-        buffer_size_ms: int = 500,
+        buffer_size_ms: int = 10000,
     ) -> None:
         """Initialize the audio output track.
 
@@ -310,7 +398,9 @@ class AudioOutputTrack:
             sample_rate: Audio sampling rate in Hz (default: 16000)
             channels: Number of audio channels (default: 1 for mono)
             bit_depth: Bits per sample (default: 16)
-            buffer_size_ms: Size of the audio buffer in milliseconds (default: 500)
+            buffer_size_ms: Size of the audio buffer in milliseconds (default: 10000).
+                This buffer accommodates TTS systems that send audio faster than real-time.
+                A larger buffer prevents audio dropouts during burst delivery.
 
         Raises:
             RuntimeError: If sounddevice is not available
@@ -512,10 +602,14 @@ class AudioOutputTrack:
 
         if actual_channels != self.channels:
             # Update the track's channel count to match device capability
+            old_channels = self.channels
             self.channels = actual_channels
-            # Recalculate buffer size
+            # Recalculate buffer size preserving the original duration
+            # buffer_size_bytes = duration_s * sample_rate * channels * bytes_per_sample
+            bytes_per_sample = self.bit_depth // 8
+            old_duration_s = self._buffer_size_bytes / (self.sample_rate * old_channels * bytes_per_sample)
             self._buffer_size_bytes = int(
-                (500 / 1000) * self.sample_rate * self.channels * (self.bit_depth // 8)
+                old_duration_s * self.sample_rate * self.channels * bytes_per_sample
             )
 
         # Create the output stream without callback (for blocking writes)

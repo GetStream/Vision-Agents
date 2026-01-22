@@ -31,7 +31,8 @@ async def test_local_room_leave():
     await room.leave()
 
 
-def test_local_edge_creation():
+@pytest.mark.asyncio
+async def test_local_edge_creation():
     """Test LocalEdge creation."""
     edge = Edge()
     assert edge is not None

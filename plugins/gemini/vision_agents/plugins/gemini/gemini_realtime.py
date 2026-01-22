@@ -379,6 +379,16 @@ class GeminiRealtime(realtime.Realtime):
         async for response in self._session.receive():
             server_message: LiveServerMessage = response
 
+            # Debug: Log server_content structure to diagnose transcript issues
+            if server_message and server_message.server_content:
+                sc = server_message.server_content
+                logger.debug(
+                    f"[GEMINI] server_content received: "
+                    f"input_transcription={sc.input_transcription}, "
+                    f"output_transcription={sc.output_transcription}, "
+                    f"model_turn={sc.model_turn is not None}"
+                )
+
             is_input_transcript = (
                 server_message
                 and server_message.server_content
@@ -401,6 +411,7 @@ class GeminiRealtime(realtime.Realtime):
                     and server_message.server_content.input_transcription
                 ):
                     text = server_message.server_content.input_transcription.text
+                    logger.debug(f"[GEMINI] Input transcription received: '{text}'")
                     if text:
                         self._emit_user_speech_transcription(
                             text=text, original=server_message
@@ -411,6 +422,7 @@ class GeminiRealtime(realtime.Realtime):
                     and server_message.server_content.output_transcription
                 ):
                     text = server_message.server_content.output_transcription.text
+                    logger.debug(f"[GEMINI] Output transcription received: '{text}'")
                     if text:
                         self._emit_agent_speech_transcription(
                             text=text, original=server_message

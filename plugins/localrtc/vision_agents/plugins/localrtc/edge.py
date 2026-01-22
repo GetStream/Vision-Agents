@@ -1,14 +1,23 @@
 """Local RTC Edge Transport implementation."""
 
+import logging
 import threading
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import aiortc
+import numpy as np
+from getstream.video.rtc.track_util import PcmData as StreamPcmData, AudioFormat
+from vision_agents.core.edge import events
 from vision_agents.core.edge.edge_transport import EdgeTransport
-from vision_agents.core.edge.types import OutputAudioTrack, User
+from vision_agents.core.edge.types import OutputAudioTrack, Participant, User
 from vision_agents.core.events import EventManager
 from vision_agents.core.protocols import Room
 from vision_agents.core.types import PcmData, TrackType
+
+logger = logging.getLogger(__name__)
+
+# Constant user ID for local audio (microphone input from human user)
+LOCAL_USER_ID = "local-user"
 
 from .devices import DeviceInfo, list_audio_inputs, list_audio_outputs, list_video_inputs
 from .room import LocalRoom
@@ -96,6 +105,8 @@ class LocalEdge(EdgeTransport):
 
         # Initialize event manager for edge transport events
         self.events = EventManager()
+        # Register edge events so subscribers can receive them
+        self.events.register_events_from_module(events)
 
         # Validate GStreamer availability if custom_pipeline is provided
         if custom_pipeline is not None and not GST_AVAILABLE:
@@ -230,8 +241,10 @@ class LocalEdge(EdgeTransport):
             self._video_input_track.stop()
             self._video_input_track = None
 
-        # Cleanup audio input track
-        self._audio_input_track = None
+        # Stop and cleanup audio input track
+        if self._audio_input_track is not None:
+            self._audio_input_track.stop()
+            self._audio_input_track = None
 
         # Leave all rooms
         for room in list(self._rooms.values()):
@@ -290,6 +303,23 @@ class LocalEdge(EdgeTransport):
         if room_id not in self._rooms:
             self._rooms[room_id] = LocalRoom(room_id=room_id, room_type=room_type)
 
+        # Create and start audio input track for microphone capture
+        # This is necessary for LocalRTC because there's no external RTC infrastructure
+        # pushing audio to us - we need to capture it locally
+        if self._audio_input_track is None and self.audio_device is not None:
+            logger.info(f"[LOCALRTC] Creating AudioInputTrack: device={self.audio_device}, "
+                       f"sample_rate={self.sample_rate}, channels={self.channels}")
+            self._audio_input_track = AudioInputTrack(
+                device=self.audio_device,
+                sample_rate=self.sample_rate,
+                channels=self.channels,
+            )
+            # Start the persistent audio input stream
+            self._audio_input_track.start()
+            # Start the capture loop to emit AudioReceivedEvents
+            self._start_audio_capture_stream()
+            logger.info("[LOCALRTC] Audio capture started")
+
         return self._rooms[room_id]
 
     async def publish_tracks(
@@ -329,6 +359,10 @@ class LocalEdge(EdgeTransport):
         if actual_audio is not None:
             if isinstance(actual_audio, AudioInputTrack):
                 self._audio_input_track = actual_audio
+                # Start the audio capture loop to emit AudioReceivedEvents
+                # This is necessary because the Agent subscribes to events, not callbacks
+                self._start_audio_capture_stream()
+                logger.info("[LOCALRTC] Audio capture started via publish_tracks")
             # Store in room if provided
             if isinstance(actual_room, LocalRoom):
                 actual_room._tracks[TrackType.AUDIO] = actual_audio
@@ -454,12 +488,37 @@ class LocalEdge(EdgeTransport):
         # Capture audio in 100ms chunks
         chunk_duration = 0.1  # seconds
 
+        # Create a participant for local audio (represents the human user)
+        local_participant = Participant(original=None, user_id=LOCAL_USER_ID)
+
         while self._audio_capture_running:
             try:
-                # Capture audio chunk
+                # Capture audio chunk (returns core PcmData with bytes)
                 pcm_data = self._audio_input_track.capture(duration=chunk_duration)
 
-                # Invoke all audio subscribers
+                # Convert core PcmData (bytes) to StreamPcmData (numpy) for AudioQueue compatibility
+                # The AudioQueue and Agent pipeline expect GetStream's PcmData format
+                audio_samples = np.frombuffer(pcm_data.data, dtype=np.int16)
+                stream_pcm = StreamPcmData(
+                    sample_rate=pcm_data.sample_rate,
+                    format=AudioFormat.S16,
+                    samples=audio_samples,
+                    channels=pcm_data.channels,
+                    participant=local_participant,
+                )
+
+                # Emit AudioReceivedEvent for Agent subscription
+                # This is the primary mechanism for delivering audio to the Agent
+                logger.debug(f"[LOCALRTC] Captured {len(pcm_data.data)} bytes, emitting AudioReceivedEvent")
+                self.events.send(
+                    events.AudioReceivedEvent(
+                        plugin_name="localrtc",
+                        pcm_data=stream_pcm,
+                        participant=local_participant,
+                    )
+                )
+
+                # Invoke all audio subscribers (legacy callback mechanism)
                 audio_subscribers = self._track_subscribers.get("audio", [])
                 audio_subscribers.extend(self._track_subscribers.get(str(TrackType.AUDIO), []))
 

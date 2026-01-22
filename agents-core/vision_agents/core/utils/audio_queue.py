@@ -255,6 +255,8 @@ class AudioQueue:
                         format=item.format,
                         channels=item.channels,
                     )
+                    # Preserve participant info on the remainder
+                    remainder.participant = item.participant
                     self._buffer.appendleft(remainder)
                     self._total_samples += len(remainder.samples)
                     break

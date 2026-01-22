@@ -823,10 +823,7 @@ class Agent:
 
     async def create_call(self, call_type: str, call_id: str) -> Room:
         """Shortcut for creating a call/room etc."""
-        call = self.edge.client.video.call(call_type, call_id)
-        await call.get_or_create(data={"created_by_id": self.agent_user.id})
-
-        return call
+        return await self.edge.create_call(call_type, call_id)
 
     def _on_rtc_reconnect(self):
         # update the code to listen?

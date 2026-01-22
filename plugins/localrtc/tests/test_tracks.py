@@ -134,11 +134,11 @@ def test_audio_input_track_init_device_objects():
 
 
 def test_audio_input_track_capture():
-    """Test AudioInputTrack.capture method."""
+    """Test AudioInputTrack.capture method with persistent stream."""
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
         # Create mock audio data
         sample_rate = 16000
-        duration = 1.0
+        duration = 0.1  # Use short duration for test
         channels = 1
         bit_depth = 16
         frames = int(duration * sample_rate)
@@ -146,10 +146,29 @@ def test_audio_input_track_capture():
         mock_audio = np.random.randint(
             -32768, 32767, size=(frames, channels), dtype=np.int16
         )
-        mock_sd.rec.return_value = mock_audio
-        mock_sd.wait.return_value = None
+
+        # Create mock InputStream that stores callback and simulates audio
+        stored_callback = None
+
+        def mock_input_stream_init(**kwargs):
+            nonlocal stored_callback
+            stored_callback = kwargs.get("callback")
+            mock_stream = MagicMock()
+            mock_stream.start = MagicMock()
+            mock_stream.stop = MagicMock()
+            mock_stream.close = MagicMock()
+            return mock_stream
+
+        mock_sd.InputStream = mock_input_stream_init
 
         track = AudioInputTrack(device="default", sample_rate=sample_rate)
+
+        # Start the track (this creates the stream)
+        track.start()
+
+        # Simulate the callback being called with audio data
+        assert stored_callback is not None
+        stored_callback(mock_audio, frames, None, None)
 
         # Capture audio
         start_time = time.time()
@@ -165,51 +184,56 @@ def test_audio_input_track_capture():
         assert pcm_data.timestamp is not None
         assert start_time <= pcm_data.timestamp <= end_time
 
-        # Verify sounddevice calls
-        mock_sd.rec.assert_called_once_with(
-            frames=frames,
-            samplerate=sample_rate,
-            channels=channels,
-            dtype="int16",
-            device=None,
-        )
-        mock_sd.wait.assert_called_once()
+        # Clean up
+        track.stop()
 
 
 def test_audio_input_track_capture_custom_params():
     """Test AudioInputTrack.capture with custom parameters."""
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
         sample_rate = 48000
-        duration = 2.0
+        duration = 0.1  # Use short duration for test
         channels = 2
-        bit_depth = 24
+        bit_depth = 16  # Use 16-bit for simpler test
         frames = int(duration * sample_rate)
 
         mock_audio = np.random.randint(
-            -8388608, 8388607, size=(frames, channels), dtype=np.int32
+            -32768, 32767, size=(frames, channels), dtype=np.int16
         )
-        mock_sd.rec.return_value = mock_audio
-        mock_sd.wait.return_value = None
         mock_sd.query_devices.return_value = [
             {"name": "Mic", "max_input_channels": 2, "max_output_channels": 0}
         ]
 
+        # Create mock InputStream that stores callback
+        stored_callback = None
+
+        def mock_input_stream_init(**kwargs):
+            nonlocal stored_callback
+            stored_callback = kwargs.get("callback")
+            mock_stream = MagicMock()
+            mock_stream.start = MagicMock()
+            mock_stream.stop = MagicMock()
+            mock_stream.close = MagicMock()
+            return mock_stream
+
+        mock_sd.InputStream = mock_input_stream_init
+
         track = AudioInputTrack(
             device=0, sample_rate=sample_rate, channels=channels, bit_depth=bit_depth
         )
+        track.start()
+
+        # Simulate callback with audio data
+        assert stored_callback is not None
+        stored_callback(mock_audio, frames, None, None)
+
         pcm_data = track.capture(duration)
 
         assert pcm_data.sample_rate == sample_rate
         assert pcm_data.channels == channels
         assert pcm_data.bit_depth == bit_depth
 
-        mock_sd.rec.assert_called_once_with(
-            frames=frames,
-            samplerate=sample_rate,
-            channels=channels,
-            dtype="int24",
-            device=0,
-        )
+        track.stop()
 
 
 def test_audio_input_track_capture_invalid_duration():
@@ -225,28 +249,47 @@ def test_audio_input_track_capture_invalid_duration():
 
 
 def test_audio_input_track_capture_error():
-    """Test AudioInputTrack.capture handles errors gracefully."""
+    """Test AudioInputTrack.capture handles timeout when no audio data arrives."""
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
-        mock_sd.rec.side_effect = Exception("Device error")
+        # Create mock InputStream that doesn't produce any audio
+        def mock_input_stream_init(**kwargs):
+            mock_stream = MagicMock()
+            mock_stream.start = MagicMock()
+            mock_stream.stop = MagicMock()
+            mock_stream.close = MagicMock()
+            return mock_stream
+
+        mock_sd.InputStream = mock_input_stream_init
 
         track = AudioInputTrack(device="default")
 
-        with pytest.raises(RuntimeError, match="Failed to capture audio"):
-            track.capture(1.0)
+        # Should timeout since no audio data is being produced
+        with pytest.raises(RuntimeError, match="Timeout waiting for audio data"):
+            track.capture(0.1)  # Short duration to speed up test
 
 
 def test_audio_input_track_capture_error_with_device_index():
-    """Test AudioInputTrack.capture error message includes device index."""
+    """Test AudioInputTrack.capture timeout message."""
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
         mock_sd.query_devices.return_value = [
             {"name": "Mic", "max_input_channels": 1, "max_output_channels": 0}
         ]
-        mock_sd.rec.side_effect = Exception("Device busy")
+
+        # Create mock InputStream that doesn't produce any audio
+        def mock_input_stream_init(**kwargs):
+            mock_stream = MagicMock()
+            mock_stream.start = MagicMock()
+            mock_stream.stop = MagicMock()
+            mock_stream.close = MagicMock()
+            return mock_stream
+
+        mock_sd.InputStream = mock_input_stream_init
 
         track = AudioInputTrack(device=0)
 
-        with pytest.raises(RuntimeError, match="device 0"):
-            track.capture(1.0)
+        # Should timeout since no audio data is being produced
+        with pytest.raises(RuntimeError, match="Timeout waiting for audio data"):
+            track.capture(0.1)
 
 
 @pytest.mark.asyncio
@@ -254,20 +297,39 @@ async def test_audio_input_track_capture_async():
     """Test AudioInputTrack.capture_async method."""
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
         sample_rate = 16000
-        duration = 0.5
+        duration = 0.1  # Short duration for test
         channels = 1
         frames = int(duration * sample_rate)
 
         mock_audio = np.random.randint(
             -32768, 32767, size=(frames, channels), dtype=np.int16
         )
-        mock_sd.rec.return_value = mock_audio
-        mock_sd.wait.return_value = None
+
+        # Create mock InputStream that stores callback
+        stored_callback = None
+
+        def mock_input_stream_init(**kwargs):
+            nonlocal stored_callback
+            stored_callback = kwargs.get("callback")
+            mock_stream = MagicMock()
+            mock_stream.start = MagicMock()
+            mock_stream.stop = MagicMock()
+            mock_stream.close = MagicMock()
+            return mock_stream
+
+        mock_sd.InputStream = mock_input_stream_init
 
         track = AudioInputTrack(device="default")
+        track.start()
+
+        # Simulate callback with audio data
+        assert stored_callback is not None
+        stored_callback(mock_audio, frames, None, None)
+
         pcm_data = await track.capture_async(duration)
 
         assert isinstance(pcm_data, PcmData)
+        track.stop()
         assert pcm_data.sample_rate == sample_rate
         assert pcm_data.channels == channels
         assert pcm_data.data == mock_audio.tobytes()
@@ -434,6 +496,10 @@ async def test_audio_output_track_write():
         channels = 1
         bit_depth = 16
 
+        # Mock the OutputStream class
+        mock_stream = MagicMock()
+        mock_sd.OutputStream.return_value = mock_stream
+
         track = AudioOutputTrack(
             device="default", sample_rate=sample_rate, channels=channels, bit_depth=bit_depth
         )
@@ -453,14 +519,15 @@ async def test_audio_output_track_write():
             bit_depth=bit_depth,
         )
 
-        # Mock play function
-        mock_sd.play = MagicMock()
-
         # Write audio
         await track.write(pcm_data)
 
-        # Verify play was called
-        assert mock_sd.play.called
+        # Verify OutputStream was created and started
+        assert mock_sd.OutputStream.called
+        assert mock_stream.start.called
+
+        # Verify audio data was added to the buffer
+        assert len(track._buffer) > 0
 
 
 @pytest.mark.asyncio
@@ -471,6 +538,10 @@ async def test_audio_output_track_write_with_sample_rate_conversion():
         data_rate = 48000
         channels = 1
         bit_depth = 16
+
+        # Mock the OutputStream class
+        mock_stream = MagicMock()
+        mock_sd.OutputStream.return_value = mock_stream
 
         track = AudioOutputTrack(
             device="default", sample_rate=track_rate, channels=channels, bit_depth=bit_depth
@@ -491,14 +562,19 @@ async def test_audio_output_track_write_with_sample_rate_conversion():
             bit_depth=bit_depth,
         )
 
-        # Mock play function
-        mock_sd.play = MagicMock()
-
         # Write audio with conversion
         await track.write(pcm_data)
 
-        # Verify play was called
-        assert mock_sd.play.called
+        # Verify OutputStream was created and started
+        assert mock_sd.OutputStream.called
+        assert mock_stream.start.called
+
+        # Verify audio data was added to the buffer (should be resampled)
+        # Original: 48000 Hz * 1s = 48000 samples
+        # Resampled: 16000 Hz * 1s = 16000 samples
+        # Each sample is 2 bytes (int16), so 16000 * 2 = 32000 bytes
+        expected_bytes = int(track_rate * duration) * (bit_depth // 8)
+        assert len(track._buffer) == expected_bytes
 
 
 @pytest.mark.asyncio
@@ -523,7 +599,8 @@ async def test_audio_output_track_write_after_stop():
 async def test_audio_output_track_write_error():
     """Test AudioOutputTrack.write handles errors gracefully."""
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
-        mock_sd.play = MagicMock(side_effect=Exception("Device error"))
+        # Mock OutputStream to raise an error when started
+        mock_sd.OutputStream.side_effect = Exception("Device error")
 
         track = AudioOutputTrack(device="default")
 
@@ -542,13 +619,22 @@ async def test_audio_output_track_write_error():
 async def test_audio_output_track_flush():
     """Test AudioOutputTrack.flush method."""
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
-        mock_sd.wait = MagicMock()
+        # Mock the OutputStream class
+        mock_stream = MagicMock()
+        mock_sd.OutputStream.return_value = mock_stream
 
         track = AudioOutputTrack(device="default")
+
+        # Add some data to the buffer first
+        track._buffer.extend(b"\x00\x01" * 100)
+
+        # Start flush (it will wait for buffer to drain)
+        # We need to drain the buffer to let flush complete
+        track._buffer.clear()
         await track.flush()
 
-        # Verify wait was called
-        assert mock_sd.wait.called
+        # Flush should complete without error when buffer is empty
+        assert len(track._buffer) == 0
 
 
 @pytest.mark.asyncio
@@ -563,27 +649,53 @@ async def test_audio_output_track_flush_after_stop():
 
 
 @pytest.mark.asyncio
-async def test_audio_output_track_flush_error():
-    """Test AudioOutputTrack.flush handles errors gracefully."""
+async def test_audio_output_track_flush_with_data():
+    """Test AudioOutputTrack.flush waits for buffer to drain."""
+    import asyncio
+
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
-        mock_sd.wait = MagicMock(side_effect=Exception("Wait error"))
+        # Mock the OutputStream class
+        mock_stream = MagicMock()
+        mock_sd.OutputStream.return_value = mock_stream
 
         track = AudioOutputTrack(device="default")
 
-        with pytest.raises(RuntimeError, match="Failed to flush audio output"):
-            await track.flush()
+        # Add some data to the buffer
+        track._buffer.extend(b"\x00\x01" * 100)
+
+        # Create a task to drain the buffer after a short delay
+        async def drain_buffer():
+            await asyncio.sleep(0.1)
+            track._buffer.clear()
+
+        # Start both flush and drain tasks
+        drain_task = asyncio.create_task(drain_buffer())
+        await track.flush()
+        await drain_task
+
+        # Buffer should be empty after flush
+        assert len(track._buffer) == 0
 
 
 def test_audio_output_track_stop():
     """Test AudioOutputTrack.stop method."""
     with patch("vision_agents.plugins.localrtc.tracks.sd") as mock_sd:
-        mock_sd.stop = MagicMock()
+        # Mock the OutputStream class
+        mock_stream = MagicMock()
+        mock_sd.OutputStream.return_value = mock_stream
 
         track = AudioOutputTrack(device="default")
+
+        # Start the stream first
+        track._ensure_stream_started()
+
+        # Now stop
         track.stop()
 
         assert track._stopped is True
-        assert mock_sd.stop.called
+        assert mock_stream.stop.called
+        assert mock_stream.close.called
+        assert track._stream is None
 
 
 def test_audio_output_track_stop_multiple_times():
