@@ -5,9 +5,12 @@ and LLM provider requirements (e.g., Gemini Realtime API).
 """
 
 import logging
-from typing import Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 from vision_agents.core.types import AudioCapabilities
+
+if TYPE_CHECKING:
+    from .config import LocalEdgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +34,18 @@ class AudioFormatNegotiator:
         self,
         input_sample_rate: int = 16000,
         input_channels: int = 1,
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the audio format negotiator.
 
         Args:
             input_sample_rate: Input device sample rate in Hz (default: 16000)
             input_channels: Input device channel count (default: 1)
+            config: Optional LocalEdgeConfig for default output format
         """
+        from .config import LocalEdgeConfig
+
+        self.config = config if config is not None else LocalEdgeConfig()
         self.input_sample_rate = input_sample_rate
         self.input_channels = input_channels
         self.output_sample_rate: Optional[int] = None
@@ -94,12 +102,12 @@ class AudioFormatNegotiator:
                     f"Will use closest supported format: {closest_rate}Hz, {closest_channels}ch"
                 )
         else:
-            # Default to 24kHz mono for backward compatibility (Gemini default)
-            self.output_sample_rate = 24000
-            self.output_channels = 1
+            # Use configured defaults
+            self.output_sample_rate = self.config.audio.output_sample_rate
+            self.output_channels = self.config.audio.output_channels
             logger.info(
-                "[AUDIO NEGOTIATION] No provider requirements found, "
-                "using default output format: 24000Hz, 1ch"
+                f"[AUDIO NEGOTIATION] No provider requirements found, "
+                f"using default output format: {self.output_sample_rate}Hz, {self.output_channels}ch"
             )
 
         logger.info(
@@ -115,8 +123,8 @@ class AudioFormatNegotiator:
 
         Returns:
             Tuple of (sample_rate, channels) for output format.
-            If not negotiated yet, returns default (24000Hz, 1ch).
+            If not negotiated yet, returns configured defaults.
         """
-        sample_rate = self.output_sample_rate or 24000
-        channels = self.output_channels or 1
+        sample_rate = self.output_sample_rate or self.config.audio.output_sample_rate
+        channels = self.output_channels or self.config.audio.output_channels
         return sample_rate, channels

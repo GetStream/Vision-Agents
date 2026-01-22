@@ -6,10 +6,13 @@ import os
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 import numpy as np
 from vision_agents.core.types import PcmData as CorePcmData
+
+if TYPE_CHECKING:
+    from .localedge.config import LocalEdgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +78,11 @@ class AudioInputTrack:
     def __init__(
         self,
         device: Union[str, int] = "default",
-        sample_rate: int = 16000,
-        channels: int = 1,
-        bit_depth: int = 16,
-        buffer_duration: float = 2.0,
+        sample_rate: Optional[int] = None,
+        channels: Optional[int] = None,
+        bit_depth: Optional[int] = None,
+        buffer_duration: Optional[float] = None,
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the audio input track.
 
@@ -87,10 +91,11 @@ class AudioInputTrack:
                 - 'default': Use system default input device
                 - str: Device name to search for
                 - int: Device index
-            sample_rate: Audio sampling rate in Hz (default: 16000)
-            channels: Number of audio channels (default: 1 for mono)
-            bit_depth: Bits per sample (default: 16)
-            buffer_duration: Duration of the circular buffer in seconds (default: 2.0)
+            sample_rate: Audio sampling rate in Hz (uses config default if not specified)
+            channels: Number of audio channels (uses config default if not specified)
+            bit_depth: Bits per sample (uses config default if not specified)
+            buffer_duration: Duration of the circular buffer in seconds (uses config default if not specified)
+            config: Optional LocalEdgeConfig for default values
 
         Raises:
             RuntimeError: If sounddevice is not available
@@ -101,17 +106,21 @@ class AudioInputTrack:
                 "sounddevice is not available. Install it with: pip install sounddevice"
             )
 
-        self.sample_rate = sample_rate
-        self.channels = channels
-        self.bit_depth = bit_depth
+        from .localedge.config import LocalEdgeConfig
+        self._config = config if config is not None else LocalEdgeConfig()
+
+        self.sample_rate = sample_rate if sample_rate is not None else self._config.audio.input_sample_rate
+        self.channels = channels if channels is not None else self._config.audio.input_channels
+        self.bit_depth = bit_depth if bit_depth is not None else self._config.audio.bit_depth
         self._device_index: Optional[int] = None
 
         # Persistent stream state
         self._stream: Optional[sd.InputStream] = None
         self._buffer_lock = threading.Lock()
         self._buffer: bytearray = bytearray()
+        buf_duration = buffer_duration if buffer_duration is not None else self._config.audio.input_buffer_duration
         self._buffer_max_bytes = int(
-            buffer_duration * sample_rate * channels * (bit_depth // 8)
+            buf_duration * self.sample_rate * self.channels * (self.bit_depth // 8)
         )
         self._started = False
 
@@ -319,7 +328,7 @@ class AudioInputTrack:
                         )
 
             # Brief sleep to avoid busy-waiting
-            time.sleep(0.01)
+            time.sleep(self._config.audio.loop_sleep_interval)
 
         timestamp = time.time()
 
@@ -384,10 +393,11 @@ class AudioOutputTrack:
     def __init__(
         self,
         device: Union[str, int] = "default",
-        sample_rate: int = 16000,
-        channels: int = 1,
-        bit_depth: int = 16,
-        buffer_size_ms: int = 10000,
+        sample_rate: Optional[int] = None,
+        channels: Optional[int] = None,
+        bit_depth: Optional[int] = None,
+        buffer_size_ms: Optional[int] = None,
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the audio output track.
 
@@ -396,12 +406,13 @@ class AudioOutputTrack:
                 - 'default': Use system default output device
                 - str: Device name to search for
                 - int: Device index
-            sample_rate: Audio sampling rate in Hz (default: 16000)
-            channels: Number of audio channels (default: 1 for mono)
-            bit_depth: Bits per sample (default: 16)
-            buffer_size_ms: Size of the audio buffer in milliseconds (default: 10000).
+            sample_rate: Audio sampling rate in Hz (uses config default if not specified)
+            channels: Number of audio channels (uses config default if not specified)
+            bit_depth: Bits per sample (uses config default if not specified)
+            buffer_size_ms: Size of the audio buffer in milliseconds (uses config default if not specified).
                 This buffer accommodates TTS systems that send audio faster than real-time.
                 A larger buffer prevents audio dropouts during burst delivery.
+            config: Optional LocalEdgeConfig for default values
 
         Raises:
             RuntimeError: If sounddevice is not available
@@ -412,17 +423,21 @@ class AudioOutputTrack:
                 "sounddevice is not available. Install it with: pip install sounddevice"
             )
 
-        self.sample_rate = sample_rate
-        self.channels = channels
-        self.bit_depth = bit_depth
+        from .localedge.config import LocalEdgeConfig
+        self._config = config if config is not None else LocalEdgeConfig()
+
+        self.sample_rate = sample_rate if sample_rate is not None else self._config.audio.output_sample_rate
+        self.channels = channels if channels is not None else self._config.audio.output_channels
+        self.bit_depth = bit_depth if bit_depth is not None else self._config.audio.bit_depth
         self._device_index: Optional[int] = None
         self._stopped = False
 
         # Thread-safe buffer for audio data
         self._buffer_lock = threading.Lock()
         self._buffer: bytearray = bytearray()
+        buf_size_ms = buffer_size_ms if buffer_size_ms is not None else self._config.audio.output_buffer_size_ms
         self._buffer_size_bytes = int(
-            (buffer_size_ms / 1000) * sample_rate * channels * (bit_depth // 8)
+            (buf_size_ms / 1000) * self.sample_rate * self.channels * (self.bit_depth // 8)
         )
 
         # Persistent output stream
@@ -451,7 +466,7 @@ class AudioOutputTrack:
             self.channels = max(1, max_channels)
             # Recalculate buffer size with adjusted channels
             self._buffer_size_bytes = int(
-                (buffer_size_ms / 1000) * sample_rate * self.channels * (bit_depth // 8)
+                (buf_size_ms / 1000) * self.sample_rate * self.channels * (self.bit_depth // 8)
             )
 
     def _validate_device_index(self, index: int) -> None:
@@ -530,8 +545,8 @@ class AudioOutputTrack:
         """
         dtype = f"int{self.bit_depth}"
         bytes_per_sample = self.bit_depth // 8
-        # Play in chunks of ~50ms
-        chunk_samples = int(self.sample_rate * 0.05)
+        # Play in chunks using configured playback duration
+        chunk_samples = int(self.sample_rate * self._config.audio.playback_chunk_duration)
         chunk_bytes = chunk_samples * self.channels * bytes_per_sample
 
         try:
@@ -557,7 +572,7 @@ class AudioOutputTrack:
                     self._stream.write(audio_array)
                 else:
                     # No data, sleep briefly
-                    time.sleep(0.01)
+                    time.sleep(self._config.audio.loop_sleep_interval)
         except Exception as e:
             if not self._stopped:
                 logger.error(f"Playback thread error: {e}")
@@ -952,7 +967,7 @@ class AudioOutputTrack:
                 with self._buffer_lock:
                     if len(self._buffer) == 0:
                         break
-                await asyncio.sleep(0.05)  # Poll every 50ms
+                await asyncio.sleep(self._config.audio.flush_poll_interval)
         except Exception as e:
             raise RuntimeError(f"Failed to flush audio output: {e}")
 
@@ -1011,9 +1026,10 @@ class VideoInputTrack:
     def __init__(
         self,
         device: Union[int, str] = 0,
-        width: int = 640,
-        height: int = 480,
-        fps: int = 30,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        fps: Optional[int] = None,
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the video input track.
 
@@ -1021,9 +1037,10 @@ class VideoInputTrack:
             device: Device identifier - can be:
                 - int: Device index (e.g., 0 for first camera)
                 - str: Device path (e.g., '/dev/video0')
-            width: Video frame width in pixels (default: 640)
-            height: Video frame height in pixels (default: 480)
-            fps: Frames per second (default: 30)
+            width: Video frame width in pixels (uses config default if not specified)
+            height: Video frame height in pixels (uses config default if not specified)
+            fps: Frames per second (uses config default if not specified)
+            config: Optional LocalEdgeConfig for default values
 
         Raises:
             RuntimeError: If cv2 (opencv-python) is not available
@@ -1034,17 +1051,21 @@ class VideoInputTrack:
                 "opencv-python is not available. Install it with: pip install opencv-python"
             )
 
-        if width <= 0:
-            raise ValueError(f"Width must be positive, got {width}")
-        if height <= 0:
-            raise ValueError(f"Height must be positive, got {height}")
-        if fps <= 0:
-            raise ValueError(f"FPS must be positive, got {fps}")
+        from .localedge.config import LocalEdgeConfig
+        self._config = config if config is not None else LocalEdgeConfig()
+
+        self.width = width if width is not None else self._config.video.default_width
+        self.height = height if height is not None else self._config.video.default_height
+        self.fps = fps if fps is not None else self._config.video.default_fps
+
+        if self.width <= 0:
+            raise ValueError(f"Width must be positive, got {self.width}")
+        if self.height <= 0:
+            raise ValueError(f"Height must be positive, got {self.height}")
+        if self.fps <= 0:
+            raise ValueError(f"FPS must be positive, got {self.fps}")
 
         self.device = device
-        self.width = width
-        self.height = height
-        self.fps = fps
         self._capture: Optional[cv2.VideoCapture] = None
         self._running = False
         self._capture_thread: Optional[threading.Thread] = None
@@ -1130,7 +1151,7 @@ class VideoInputTrack:
                 # In production, you might want to emit an error event
                 if self._running:  # Only log if we're still supposed to be running
                     logger.error(f"Error in video capture loop: {e}")
-                    time.sleep(0.1)  # Brief pause before retry
+                    time.sleep(self._config.audio.error_retry_delay)
                 else:
                     # We're shutting down, exit gracefully
                     break
@@ -1353,38 +1374,44 @@ class GStreamerAudioInputTrack(BaseGStreamerTrack):
     def __init__(
         self,
         pipeline: str,
-        sample_rate: int = 16000,
-        channels: int = 1,
-        bit_depth: int = 16,
+        sample_rate: Optional[int] = None,
+        channels: Optional[int] = None,
+        bit_depth: Optional[int] = None,
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the GStreamer audio input track.
 
         Args:
             pipeline: GStreamer pipeline string for audio input
-            sample_rate: Audio sampling rate in Hz (default: 16000)
-            channels: Number of audio channels (default: 1 for mono)
-            bit_depth: Bits per sample (default: 16)
+            sample_rate: Audio sampling rate in Hz (uses config default if not specified)
+            channels: Number of audio channels (uses config default if not specified)
+            bit_depth: Bits per sample (uses config default if not specified)
+            config: Optional LocalEdgeConfig for default values
 
         Raises:
             RuntimeError: If GStreamer is not available
         """
         super().__init__(pipeline)
-        self.sample_rate = sample_rate
-        self.channels = channels
-        self.bit_depth = bit_depth
+        from .localedge.config import LocalEdgeConfig
+        self._config = config if config is not None else LocalEdgeConfig()
+
+        self.sample_rate = sample_rate if sample_rate is not None else self._config.audio.input_sample_rate
+        self.channels = channels if channels is not None else self._config.audio.input_channels
+        self.bit_depth = bit_depth if bit_depth is not None else self._config.audio.bit_depth
         self._appsink: Optional[Any] = None
 
     def _create_pipeline(self) -> None:
         """Create and configure the GStreamer pipeline."""
         # Build full pipeline with appsink for data capture
         caps = f"audio/x-raw,format=S{self.bit_depth}LE,rate={self.sample_rate},channels={self.channels}"
-        full_pipeline = f"{self.pipeline_str} ! appsink name=sink caps={caps}"
+        sink_name = self._config.gstreamer.appsink_name
+        full_pipeline = f"{self.pipeline_str} ! appsink name={sink_name} caps={caps}"
 
         self._pipeline = Gst.parse_launch(full_pipeline)
-        self._appsink = self._pipeline.get_by_name("sink")
+        self._appsink = self._pipeline.get_by_name(sink_name)
 
         if self._appsink is None:
-            raise RuntimeError("Failed to get appsink from GStreamer pipeline")
+            raise RuntimeError(f"Failed to get appsink '{sink_name}' from GStreamer pipeline")
 
     def capture(self, duration: float) -> PcmData:
         """Capture audio from the GStreamer pipeline for a specified duration.
@@ -1492,52 +1519,60 @@ class GStreamerVideoInputTrack(BaseGStreamerTrack):
     def __init__(
         self,
         pipeline: str,
-        width: int = 640,
-        height: int = 480,
-        fps: int = 30,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        fps: Optional[int] = None,
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the GStreamer video input track.
 
         Args:
             pipeline: GStreamer pipeline string for video input
-            width: Video frame width in pixels (default: 640)
-            height: Video frame height in pixels (default: 480)
-            fps: Frames per second (default: 30)
+            width: Video frame width in pixels (uses config default if not specified)
+            height: Video frame height in pixels (uses config default if not specified)
+            fps: Frames per second (uses config default if not specified)
+            config: Optional LocalEdgeConfig for default values
 
         Raises:
             RuntimeError: If GStreamer is not available
             ValueError: If parameters are out of range
         """
-        if width <= 0:
-            raise ValueError(f"Width must be positive, got {width}")
-        if height <= 0:
-            raise ValueError(f"Height must be positive, got {height}")
-        if fps <= 0:
-            raise ValueError(f"FPS must be positive, got {fps}")
-
         super().__init__(pipeline)
-        self.width = width
-        self.height = height
-        self.fps = fps
+        from .localedge.config import LocalEdgeConfig
+        self._config = config if config is not None else LocalEdgeConfig()
+
+        self.width = width if width is not None else self._config.video.default_width
+        self.height = height if height is not None else self._config.video.default_height
+        self.fps = fps if fps is not None else self._config.video.default_fps
+
+        if self.width <= 0:
+            raise ValueError(f"Width must be positive, got {self.width}")
+        if self.height <= 0:
+            raise ValueError(f"Height must be positive, got {self.height}")
+        if self.fps <= 0:
+            raise ValueError(f"FPS must be positive, got {self.fps}")
+
         self._appsink: Optional[Any] = None
         self._callback: Optional[Callable[[np.ndarray, float], None]] = None
 
     def _create_pipeline(self) -> None:
         """Create and configure the GStreamer pipeline."""
         # Build full pipeline with appsink for frame capture
-        caps = f"video/x-raw,format=BGR,width={self.width},height={self.height},framerate={self.fps}/1"
-        full_pipeline = f"{self.pipeline_str} ! videoscale ! videoconvert ! appsink name=sink caps={caps}"
+        video_format = self._config.video.format
+        caps = f"video/x-raw,format={video_format},width={self.width},height={self.height},framerate={self.fps}/1"
+        sink_name = self._config.gstreamer.appsink_name
+        full_pipeline = f"{self.pipeline_str} ! videoscale ! videoconvert ! appsink name={sink_name} caps={caps}"
 
         self._pipeline = Gst.parse_launch(full_pipeline)
-        self._appsink = self._pipeline.get_by_name("sink")
+        self._appsink = self._pipeline.get_by_name(sink_name)
 
         if self._appsink is None:
-            raise RuntimeError("Failed to get appsink from GStreamer pipeline")
+            raise RuntimeError(f"Failed to get appsink '{sink_name}' from GStreamer pipeline")
 
         # Configure appsink
         self._appsink.set_property("emit-signals", True)
         self._appsink.set_property("drop", True)
-        self._appsink.set_property("max-buffers", 1)
+        self._appsink.set_property("max-buffers", self._config.video.max_buffers)
 
     def _capture_loop(self) -> None:
         """Internal capture loop that reads frames and invokes callback."""
@@ -1561,7 +1596,7 @@ class GStreamerVideoInputTrack(BaseGStreamerTrack):
             except Exception as e:
                 if self._running:
                     logger.error(f"Error in GStreamer video capture loop: {e}")
-                    time.sleep(0.1)
+                    time.sleep(self._config.audio.error_retry_delay)
                 else:
                     break
 
@@ -1693,39 +1728,46 @@ class GStreamerAudioOutputTrack(BaseGStreamerTrack):
     def __init__(
         self,
         pipeline: str,
-        sample_rate: int = 16000,
-        channels: int = 1,
-        bit_depth: int = 16,
+        sample_rate: Optional[int] = None,
+        channels: Optional[int] = None,
+        bit_depth: Optional[int] = None,
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the GStreamer audio output track.
 
         Args:
             pipeline: GStreamer pipeline string for audio output (sink)
-            sample_rate: Audio sampling rate in Hz (default: 16000)
-            channels: Number of audio channels (default: 1 for mono)
-            bit_depth: Bits per sample (default: 16)
+            sample_rate: Audio sampling rate in Hz (uses config default if not specified)
+            channels: Number of audio channels (uses config default if not specified)
+            bit_depth: Bits per sample (uses config default if not specified)
+            config: Optional LocalEdgeConfig for default values
 
         Raises:
             RuntimeError: If GStreamer is not available
         """
         super().__init__(pipeline)
-        self.sample_rate = sample_rate
-        self.channels = channels
-        self.bit_depth = bit_depth
+        from .localedge.config import LocalEdgeConfig
+        self._config = config if config is not None else LocalEdgeConfig()
+
+        self.sample_rate = sample_rate if sample_rate is not None else self._config.audio.output_sample_rate
+        self.channels = channels if channels is not None else self._config.audio.output_channels
+        self.bit_depth = bit_depth if bit_depth is not None else self._config.audio.bit_depth
         self._appsrc: Optional[Any] = None
         self._stopped = False
 
     def _create_pipeline(self) -> None:
         """Create and configure the GStreamer pipeline."""
         # Build full pipeline with appsrc for data input
-        caps = f"audio/x-raw,format=S{self.bit_depth}LE,rate={self.sample_rate},channels={self.channels},layout=interleaved"
-        full_pipeline = f"appsrc name=src caps={caps} ! audioconvert ! audioresample ! {self.pipeline_str}"
+        audio_layout = self._config.gstreamer.audio_layout
+        caps = f"audio/x-raw,format=S{self.bit_depth}LE,rate={self.sample_rate},channels={self.channels},layout={audio_layout}"
+        src_name = self._config.gstreamer.appsrc_name
+        full_pipeline = f"appsrc name={src_name} caps={caps} ! audioconvert ! audioresample ! {self.pipeline_str}"
 
         self._pipeline = Gst.parse_launch(full_pipeline)
-        self._appsrc = self._pipeline.get_by_name("src")
+        self._appsrc = self._pipeline.get_by_name(src_name)
 
         if self._appsrc is None:
-            raise RuntimeError("Failed to get appsrc from GStreamer pipeline")
+            raise RuntimeError(f"Failed to get appsrc '{src_name}' from GStreamer pipeline")
 
         # Configure appsrc
         self._appsrc.set_property("format", Gst.Format.TIME)
@@ -1777,7 +1819,7 @@ class GStreamerAudioOutputTrack(BaseGStreamerTrack):
             # Send end-of-stream to flush the pipeline
             self._appsrc.emit("end-of-stream")
             # Wait a bit for EOS to propagate
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(self._config.audio.eos_wait_time)
         except Exception as e:
             raise RuntimeError(f"Failed to flush GStreamer audio output: {e}")
 

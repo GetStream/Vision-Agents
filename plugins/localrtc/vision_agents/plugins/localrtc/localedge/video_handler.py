@@ -5,7 +5,10 @@ video device access.
 """
 
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+
+if TYPE_CHECKING:
+    from .config import LocalEdgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +28,18 @@ class VideoHandler:
         self,
         video_device: Union[int, str],
         custom_pipeline: Optional[Dict[str, Any]],
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the video handler.
 
         Args:
             video_device: Video input device identifier
             custom_pipeline: Optional GStreamer pipeline configuration
+            config: Optional LocalEdgeConfig for video settings
         """
+        from .config import LocalEdgeConfig
+
+        self.config = config if config is not None else LocalEdgeConfig()
         self.video_device = video_device
         self.custom_pipeline = custom_pipeline
 
@@ -54,11 +62,15 @@ class VideoHandler:
             if self.custom_pipeline and "video_source" in self.custom_pipeline:
                 # Use GStreamer pipeline
                 self._video_input_track = GStreamerVideoInputTrack(
-                    pipeline=self.custom_pipeline["video_source"]
+                    pipeline=self.custom_pipeline["video_source"],
+                    config=self.config,
                 )
             else:
                 # Use default device access
-                self._video_input_track = VideoInputTrack(device=self.video_device)
+                self._video_input_track = VideoInputTrack(
+                    device=self.video_device,
+                    config=self.config,
+                )
 
             logger.info("[LOCALRTC] Video input track created")
 

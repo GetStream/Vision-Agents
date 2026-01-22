@@ -6,7 +6,7 @@ and subscriber management for audio data.
 
 import logging
 import threading
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 from getstream.video.rtc.track_util import AudioFormat, PcmData as StreamPcmData
@@ -14,6 +14,9 @@ from vision_agents.core.edge import events
 from vision_agents.core.edge.types import OutputAudioTrack, Participant
 from vision_agents.core.events import EventManager
 from vision_agents.core.types import PcmData, TrackType
+
+if TYPE_CHECKING:
+    from .config import LocalEdgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,7 @@ class AudioHandler:
         channels: int,
         custom_pipeline: Optional[Dict[str, Any]],
         events: EventManager,
+        config: Optional["LocalEdgeConfig"] = None,
     ) -> None:
         """Initialize the audio handler.
 
@@ -54,7 +58,11 @@ class AudioHandler:
             channels: Number of audio channels
             custom_pipeline: Optional GStreamer pipeline configuration
             events: Event manager for emitting audio events
+            config: Optional LocalEdgeConfig for audio settings
         """
+        from .config import LocalEdgeConfig
+
+        self.config = config if config is not None else LocalEdgeConfig()
         self.audio_device = audio_device
         self.speaker_device = speaker_device
         self.sample_rate = sample_rate
@@ -206,7 +214,7 @@ class AudioHandler:
             self._audio_capture_thread is not None
             and self._audio_capture_thread.is_alive()
         ):
-            self._audio_capture_thread.join(timeout=2.0)
+            self._audio_capture_thread.join(timeout=self.config.audio.thread_join_timeout)
             self._audio_capture_thread = None
 
         logger.info("[LOCALRTC] Audio capture stream stopped")
@@ -238,8 +246,8 @@ class AudioHandler:
         if self._audio_input_track is None:
             return
 
-        # Capture audio in 100ms chunks
-        chunk_duration = 0.1  # seconds
+        # Capture audio chunks using configured duration
+        chunk_duration = self.config.audio.capture_chunk_duration
 
         # Create a participant for local audio (represents the human user)
         local_participant = Participant(original=None, user_id=LOCAL_USER_ID)
@@ -292,7 +300,7 @@ class AudioHandler:
                     logger.error(f"Error in audio capture loop: {e}")
                     import time
 
-                    time.sleep(0.1)  # Brief pause before retry
+                    time.sleep(self.config.audio.error_retry_delay)
                 else:
                     # Shutting down, exit gracefully
                     break

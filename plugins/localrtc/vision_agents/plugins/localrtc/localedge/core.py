@@ -13,6 +13,7 @@ from vision_agents.core.protocols import Room
 from vision_agents.core.types import PcmData, TrackType
 
 from .audio_handler import AudioHandler
+from .config import LocalEdgeConfig
 from .format_negotiation import AudioFormatNegotiator
 from .video_handler import VideoHandler
 
@@ -55,6 +56,7 @@ class LocalEdge(EdgeTransport):
         sample_rate: int = 16000,
         channels: int = 1,
         custom_pipeline: Optional[Dict[str, Any]] = None,
+        config: Optional[LocalEdgeConfig] = None,
     ) -> None:
         """Initialize the local edge transport.
 
@@ -65,6 +67,7 @@ class LocalEdge(EdgeTransport):
             sample_rate: Audio input sampling rate in Hz (default: 16000)
                 Note: Audio output is automatically set to 24000 Hz to match
                 Gemini Realtime API's native format and avoid resampling issues.
+                Can be overridden via config or VA_AUDIO_OUTPUT_SAMPLE_RATE env var.
             channels: Number of audio channels (default: 1)
             custom_pipeline: Optional GStreamer pipeline configuration. When provided,
                 uses GStreamer instead of default device access. Dictionary with keys:
@@ -75,6 +78,10 @@ class LocalEdge(EdgeTransport):
                 - audio_sink: GStreamer pipeline string for audio output
                   Example: "autoaudiosink"
                 Note: Requires PyGObject (gi) and GStreamer to be installed.
+            config: Optional LocalEdgeConfig for customizing audio/video behavior.
+                If not provided, uses defaults with environment variable overrides.
+                Environment variables (e.g., VA_AUDIO_INPUT_SAMPLE_RATE=48000) are
+                automatically applied when config is not specified.
 
         Raises:
             RuntimeError: If custom_pipeline is provided but GStreamer is not available
@@ -82,6 +89,16 @@ class LocalEdge(EdgeTransport):
         Example:
             >>> # Using default device access
             >>> edge = LocalEdge(audio_device="default", video_device=0)
+            >>>
+            >>> # Using custom configuration
+            >>> from vision_agents.plugins.localrtc.localedge import LocalEdgeConfig, AudioConfig
+            >>> config = LocalEdgeConfig(audio=AudioConfig(input_sample_rate=48000))
+            >>> edge = LocalEdge(config=config)
+            >>>
+            >>> # Using environment variables
+            >>> import os
+            >>> os.environ["VA_AUDIO_INPUT_SAMPLE_RATE"] = "48000"
+            >>> edge = LocalEdge()  # Automatically uses env var
             >>>
             >>> # Using custom GStreamer pipelines
             >>> pipeline = {
@@ -107,6 +124,9 @@ class LocalEdge(EdgeTransport):
                 "  macOS: brew install pygobject3 gstreamer"
             )
 
+        # Initialize or use provided configuration
+        self.config = config if config is not None else LocalEdgeConfig()
+
         self.audio_device = audio_device
         self.video_device = video_device
         self.speaker_device = speaker_device
@@ -122,16 +142,19 @@ class LocalEdge(EdgeTransport):
             channels=channels,
             custom_pipeline=custom_pipeline,
             events=self.events,
+            config=self.config,
         )
 
         self._video_handler = VideoHandler(
             video_device=video_device,
             custom_pipeline=custom_pipeline,
+            config=self.config,
         )
 
         self._format_negotiator = AudioFormatNegotiator(
             input_sample_rate=sample_rate,
             input_channels=channels,
+            config=self.config,
         )
 
         # Track state
