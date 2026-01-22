@@ -1,6 +1,7 @@
 """Local RTC Edge Transport implementation."""
 
-from typing import Any, Callable, Dict, Optional, Union
+import threading
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import aiortc
 from vision_agents.core.edge.edge_transport import EdgeTransport
@@ -56,7 +57,9 @@ class LocalEdge(EdgeTransport):
         self._audio_output_track: Optional[AudioOutputTrack] = None
         self._video_input_track: Optional[VideoInputTrack] = None
         self._rooms: Dict[str, LocalRoom] = {}
-        self._track_subscribers: Dict[str, Callable[[PcmData], None]] = {}
+        self._track_subscribers: Dict[str, List[Callable[[PcmData], None]]] = {}
+        self._audio_capture_thread: Optional[threading.Thread] = None
+        self._audio_capture_running: bool = False
 
     async def create_user(self, user: User) -> None:
         """Create a user in the local edge transport.
@@ -82,6 +85,9 @@ class LocalEdge(EdgeTransport):
 
     async def close(self) -> None:
         """Close the edge transport and clean up resources."""
+        # Stop audio capture streaming
+        self._stop_audio_capture_stream()
+
         # Stop and cleanup audio output track
         if self._audio_output_track is not None:
             self._audio_output_track.stop()
@@ -176,13 +182,123 @@ class LocalEdge(EdgeTransport):
     ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
         """Add a subscriber to a track.
 
+        This method subscribes to audio or video tracks and invokes the callback
+        with the appropriate data. For audio tracks, the callback receives PcmData.
+        For video tracks, this method returns None as local RTC doesn't use
+        aiortc MediaStreamTracks.
+
         Args:
-            track_id: The ID of the track to subscribe to.
-            callback: Callback function to handle PCM data.
+            track_id: The ID of the track to subscribe to. Should match TrackType
+                     values (e.g., "audio", "video") or room-specific track IDs.
+            callback: Callback function to handle PCM data for audio tracks.
 
         Returns:
-            A MediaStreamTrack if available, None otherwise.
+            A MediaStreamTrack if available (None for local edge as we don't use
+            aiortc MediaStreamTracks).
         """
-        self._track_subscribers[track_id] = callback
+        # Initialize subscriber list for this track_id if not exists
+        if track_id not in self._track_subscribers:
+            self._track_subscribers[track_id] = []
+
+        # Add callback to subscribers list
+        self._track_subscribers[track_id].append(callback)
+
+        # Determine track type from track_id
+        track_type = self._get_track_type_from_id(track_id)
+
+        # Start streaming for audio tracks
+        if track_type == TrackType.AUDIO and not self._audio_capture_running:
+            self._start_audio_capture_stream()
+
+        # For video tracks, they use their own callback mechanism via start()
+        # Video tracks are not managed through add_track_subscriber callbacks
+
         # For local edge, we don't use aiortc MediaStreamTracks
         return None
+
+    def _get_track_type_from_id(self, track_id: str) -> Optional[TrackType]:
+        """Determine track type from track ID.
+
+        Args:
+            track_id: The track identifier
+
+        Returns:
+            TrackType if determinable, None otherwise
+        """
+        # Check if track_id matches TrackType enum values
+        track_id_lower = track_id.lower()
+        if track_id_lower == "audio" or "audio" in track_id_lower:
+            return TrackType.AUDIO
+        elif track_id_lower == "video" or "video" in track_id_lower:
+            return TrackType.VIDEO
+        elif track_id_lower == "screenshare" or "screen" in track_id_lower:
+            return TrackType.SCREENSHARE
+
+        # Check if track exists in any room
+        for room in self._rooms.values():
+            if isinstance(room, LocalRoom):
+                for track_type, track in room._tracks.items():
+                    if track_id == str(track_type) or track_id in str(track_type):
+                        return track_type
+
+        return None
+
+    def _start_audio_capture_stream(self) -> None:
+        """Start continuous audio capture stream for subscribed callbacks."""
+        if self._audio_capture_running or self._audio_input_track is None:
+            return
+
+        self._audio_capture_running = True
+        self._audio_capture_thread = threading.Thread(
+            target=self._audio_capture_loop, daemon=True
+        )
+        self._audio_capture_thread.start()
+
+    def _stop_audio_capture_stream(self) -> None:
+        """Stop continuous audio capture stream."""
+        if not self._audio_capture_running:
+            return
+
+        self._audio_capture_running = False
+
+        if self._audio_capture_thread is not None and self._audio_capture_thread.is_alive():
+            self._audio_capture_thread.join(timeout=2.0)
+            self._audio_capture_thread = None
+
+    def _audio_capture_loop(self) -> None:
+        """Continuous audio capture loop that invokes subscriber callbacks.
+
+        This runs in a background thread and continuously captures audio chunks,
+        then invokes all registered callbacks with PcmData.
+        """
+        if self._audio_input_track is None:
+            return
+
+        # Capture audio in 100ms chunks
+        chunk_duration = 0.1  # seconds
+
+        while self._audio_capture_running:
+            try:
+                # Capture audio chunk
+                pcm_data = self._audio_input_track.capture(duration=chunk_duration)
+
+                # Invoke all audio subscribers
+                audio_subscribers = self._track_subscribers.get("audio", [])
+                audio_subscribers.extend(self._track_subscribers.get(str(TrackType.AUDIO), []))
+
+                for callback in audio_subscribers:
+                    try:
+                        callback(pcm_data)
+                    except Exception as e:
+                        # Log error but continue processing other callbacks
+                        print(f"Error in audio track subscriber callback: {e}")
+
+            except Exception as e:
+                if self._audio_capture_running:
+                    # Only log if we're still supposed to be running
+                    print(f"Error in audio capture loop: {e}")
+                    import time
+                    time.sleep(0.1)  # Brief pause before retry
+                else:
+                    # Shutting down, exit gracefully
+                    break
