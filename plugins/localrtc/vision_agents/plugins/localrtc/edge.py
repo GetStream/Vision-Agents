@@ -9,6 +9,7 @@ from vision_agents.core.edge.types import OutputAudioTrack, User
 from vision_agents.core.protocols import Room
 from vision_agents.core.types import PcmData, TrackType
 
+from .devices import DeviceInfo, list_audio_inputs, list_audio_outputs, list_video_inputs
 from .room import LocalRoom
 from .tracks import AudioInputTrack, AudioOutputTrack, VideoInputTrack
 
@@ -60,6 +61,43 @@ class LocalEdge(EdgeTransport):
         self._track_subscribers: Dict[str, List[Callable[[PcmData], None]]] = {}
         self._audio_capture_thread: Optional[threading.Thread] = None
         self._audio_capture_running: bool = False
+
+    @staticmethod
+    def list_devices() -> Dict[str, List[DeviceInfo]]:
+        """List all available audio and video devices.
+
+        This static method discovers and returns all available audio input,
+        audio output, and video input devices on the system. It provides a
+        convenient way to enumerate devices before creating an Edge instance.
+
+        Returns:
+            Dictionary with three keys:
+                - audio_inputs: List of audio input devices
+                - audio_outputs: List of audio output devices
+                - video_inputs: List of video input devices
+            Each device is a dict with 'name' and 'index' keys.
+
+        Example:
+            >>> devices = Edge.list_devices()
+            >>> print("Audio inputs:")
+            >>> for device in devices["audio_inputs"]:
+            ...     print(f"  {device['index']}: {device['name']}")
+            >>> print("Audio outputs:")
+            >>> for device in devices["audio_outputs"]:
+            ...     print(f"  {device['index']}: {device['name']}")
+            >>> print("Video inputs:")
+            >>> for device in devices["video_inputs"]:
+            ...     print(f"  {device['index']}: {device['name']}")
+
+        Note:
+            Video device enumeration is not yet fully implemented and may
+            return an empty list on some platforms.
+        """
+        return {
+            "audio_inputs": list_audio_inputs(),
+            "audio_outputs": list_audio_outputs(),
+            "video_inputs": list_video_inputs(),
+        }
 
     async def create_user(self, user: User) -> None:
         """Create a user in the local edge transport.
