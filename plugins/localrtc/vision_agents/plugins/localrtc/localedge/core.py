@@ -1,5 +1,6 @@
 """Local RTC Edge Transport core implementation."""
 
+import asyncio
 import logging
 import warnings
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -248,14 +249,14 @@ class LocalEdge(EdgeTransport):
 
     async def close(self) -> None:
         """Close the edge transport and clean up resources."""
-        # Stop all audio/video tracks
-        self._audio_handler.stop_all_tracks()
-        self._video_handler.stop_all_tracks()
-
-        # Leave all rooms
+        # Leave all rooms first (async operations)
         for room in list(self._rooms.values()):
             await room.leave()
         self._rooms.clear()
+
+        # Stop all audio/video tracks (sync operations, run in thread pool)
+        await asyncio.to_thread(self._audio_handler.stop_all_tracks)
+        await asyncio.to_thread(self._video_handler.stop_all_tracks)
 
         # Clear user
         self._user = None
@@ -356,9 +357,9 @@ class LocalEdge(EdgeTransport):
         # Create and start audio input track for microphone capture
         # This is necessary for LocalRTC because there's no external RTC infrastructure
         # pushing audio to us - we need to capture it locally
-        self._audio_handler.create_audio_input_track()
-        # Start the capture loop to emit AudioReceivedEvents
-        self._audio_handler.start_audio_capture_stream()
+        # Run in thread pool to avoid blocking event loop
+        await asyncio.to_thread(self._audio_handler.create_audio_input_track)
+        await asyncio.to_thread(self._audio_handler.start_audio_capture_stream)
         logger.info("[LOCALRTC] Audio capture started")
 
         return self._rooms[room_id]

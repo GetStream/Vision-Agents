@@ -263,9 +263,10 @@ class AudioInputTrack:
             try:
                 self._stream.stop()
                 self._stream.close()
-            except Exception:
-                pass
-            self._stream = None
+            except Exception as e:
+                logger.error(f"Error closing audio input stream: {e}")
+            finally:
+                self._stream = None
 
         with self._buffer_lock:
             self._buffer.clear()
@@ -349,8 +350,8 @@ class AudioInputTrack:
     async def capture_async(self, duration: float) -> PcmData:
         """Asynchronously capture audio from the microphone.
 
-        This is a convenience method that wraps the synchronous capture method.
-        For non-blocking async operation, consider using asyncio.to_thread.
+        This method runs the blocking capture operation in a thread pool
+        to avoid blocking the event loop.
 
         Args:
             duration: Duration in seconds to capture audio
@@ -362,9 +363,8 @@ class AudioInputTrack:
             RuntimeError: If audio capture fails
             ValueError: If duration is invalid
         """
-        # Note: sounddevice.rec is blocking, so this is still blocking
-        # For true async, we'd need to use a different approach with callbacks
-        return self.capture(duration)
+        # Run blocking capture in thread pool to avoid blocking event loop
+        return await asyncio.to_thread(self.capture, duration)
 
 
 class AudioOutputTrack:
@@ -599,7 +599,8 @@ class AudioOutputTrack:
             if isinstance(max_ch, int):
                 return max_ch
             return 2  # Default to stereo
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error querying device max channels: {e}. Defaulting to stereo.")
             return 2  # Default to stereo if we can't query
 
     def _ensure_stream_started(self) -> None:
@@ -612,37 +613,49 @@ class AudioOutputTrack:
         if self._stream_started:
             return
 
-        # Check device capabilities and adjust channels if needed
-        max_channels = self._get_device_max_channels()
-        actual_channels = min(self.channels, max_channels)
+        try:
+            # Check device capabilities and adjust channels if needed
+            max_channels = self._get_device_max_channels()
+            actual_channels = min(self.channels, max_channels)
 
-        if actual_channels != self.channels:
-            # Update the track's channel count to match device capability
-            old_channels = self.channels
-            self.channels = actual_channels
-            # Recalculate buffer size preserving the original duration
-            # buffer_size_bytes = duration_s * sample_rate * channels * bytes_per_sample
-            bytes_per_sample = self.bit_depth // 8
-            old_duration_s = self._buffer_size_bytes / (self.sample_rate * old_channels * bytes_per_sample)
-            self._buffer_size_bytes = int(
-                old_duration_s * self.sample_rate * self.channels * bytes_per_sample
+            if actual_channels != self.channels:
+                # Update the track's channel count to match device capability
+                old_channels = self.channels
+                self.channels = actual_channels
+                # Recalculate buffer size preserving the original duration
+                # buffer_size_bytes = duration_s * sample_rate * channels * bytes_per_sample
+                bytes_per_sample = self.bit_depth // 8
+                old_duration_s = self._buffer_size_bytes / (self.sample_rate * old_channels * bytes_per_sample)
+                self._buffer_size_bytes = int(
+                    old_duration_s * self.sample_rate * self.channels * bytes_per_sample
+                )
+
+            # Create the output stream without callback (for blocking writes)
+            self._stream = sd.OutputStream(
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype=f"int{self.bit_depth}",
+                device=self._device_index,
             )
+            self._stream.start()
+            self._stream_started = True
 
-        # Create the output stream without callback (for blocking writes)
-        self._stream = sd.OutputStream(
-            samplerate=self.sample_rate,
-            channels=self.channels,
-            dtype=f"int{self.bit_depth}",
-            device=self._device_index,
-        )
-        self._stream.start()
-        self._stream_started = True
-
-        # Start playback thread
-        self._playback_thread_handle = threading.Thread(
-            target=self._playback_thread, daemon=True
-        )
-        self._playback_thread_handle.start()
+            # Start playback thread
+            self._playback_thread_handle = threading.Thread(
+                target=self._playback_thread, daemon=True
+            )
+            self._playback_thread_handle.start()
+        except Exception:
+            # Clean up on failure
+            if self._stream is not None:
+                try:
+                    self._stream.close()
+                except Exception as e:
+                    logger.error(f"Error closing stream during cleanup: {e}")
+                finally:
+                    self._stream = None
+            self._stream_started = False
+            raise
 
     def _convert_audio(
         self,
@@ -895,9 +908,8 @@ class AudioOutputTrack:
                 )
 
             # Ensure the output stream is running
-            # Note: Don't use asyncio.to_thread here - sounddevice streams
-            # should be created from a consistent thread context
-            self._ensure_stream_started()
+            # Run in thread pool to avoid blocking event loop with synchronous stream operations
+            await asyncio.to_thread(self._ensure_stream_started)
 
             if _VISION_AGENT_DEV:
                 logger.debug(
@@ -982,23 +994,31 @@ class AudioOutputTrack:
         self._stopped = True
 
         try:
-            # Wait for playback thread to finish
+            # Wait for playback thread to finish with timeout
             if hasattr(self, '_playback_thread_handle') and self._playback_thread_handle:
-                self._playback_thread_handle.join(timeout=1.0)
+                self._playback_thread_handle.join(timeout=2.0)
+                if self._playback_thread_handle.is_alive():
+                    logger.warning("Audio playback thread did not terminate within timeout")
+        except Exception as e:
+            logger.error(f"Error waiting for playback thread: {e}")
 
+        try:
             # Stop and close the persistent stream
             if self._stream is not None:
                 self._stream.stop()
                 self._stream.close()
-                self._stream = None
+        except Exception as e:
+            logger.error(f"Error stopping audio output stream: {e}")
+        finally:
+            self._stream = None
             self._stream_started = False
 
+        try:
             # Clear the buffer
             with self._buffer_lock:
                 self._buffer.clear()
-        except Exception:
-            # Ignore errors during stop
-            pass
+        except Exception as e:
+            logger.error(f"Error clearing audio buffer: {e}")
 
 
 class VideoInputTrack:
@@ -1088,27 +1108,37 @@ class VideoInputTrack:
                     "Check that the device exists and is not in use."
                 )
 
-            # Set capture properties
-            self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            self._capture.set(cv2.CAP_PROP_FPS, self.fps)
+            try:
+                # Set capture properties
+                self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                self._capture.set(cv2.CAP_PROP_FPS, self.fps)
 
-            # Verify actual settings (devices may not support requested values)
-            actual_width = int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_height = int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            actual_fps = int(self._capture.get(cv2.CAP_PROP_FPS))
+                # Verify actual settings (devices may not support requested values)
+                actual_width = int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_height = int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                actual_fps = int(self._capture.get(cv2.CAP_PROP_FPS))
 
-            # Update to actual values
-            self.width = actual_width
-            self.height = actual_height
-            # Only update fps if device reported a valid value
-            if actual_fps > 0:
-                self.fps = actual_fps
+                # Update to actual values
+                self.width = actual_width
+                self.height = actual_height
+                # Only update fps if device reported a valid value
+                if actual_fps > 0:
+                    self.fps = actual_fps
+            except Exception:
+                # If property setting fails, release device before re-raising
+                self._capture.release()
+                self._capture = None
+                raise
 
         except Exception as e:
             if self._capture is not None:
-                self._capture.release()
-                self._capture = None
+                try:
+                    self._capture.release()
+                except Exception as release_error:
+                    logger.error(f"Error releasing video capture during cleanup: {release_error}")
+                finally:
+                    self._capture = None
             if isinstance(e, RuntimeError):
                 raise
             raise RuntimeError(f"Error opening video device {self.device}: {e}")
@@ -1199,19 +1229,21 @@ class VideoInputTrack:
 
         self._running = False
 
-        # Wait for capture thread to finish
+        # Wait for capture thread to finish with timeout
         if self._capture_thread is not None and self._capture_thread.is_alive():
-            self._capture_thread.join(timeout=2.0)
+            self._capture_thread.join(timeout=3.0)
+            if self._capture_thread.is_alive():
+                logger.warning("Video capture thread did not terminate within timeout")
             self._capture_thread = None
 
         # Release capture device
         if self._capture is not None:
             try:
                 self._capture.release()
-            except Exception:
-                # Ignore errors during release
-                pass
-            self._capture = None
+            except Exception as e:
+                logger.error(f"Error releasing video capture device: {e}")
+            finally:
+                self._capture = None
 
         self._callback = None
 
