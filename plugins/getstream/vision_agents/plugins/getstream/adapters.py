@@ -26,6 +26,7 @@ Example:
         # Returns: TrackType.AUDIO
 """
 
+from getstream.video.async_call import Call
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
     TrackType as StreamTrackType,
 )
@@ -114,3 +115,70 @@ def adapt_track_type(stream_track_type: int) -> TrackType:
     else:
         # Default to video for unknown types
         return TrackType.VIDEO
+
+
+class GetStreamRoomAdapter:
+    """Adapter to make GetStream Call objects satisfy the Room protocol.
+
+    This adapter wraps a GetStream Call instance and provides the interface
+    required by the Room protocol, enabling GetStream calls to be used
+    interchangeably with other room implementations in the framework.
+
+    The adapter translates between GetStream's Call API and the Room protocol:
+    - Maps Call.id to Room.id
+    - Maps Call.call_type to Room.type
+    - Maps Call.end() to Room.leave()
+
+    Args:
+        call: A GetStream Call instance to wrap.
+
+    Example:
+        >>> from getstream.video.async_call import Call
+        >>> from vision_agents.plugins.getstream.adapters import GetStreamRoomAdapter
+        >>>
+        >>> # Assuming you have a GetStream call instance
+        >>> call = Call(client, call_type="default", call_id="my-call-123")
+        >>> room = GetStreamRoomAdapter(call)
+        >>>
+        >>> # Now use it as a Room protocol object
+        >>> print(room.id)  # "my-call-123"
+        >>> print(room.type)  # "default"
+        >>> await room.leave()  # Calls call.end() internally
+    """
+
+    def __init__(self, call: Call):
+        """Initialize the adapter with a GetStream Call instance.
+
+        Args:
+            call: The GetStream Call object to wrap.
+        """
+        self._call = call
+
+    @property
+    def id(self) -> str:
+        """Unique identifier for the room/call.
+
+        Returns:
+            The call's unique identifier.
+        """
+        return self._call.id
+
+    @property
+    def type(self) -> str:
+        """Type or category of the room/call.
+
+        Returns:
+            The call's type (e.g., "default", "rtc").
+        """
+        return self._call.call_type
+
+    async def leave(self) -> None:
+        """Asynchronously leave/disconnect from the call.
+
+        This method delegates to the GetStream Call's end() method to
+        gracefully terminate the call.
+
+        The implementation is idempotent - calling leave() multiple times
+        should be safe.
+        """
+        await self._call.end()
