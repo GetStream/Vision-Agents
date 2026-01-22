@@ -1,13 +1,30 @@
 """Audio and video track implementations for local RTC."""
 
 import asyncio
+import logging
+import os
 import threading
 import time
 from typing import Any, Callable, Optional, Union
 
 import numpy as np
+from vision_agents.core.types import PcmData as CorePcmData
 
-from vision_agents.core.types import PcmData
+logger = logging.getLogger(__name__)
+
+# Check if audio debugging is enabled via environment variable
+_DEBUG_AUDIO = os.environ.get("VISION_AGENTS_DEBUG_AUDIO", "").lower() in ("true", "1", "yes")
+
+# Import getstream PcmData for compatibility with Gemini plugin
+try:
+    from getstream.video.rtc.track_util import PcmData as StreamPcmData
+    HAS_STREAM_PCM = True
+except ImportError:
+    StreamPcmData = None  # type: ignore
+    HAS_STREAM_PCM = False
+
+# Type alias for backwards compatibility
+PcmData = CorePcmData
 
 try:
     import sounddevice as sd
@@ -186,6 +203,14 @@ class AudioInputTrack:
             # Calculate number of frames to capture
             frames = int(duration * self.sample_rate)
 
+            if _DEBUG_AUDIO:
+                logger.debug(
+                    f"[AUDIO DEBUG] Capturing audio from input device - "
+                    f"device_index={self._device_index}, duration={duration}s, "
+                    f"sample_rate={self.sample_rate}Hz, channels={self.channels}, "
+                    f"bit_depth={self.bit_depth}, frames={frames}"
+                )
+
             # Capture audio
             timestamp = time.time()
             recording = sd.rec(
@@ -199,6 +224,12 @@ class AudioInputTrack:
 
             # Convert numpy array to bytes
             audio_bytes = recording.tobytes()
+
+            if _DEBUG_AUDIO:
+                logger.debug(
+                    f"[AUDIO DEBUG] Captured audio from input device - "
+                    f"data_size={len(audio_bytes)} bytes, timestamp={timestamp}"
+                )
 
             return PcmData(
                 data=audio_bytes,
@@ -244,6 +275,9 @@ class AudioOutputTrack:
     This class plays audio to a speaker device from PcmData objects.
     It implements the OutputAudioTrack protocol for Vision Agents.
 
+    Uses a persistent OutputStream with a callback-based approach to avoid
+    the PortAudio errors that occur when rapidly creating/destroying streams.
+
     Attributes:
         device: Device identifier (name, index, or 'default')
         sample_rate: Audio sampling rate in Hz (default: 16000)
@@ -264,6 +298,7 @@ class AudioOutputTrack:
         sample_rate: int = 16000,
         channels: int = 1,
         bit_depth: int = 16,
+        buffer_size_ms: int = 500,
     ) -> None:
         """Initialize the audio output track.
 
@@ -275,6 +310,7 @@ class AudioOutputTrack:
             sample_rate: Audio sampling rate in Hz (default: 16000)
             channels: Number of audio channels (default: 1 for mono)
             bit_depth: Bits per sample (default: 16)
+            buffer_size_ms: Size of the audio buffer in milliseconds (default: 500)
 
         Raises:
             RuntimeError: If sounddevice is not available
@@ -289,10 +325,18 @@ class AudioOutputTrack:
         self.channels = channels
         self.bit_depth = bit_depth
         self._device_index: Optional[int] = None
-        self._buffer: bytearray = bytearray()
-        self._lock = asyncio.Lock()
-        self._stream: Optional[sd.OutputStream] = None
         self._stopped = False
+
+        # Thread-safe buffer for audio data
+        self._buffer_lock = threading.Lock()
+        self._buffer: bytearray = bytearray()
+        self._buffer_size_bytes = int(
+            (buffer_size_ms / 1000) * sample_rate * channels * (bit_depth // 8)
+        )
+
+        # Persistent output stream
+        self._stream: Optional[sd.OutputStream] = None
+        self._stream_started = False
 
         # Resolve device to index
         if device == "default":
@@ -308,6 +352,15 @@ class AudioOutputTrack:
         else:
             raise ValueError(
                 f"Invalid device type: {type(device)}. Expected str, int, or 'default'"
+            )
+
+        # Adjust channels based on device capabilities
+        max_channels = self._get_device_max_channels()
+        if self.channels > max_channels:
+            self.channels = max(1, max_channels)
+            # Recalculate buffer size with adjusted channels
+            self._buffer_size_bytes = int(
+                (buffer_size_ms / 1000) * sample_rate * self.channels * (bit_depth // 8)
             )
 
     def _validate_device_index(self, index: int) -> None:
@@ -379,58 +432,216 @@ class AudioOutputTrack:
                 raise
             raise ValueError(f"Error searching for device '{name}': {e}")
 
-    def _convert_sample_rate(
-        self, data: bytes, from_rate: int, to_rate: int, channels: int, bit_depth: int
+    def _playback_thread(self) -> None:
+        """Background thread that plays audio from the buffer.
+
+        Uses blocking writes to the output stream for more reliable playback.
+        """
+        dtype = f"int{self.bit_depth}"
+        bytes_per_sample = self.bit_depth // 8
+        # Play in chunks of ~50ms
+        chunk_samples = int(self.sample_rate * 0.05)
+        chunk_bytes = chunk_samples * self.channels * bytes_per_sample
+
+        try:
+            while not self._stopped:
+                # Get data from buffer
+                with self._buffer_lock:
+                    if len(self._buffer) >= chunk_bytes:
+                        data = bytes(self._buffer[:chunk_bytes])
+                        del self._buffer[:chunk_bytes]
+                    elif len(self._buffer) > 0:
+                        # Play what we have
+                        data = bytes(self._buffer)
+                        self._buffer.clear()
+                    else:
+                        data = None
+
+                if data:
+                    # Convert to numpy and play
+                    audio_array = np.frombuffer(data, dtype=dtype)
+                    if self.channels > 1:
+                        audio_array = audio_array.reshape(-1, self.channels)
+                    # Write to stream (blocking)
+                    self._stream.write(audio_array)
+                else:
+                    # No data, sleep briefly
+                    time.sleep(0.01)
+        except Exception as e:
+            if not self._stopped:
+                logger.error(f"Playback thread error: {e}")
+
+    def _get_device_max_channels(self) -> int:
+        """Get the maximum number of output channels for the device.
+
+        Returns:
+            Maximum number of output channels the device supports
+        """
+        try:
+            if self._device_index is None:
+                # Get default output device info
+                device_info = sd.query_devices(kind="output")
+            else:
+                device_info = sd.query_devices(self._device_index)
+
+            if isinstance(device_info, dict):
+                max_ch = device_info.get("max_output_channels", 2)
+            else:
+                max_ch = getattr(device_info, "max_output_channels", 2)
+
+            # Ensure we return an int (handles mocked objects in tests)
+            if isinstance(max_ch, int):
+                return max_ch
+            return 2  # Default to stereo
+        except Exception:
+            return 2  # Default to stereo if we can't query
+
+    def _ensure_stream_started(self) -> None:
+        """Ensure the output stream is created and started.
+
+        Creates a persistent OutputStream with blocking writes and a background
+        playback thread. This avoids the PortAudio errors that occur when
+        rapidly creating/destroying streams with sd.play().
+        """
+        if self._stream_started:
+            return
+
+        # Check device capabilities and adjust channels if needed
+        max_channels = self._get_device_max_channels()
+        actual_channels = min(self.channels, max_channels)
+
+        if actual_channels != self.channels:
+            # Update the track's channel count to match device capability
+            self.channels = actual_channels
+            # Recalculate buffer size
+            self._buffer_size_bytes = int(
+                (500 / 1000) * self.sample_rate * self.channels * (self.bit_depth // 8)
+            )
+
+        # Create the output stream without callback (for blocking writes)
+        self._stream = sd.OutputStream(
+            samplerate=self.sample_rate,
+            channels=self.channels,
+            dtype=f"int{self.bit_depth}",
+            device=self._device_index,
+        )
+        self._stream.start()
+        self._stream_started = True
+
+        # Start playback thread
+        self._playback_thread_handle = threading.Thread(
+            target=self._playback_thread, daemon=True
+        )
+        self._playback_thread_handle.start()
+
+    def _convert_audio(
+        self,
+        data: bytes,
+        from_rate: int,
+        to_rate: int,
+        from_channels: int,
+        to_channels: int,
+        bit_depth: int,
     ) -> bytes:
-        """Convert audio data from one sample rate to another.
+        """Convert audio data: resample and/or change channel count.
 
         Args:
             data: Raw PCM audio data
             from_rate: Original sample rate
             to_rate: Target sample rate
-            channels: Number of audio channels
+            from_channels: Original number of channels
+            to_channels: Target number of channels
             bit_depth: Bits per sample
 
         Returns:
-            Resampled audio data as bytes
+            Converted audio data as bytes
+
+        Raises:
+            ValueError: If audio format parameters are invalid
         """
+        # Validate input parameters
+        if not data:
+            raise ValueError("Cannot convert empty audio data")
+
+        if from_rate <= 0 or to_rate <= 0:
+            raise ValueError(
+                f"Invalid sample rates: from_rate={from_rate}Hz, to_rate={to_rate}Hz. "
+                f"Sample rates must be positive."
+            )
+
+        if from_channels <= 0 or to_channels <= 0:
+            raise ValueError(
+                f"Invalid channel counts: from_channels={from_channels}, to_channels={to_channels}. "
+                f"Channel counts must be positive."
+            )
+
+        if bit_depth not in (8, 16, 24, 32):
+            raise ValueError(
+                f"Invalid bit depth: {bit_depth}. "
+                f"Supported bit depths are: 8, 16, 24, 32."
+            )
+
+        # Validate data size matches format
+        bytes_per_sample = bit_depth // 8
+        expected_sample_count = len(data) // (bytes_per_sample * from_channels)
+        expected_bytes = expected_sample_count * bytes_per_sample * from_channels
+
+        if len(data) != expected_bytes:
+            logger.warning(
+                f"[AUDIO FORMAT WARNING] Audio data size mismatch: "
+                f"got {len(data)} bytes, expected {expected_bytes} bytes "
+                f"for {from_channels} channels with {bit_depth}-bit samples. "
+                f"Truncating to nearest complete frame."
+            )
+            # Truncate to complete frames
+            data = data[:expected_bytes]
+
         # Convert bytes to numpy array
         dtype = f"int{bit_depth}"
-        audio_array = np.frombuffer(data, dtype=dtype)
+        audio_array = np.frombuffer(data, dtype=dtype).astype(np.float32)
 
         # Reshape for multi-channel audio
-        if channels > 1:
-            audio_array = audio_array.reshape(-1, channels)
+        if from_channels > 1:
+            audio_array = audio_array.reshape(-1, from_channels)
+            # Mix down to mono for processing (average channels)
+            audio_mono = np.mean(audio_array, axis=1)
+        else:
+            audio_mono = audio_array.flatten()
 
-        # Calculate resampling ratio
-        num_samples = len(audio_array)
-        new_length = int(num_samples * to_rate / from_rate)
+        # Resample if needed
+        if from_rate != to_rate:
+            num_samples = len(audio_mono)
+            new_length = int(num_samples * to_rate / from_rate)
 
-        # Perform linear interpolation for resampling
-        resampled = np.interp(
-            np.linspace(0, num_samples - 1, new_length),
-            np.arange(num_samples),
-            audio_array.flatten() if channels == 1 else audio_array[:, 0],
-        )
+            # Use linear interpolation for resampling
+            old_indices = np.arange(num_samples)
+            new_indices = np.linspace(0, num_samples - 1, new_length)
+            audio_mono = np.interp(new_indices, old_indices, audio_mono)
 
-        # Convert back to original dtype
-        resampled = resampled.astype(dtype)
+        # Convert to target channels
+        if to_channels > 1:
+            # Duplicate mono to all channels
+            resampled = np.column_stack([audio_mono] * to_channels)
+        else:
+            resampled = audio_mono.reshape(-1, 1)
 
-        # For multi-channel, duplicate to all channels (simple approach)
-        if channels > 1:
-            resampled = np.column_stack([resampled] * channels)
+        # Convert back to target dtype with clipping to prevent overflow
+        max_val = 2 ** (bit_depth - 1) - 1
+        min_val = -(2 ** (bit_depth - 1))
+        resampled = np.clip(resampled, min_val, max_val).astype(dtype)
 
         return resampled.tobytes()
 
-    async def write(self, data: PcmData) -> None:
+    async def write(self, data) -> None:
         """Write PCM audio data to the output device.
 
-        This method buffers the audio data and plays it through the speaker.
-        If the sample rate differs from the track's configuration, it will
-        be automatically resampled.
+        This method buffers the audio data and plays it through a persistent
+        output stream. If the sample rate differs from the track's configuration,
+        it will be automatically resampled.
 
         Args:
-            data: PcmData object containing audio to play
+            data: PcmData object containing audio to play. Supports both
+                  vision_agents.core.types.PcmData and getstream PcmData.
 
         Raises:
             RuntimeError: If audio playback fails
@@ -440,33 +651,133 @@ class AudioOutputTrack:
             raise RuntimeError("AudioOutputTrack has been stopped")
 
         try:
-            audio_data = data.data
+            # Handle both core PcmData and getstream PcmData types
+            if isinstance(data, CorePcmData):
+                # Core PcmData has .data attribute
+                audio_data = data.data
+                sample_rate = data.sample_rate
+                channels = data.channels
+                bit_depth = data.bit_depth
 
-            # Convert sample rate if needed
-            if data.sample_rate != self.sample_rate:
-                audio_data = self._convert_sample_rate(
+                if _DEBUG_AUDIO:
+                    logger.debug(
+                        f"[AUDIO DEBUG] Ingesting CorePcmData - "
+                        f"sample_rate={sample_rate}Hz, channels={channels}, "
+                        f"bit_depth={bit_depth}, data_size={len(audio_data)} bytes"
+                    )
+            elif HAS_STREAM_PCM and isinstance(data, StreamPcmData):
+                # GetStream PcmData stores samples as numpy array
+                # Use samples directly and convert to bytes
+                samples = data.samples
+                logger.debug(
+                    f"StreamPcmData: samples.shape={samples.shape}, "
+                    f"dtype={samples.dtype}, rate={data.sample_rate}, ch={data.channels}"
+                )
+                if samples.dtype == np.float32:
+                    # Convert float32 [-1, 1] to int16
+                    samples = (samples * 32767).astype(np.int16)
+                elif samples.dtype != np.int16:
+                    samples = samples.astype(np.int16)
+                audio_data = samples.tobytes()
+                sample_rate = data.sample_rate
+                channels = data.channels
+                bit_depth = 16
+
+                if _DEBUG_AUDIO:
+                    logger.debug(
+                        f"[AUDIO DEBUG] Ingesting StreamPcmData - "
+                        f"sample_rate={sample_rate}Hz, channels={channels}, "
+                        f"bit_depth={bit_depth}, data_size={len(audio_data)} bytes, "
+                        f"samples_shape={data.samples.shape}, dtype={data.samples.dtype}"
+                    )
+
+                # Debug: save first chunk to file
+                if not hasattr(self, '_debug_file'):
+                    self._debug_file = open('/tmp/gemini_audio_raw.pcm', 'wb')
+                    logger.info("Saving raw audio to /tmp/gemini_audio_raw.pcm")
+                self._debug_file.write(audio_data)
+                self._debug_file.flush()
+            else:
+                raise ValueError(f"Unsupported PcmData type: {type(data)}")
+
+            # Validate and convert sample rate and/or channels if needed
+            if sample_rate != self.sample_rate or channels != self.channels:
+                if _DEBUG_AUDIO:
+                    logger.debug(
+                        f"[AUDIO DEBUG] Format conversion required - "
+                        f"from {sample_rate}Hz/{channels}ch to {self.sample_rate}Hz/{self.channels}ch"
+                    )
+
+                # Validate format parameters before conversion
+                if sample_rate <= 0:
+                    raise ValueError(
+                        f"Invalid input sample rate: {sample_rate}Hz. "
+                        f"Sample rate must be positive."
+                    )
+                if channels <= 0:
+                    raise ValueError(
+                        f"Invalid input channel count: {channels}. "
+                        f"Channel count must be positive."
+                    )
+                if self.sample_rate <= 0:
+                    raise ValueError(
+                        f"Invalid output sample rate: {self.sample_rate}Hz. "
+                        f"Output track is misconfigured."
+                    )
+
+                audio_data = self._convert_audio(
                     audio_data,
-                    data.sample_rate,
-                    self.sample_rate,
-                    data.channels,
-                    data.bit_depth,
+                    from_rate=sample_rate,
+                    to_rate=self.sample_rate,
+                    from_channels=channels,
+                    to_channels=self.channels,
+                    bit_depth=bit_depth,
                 )
 
-            # Convert to numpy array for playback
-            dtype = f"int{self.bit_depth}"
-            audio_array = np.frombuffer(audio_data, dtype=dtype)
+                if _DEBUG_AUDIO:
+                    logger.debug(
+                        f"[AUDIO DEBUG] Format conversion completed - "
+                        f"output data_size={len(audio_data)} bytes"
+                    )
+            elif _DEBUG_AUDIO:
+                logger.debug(
+                    f"[AUDIO DEBUG] No format conversion needed - "
+                    f"format matches output track ({self.sample_rate}Hz/{self.channels}ch)"
+                )
 
-            # Reshape for multi-channel audio
-            if self.channels > 1:
-                audio_array = audio_array.reshape(-1, self.channels)
+            # Ensure the output stream is running
+            # Note: Don't use asyncio.to_thread here - sounddevice streams
+            # should be created from a consistent thread context
+            self._ensure_stream_started()
 
-            # Play audio (blocking)
-            await asyncio.to_thread(
-                sd.play,
-                audio_array,
-                samplerate=self.sample_rate,
-                device=self._device_index,
-            )
+            if _DEBUG_AUDIO:
+                logger.debug(
+                    f"[AUDIO DEBUG] Writing to output device - "
+                    f"device_index={self._device_index}, sample_rate={self.sample_rate}Hz, "
+                    f"channels={self.channels}, bit_depth={self.bit_depth}, "
+                    f"data_size={len(audio_data)} bytes, "
+                    f"buffer_size_before={len(self._buffer)} bytes"
+                )
+
+            # Add audio data to the buffer (thread-safe)
+            with self._buffer_lock:
+                # If buffer is getting too large, remove oldest data to prevent memory issues
+                if len(self._buffer) > self._buffer_size_bytes:
+                    excess = len(self._buffer) - self._buffer_size_bytes + len(audio_data)
+                    if excess > 0:
+                        if _DEBUG_AUDIO:
+                            logger.warning(
+                                f"[AUDIO DEBUG] Buffer overflow - removing {excess} bytes "
+                                f"(buffer_size={len(self._buffer)}, limit={self._buffer_size_bytes})"
+                            )
+                        del self._buffer[:excess]
+                self._buffer.extend(audio_data)
+
+                if _DEBUG_AUDIO:
+                    logger.debug(
+                        f"[AUDIO DEBUG] Buffer updated - "
+                        f"buffer_size_after={len(self._buffer)} bytes"
+                    )
 
         except Exception as e:
             device_info = (
@@ -474,26 +785,47 @@ class AudioOutputTrack:
                 if self._device_index is not None
                 else "default device"
             )
-            raise RuntimeError(f"Failed to play audio to {device_info}: {e}")
+
+            # Provide detailed error message with format information
+            error_msg = (
+                f"Failed to play audio to {device_info}: {e}\n"
+                f"Audio format details:\n"
+                f"  - Input: {sample_rate if 'sample_rate' in locals() else 'unknown'}Hz, "
+                f"{channels if 'channels' in locals() else 'unknown'} channels, "
+                f"{bit_depth if 'bit_depth' in locals() else 'unknown'}-bit\n"
+                f"  - Output track: {self.sample_rate}Hz, {self.channels} channels, "
+                f"{self.bit_depth}-bit\n"
+                f"  - Data type: {type(data).__name__}"
+            )
+
+            if _DEBUG_AUDIO:
+                logger.error(f"[AUDIO DEBUG] {error_msg}")
+
+            raise RuntimeError(error_msg)
 
     async def flush(self) -> None:
         """Flush any buffered audio data and wait for playback to complete.
 
-        This method waits for all queued audio to finish playing.
+        This method waits for all queued audio to finish playing by polling
+        the buffer until it's empty.
         """
         if self._stopped:
             return
 
         try:
-            # Wait for playback to complete
-            await asyncio.to_thread(sd.wait)
+            # Wait for the buffer to drain
+            while True:
+                with self._buffer_lock:
+                    if len(self._buffer) == 0:
+                        break
+                await asyncio.sleep(0.05)  # Poll every 50ms
         except Exception as e:
             raise RuntimeError(f"Failed to flush audio output: {e}")
 
     def stop(self) -> None:
         """Stop the audio output track and release resources.
 
-        This method stops any ongoing playback and marks the track as stopped.
+        This method stops the persistent output stream and marks the track as stopped.
         """
         if self._stopped:
             return
@@ -501,8 +833,24 @@ class AudioOutputTrack:
         self._stopped = True
 
         try:
-            # Stop any ongoing playback
-            sd.stop()
+            # Wait for playback thread to finish
+            if hasattr(self, '_playback_thread_handle') and self._playback_thread_handle:
+                self._playback_thread_handle.join(timeout=1.0)
+
+            # Stop and close the persistent stream
+            if self._stream is not None:
+                self._stream.stop()
+                self._stream.close()
+                self._stream = None
+            self._stream_started = False
+
+            # Clear the buffer
+            with self._buffer_lock:
+                self._buffer.clear()
+
+            # Close debug file if open
+            if hasattr(self, '_debug_file') and self._debug_file:
+                self._debug_file.close()
         except Exception:
             # Ignore errors during stop
             pass

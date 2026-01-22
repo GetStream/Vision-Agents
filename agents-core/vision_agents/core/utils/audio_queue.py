@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from collections import deque
 from typing import Optional
 
@@ -7,6 +8,9 @@ import numpy as np
 from getstream.video.rtc.track_util import PcmData
 
 logger = logging.getLogger(__name__)
+
+# Check if audio debugging is enabled via environment variable
+_DEBUG_AUDIO = os.environ.get("VISION_AGENTS_DEBUG_AUDIO", "").lower() in ("true", "1", "yes")
 
 
 class AudioQueue:
@@ -64,9 +68,18 @@ class AudioQueue:
             # Track sample rate from first item
             if self._sample_rate is None:
                 self._sample_rate = item.sample_rate
+                if _DEBUG_AUDIO:
+                    logger.debug(
+                        f"[AUDIO DEBUG] AudioQueue initialized - "
+                        f"sample_rate={self._sample_rate}Hz, channels={item.channels}, "
+                        f"format={item.format}"
+                    )
             elif self._sample_rate != item.sample_rate:
                 logger.warning(
-                    f"Sample rate mismatch: expected {self._sample_rate}, got {item.sample_rate}"
+                    f"[AUDIO FORMAT MISMATCH] Sample rate mismatch in AudioQueue: "
+                    f"expected {self._sample_rate}Hz, got {item.sample_rate}Hz. "
+                    f"This may cause audio playback issues. "
+                    f"Ensure all audio sources use consistent sample rates."
                 )
 
             # Check if adding this would exceed the buffer limit
@@ -74,9 +87,19 @@ class AudioQueue:
             new_total_samples = self._total_samples + new_samples
             new_duration_ms = (new_total_samples / item.sample_rate) * 1000
 
+            if _DEBUG_AUDIO:
+                logger.debug(
+                    f"[AUDIO DEBUG] Adding to AudioQueue - "
+                    f"samples={new_samples}, sample_rate={item.sample_rate}Hz, "
+                    f"channels={item.channels}, format={item.format}, "
+                    f"new_total_samples={new_total_samples}, new_duration_ms={new_duration_ms:.1f}ms"
+                )
+
             if new_duration_ms > self.buffer_limit_ms:
                 logger.warning(
-                    f"AudioQueue buffer limit exceeded: {new_duration_ms:.1f}ms > {self.buffer_limit_ms}ms"
+                    f"[AUDIO DEBUG] AudioQueue buffer limit exceeded: "
+                    f"{new_duration_ms:.1f}ms > {self.buffer_limit_ms}ms. "
+                    f"This may indicate audio processing is slower than real-time."
                 )
 
             self._buffer.append(item)
@@ -98,9 +121,18 @@ class AudioQueue:
         # Track sample rate from first item
         if self._sample_rate is None:
             self._sample_rate = item.sample_rate
+            if _DEBUG_AUDIO:
+                logger.debug(
+                    f"[AUDIO DEBUG] AudioQueue initialized (nowait) - "
+                    f"sample_rate={self._sample_rate}Hz, channels={item.channels}, "
+                    f"format={item.format}"
+                )
         elif self._sample_rate != item.sample_rate:
             logger.warning(
-                f"Sample rate mismatch: expected {self._sample_rate}, got {item.sample_rate}"
+                f"[AUDIO FORMAT MISMATCH] Sample rate mismatch in AudioQueue: "
+                f"expected {self._sample_rate}Hz, got {item.sample_rate}Hz. "
+                f"This may cause audio playback issues. "
+                f"Ensure all audio sources use consistent sample rates."
             )
 
         # Check if adding this would exceed the buffer limit
@@ -108,9 +140,19 @@ class AudioQueue:
         new_total_samples = self._total_samples + new_samples
         new_duration_ms = (new_total_samples / item.sample_rate) * 1000
 
+        if _DEBUG_AUDIO:
+            logger.debug(
+                f"[AUDIO DEBUG] Adding to AudioQueue (nowait) - "
+                f"samples={new_samples}, sample_rate={item.sample_rate}Hz, "
+                f"channels={item.channels}, format={item.format}, "
+                f"new_total_samples={new_total_samples}, new_duration_ms={new_duration_ms:.1f}ms"
+            )
+
         if new_duration_ms > self.buffer_limit_ms:
             logger.warning(
-                f"AudioQueue buffer limit exceeded: {new_duration_ms:.1f}ms > {self.buffer_limit_ms}ms"
+                f"[AUDIO DEBUG] AudioQueue buffer limit exceeded: "
+                f"{new_duration_ms:.1f}ms > {self.buffer_limit_ms}ms. "
+                f"This may indicate audio processing is slower than real-time."
             )
 
         self._buffer.append(item)
