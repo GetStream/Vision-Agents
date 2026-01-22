@@ -33,6 +33,7 @@ vision-agents-plugins-decart = { workspace = true }
 vision-agents-plugins-twilio = { workspace = true }
 vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
+vision-agents-plugins-localrtc = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -72,6 +73,7 @@ members = [
     "plugins/twilio",
     "plugins/turbopuffer",
     "plugins/nvidia",
+    "plugins/localrtc",
 ]
 exclude = [
     "**/__pycache__",
