@@ -4,7 +4,7 @@ import logging
 import os
 import time
 import webbrowser
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 from urllib.parse import urlencode
 
 import aiortc
@@ -37,16 +37,28 @@ logger = logging.getLogger(__name__)
 
 
 class StreamConnection(Connection):
-    def __init__(self, connection: ConnectionManager):
+    def __init__(self, connection: ConnectionManager, call_id: str, call_type: str):
         super().__init__()
         # store the native connection object
         self._connection = connection
+        self._call_id = call_id
+        self._call_type = call_type
         self._idle_since: float = 0.0
         self._participant_joined = asyncio.Event()
         # Subscribe to participants changes for this connection
         self._subscription = self._connection.participants_state.map(
             self._on_participant_change
         )
+
+    @property
+    def id(self) -> str:
+        """Unique identifier for the room/call (Room protocol)."""
+        return self._call_id
+
+    @property
+    def type(self) -> str:
+        """Type or category of the room/call (Room protocol)."""
+        return self._call_type
 
     @property
     def participants(self) -> ParticipantsState:
@@ -67,6 +79,10 @@ class StreamConnection(Connection):
         Wait for at least one participant other than the agent to join.
         """
         await asyncio.wait_for(self._participant_joined.wait(), timeout=timeout)
+
+    async def leave(self) -> None:
+        """Asynchronously leave/disconnect from the call (Room protocol)."""
+        await self.close()
 
     async def close(self, timeout: float = 2.0):
         try:
@@ -343,7 +359,7 @@ class StreamEdge(EdgeTransport):
         response = await self.client.update_users(users_map)
         return [response.data.users[u.id] for u in users]
 
-    async def join(self, agent: "Agent", call: Call) -> StreamConnection:
+    async def join(self, agent: "Agent", call: Call):
         """
         The logic for joining a call is different for each edge network/realtime audio/video provider
 
@@ -352,6 +368,9 @@ class StreamEdge(EdgeTransport):
         - has the agent.agent_user join the call
         - connects incoming audio/video to the agent
         - connecting agent's outgoing audio/video to the call
+
+        Returns:
+            StreamConnection: A connection object that satisfies the Room protocol.
         """
 
         # Traditional mode - use WebRTC connection
@@ -397,7 +416,7 @@ class StreamEdge(EdgeTransport):
         await connection.republish_tracks()
         self._real_connection = connection
 
-        standardize_connection = StreamConnection(connection)
+        standardize_connection = StreamConnection(connection, call.id, call.call_type)
         return standardize_connection
 
     def create_audio_track(
@@ -413,18 +432,60 @@ class StreamEdge(EdgeTransport):
         return aiortc.VideoStreamTrack()
 
     def add_track_subscriber(
-        self, track_id: str
+        self, track_id: str, callback: Optional[Callable[[PcmData], None]] = None
     ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
+        """Subscribe to a track and optionally receive PCM audio data via callback.
+
+        Args:
+            track_id: The ID of the track to subscribe to.
+            callback: Optional callback function that receives PcmData for audio tracks.
+                     For GetStream, audio data is delivered through the connection's
+                     'audio' event rather than this callback. This parameter is accepted
+                     for interface compatibility but not currently used.
+
+        Returns:
+            The MediaStreamTrack for the subscribed track, or None if not found.
+        """
+        # Note: GetStream delivers audio through connection.on("audio") event handler
+        # set up in join(), so the callback parameter is accepted but not used here.
+        # The audio event handler already converts StreamPcmData to core PcmData.
         return self._connection.subscriber_pc.add_track_subscriber(track_id)
 
-    async def publish_tracks(self, audio_track, video_track):
+    async def publish_tracks(self, room, audio_track=None, video_track=None):  # type: ignore[override]
         """
-        Add the tracks to publish audio and video
+        Add the tracks to publish audio and video.
+
+        Args:
+            room: Either the Room object (new calling convention) or audio_track (legacy).
+            audio_track: The audio track to publish (new) or video_track (legacy).
+            video_track: The video track to publish (new) or None (legacy).
+
+        Note:
+            This method supports both calling conventions:
+            - Legacy: publish_tracks(audio_track, video_track)
+            - New: publish_tracks(room, audio_track, video_track)
+            The type: ignore comment is needed because we support both conventions.
         """
-        await self._connection.add_tracks(audio=audio_track, video=video_track)
-        if audio_track:
+        # Handle both calling conventions
+        if audio_track is None and video_track is None:
+            # Legacy calling convention: publish_tracks(audio, video)
+            # room parameter actually contains audio_track
+            actual_audio = room
+            actual_video = None
+        elif video_track is None:
+            # Legacy calling convention: publish_tracks(audio, video)
+            # room contains audio, audio_track contains video
+            actual_audio = room
+            actual_video = audio_track
+        else:
+            # New calling convention: publish_tracks(room, audio, video)
+            actual_audio = audio_track
+            actual_video = video_track
+
+        await self._connection.add_tracks(audio=actual_audio, video=actual_video)
+        if actual_audio:
             logger.info("🤖 Agent ready to speak")
-        if video_track:
+        if actual_video:
             logger.info("🎥 Agent ready to publish video")
         # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 

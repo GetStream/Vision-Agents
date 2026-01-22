@@ -17,7 +17,9 @@ def connection_manager():
 class TestStreamConnection:
     def test_idle_for(self, connection_manager):
         # No participants, connection is idle
-        conn = StreamConnection(connection=connection_manager)
+        conn = StreamConnection(
+            connection=connection_manager, call_id="test-call", call_type="default"
+        )
         time.sleep(0.01)
         assert conn.idle_since() > 0
 
@@ -42,7 +44,9 @@ class TestStreamConnection:
     async def test_wait_for_participant_already_present(self, connection_manager):
         """Test that wait_for_participant returns immediately if participant already in call"""
 
-        conn = StreamConnection(connection_manager)
+        conn = StreamConnection(
+            connection_manager, call_id="test-call", call_type="default"
+        )
         # Add a non-agent participant to the call
         participant = Participant(user_id="user-1", session_id="session-1")
         connection_manager.participants_state._add_participant(participant)
@@ -54,7 +58,9 @@ class TestStreamConnection:
         """
         Test that the agent itself in the call doesn't satisfy wait_for_participant
         """
-        conn = StreamConnection(connection_manager)
+        conn = StreamConnection(
+            connection_manager, call_id="test-call", call_type="default"
+        )
         # Add only the agent to the call
         agent_participant = Participant(
             user_id=connection_manager.user_id, session_id="session-1"
@@ -68,7 +74,9 @@ class TestStreamConnection:
     async def test_wait_for_participant_event_triggered(self, connection_manager):
         """Test that wait_for_participant completes when a participant joins"""
         # No participants present initially (participants list is empty by default)
-        conn = StreamConnection(connection_manager)
+        conn = StreamConnection(
+            connection_manager, call_id="test-call", call_type="default"
+        )
 
         # Create a task to wait for participant
         wait_task = asyncio.create_task(conn.wait_for_participant())
