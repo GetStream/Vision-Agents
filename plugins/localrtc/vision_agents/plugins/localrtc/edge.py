@@ -2,6 +2,7 @@
 
 import logging
 import threading
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import aiortc
@@ -352,15 +353,39 @@ class LocalEdge(EdgeTransport):
         )
 
     async def join(self, *args: Any, **kwargs: Any) -> Room:
-        """Join a room.
+        """Join a room and start device capture.
+
+        This method supports two calling conventions:
+
+        **Recommended (with agent for audio negotiation):**
+            >>> room = await edge.join(agent, room_id="call-1", room_type="default")
+
+        **Legacy (without agent):**
+            >>> room = await edge.join(room_id="call-1", room_type="default")
 
         Args:
             *args: Positional arguments for join configuration.
-                First positional argument can be the Agent instance for format negotiation.
+                First positional argument should be the Agent instance for audio
+                format negotiation (recommended). When an agent is provided, the
+                output audio format is automatically negotiated based on the LLM
+                provider's requirements.
             **kwargs: Keyword arguments for join configuration.
+                - room_id (str): Unique identifier for the room. Defaults to "local-room".
+                - room_type (str): Type of room. Defaults to "default".
 
         Returns:
             A Room instance representing the joined room.
+
+        Note:
+            When an agent is not provided, the output audio format defaults to
+            24000Hz mono (Gemini's native format). For best results, always pass
+            the agent instance to enable automatic audio format negotiation.
+
+        Example:
+            >>> edge = localrtc.Edge(audio_device="default")
+            >>> agent = Agent(edge=edge, llm=gemini.Realtime())
+            >>> call = await agent.create_call("default", "my-call")
+            >>> room = await edge.join(agent, room_id="my-call")
         """
         # Extract agent from args if provided (new Agent API passes agent as first arg)
         agent = args[0] if args and hasattr(args[0], "llm") else None
@@ -408,15 +433,54 @@ class LocalEdge(EdgeTransport):
     ) -> None:
         """Publish audio and video tracks to the room.
 
-        This method supports both calling conventions:
-        - Legacy: publish_tracks(audio_track, video_track)
-        - New: publish_tracks(room, audio_track, video_track)
+        **Recommended calling convention:**
+            >>> await edge.publish_tracks(room, audio_track=audio, video_track=video)
+            >>> await edge.publish_tracks(room, audio_track=audio)  # Audio only
+
+        **Legacy calling convention (deprecated):**
+            >>> await edge.publish_tracks(audio, video)  # Will be removed in v2.0
 
         Args:
-            room: The room to publish tracks to (new) or audio_track (legacy).
-            audio_track: Audio track to publish (new) or video_track (legacy).
-            video_track: Video track to publish (new) or None (legacy).
+            room: The room to publish tracks to. In the recommended convention, this
+                should be a Room instance. In the legacy convention, this is the
+                audio_track.
+            audio_track: Audio track to publish (e.g., AudioInputTrack instance).
+                Optional - only required if you want to publish audio.
+            video_track: Video track to publish (e.g., VideoInputTrack instance).
+                Optional - only required if you want to publish video.
+
+        Note:
+            The legacy calling convention without explicit room parameter is
+            deprecated and will be removed in version 2.0. Please update your
+            code to use the new convention with explicit room parameter.
+
+        Example:
+            >>> edge = localrtc.Edge()
+            >>> room = await edge.join(agent, room_id="my-call")
+            >>> audio = AudioInputTrack(device="default")
+            >>> video = VideoInputTrack(device=0)
+            >>> await edge.publish_tracks(room, audio_track=audio, video_track=video)
         """
+        # Detect legacy calling convention and issue deprecation warning
+        is_legacy = False
+        if audio_track is None and video_track is None:
+            # Legacy: publish_tracks(audio_track)
+            is_legacy = True
+        elif video_track is None and not isinstance(room, (LocalRoom,)):
+            # Legacy: publish_tracks(audio_track, video_track)
+            # Check if room looks like a track instead of a Room
+            if hasattr(room, "capture") or hasattr(room, "start"):
+                is_legacy = True
+
+        if is_legacy:
+            warnings.warn(
+                "Calling publish_tracks without explicit room parameter is deprecated "
+                "and will be removed in version 2.0. Use: "
+                "await edge.publish_tracks(room, audio_track=audio, video_track=video)",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Handle both calling conventions
         if audio_track is None and video_track is None:
             # Legacy calling convention: publish_tracks(audio, video)
@@ -424,7 +488,7 @@ class LocalEdge(EdgeTransport):
             actual_audio = room
             actual_video = None
             actual_room = None
-        elif video_track is None:
+        elif video_track is None and is_legacy:
             # Legacy calling convention: publish_tracks(audio, video)
             # room contains audio, audio_track contains video
             actual_audio = room

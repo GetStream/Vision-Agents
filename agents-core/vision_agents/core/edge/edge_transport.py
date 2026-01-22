@@ -47,7 +47,24 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
     """
 
     @abc.abstractmethod
-    async def create_user(self, user: User):
+    async def create_user(self, user: User) -> None:
+        """Create a user in the edge transport.
+
+        **Required method** - Must be implemented by all transport implementations.
+
+        This method initializes a user in the transport layer. The specific
+        implementation varies by transport:
+        - StreamEdge: Creates user in GetStream service
+        - LocalEdge: Stores user locally for session management
+
+        Args:
+            user: User object containing user information (id, name, image).
+
+        Example:
+            >>> edge = LocalEdge()
+            >>> user = User(id="user-123", name="Alice")
+            >>> await edge.create_user(user)
+        """
         pass
 
     @abc.abstractmethod
@@ -85,23 +102,166 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def close(self):
+    async def close(self) -> None:
+        """Close the edge transport and clean up resources.
+
+        **Required method** - Must be implemented by all transport implementations.
+
+        This method performs cleanup operations including:
+        - Stopping audio/video capture
+        - Closing network connections
+        - Releasing device resources
+        - Clearing internal state
+
+        Should be called when the transport is no longer needed to prevent
+        resource leaks.
+
+        Example:
+            >>> edge = LocalEdge()
+            >>> # ... use edge ...
+            >>> await edge.close()  # Clean up when done
+        """
         pass
 
     @abc.abstractmethod
-    def open_demo(self, *args, **kwargs):
+    def open_demo(self, *args: Any, **kwargs: Any) -> None:
+        """Open a demo session.
+
+        **Optional method** - Implementation can be a no-op for transports
+        that don't support demo mode (e.g., LocalEdge).
+
+        This method is used by transports that provide web-based demo interfaces
+        (e.g., StreamEdge opens GetStream's demo UI). Implementations that don't
+        provide a demo interface should implement this as a no-op.
+
+        Args:
+            *args: Positional arguments for demo configuration.
+            **kwargs: Keyword arguments for demo configuration.
+
+        Note:
+            LocalEdge implements this as a no-op since local transports don't
+            have a web-based demo interface.
+
+        Example:
+            >>> edge = StreamEdge(connection=conn)
+            >>> edge.open_demo()  # Opens browser to GetStream demo UI
+            >>>
+            >>> edge = LocalEdge()
+            >>> edge.open_demo()  # No-op for local transport
+        """
         pass
 
     @abc.abstractmethod
-    async def join(self, *args, **kwargs) -> Room:
+    async def join(self, *args: Any, **kwargs: Any) -> Room:
+        """Join a room and start device capture/streaming.
+
+        **Required method** - Must be implemented by all transport implementations.
+
+        This method connects to a room and begins capturing/streaming audio and
+        video. The specific implementation varies by transport:
+
+        - **LocalEdge**: Creates local room and starts device capture
+        - **StreamEdge**: Joins GetStream room and publishes WebRTC tracks
+
+        **Calling Convention:**
+            The recommended convention is to pass an Agent instance as the first
+            positional argument to enable audio format negotiation:
+
+            >>> room = await edge.join(agent, room_id="call-1", room_type="default")
+
+            Legacy convention without agent is still supported but may not
+            negotiate optimal audio formats:
+
+            >>> room = await edge.join(room_id="call-1", room_type="default")
+
+        Args:
+            *args: Positional arguments. First argument should be Agent instance
+                for audio format negotiation (recommended).
+            **kwargs: Keyword arguments for join configuration.
+                Common kwargs:
+                - room_id (str): Unique identifier for the room
+                - room_type (str): Type of room (e.g., "default", "audio", "video")
+
+        Returns:
+            A Room instance representing the joined room.
+
+        Example:
+            >>> edge = LocalEdge(audio_device="default")
+            >>> agent = Agent(edge=edge, llm=gemini.Realtime())
+            >>> room = await edge.join(agent, room_id="my-call", room_type="default")
+            >>> # Room is now active, devices are capturing
+        """
         pass
 
     @abc.abstractmethod
-    async def publish_tracks(self, room: Room, audio_track, video_track):
+    async def publish_tracks(
+        self, room: Room, audio_track: Any = None, video_track: Any = None
+    ) -> None:
+        """Publish audio and video tracks to the room.
+
+        **Required method** - Must be implemented by all transport implementations.
+
+        This method publishes media tracks to the room, making them available
+        to other participants. Tracks can be published individually or together.
+
+        **Calling Convention:**
+            The recommended convention is to use keyword arguments with explicit
+            room parameter:
+
+            >>> await edge.publish_tracks(room, audio_track=audio, video_track=video)
+            >>> await edge.publish_tracks(room, audio_track=audio)  # Audio only
+
+        Args:
+            room: The room to publish tracks to. Must be a Room instance.
+            audio_track: Audio track to publish (e.g., AudioInputTrack, AudioOutputTrack).
+                Optional - only required if publishing audio.
+            video_track: Video track to publish (e.g., VideoInputTrack).
+                Optional - only required if publishing video.
+
+        Note:
+            Some implementations may support legacy calling conventions without
+            explicit room parameter. These are deprecated and will be removed in
+            future versions.
+
+        Example:
+            >>> edge = LocalEdge()
+            >>> room = await edge.join(agent, room_id="my-call")
+            >>> audio = AudioInputTrack(device="default", sample_rate=16000)
+            >>> video = VideoInputTrack(device=0)
+            >>> await edge.publish_tracks(room, audio_track=audio, video_track=video)
+        """
         pass
 
     @abc.abstractmethod
-    async def create_conversation(self, call: Any, user: User, instructions):
+    async def create_conversation(self, call: Any, user: User, instructions: Any) -> None:
+        """Create a conversation in the call.
+
+        **Optional method** - Implementation can be a no-op for transports
+        that don't manage conversations externally (e.g., LocalEdge).
+
+        This method is used by transports that manage conversation state
+        externally (e.g., StreamEdge creates conversations in GetStream).
+        For transports that manage conversations locally or through the LLM
+        directly, this can be a no-op.
+
+        Args:
+            call: The call object to create the conversation in.
+            user: User object representing the participant.
+            instructions: Conversation instructions or configuration.
+
+        Note:
+            LocalEdge implements this as a no-op since conversations are
+            managed by the LLM provider (e.g., Gemini), not the transport layer.
+
+        Example:
+            >>> edge = StreamEdge(connection=conn)
+            >>> call = await edge.create_call("default", "my-call")
+            >>> user = User(id="user-123", name="Alice")
+            >>> await edge.create_conversation(call, user, instructions="Be helpful")
+            >>>
+            >>> edge = LocalEdge()
+            >>> await edge.create_conversation(call, user, instructions)  # No-op
+        """
         pass
 
     @abc.abstractmethod
@@ -151,14 +311,31 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
     async def create_call(self, call_type: str, call_id: str) -> Room:
         """Create a call/room with the given type and ID.
 
+        **Required method** - Must be implemented by all transport implementations.
+
         This method creates a new call or room instance that can be used
-        for joining and managing communication sessions.
+        for joining and managing communication sessions. The specific
+        implementation varies by transport:
+
+        - **LocalEdge**: Creates a lightweight LocalRoom instance for local sessions
+        - **StreamEdge**: Creates a GetStream call/room in the cloud
 
         Args:
-            call_type: The type of call (e.g., "default", "video", "audio")
-            call_id: Unique identifier for the call
+            call_type: The type of call. Common values:
+                - "default": Standard call
+                - "audio": Audio-only call
+                - "video": Video call
+                The interpretation of call_type is transport-specific.
+            call_id: Unique identifier for the call. This should be globally
+                unique within your application to avoid conflicts.
 
         Returns:
-            A Room instance representing the created call
+            A Room instance representing the created call. The Room provides
+            properties like `id`, `type`, and methods like `leave()`.
+
+        Example:
+            >>> edge = LocalEdge()
+            >>> room = await edge.create_call("default", "my-call-123")
+            >>> print(f"Created room: {room.id} of type {room.type}")
         """
         pass
