@@ -114,7 +114,10 @@ class TestAgentLauncher:
                 assert session1.finished
                 assert session2.finished
 
-    async def test_idle_sessions_alive_with_idle_timeout_zero(self, stream_edge_mock):
+    @pytest.mark.parametrize("idle_for", [0, 10])
+    async def test_idle_sessions_alive_with_idle_timeout_zero(
+        self, stream_edge_mock, idle_for: float
+    ):
         llm = DummyLLM()
         tts = DummyTTS()
 
@@ -132,7 +135,7 @@ class TestAgentLauncher:
             agent_idle_timeout=0,
             cleanup_interval=0.5,
         )
-        with patch.object(Agent, "idle_for", return_value=10):
+        with patch.object(Agent, "idle_for", return_value=idle_for):
             # Start the launcher internals
             async with launcher:
                 # Launch a couple of idle agents

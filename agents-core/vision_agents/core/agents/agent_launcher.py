@@ -404,7 +404,7 @@ class AgentLauncher:
                 agent = session.agent
                 on_call_for = agent.on_call_for()
                 idle_for = agent.idle_for()
-                if idle_for >= self._agent_idle_timeout:
+                if 0 < self._agent_idle_timeout <= idle_for:
                     logger.info(
                         f'Closing session "{session.id}" with '
                         f'user_id "{agent.agent_user.id}" after being '
