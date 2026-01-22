@@ -7684,6 +7684,9 @@ dev = [
 name = "vision-agents-plugins-xai"
 source = { editable = "plugins/xai" }
 dependencies = [
+    { name = "aiohttp" },
+    { name = "vision-agents" },
+    { name = "websockets" },
     { name = "xai-sdk" },
 ]
 
@@ -7691,15 +7694,22 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "xai-sdk" }]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "vision-agents", editable = "agents-core" },
+    { name = "websockets", specifier = ">=13.0" },
+    { name = "xai-sdk", specifier = ">=1.5.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "python-dotenv", specifier = ">=1.1.1" },
 ]
 
 [[package]]
@@ -7887,7 +7897,7 @@ wheels = [
 
 [[package]]
 name = "xai-sdk"
-version = "1.4.0"
+version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -7898,9 +7908,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/cf/c9ccc20bd419f4fce088cd3e1778fb6b3420526ff4599c2bf6caf1427e99/xai_sdk-1.4.0.tar.gz", hash = "sha256:90e6e0b929395816a8474a332e6d996fbd7c56c3e9922b3894d14ef90b4adc37", size = 314502, upload-time = "2025-11-07T23:55:07.722Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/54/378c681c2c4512de78b49b65af1b7aaea0e0740dfa4a3389535e65422f70/xai_sdk-1.5.0.tar.gz", hash = "sha256:f88529d844f962fbb24464351a5962cc21a7d080e088bf656709ca7856270c8c", size = 349692, upload-time = "2025-12-05T03:27:36.93Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/e5/8cbdd56008e8194880151f151db62b1b2331d51de8f8e788b91524279611/xai_sdk-1.4.0-py3-none-any.whl", hash = "sha256:2635d661995ef1424fd5b5de6a9b7d6a11bad49a34afb19b04a330c40d90e0d1", size = 185691, upload-time = "2025-11-07T23:55:06.168Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/34/cd3681e5f786e37fb2dbb195fa3d5eb2a5e2be9b20d3abf01b40c9aba839/xai_sdk-1.5.0-py3-none-any.whl", hash = "sha256:4dc56bec2d67811c67030a50b42c4a1bc60f43947d4baaa840acf0aef246e816", size = 204314, upload-time = "2025-12-05T03:27:35.67Z" },
 ]
 
 [[package]]

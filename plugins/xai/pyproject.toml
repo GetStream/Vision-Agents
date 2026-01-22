@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.10.0"
 license = "Apache-2.0"
 dependencies = [
-    "xai-sdk",
+    "vision-agents",
+    "xai-sdk>=1.5.0",
+    "websockets>=13.0",
+    "aiohttp>=3.9.0",
 ]
 
 [project.urls]
@@ -23,7 +26,10 @@ source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["vision_agents"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/vision_agents"]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
@@ -32,4 +38,5 @@ vision-agents = { workspace = true }
 dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
+    "python-dotenv>=1.1.1",
 ]

@@ -1,4 +1,4 @@
 from .llm import XAILLM as LLM
-from .version import __version__
+from .xai_realtime import XAIRealtime as Realtime
 
-__all__ = ["LLM", "__version__"]
+__all__ = ["LLM", "Realtime"]
