@@ -3,8 +3,10 @@
 from .devices import list_audio_inputs, list_audio_outputs, list_video_inputs
 from .edge import LocalEdge as Edge
 from .room import LocalRoom
+from .tracks import AudioInputTrack
 
 __all__ = [
+    "AudioInputTrack",
     "Edge",
     "LocalRoom",
     "list_audio_inputs",
