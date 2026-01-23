@@ -33,11 +33,12 @@ class AudioConfig:
 
     input_buffer_duration: float = 2.0
     output_buffer_size_ms: int = 10000
-    output_prebuffer_ms: int = 200
+    output_prebuffer_ms: int = 400
+    output_latency_ms: int = 200
 
     capture_chunk_duration: float = 0.1
-    playback_chunk_duration: float = 0.1
-    loop_sleep_interval: float = 0.01
+    playback_chunk_duration: float = 0.2
+    loop_sleep_interval: float = 0.005
     flush_poll_interval: float = 0.05
     error_retry_delay: float = 0.1
     thread_join_timeout: float = 2.0

@@ -425,6 +425,7 @@ class AudioOutputTrack:
         # Persistent output stream
         self._stream: Optional[sd.OutputStream] = None
         self._stream_started = False
+        self._stream_lock = threading.Lock()
 
         # Resolve device to index
         if device == "default":
@@ -609,53 +610,68 @@ class AudioOutputTrack:
         if self._stream_started:
             return
 
-        try:
-            # Check device capabilities and adjust channels if needed
-            max_channels = self._get_device_max_channels()
-            actual_channels = min(self.channels, max_channels)
+        # Use lock to prevent multiple concurrent stream creations
+        with self._stream_lock:
+            # Double-check after acquiring lock
+            if self._stream_started:
+                return
 
-            if actual_channels != self.channels:
-                # Update the track's channel count to match device capability
-                old_channels = self.channels
-                self.channels = actual_channels
-                # Recalculate buffer size preserving the original duration
-                # buffer_size_bytes = duration_s * sample_rate * channels * bytes_per_sample
-                bytes_per_sample = self.bit_depth // 8
-                old_duration_s = self._buffer_size_bytes / (self.sample_rate * old_channels * bytes_per_sample)
-                self._buffer_size_bytes = int(
-                    old_duration_s * self.sample_rate * self.channels * bytes_per_sample
+            try:
+                # Check device capabilities and adjust channels if needed
+                max_channels = self._get_device_max_channels()
+                actual_channels = min(self.channels, max_channels)
+
+                if actual_channels != self.channels:
+                    # Update the track's channel count to match device capability
+                    old_channels = self.channels
+                    self.channels = actual_channels
+                    # Recalculate buffer size preserving the original duration
+                    # buffer_size_bytes = duration_s * sample_rate * channels * bytes_per_sample
+                    bytes_per_sample = self.bit_depth // 8
+                    old_duration_s = self._buffer_size_bytes / (self.sample_rate * old_channels * bytes_per_sample)
+                    self._buffer_size_bytes = int(
+                        old_duration_s * self.sample_rate * self.channels * bytes_per_sample
+                    )
+
+                # Calculate blocksize to match playback chunk duration for smoother audio
+                blocksize = int(self.sample_rate * self._config.audio.playback_chunk_duration)
+
+                # Calculate latency in seconds for smoother playback
+                latency_s = self._config.audio.output_latency_ms / 1000.0
+
+                # Create the output stream without callback (for blocking writes)
+                # The latency parameter helps buffer audio on the device side for smoother playback
+                self._stream = sd.OutputStream(
+                    samplerate=self.sample_rate,
+                    channels=self.channels,
+                    dtype=f"int{self.bit_depth}",
+                    device=self._device_index,
+                    blocksize=blocksize,
+                    latency=latency_s,
+                )
+                self._stream.start()
+                self._stream_started = True
+                logger.info(
+                    f"[LOCALRTC] Audio output stream started: {self.sample_rate}Hz, "
+                    f"blocksize={blocksize}, latency={latency_s}s"
                 )
 
-            # Calculate blocksize to match playback chunk duration for smoother audio
-            blocksize = int(self.sample_rate * self._config.audio.playback_chunk_duration)
-
-            # Create the output stream without callback (for blocking writes)
-            self._stream = sd.OutputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=f"int{self.bit_depth}",
-                device=self._device_index,
-                blocksize=blocksize,
-            )
-            self._stream.start()
-            self._stream_started = True
-
-            # Start playback thread
-            self._playback_thread_handle = threading.Thread(
-                target=self._playback_thread, daemon=True
-            )
-            self._playback_thread_handle.start()
-        except Exception:
-            # Clean up on failure
-            if self._stream is not None:
-                try:
-                    self._stream.close()
-                except Exception as e:
-                    logger.error(f"Error closing stream during cleanup: {e}")
-                finally:
-                    self._stream = None
-            self._stream_started = False
-            raise
+                # Start playback thread
+                self._playback_thread_handle = threading.Thread(
+                    target=self._playback_thread, daemon=True
+                )
+                self._playback_thread_handle.start()
+            except Exception:
+                # Clean up on failure
+                if self._stream is not None:
+                    try:
+                        self._stream.close()
+                    except Exception as e:
+                        logger.error(f"Error closing stream during cleanup: {e}")
+                    finally:
+                        self._stream = None
+                self._stream_started = False
+                raise
 
     def _convert_audio(
         self,
