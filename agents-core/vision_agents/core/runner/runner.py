@@ -127,12 +127,15 @@ class Runner:
                 # Start the agent launcher.
                 await self._launcher.start()
 
-                # Create the agent
-                agent = await self._launcher.launch()
-
                 logger.info("✅ Agent warmed up and ready")
 
+                # Join call if join_call function is provided
+                logger.info(f"📞 Joining call: {call_type}/{call_id}")
+                session = await self._launcher.start_session(
+                    call_id, call_type, video_track_override_path=video_track_override
+                )
                 # Open demo UI by default
+                agent = session.agent
                 if (
                     not no_demo
                     and hasattr(agent, "edge")
@@ -141,11 +144,6 @@ class Runner:
                     logger.info("🌐 Opening demo UI...")
                     await agent.edge.open_demo_for_agent(agent, call_type, call_id)
 
-                # Join call if join_call function is provided
-                logger.info(f"📞 Joining call: {call_type}/{call_id}")
-                session = await self._launcher.start_session(
-                    call_id, call_type, video_track_override_path=video_track_override
-                )
                 await session.wait()
             except asyncio.CancelledError:
                 logger.info("The session is cancelled, shutting down gracefully...")
