@@ -7,9 +7,8 @@ Export real metrics from Stream Agents to Prometheus using OpenTelemetry, with o
 This example demonstrates how to:
 
 1. Configure OpenTelemetry with a Prometheus exporter
-2. Attach `MetricsCollector` to an agent for opt-in metrics collection
-3. Scrape metrics from the `/metrics` endpoint during a live video call
-4. Visualize metrics in Grafana with pre-built dashboards
+2. Scrape metrics from the `/metrics` endpoint during a live video call
+3. Visualize metrics in Grafana with pre-built dashboards
 
 ## Quick Start
 
@@ -42,6 +41,7 @@ uv run python prometheus_metrics_example.py run --call-type default --call-id te
 3. Open Grafana at http://localhost:3000 (no login required - anonymous access enabled)
 
 The pre-configured dashboard shows:
+
 - LLM latency (p50, p95, p99)
 - STT latency (p50, p95, p99)
 - TTS latency (p50, p95, p99)
@@ -147,25 +147,23 @@ histogram_quantile(0.95, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (l
 The key pattern is:
 
 ```python
-# 1. Configure OpenTelemetry BEFORE importing vision_agents
 from opentelemetry import metrics
-from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from opentelemetry.sdk.metrics import MeterProvider
 from prometheus_client import start_http_server
 
+from vision_agents.core import Agent
+
+# Start Prometheus exporter on localhost:9464
 start_http_server(9464)
+
+# Configure OpenTelemetry to use Prometheus
 reader = PrometheusMetricReader()
 provider = MeterProvider(metric_readers=[reader])
 metrics.set_meter_provider(provider)
 
-# 2. Now import and create your agent
-from vision_agents.core import Agent
-from vision_agents.core.observability import MetricsCollector
-
+# Setup and run the agent
 agent = Agent(...)
-
-# 3. Attach MetricsCollector to opt-in to metrics
-collector = MetricsCollector(agent)
 ```
 
 ## Files
@@ -204,10 +202,12 @@ STREAM_API_SECRET=your_secret
 ## Troubleshooting
 
 ### Prometheus can't scrape metrics
+
 - Make sure the agent is running before Prometheus starts, or restart Prometheus after starting the agent
 - On macOS, `host.docker.internal` should work. On Linux, you may need to use `--network="host"` or configure the target differently
 
 ### Grafana shows no data
+
 - Wait a few seconds for metrics to be scraped
 - Check Prometheus targets at http://localhost:9090/targets
 - Ensure the agent is actively processing (make a call and talk to it)

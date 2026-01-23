@@ -18,39 +18,35 @@ Run with:
 Then open http://localhost:9464/metrics to see real-time metrics as you talk to the agent.
 """
 
-# =============================================================================
-# IMPORTANT: Configure OpenTelemetry BEFORE importing vision_agents
-# =============================================================================
+import logging
+import sys
+from typing import Any, Dict
+
+from dotenv import load_dotenv
 from opentelemetry import metrics
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
 from prometheus_client import start_http_server
+from vision_agents.core import Agent, AgentLauncher, Runner, User
+from vision_agents.core.utils.examples import get_weather_by_location
+from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
-# Start Prometheus HTTP server on port 9464
-PROMETHEUS_PORT = 9464
-start_http_server(PROMETHEUS_PORT)
+load_dotenv()
 
 # Configure OpenTelemetry to export to Prometheus
+PROMETHEUS_PORT = 9464
 reader = PrometheusMetricReader()
 provider = MeterProvider(metric_readers=[reader])
 metrics.set_meter_provider(provider)
 
-# =============================================================================
-# Now import vision_agents - metrics will be recorded automatically
-# =============================================================================
-import logging  # noqa: E402
-from typing import Any, Dict  # noqa: E402
-
-from dotenv import load_dotenv  # noqa: E402
-from vision_agents.core import Agent, AgentLauncher, Runner, User  # noqa: E402
-from vision_agents.core.observability import MetricsCollector  # noqa: E402
-from vision_agents.core.utils.examples import get_weather_by_location  # noqa: E402
-from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream  # noqa: E402
-
-load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
+# Configure our own logger to write to stderr
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stderr)
+handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+logger.addHandler(handler)
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -79,7 +75,6 @@ async def create_agent(**kwargs) -> Agent:
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join a call with metrics collection enabled."""
     # Attach MetricsCollector to record OpenTelemetry metrics
-    _ = MetricsCollector(agent)
 
     logger.info("=" * 60)
     logger.info("Prometheus Metrics Agent")
@@ -106,4 +101,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
+    # Start Prometheus HTTP server on port 9464
+    start_http_server(PROMETHEUS_PORT)
     Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
