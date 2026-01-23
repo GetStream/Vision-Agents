@@ -26,10 +26,6 @@ from .http.options import ServeOptions
 
 logger = logging.getLogger(__name__)
 
-# TODO:
-#   - Figure out how to serialize the agent config into some dict
-#   - Docs
-
 asyncio_logger = logging.getLogger("asyncio")
 
 
@@ -175,18 +171,17 @@ class Runner:
         port: int = 8000,
         agents_log_level: str = "INFO",
         http_log_level: str = "INFO",
-    ):
+        debug: bool = False,
+    ) -> None:
         """
         Start the HTTP server that spawns agents to the calls.
 
         Args:
-            host:
-            port:
-            agents_log_level:
-            http_log_level:
-
-        Returns:
-
+            host: Host address to bind the server to.
+            port: Port number for the server.
+            agents_log_level: Logging level for agent-related logs.
+            http_log_level: Logging level for FastAPI and uvicorn logs.
+            debug: Enable asyncio debug mode.
         """
         # Configure loggers if they're not already configured
         configure_sdk_logger(
@@ -201,9 +196,22 @@ class Runner:
         warnings.filterwarnings(
             "ignore", category=RuntimeWarning, module="dataclasses_json.core"
         )
+
+        # Get the policy's loop and enable debug
+        asyncio.get_event_loop().set_debug(debug)
+
         uvicorn.run(self.fast_api, host=host, port=port, log_config=None)
 
     def _create_fastapi_app(self, options: ServeOptions) -> FastAPI:
+        """
+        Create and configure a FastAPI application for serving agents.
+
+        Args:
+            options: Configuration options for the server.
+
+        Returns:
+            Configured FastAPI application instance.
+        """
         app = FastAPI(lifespan=lifespan)
         app.state.launcher = self._launcher
         app.state.options = self._serve_options
@@ -226,9 +234,9 @@ class Runner:
         )
         return app
 
-    def cli(self):
+    def cli(self) -> None:
         """
-        Run the CLI
+        Run the command-line interface with `run` and `serve` subcommands.
         """
 
         @click.group()
@@ -324,11 +332,18 @@ class Runner:
             default="INFO",
             help="Set the logging level for FastAPI and uvicorn",
         )
+        @click.option(
+            "--debug",
+            is_flag=True,
+            default=False,
+            help="Enable asyncio debug mode",
+        )
         def serve_cmd(
             host: str,
             port: int,
             agents_log_level: str,
             http_log_level: str,
+            debug: bool,
         ) -> None:
             """
             Start the HTTP server that spawns agents to the calls.
@@ -338,6 +353,7 @@ class Runner:
                 port=port,
                 agents_log_level=agents_log_level.upper(),
                 http_log_level=http_log_level.upper(),
+                debug=debug,
             )
 
         cli_()
