@@ -194,9 +194,8 @@ class EventManager:
             )
 
     def merge(self, em: "EventManager"):
-        # Stop the processing task in the merged manager
-        if em._processing_task and not em._processing_task.done():
-            em._processing_task.cancel()
+        # Stop the processing task in the merged manager gracefully
+        em.shutdown_sync()
 
         # Merge all data from the other manager
         self._events.update(em._events)
@@ -213,8 +212,9 @@ class EventManager:
         em._handlers = self._handlers
         em._queue = self._queue
         em._silent_events = self._silent_events
-        em._processing_task = None  # Clear the stopped task reference
+        em._processing_task = None
         em._received_event = self._received_event
+        em._shutdown = False  # Reset shutdown flag since we're now sharing state
 
     def register_events_from_module(
         self, module, prefix="", ignore_not_compatible=True
@@ -495,6 +495,43 @@ class EventManager:
                 break
             await asyncio.sleep(0.01)
 
+    async def shutdown(self):
+        """
+        Gracefully shut down the event manager.
+
+        Sets the shutdown flag, signals the processing task to exit,
+        and waits for it to complete.
+        """
+        self._shutdown = True
+        self._received_event.set()
+
+        if self._processing_task and not self._processing_task.done():
+            try:
+                await asyncio.wait_for(self._processing_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning("Event processing task did not shut down in time, cancelling")
+                self._processing_task.cancel()
+                try:
+                    await self._processing_task
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.CancelledError:
+                pass
+            self._processing_task = None
+
+    def shutdown_sync(self):
+        """
+        Synchronously signal shutdown without waiting.
+
+        Use this in contexts where you can't await (e.g., merge).
+        The processing task will exit on its next iteration.
+        """
+        self._shutdown = True
+        self._received_event.set()
+        if self._processing_task and not self._processing_task.done():
+            self._processing_task.cancel()
+            self._processing_task = None
+
     def _start_processing_task(self):
         """Start the background event processing task."""
         if self._processing_task and not self._processing_task.done():
@@ -513,6 +550,11 @@ class EventManager:
         """
         cancelled_exc = None
         while True:
+            # Check shutdown flag
+            if self._shutdown and not self._queue:
+                logger.debug("Event processing task shutting down")
+                return
+
             if self._queue:
                 event = self._queue.popleft()
                 try:

@@ -782,6 +782,13 @@ class Agent:
             self._video_track.stop()
         self._video_track = None
 
+        # Close the edge transport to release all its resources
+        if self.edge:
+            await self.edge.close()
+
+        # Shut down the event manager
+        await self.events.shutdown()
+
         self._call_ended_event = None
         self._joined_at = 0.0
         self.clear_call_logging_context()

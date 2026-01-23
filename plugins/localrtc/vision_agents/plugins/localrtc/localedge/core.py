@@ -258,6 +258,9 @@ class LocalEdge(EdgeTransport):
         await asyncio.to_thread(self._audio_handler.stop_all_tracks)
         await asyncio.to_thread(self._video_handler.stop_all_tracks)
 
+        # Shut down the event manager
+        await self.events.shutdown()
+
         # Clear user
         self._user = None
 

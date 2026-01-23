@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -15,9 +14,6 @@ if TYPE_CHECKING:
     from .localedge.config import LocalEdgeConfig
 
 logger = logging.getLogger(__name__)
-
-# Check if development mode is enabled via environment variable
-_VISION_AGENT_DEV = os.environ.get("VISION_AGENT_DEV", "").lower() in ("true", "1", "yes")
 
 # Import getstream PcmData for compatibility with Gemini plugin
 try:
@@ -295,14 +291,6 @@ class AudioInputTrack:
         bytes_per_sample = self.bit_depth // 8
         required_bytes = int(duration * self.sample_rate * self.channels * bytes_per_sample)
 
-        if _VISION_AGENT_DEV:
-            logger.debug(
-                f"[AUDIO DEBUG] Capturing audio from input device - "
-                f"device_index={self._device_index}, duration={duration}s, "
-                f"sample_rate={self.sample_rate}Hz, channels={self.channels}, "
-                f"bit_depth={self.bit_depth}, required_bytes={required_bytes}"
-            )
-
         # Wait for enough data to accumulate
         timeout = duration + 0.5  # Give a bit of extra time
         start_time = time.time()
@@ -332,12 +320,6 @@ class AudioInputTrack:
             time.sleep(self._config.audio.loop_sleep_interval)
 
         timestamp = time.time()
-
-        if _VISION_AGENT_DEV:
-            logger.debug(
-                f"[AUDIO DEBUG] Captured audio from input device - "
-                f"data_size={len(audio_bytes)} bytes, timestamp={timestamp}"
-            )
 
         return PcmData(
             data=audio_bytes,
@@ -542,6 +524,7 @@ class AudioOutputTrack:
         """Background thread that plays audio from the buffer.
 
         Uses blocking writes to the output stream for more reliable playback.
+        Pre-buffers audio before starting to ensure smooth playback.
         """
         dtype = f"int{self.bit_depth}"
         bytes_per_sample = self.bit_depth // 8
@@ -549,19 +532,32 @@ class AudioOutputTrack:
         chunk_samples = int(self.sample_rate * self._config.audio.playback_chunk_duration)
         chunk_bytes = chunk_samples * self.channels * bytes_per_sample
 
+        # Pre-buffer threshold: wait for configured amount of audio before starting playback
+        # This prevents choppy audio when data arrives in bursts
+        prebuffer_ms = self._config.audio.output_prebuffer_ms
+        prebuffer_bytes = int((prebuffer_ms / 1000.0) * self.sample_rate * self.channels * bytes_per_sample)
+        prebuffered = False
+
         try:
             while not self._stopped:
+                data = None
+
                 # Get data from buffer
                 with self._buffer_lock:
-                    if len(self._buffer) >= chunk_bytes:
+                    buffer_len = len(self._buffer)
+
+                    # Wait for pre-buffer threshold before starting playback
+                    if not prebuffered:
+                        if buffer_len >= prebuffer_bytes:
+                            prebuffered = True
+                            logger.debug(f"[LOCALRTC] Audio pre-buffered: {buffer_len} bytes")
+                    elif buffer_len >= chunk_bytes:
                         data = bytes(self._buffer[:chunk_bytes])
                         del self._buffer[:chunk_bytes]
-                    elif len(self._buffer) > 0:
-                        # Play what we have
+                    elif buffer_len > 0 and self._stopped:
+                        # Only play partial data when stopping
                         data = bytes(self._buffer)
                         self._buffer.clear()
-                    else:
-                        data = None
 
                 if data:
                     # Convert to numpy and play
@@ -571,7 +567,7 @@ class AudioOutputTrack:
                     # Write to stream (blocking)
                     self._stream.write(audio_array)
                 else:
-                    # No data, sleep briefly
+                    # No data or waiting for pre-buffer, sleep briefly
                     time.sleep(self._config.audio.loop_sleep_interval)
         except Exception as e:
             if not self._stopped:
@@ -630,12 +626,16 @@ class AudioOutputTrack:
                     old_duration_s * self.sample_rate * self.channels * bytes_per_sample
                 )
 
+            # Calculate blocksize to match playback chunk duration for smoother audio
+            blocksize = int(self.sample_rate * self._config.audio.playback_chunk_duration)
+
             # Create the output stream without callback (for blocking writes)
             self._stream = sd.OutputStream(
                 samplerate=self.sample_rate,
                 channels=self.channels,
                 dtype=f"int{self.bit_depth}",
                 device=self._device_index,
+                blocksize=blocksize,
             )
             self._stream.start()
             self._stream_started = True
@@ -826,22 +826,10 @@ class AudioOutputTrack:
                 sample_rate = data.sample_rate
                 channels = data.channels
                 bit_depth = data.bit_depth
-
-                if _VISION_AGENT_DEV:
-                    logger.debug(
-                        f"[AUDIO DEBUG] Ingesting CorePcmData - "
-                        f"sample_rate={sample_rate}Hz, channels={channels}, "
-                        f"bit_depth={bit_depth}, data_size={len(audio_data)} bytes"
-                    )
             elif HAS_STREAM_PCM and isinstance(data, StreamPcmData):
                 # GetStream PcmData stores samples as numpy array
                 # Use samples directly and convert to bytes
                 samples = data.samples
-                if _VISION_AGENT_DEV:
-                    logger.debug(
-                        f"StreamPcmData: samples.shape={samples.shape}, "
-                        f"dtype={samples.dtype}, rate={data.sample_rate}, ch={data.channels}"
-                    )
                 if samples.dtype == np.float32:
                     # Convert float32 [-1, 1] to int16
                     samples = (samples * 32767).astype(np.int16)
@@ -851,25 +839,11 @@ class AudioOutputTrack:
                 sample_rate = data.sample_rate
                 channels = data.channels
                 bit_depth = 16
-
-                if _VISION_AGENT_DEV:
-                    logger.debug(
-                        f"[AUDIO DEBUG] Ingesting StreamPcmData - "
-                        f"sample_rate={sample_rate}Hz, channels={channels}, "
-                        f"bit_depth={bit_depth}, data_size={len(audio_data)} bytes, "
-                        f"samples_shape={data.samples.shape}, dtype={data.samples.dtype}"
-                    )
             else:
                 raise ValueError(f"Unsupported PcmData type: {type(data)}")
 
             # Validate and convert sample rate and/or channels if needed
             if sample_rate != self.sample_rate or channels != self.channels:
-                if _VISION_AGENT_DEV:
-                    logger.debug(
-                        f"[AUDIO DEBUG] Format conversion required - "
-                        f"from {sample_rate}Hz/{channels}ch to {self.sample_rate}Hz/{self.channels}ch"
-                    )
-
                 # Validate format parameters before conversion
                 if sample_rate <= 0:
                     raise ValueError(
@@ -896,29 +870,9 @@ class AudioOutputTrack:
                     bit_depth=bit_depth,
                 )
 
-                if _VISION_AGENT_DEV:
-                    logger.debug(
-                        f"[AUDIO DEBUG] Format conversion completed - "
-                        f"output data_size={len(audio_data)} bytes"
-                    )
-            elif _VISION_AGENT_DEV:
-                logger.debug(
-                    f"[AUDIO DEBUG] No format conversion needed - "
-                    f"format matches output track ({self.sample_rate}Hz/{self.channels}ch)"
-                )
-
             # Ensure the output stream is running
             # Run in thread pool to avoid blocking event loop with synchronous stream operations
             await asyncio.to_thread(self._ensure_stream_started)
-
-            if _VISION_AGENT_DEV:
-                logger.debug(
-                    f"[AUDIO DEBUG] Writing to output device - "
-                    f"device_index={self._device_index}, sample_rate={self.sample_rate}Hz, "
-                    f"channels={self.channels}, bit_depth={self.bit_depth}, "
-                    f"data_size={len(audio_data)} bytes, "
-                    f"buffer_size_before={len(self._buffer)} bytes"
-                )
 
             # Add audio data to the buffer (thread-safe)
             with self._buffer_lock:
@@ -926,19 +880,8 @@ class AudioOutputTrack:
                 if len(self._buffer) > self._buffer_size_bytes:
                     excess = len(self._buffer) - self._buffer_size_bytes + len(audio_data)
                     if excess > 0:
-                        if _VISION_AGENT_DEV:
-                            logger.warning(
-                                f"[AUDIO DEBUG] Buffer overflow - removing {excess} bytes "
-                                f"(buffer_size={len(self._buffer)}, limit={self._buffer_size_bytes})"
-                            )
                         del self._buffer[:excess]
                 self._buffer.extend(audio_data)
-
-                if _VISION_AGENT_DEV:
-                    logger.debug(
-                        f"[AUDIO DEBUG] Buffer updated - "
-                        f"buffer_size_after={len(self._buffer)} bytes"
-                    )
 
         except Exception as e:
             device_info = (
@@ -958,9 +901,6 @@ class AudioOutputTrack:
                 f"{self.bit_depth}-bit\n"
                 f"  - Data type: {type(data).__name__}"
             )
-
-            if _VISION_AGENT_DEV:
-                logger.error(f"[AUDIO DEBUG] {error_msg}")
 
             raise RuntimeError(error_msg)
 

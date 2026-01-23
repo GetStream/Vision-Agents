@@ -124,15 +124,19 @@ class Runner:
             logger.info("🚀 Launching agent...")
 
             try:
-                # Start the agent launcher.
+                # Start the agent launcher (handles warmup)
                 await self._launcher.start()
-
-                # Create the agent
-                agent = await self._launcher.launch()
 
                 logger.info("✅ Agent warmed up and ready")
 
-                # Open demo UI by default
+                # Join call - this creates the actual agent for the session
+                logger.info(f"📞 Joining call: {call_type}/{call_id}")
+                session = await self._launcher.start_session(
+                    call_id, call_type, video_track_override_path=video_track_override
+                )
+
+                # Open demo UI after session starts (uses the session's agent)
+                agent = session.agent
                 if (
                     not no_demo
                     and hasattr(agent, "edge")
@@ -141,11 +145,6 @@ class Runner:
                     logger.info("🌐 Opening demo UI...")
                     await agent.edge.open_demo_for_agent(agent, call_type, call_id)
 
-                # Join call if join_call function is provided
-                logger.info(f"📞 Joining call: {call_type}/{call_id}")
-                session = await self._launcher.start_session(
-                    call_id, call_type, video_track_override_path=video_track_override
-                )
                 await session.wait()
             except KeyboardInterrupt:
                 logger.info("🛑 Received interrupt signal, shutting down gracefully...")

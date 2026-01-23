@@ -134,6 +134,10 @@ class AgentLauncher:
 
             logger.info("Agent warmup completed")
 
+            # Close the warmup agent to release its resources (audio/video tracks, etc.)
+            # The warmed-up LLM/TTS/STT resources are cached and will be reused.
+            await agent.close()
+
     @property
     def warmed_up(self) -> bool:
         return self._warmed_up
