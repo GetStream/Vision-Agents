@@ -106,8 +106,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, llm_class))",
-          "legendFormat": "p50 - {{llm_class}}",
+          "expr": "histogram_quantile(0.50, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p50 - {{provider}}",
           "refId": "A"
         },
         {
@@ -115,8 +115,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, llm_class))",
-          "legendFormat": "p95 - {{llm_class}}",
+          "expr": "histogram_quantile(0.95, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p95 - {{provider}}",
           "refId": "B"
         },
         {
@@ -124,8 +124,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, llm_class))",
-          "legendFormat": "p99 - {{llm_class}}",
+          "expr": "histogram_quantile(0.99, sum(rate(llm_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p99 - {{provider}}",
           "refId": "C"
         }
       ],
@@ -216,8 +216,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
-          "legendFormat": "p50 - {{stt_class}}",
+          "expr": "histogram_quantile(0.50, sum(increase(stt_latency_ms_milliseconds_bucket[15m])) by (le, provider))",
+          "legendFormat": "p50 - {{provider}}",
           "refId": "A"
         },
         {
@@ -225,8 +225,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
-          "legendFormat": "p95 - {{stt_class}}",
+          "expr": "histogram_quantile(0.95, sum(increase(stt_latency_ms_milliseconds_bucket[15m])) by (le, provider))",
+          "legendFormat": "p95 - {{provider}}",
           "refId": "B"
         },
         {
@@ -234,9 +234,18 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(stt_latency_ms_milliseconds_bucket[5m])) by (le, stt_class))",
-          "legendFormat": "p99 - {{stt_class}}",
+          "expr": "histogram_quantile(0.99, sum(increase(stt_latency_ms_milliseconds_bucket[15m])) by (le, provider))",
+          "legendFormat": "p99 - {{provider}}",
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(stt_latency_ms_milliseconds_sum) by (provider) / sum(stt_latency_ms_milliseconds_count) by (provider)",
+          "legendFormat": "avg - {{provider}}",
+          "refId": "D"
         }
       ],
       "title": "STT Latency",
@@ -326,8 +335,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(tts_latency_ms_milliseconds_bucket[5m])) by (le, tts_class))",
-          "legendFormat": "p50 - {{tts_class}}",
+          "expr": "histogram_quantile(0.50, sum(rate(tts_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p50 - {{provider}}",
           "refId": "A"
         },
         {
@@ -335,8 +344,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(tts_latency_ms_milliseconds_bucket[5m])) by (le, tts_class))",
-          "legendFormat": "p95 - {{tts_class}}",
+          "expr": "histogram_quantile(0.95, sum(rate(tts_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p95 - {{provider}}",
           "refId": "B"
         },
         {
@@ -344,8 +353,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(tts_latency_ms_milliseconds_bucket[5m])) by (le, tts_class))",
-          "legendFormat": "p99 - {{tts_class}}",
+          "expr": "histogram_quantile(0.99, sum(rate(tts_latency_ms_milliseconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "p99 - {{provider}}",
           "refId": "C"
         }
       ],
