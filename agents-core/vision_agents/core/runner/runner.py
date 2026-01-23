@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import warnings
 from typing import Optional
 from uuid import uuid4
@@ -197,9 +198,9 @@ class Runner:
             "ignore", category=RuntimeWarning, module="dataclasses_json.core"
         )
 
-        # Get the policy's loop and enable debug
-        asyncio.get_event_loop().set_debug(debug)
-
+        # Enable asyncio debug via environment variable before uvicorn creates its loop
+        if debug:
+            os.environ.setdefault("PYTHONASYNCIODEBUG", "1")
         uvicorn.run(self.fast_api, host=host, port=port, log_config=None)
 
     def _create_fastapi_app(self, options: ServeOptions) -> FastAPI:
