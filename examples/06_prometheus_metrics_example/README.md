@@ -17,7 +17,7 @@ This example demonstrates how to:
 ```bash
 cd examples/06_prometheus_metrics_example
 uv sync
-uv run python prometheus_metrics_example.py run --call-type default --call-id test-metrics
+uv run python prometheus_metrics_example.py run
 ```
 
 Then open http://localhost:9464/metrics in your browser to see raw metrics as you talk to the agent.
@@ -35,7 +35,7 @@ docker compose up -d
 
 ```bash
 uv sync
-uv run python prometheus_metrics_example.py run --call-type default --call-id test-metrics
+uv run python prometheus_metrics_example.py run
 ```
 
 3. Open Grafana at http://localhost:3000 (no login required - anonymous access enabled)
