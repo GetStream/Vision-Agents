@@ -88,9 +88,7 @@ async def create_agent(**kwargs) -> Agent:
         The edge transport queries the LLM's requirements and configures output
         accordingly (e.g., 24kHz mono for Gemini).
     """
-    # BEST PRACTICE: Create the Local RTC Edge transport with explicit parameters
-    # This handles all local device I/O: capturing from microphone/camera
-    # and playing audio to speakers
+
     edge = localrtc.Edge(
         audio_device="default",   # Use system default microphone
         video_device=0,           # Use first available camera (integer index)
@@ -101,16 +99,13 @@ async def create_agent(**kwargs) -> Agent:
         # custom_pipeline=None,   # Optional: Use GStreamer pipelines for advanced control
     )
 
-    # BEST PRACTICE: Discover available devices before deployment
-    # Uncomment to enumerate devices on your system:
-    # devices = localrtc.Edge.list_devices()
-    # print("Available audio inputs:", devices["audio_inputs"])
-    # print("Available audio outputs:", devices["audio_outputs"])
-    # print("Available video inputs:", devices["video_inputs"])
+    devices = localrtc.Edge.list_devices()
+    print("Available audio inputs:", devices["audio_inputs"])
+    print("Available audio outputs:", devices["audio_outputs"])
+    print("Available video inputs:", devices["video_inputs"])
     # # Then use device index or name:
     # # edge = localrtc.Edge(audio_device=devices["audio_inputs"][0]["index"])
 
-    # BEST PRACTICE: Create the agent with explicit configuration
     agent = Agent(
         edge=edge,  # EdgeTransport instance for device I/O
         agent_user=User(
@@ -123,13 +118,8 @@ async def create_agent(**kwargs) -> Agent:
             "Keep your responses concise and conversational. "
             "You can see the user through the camera and hear them through the microphone."
         ),
-        llm=gemini.Realtime(
-            # Optional: Configure video frame rate (default is 1 fps)
-            # fps=3,  # Send 3 video frames per second to Gemini
-            # Optional: Configure other Gemini Realtime parameters
-            # model="gemini-2.0-flash-exp",  # Specify model version
-        ),
-        processors=[],  # No additional processors in this basic example
+        llm=gemini.Realtime(),
+        processors=[],  
     )
 
     return agent
