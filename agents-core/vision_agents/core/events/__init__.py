@@ -1,15 +1,3 @@
-from .base import (
-    ConnectionState,
-    AudioFormat,
-    BaseEvent,
-    PluginBaseEvent,
-    PluginInitializedEvent,
-    PluginClosedEvent,
-    PluginErrorEvent,
-    VideoProcessorDetectionEvent,
-)
-from .manager import EventManager
-
 from getstream.models import (
     BlockedUserEvent,
     CallAcceptedEvent,
@@ -64,6 +52,15 @@ from getstream.models import (
     UnblockedUserEvent,
     UpdatedCallPermissionsEvent,
 )
+
+from .base import (
+    AudioFormat,
+    BaseEvent,
+    ConnectionState,
+    PluginBaseEvent,
+    VideoProcessorDetectionEvent,
+)
+from .manager import EventManager
 
 __all__ = [
     "BlockedUserEvent",

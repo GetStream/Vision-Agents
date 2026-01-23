@@ -7,7 +7,6 @@ from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, Optional,
 import av
 from vision_agents.core.events import (
     AudioFormat,
-    PluginClosedEvent,
 )
 from vision_agents.core.events.manager import EventManager
 
@@ -282,12 +281,3 @@ class TTS(abc.ABC):
 
     async def close(self):
         """Close the TTS service and release any resources."""
-        self.events.send(
-            PluginClosedEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                plugin_type="TTS",
-                provider=self.provider_name,
-                cleanup_successful=True,
-            )
-        )
