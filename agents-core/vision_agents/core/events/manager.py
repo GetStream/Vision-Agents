@@ -551,3 +551,4 @@ class EventManager:
     def stop(self):
         if self._processing_task and not self._processing_task.done():
             self._processing_task.cancel()
+            self._processing_task = None
