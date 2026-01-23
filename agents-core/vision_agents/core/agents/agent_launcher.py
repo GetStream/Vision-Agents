@@ -198,11 +198,13 @@ class AgentLauncher:
 
             # Create a dry-run Agent instance and warmup its components for the first time.
             agent: "Agent" = await await_or_run(self._create_agent)
-            logger.info("Warming up agent components...")
-            await self._warmup_agent(agent)
-            self._warmed_up = True
-
-            logger.info("Agent warmup completed")
+            try:
+                logger.info("Warming up agent components...")
+                await self._warmup_agent(agent)
+                self._warmed_up = True
+                logger.info("Agent warmup completed")
+            finally:
+                await agent.close()
 
     @property
     def warmed_up(self) -> bool:

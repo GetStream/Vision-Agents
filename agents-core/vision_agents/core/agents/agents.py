@@ -799,6 +799,7 @@ class Agent:
         self._call_ended_event = None
         self._joined_at = 0.0
         self.clear_call_logging_context()
+        self.events.stop()
         self._closed = True
         self.logger.info("🤖 Agent stopped")
 

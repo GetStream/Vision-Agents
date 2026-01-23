@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import warnings
 from typing import Optional
 from uuid import uuid4
@@ -25,10 +26,6 @@ from .http.dependencies import (
 from .http.options import ServeOptions
 
 logger = logging.getLogger(__name__)
-
-# TODO:
-#   - Figure out how to serialize the agent config into some dict
-#   - Docs
 
 asyncio_logger = logging.getLogger("asyncio")
 
@@ -127,12 +124,15 @@ class Runner:
                 # Start the agent launcher.
                 await self._launcher.start()
 
-                # Create the agent
-                agent = await self._launcher.launch()
-
                 logger.info("✅ Agent warmed up and ready")
 
+                # Join call if join_call function is provided
+                logger.info(f"📞 Joining call: {call_type}/{call_id}")
+                session = await self._launcher.start_session(
+                    call_id, call_type, video_track_override_path=video_track_override
+                )
                 # Open demo UI by default
+                agent = session.agent
                 if (
                     not no_demo
                     and hasattr(agent, "edge")
@@ -141,11 +141,6 @@ class Runner:
                     logger.info("🌐 Opening demo UI...")
                     await agent.edge.open_demo_for_agent(agent, call_type, call_id)
 
-                # Join call if join_call function is provided
-                logger.info(f"📞 Joining call: {call_type}/{call_id}")
-                session = await self._launcher.start_session(
-                    call_id, call_type, video_track_override_path=video_track_override
-                )
                 await session.wait()
             except asyncio.CancelledError:
                 logger.info("The session is cancelled, shutting down gracefully...")
@@ -177,18 +172,17 @@ class Runner:
         port: int = 8000,
         agents_log_level: str = "INFO",
         http_log_level: str = "INFO",
-    ):
+        debug: bool = False,
+    ) -> None:
         """
         Start the HTTP server that spawns agents to the calls.
 
         Args:
-            host:
-            port:
-            agents_log_level:
-            http_log_level:
-
-        Returns:
-
+            host: Host address to bind the server to.
+            port: Port number for the server.
+            agents_log_level: Logging level for agent-related logs.
+            http_log_level: Logging level for FastAPI and uvicorn logs.
+            debug: Enable asyncio debug mode.
         """
         # Configure loggers if they're not already configured
         configure_sdk_logger(
@@ -203,9 +197,22 @@ class Runner:
         warnings.filterwarnings(
             "ignore", category=RuntimeWarning, module="dataclasses_json.core"
         )
+
+        # Enable asyncio debug via environment variable before uvicorn creates its loop
+        if debug:
+            os.environ.setdefault("PYTHONASYNCIODEBUG", "1")
         uvicorn.run(self.fast_api, host=host, port=port, log_config=None)
 
     def _create_fastapi_app(self, options: ServeOptions) -> FastAPI:
+        """
+        Create and configure a FastAPI application for serving agents.
+
+        Args:
+            options: Configuration options for the server.
+
+        Returns:
+            Configured FastAPI application instance.
+        """
         app = FastAPI(lifespan=lifespan)
         app.state.launcher = self._launcher
         app.state.options = self._serve_options
@@ -228,9 +235,9 @@ class Runner:
         )
         return app
 
-    def cli(self):
+    def cli(self) -> None:
         """
-        Run the CLI
+        Run the command-line interface with `run` and `serve` subcommands.
         """
 
         @click.group()
@@ -326,11 +333,18 @@ class Runner:
             default="INFO",
             help="Set the logging level for FastAPI and uvicorn",
         )
+        @click.option(
+            "--debug",
+            is_flag=True,
+            default=False,
+            help="Enable asyncio debug mode",
+        )
         def serve_cmd(
             host: str,
             port: int,
             agents_log_level: str,
             http_log_level: str,
+            debug: bool,
         ) -> None:
             """
             Start the HTTP server that spawns agents to the calls.
@@ -340,6 +354,7 @@ class Runner:
                 port=port,
                 agents_log_level=agents_log_level.upper(),
                 http_log_level=http_log_level.upper(),
+                debug=debug,
             )
 
         cli_()

@@ -1,19 +1,12 @@
 import asyncio
-import uuid
 import collections
 import logging
 import types
 import typing
+import uuid
 from typing import Any, Deque, Dict, Optional, Union, get_args, get_origin
 
-from .base import (
-    ConnectionClosedEvent,
-    ConnectionErrorEvent,
-    ConnectionOkEvent,
-    ExceptionEvent,
-    HealthCheckEvent,
-)
-
+from .base import ExceptionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +138,6 @@ class EventManager:
         self._received_event = asyncio.Event()
 
         self.register(ExceptionEvent)
-        self.register(HealthCheckEvent)
-        self.register(ConnectionOkEvent)
-        self.register(ConnectionErrorEvent)
-        self.register(ConnectionClosedEvent)
 
         # Start background processing task
         self._start_processing_task()
@@ -195,8 +184,7 @@ class EventManager:
 
     def merge(self, em: "EventManager"):
         # Stop the processing task in the merged manager
-        if em._processing_task and not em._processing_task.done():
-            em._processing_task.cancel()
+        em.stop()
 
         # Merge all data from the other manager
         self._events.update(em._events)
@@ -559,3 +547,8 @@ class EventManager:
             loop = asyncio.get_running_loop()
             handler_task = loop.create_task(self._run_handler(handler, event))
             self._handler_tasks[uuid.uuid4()] = handler_task
+
+    def stop(self):
+        if self._processing_task and not self._processing_task.done():
+            self._processing_task.cancel()
+            self._processing_task = None
