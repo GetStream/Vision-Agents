@@ -122,9 +122,6 @@ __all__ += [
     "AudioFormat",
     "BaseEvent",
     "PluginBaseEvent",
-    "PluginInitializedEvent",
-    "PluginClosedEvent",
-    "PluginErrorEvent",
     "VideoProcessorDetectionEvent",
     "EventManager",
 ]
