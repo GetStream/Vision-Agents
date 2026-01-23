@@ -97,7 +97,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     call = await agent.create_call(call_type, call_id)
 
-    with await agent.join(call):
+    async with agent.join(call):
         await agent.simple_response(
             "Hello! I'm demonstrating metrics collection. "
             "Ask me anything - try asking about the weather!"
