@@ -6,9 +6,9 @@ The metrics are automatically collected from LLM, STT, TTS, and other components
 during a live video call.
 
 Setup:
-    1. Configure OpenTelemetry with Prometheus exporter BEFORE importing agents
+    1. Configure OpenTelemetry with Prometheus reader
     2. Create your agent with the desired plugins
-    3. Attach MetricsCollector to opt-in to metrics collection
+    3. Start Prometheus exporter before the main app
     4. Metrics are available at http://localhost:9464/metrics
 
 Run with:
