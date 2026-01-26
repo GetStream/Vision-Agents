@@ -3,12 +3,13 @@ Prometheus Metrics Example for Stream Agents.
 
 This example shows how to export real metrics from Stream Agents to Prometheus.
 The metrics are automatically collected from LLM, STT, TTS, and other components
-during a live video call.
+during a live video call. Each Agent automatically creates a MetricsCollector
+internally, so metrics collection is enabled by default when OpenTelemetry is configured.
 
 Setup:
     1. Configure OpenTelemetry with Prometheus reader
-    2. Create your agent with the desired plugins
-    3. Start Prometheus exporter before the main app
+    2. Start Prometheus HTTP server
+    3. Create and run your agent
     4. Metrics are available at http://localhost:9464/metrics
 
 Run with:
@@ -74,8 +75,7 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join a call with metrics collection enabled."""
-    # Attach MetricsCollector to record OpenTelemetry metrics
-
+    # MetricsCollector is automatically attached to the agent
     logger.info("=" * 60)
     logger.info("Prometheus Metrics Agent")
     logger.info("=" * 60)
