@@ -1398,8 +1398,40 @@ class Agent:
             self.logger.info("🎥 Video track initialized from video publisher")
 
     def _sanitize_text(self, text: str) -> str:
-        """Remove markdown and special characters that don't speak well."""
-        return text.replace("*", "").replace("#", "")
+        """
+        Remove markdown, special characters, and visual annotations that don't speak well.
+
+        This method removes:
+        - Markdown formatting characters (*, #)
+        - JSON annotation blocks (used for visual overlays)
+        - Markdown code blocks containing JSON
+        """
+        import re
+
+        # Remove markdown formatting
+        text = text.replace("*", "").replace("#", "")
+
+        # Remove JSON annotation blocks in markdown code blocks
+        # Pattern: ```json\n...\n```
+        text = re.sub(r"```json\s*[\s\S]*?\s*```", "", text)
+
+        # Remove inline JSON arrays that look like annotations
+        # Pattern: [{...}, {...}] with visual annotation keys
+        # This matches arrays containing objects with keys like "box_2d", "circle", etc.
+        annotation_pattern = r'\[\s*\{[^\]]*(?:box_2d|circle|polygon|point|line|bbox)[^\]]*\]\s*'
+        text = re.sub(annotation_pattern, "", text, flags=re.DOTALL)
+
+        # Clean up extra whitespace left by removals
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Multiple blank lines -> double
+        text = text.strip()
+
+        # If the text is now empty or very short, provide a default message
+        if not text or len(text.strip()) < 5:
+            # Check if original text had annotations
+            if "box_2d" in text or "circle" in text or "polygon" in text:
+                return "I've marked that for you in the video."
+
+        return text
 
     async def _get_video_track_override(self) -> VideoFileTrack:
         """
