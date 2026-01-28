@@ -2,6 +2,8 @@ import logging
 from typing import Any, Dict
 
 from dotenv import load_dotenv
+from google.genai import types
+
 from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import (
@@ -21,7 +23,7 @@ Agent example optimized for fast response time.
 Eager turn taking STT, LLM, TTS workflow
 - deepgram for optimal latency
 - eleven labs for TTS
-- gemini-2.5-flash-lite for fast responses
+- gemini-3-flash-preview for fast responses
 - stream's edge network for video transport
 
 This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_example
@@ -29,7 +31,12 @@ This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_ex
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-2.5-flash-lite")
+    llm = gemini.VLM(
+        "gemini-3-flash-preview",
+        config=types.GenerateContentConfig(
+            tools=[types.Tool(code_execution=types.ToolCodeExecution)]
+        ),
+    )
 
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.

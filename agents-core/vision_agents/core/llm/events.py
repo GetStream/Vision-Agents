@@ -236,6 +236,25 @@ class VLMInferenceCompletedEvent(PluginBaseEvent):
 
 
 @dataclass
+class VLMAnnotationEvent(PluginBaseEvent):
+    """
+    Event emitted when a VLM returns visual annotations.
+
+    This event includes the reference frame that was analyzed by the VLM,
+    ensuring annotations are drawn on the correct frame rather than on
+    live video that may have moved since the analysis.
+    """
+
+    type: str = field(default="plugin.vlm_annotation", init=False)
+    annotations_json: str = ""
+    """The raw JSON string containing annotation data."""
+    reference_frame: Optional[Any] = None
+    """The video frame (av.VideoFrame) that was analyzed by the VLM."""
+    inference_id: Optional[str] = None
+    """ID linking to the VLM inference that produced these annotations."""
+
+
+@dataclass
 class VLMErrorEvent(PluginBaseEvent):
     """Event emitted when a VLM error occurs."""
 

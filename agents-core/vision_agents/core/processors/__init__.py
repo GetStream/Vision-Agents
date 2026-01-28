@@ -5,6 +5,18 @@ This package contains various processors for handling audio, video, and image pr
 in Stream Agents applications.
 """
 
+from .annotation_processor import AnnotationProcessor
+from .annotation_types import (
+    Annotation,
+    AnnotationStyle,
+    AnnotationType,
+    BoundingBox,
+    Circle,
+    Line,
+    Point,
+    Polygon,
+    TextLabel,
+)
 from .base_processor import (
     AudioProcessorPublisher,
     AudioPublisher,
@@ -23,4 +35,15 @@ __all__ = [
     "AudioProcessor",
     "AudioProcessorPublisher",
     "VideoProcessorPublisher",
+    # Annotation support
+    "AnnotationProcessor",
+    "Annotation",
+    "AnnotationStyle",
+    "AnnotationType",
+    "BoundingBox",
+    "Circle",
+    "Line",
+    "Point",
+    "Polygon",
+    "TextLabel",
 ]

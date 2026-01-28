@@ -321,6 +321,9 @@ class EventManager:
         is_union = False
         annotations = typing.get_type_hints(function)
 
+        # Filter out the return annotation - it's never intended to be an event type
+        annotations = {k: v for k, v in annotations.items() if k != "return"}
+
         if not asyncio.iscoroutinefunction(function):
             raise RuntimeError(
                 "Handlers must be coroutines. Use async def handler(event: EventType):"
