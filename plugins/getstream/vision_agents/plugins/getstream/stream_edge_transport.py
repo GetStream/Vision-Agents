@@ -302,7 +302,12 @@ class StreamEdge(EdgeTransport):
             )
         )
 
-    async def create_conversation(self, call: Call, user, instructions):
+    async def create_chat_channel(self, call: Call, user: User, instructions: str):
+        """
+        Create a text chat channel associated with the call.
+
+        Audio Direction: N/A - Text chat only, no audio handling.
+        """
         chat_client: ChatClient = call.client.stream.chat
         channel = chat_client.channel(self.channel_type, call.id)
         await channel.get_or_create(
@@ -311,7 +316,12 @@ class StreamEdge(EdgeTransport):
         self.conversation = StreamConversation(instructions, [], channel)
         return self.conversation
 
-    async def create_user(self, user: User):
+    async def register_user(self, user: User) -> None:
+        """
+        Register the agent's user identity with the provider.
+
+        Audio Direction: N/A - Setup only, no audio handling.
+        """
         self.agent_user_id = user.id
         return await self.client.create_user(
             name=user.name, id=user.id, image=user.image
@@ -325,15 +335,15 @@ class StreamEdge(EdgeTransport):
         response = await self.client.update_users(users_map)
         return [response.data.users[u.id] for u in users]
 
-    async def join(self, agent: "Agent", call: Call) -> StreamConnection:
+    async def connect(self, agent: "Agent", call: Call) -> StreamConnection:
         """
-        The logic for joining a call is different for each edge network/realtime audio/video provider
+        Connect to a call or room.
 
-        This function
-        - initializes the chat channel
-        - has the agent.agent_user join the call
-        - connects incoming audio/video to the agent
-        - connecting agent's outgoing audio/video to the call
+        Audio Direction: INPUT - After this call, audio from participants will
+        be delivered via AudioReceivedEvent on the transport's event manager.
+
+        This establishes the WebRTC connection and begins receiving
+        audio and video from remote participants.
         """
 
         # Traditional mode - use WebRTC connection
@@ -382,9 +392,15 @@ class StreamEdge(EdgeTransport):
         standardize_connection = StreamConnection(connection)
         return standardize_connection
 
-    def create_audio_track(
+    def create_output_audio_track(
         self, framerate: int = 48000, stereo: bool = True
     ) -> OutputAudioTrack:
+        """
+        Create an audio track for the agent's outgoing audio.
+
+        Audio Direction: OUTPUT - The returned track is where the agent writes
+        TTS/speech audio. Call publish_tracks() to start sending to participants.
+        """
         return audio_track.AudioStreamTrack(
             audio_buffer_size_ms=300_000,
             sample_rate=framerate,
@@ -394,14 +410,24 @@ class StreamEdge(EdgeTransport):
     def create_video_track(self):
         return aiortc.VideoStreamTrack()
 
-    def add_track_subscriber(
+    def subscribe_to_track(
         self, track_id: str
     ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
+        """
+        Subscribe to receive a remote participant's video track.
+
+        Audio Direction: INPUT (video only) - Audio from participants is received
+        automatically via AudioReceivedEvent after connect(). This method is
+        specifically for subscribing to VIDEO tracks.
+        """
         return self._connection.subscriber_pc.add_track_subscriber(track_id)
 
     async def publish_tracks(self, audio_track, video_track):
         """
-        Add the tracks to publish audio and video
+        Publish the agent's media tracks to participants.
+
+        Audio Direction: OUTPUT - After this call, audio written to the
+        audio_track will be sent to participants (played on their speakers).
         """
         await self._connection.add_tracks(audio=audio_track, video=video_track)
         if audio_track:
@@ -420,8 +446,13 @@ class StreamEdge(EdgeTransport):
             ]
         )
 
-    async def close(self):
-        # Note: Not calling super().close() as it's an abstract method with trivial body
+    async def disconnect(self) -> None:
+        """
+        Disconnect from the call and release all resources.
+
+        Audio Direction: Stops both INPUT and OUTPUT streams.
+        """
+        # Note: Connection cleanup is handled by StreamConnection.close()
         pass
 
     @tracer.start_as_current_span("stream_edge.open_demo")

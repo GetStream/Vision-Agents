@@ -518,7 +518,7 @@ class Agent:
 
     @asynccontextmanager
     async def join(
-        self, call: Call, participant_wait_timeout: Optional[float] = 10.0
+        self, call: Optional[Call] = None, participant_wait_timeout: Optional[float] = 10.0
     ) -> AsyncIterator[None]:
         """
         Join the given call.
@@ -527,7 +527,7 @@ class Agent:
         Once the call is ended, the agent closes itself.
 
         Args:
-            call: the call to join.
+            call: The call to join, or None for local transports that don't use calls.
             participant_wait_timeout: timeout in seconds to wait for other participants to join before proceeding.
                  If `0`, do not wait at all. If `None`, wait forever.
                  Default - `10.0`.
@@ -538,14 +538,18 @@ class Agent:
         if self._call_ended_event is not None:
             raise RuntimeError("Agent already joined the call")
 
+        # For local transports, call may be None
+        call_id = call.id if call is not None else "local"
+
         try:
             await self._join_lock.acquire()
-            self._start_tracing(call)
+            if call is not None:
+                self._start_tracing(call)
             self.call = call
             self.conversation = None
 
             # Ensure all subsequent logs include the call context.
-            self._set_call_logging_context(call.id)
+            self._set_call_logging_context(call_id)
 
             # run start on all subclasses
             await self._apply("start")
@@ -558,13 +562,13 @@ class Agent:
                     await self.mcp_manager.connect_all()
 
             # Ensure Realtime providers are ready before proceeding (they manage their own connection)
-            self.logger.info(f"🤖 Agent joining call: {call.id}")
+            self.logger.info(f"🤖 Agent joining call: {call_id}")
             if _is_realtime_llm(self.llm):
                 await self.llm.connect()
 
-            with self.span("edge.join"):
-                self._connection = await self.edge.join(self, call)
-            self.logger.info(f"🤖 Agent joined call: {call.id}")
+            with self.span("edge.connect"):
+                self._connection = await self.edge.connect(self, call)
+            self.logger.info(f"🤖 Agent joined call: {call_id}")
 
             # Set up audio and video tracks together to avoid SDP issues
             audio_track = self._audio_track if self.publish_audio else None
@@ -575,7 +579,7 @@ class Agent:
                     await self.edge.publish_tracks(audio_track, video_track)
 
             # Setup chat and connect it to transcript events
-            self.conversation = await self.edge.create_conversation(
+            self.conversation = await self.edge.create_chat_channel(
                 call, self.agent_user, self.instructions.full_reference
             )
 
@@ -688,7 +692,8 @@ class Agent:
 
     def _start_tracing(self, call: Call) -> None:
         self._root_span = self.tracer.start_span("join").__enter__()
-        self._root_span.set_attribute("call_id", call.id)
+        call_id = call.id if call is not None else ""
+        self._root_span.set_attribute("call_id", call_id)
         if self.agent_user.id:
             self._root_span.set_attribute("agent_id", self.agent_user.id)
         self._root_ctx = set_span_in_context(self._root_span)
@@ -830,8 +835,8 @@ class Agent:
         if self._agent_user_initialized:
             return None
 
-        with self.span("edge.create_user"):
-            await self.edge.create_user(self.agent_user)
+        with self.span("edge.register_user"):
+            await self.edge.register_user(self.agent_user)
             self._agent_user_initialized = True
 
         return None
@@ -1106,7 +1111,7 @@ class Agent:
             track = await self._get_video_track_override()
         else:
             # Subscribe to the video track, we watch all tracks by default
-            track = self.edge.add_track_subscriber(track_id)
+            track = self.edge.subscribe_to_track(track_id)
             if not track:
                 self.logger.error(f"Failed to subscribe to {track_id}")
                 return
@@ -1364,7 +1369,7 @@ class Agent:
         if self.publish_audio:
             framerate = 48000
             stereo = True
-            self._audio_track = self.edge.create_audio_track(
+            self._audio_track = self.edge.create_output_audio_track(
                 framerate=framerate, stereo=stereo
             )
 
