@@ -546,6 +546,58 @@ class LocalTransport(EdgeTransport):
         self._connection: Optional[LocalConnection] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
+    def _candidate_input_sample_rates(self) -> list[int]:
+        rates = [
+            self._sample_rate,
+            get_device_sample_rate(self._input_device, is_input=True),
+            48000,
+            44100,
+            32000,
+            24000,
+            22050,
+            16000,
+            12000,
+            8000,
+        ]
+        unique_rates: list[int] = []
+        for rate in rates:
+            if rate > 0 and rate not in unique_rates:
+                unique_rates.append(rate)
+        return unique_rates
+
+    def _resolve_input_sample_rate(self) -> None:
+        candidate_rates = self._candidate_input_sample_rates()
+        for rate in candidate_rates:
+            try:
+                sd.check_input_settings(
+                    device=self._input_device,
+                    channels=self._input_channels,
+                    dtype="int16",
+                    samplerate=rate,
+                )
+            except sd.PortAudioError as error:
+                error_message = str(error)
+                if "Invalid sample rate" in error_message:
+                    continue
+                if "PaErrorCode -9997" in error_message:
+                    continue
+                raise
+
+            if rate != self._sample_rate:
+                logger.warning(
+                    "Input sample rate %sHz not supported; using %sHz",
+                    self._sample_rate,
+                    rate,
+                )
+                self._sample_rate = rate
+            return
+
+        logger.error(
+            "No supported input sample rate found for device %s; tried %s",
+            self._input_device if self._input_device is not None else "default",
+            candidate_rates,
+        )
+
     async def _microphone_callback_async(self, data: np.ndarray) -> None:
         """Process microphone data and emit AudioReceivedEvent."""
         # Convert to PcmData
@@ -604,9 +656,10 @@ class LocalTransport(EdgeTransport):
         if self._running:
             return
 
-        self._running = True
         # Store the event loop reference for use in callbacks from other threads
         self._loop = asyncio.get_running_loop()
+        self._resolve_input_sample_rate()
+        self._running = True
 
         # Start input stream
         self._input_stream = sd.InputStream(
