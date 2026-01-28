@@ -590,10 +590,10 @@ class Agent:
                 await self.wait_for_participant(timeout=participant_wait_timeout)
 
             # Start consuming audio from the call
+            self._call_ended_event = asyncio.Event()
             self._audio_consumer_task = asyncio.create_task(
                 self._consume_incoming_audio()
             )
-            self._call_ended_event = asyncio.Event()
             self._joined_at = time.time()
             yield
         except Exception as exc:
@@ -955,9 +955,13 @@ class Agent:
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from the queue."""
         interval_seconds = 0.02  # 20ms target interval
+        call_ended_event = self._call_ended_event
+        if call_ended_event is None:
+            self.logger.warning("Audio consumer started without a call event")
+            return
 
         try:
-            while self._call_ended_event and not self._call_ended_event.is_set():
+            while not call_ended_event.is_set():
                 loop_start = time.perf_counter()
                 try:
                     # Get audio data from queue with timeout to keep the loop running
