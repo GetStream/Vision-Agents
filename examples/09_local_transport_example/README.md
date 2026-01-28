@@ -1,21 +1,50 @@
 # Local Transport Example
 
-This example demonstrates how to run a vision agent using local audio I/O (microphone and speakers) instead of a cloud-based edge network.
+This example demonstrates how to run a vision agent using local audio/video I/O (microphone, speakers, and camera) instead of a cloud-based edge network.
 
 ## Overview
 
 The LocalTransport provides:
-- **Microphone input**: Captures audio from your default microphone
-- **Speaker output**: Plays AI responses on your default speakers
-- **No cloud dependencies**: Everything runs locally (except for the LLM, TTS, and STT services)
+- **Microphone input**: Captures audio from your microphone
+- **Speaker output**: Plays AI responses on your speakers
+- **Camera input**: Captures video from your camera (optional)
+- **No cloud dependencies**: Media runs locally (except for the LLM, TTS, and STT services)
+
+## Examples
+
+There are two example scripts:
+
+### 1. Basic Voice Agent (`local_transport_example.py`)
+
+Uses Gemini LLM with Deepgram STT and ElevenLabs TTS for a voice-only experience.
+
+```bash
+uv run python local_transport_example.py
+```
+
+### 2. Vision Agent with Gemini Realtime (`local_transport_realtime_example.py`)
+
+Uses Gemini Realtime for native audio/video understanding. This lets Gemini see through your camera!
+
+```bash
+uv run python local_transport_realtime_example.py
+```
+
+Try asking: "What do you see?" or "Describe what's in front of you"
 
 ## Prerequisites
 
 1. A working microphone and speakers
-2. API keys for the following services:
-   - Google AI (for Gemini LLM)
-   - Deepgram (for STT)
-   - ElevenLabs (for TTS)
+2. A camera (optional for basic example, recommended for realtime example)
+3. API keys:
+
+### For basic example:
+- Google AI (for Gemini LLM)
+- Deepgram (for STT)
+- ElevenLabs (for TTS)
+
+### For realtime example:
+- Google AI (for Gemini Realtime) - handles audio/video natively
 
 ## Setup
 
@@ -34,18 +63,14 @@ cd examples/09_local_transport_example
 uv sync
 ```
 
-## Running the Example
+## Device Selection
 
-```bash
-uv run python local_transport_example.py
-```
+Both examples will prompt you to select:
+1. **Input device** (microphone)
+2. **Output device** (speakers)
+3. **Video device** (camera) - can be skipped by entering 'n'
 
-The agent will:
-1. Start listening on your microphone
-2. Transcribe your speech using Deepgram
-3. Generate responses using Gemini
-4. Speak responses using ElevenLabs TTS
-5. Play the audio on your speakers
+Press Enter to use the default device, or enter a number to select a specific device.
 
 Press `Ctrl+C` to stop the agent.
 

@@ -305,14 +305,33 @@ class TestLocalTransport(BaseTest):
         # Should not raise
         await transport.register_user(user)
 
-    async def test_subscribe_to_track_returns_none(self, mock_sounddevice):
-        """Test that subscribe_to_track returns None (no video support)."""
+    async def test_subscribe_to_track_returns_none_for_unknown(self, mock_sounddevice):
+        """Test that subscribe_to_track returns None for unknown track IDs."""
         from vision_agents.core.edge.local_transport import LocalTransport
 
         transport = LocalTransport()
         result = transport.subscribe_to_track("some-track-id")
 
         assert result is None
+
+    async def test_subscribe_to_track_returns_video_track(self, mock_sounddevice, mock_av):
+        """Test that subscribe_to_track returns video track for local-video."""
+        with patch.dict("sys.modules", {"av": mock_av}):
+            with patch(
+                "vision_agents.core.edge.local_transport.PYAV_AVAILABLE", True
+            ):
+                with patch(
+                    "vision_agents.core.edge.local_transport.AIORTC_AVAILABLE", True
+                ):
+                    from vision_agents.core.edge.local_transport import LocalTransport
+
+                    transport = LocalTransport(video_device="0")
+                    transport.create_video_track()
+
+                    result = transport.subscribe_to_track("local-video")
+
+                    assert result is not None
+                    assert result._device == "0"
 
     async def test_create_chat_channel_returns_none(self, mock_sounddevice):
         """Test that create_chat_channel returns None."""

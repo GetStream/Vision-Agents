@@ -47,9 +47,12 @@ from getstream.video.rtc.track_util import AudioFormat, PcmData
 from pyee.asyncio import AsyncIOEventEmitter
 
 from vision_agents.core.edge.edge_transport import EdgeTransport
-from vision_agents.core.edge.events import AudioReceivedEvent
+from vision_agents.core.edge.events import AudioReceivedEvent, TrackAddedEvent
 from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
 from vision_agents.core.events.manager import EventManager
+
+# Track type constants (matching getstream TrackType)
+TRACK_TYPE_VIDEO = 2
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
@@ -663,13 +666,14 @@ class LocalTransport(EdgeTransport):
         )
         return self._video_track
 
-    def subscribe_to_track(self, track_id: str) -> None:
+    def subscribe_to_track(self, track_id: str) -> Optional[LocalVideoTrack]:
         """
-        Subscribe to receive a remote participant's video track.
+        Subscribe to receive a video track.
 
-        Audio Direction: INPUT (video only) - Not implemented for local transport.
+        For LocalTransport, returns the local camera video track if available.
         """
-        # No video support yet
+        if track_id == "local-video" and self._video_track is not None:
+            return self._video_track
         return None
 
     async def connect(self, agent: "Agent", call: Any = None) -> LocalConnection:
@@ -679,7 +683,7 @@ class LocalTransport(EdgeTransport):
         Audio Direction: INPUT - After this call, audio from the microphone will
         be delivered via AudioReceivedEvent on the transport's event manager.
 
-        For LocalTransport, this starts microphone capture.
+        For LocalTransport, this starts microphone capture and optionally camera.
 
         Args:
             agent: The agent joining
@@ -690,6 +694,21 @@ class LocalTransport(EdgeTransport):
         """
         # Start microphone capture
         await self._start_audio()
+
+        # Start video capture if configured
+        if self._video_device is not None:
+            video_track = self.create_video_track()
+            if video_track is not None:
+                # Emit TrackAddedEvent so the agent knows about the video
+                self.events.send(
+                    TrackAddedEvent(
+                        plugin_name="local_transport",
+                        track_id="local-video",
+                        track_type=TRACK_TYPE_VIDEO,
+                        user=self._local_participant,
+                    )
+                )
+                logger.info("Camera video track added")
 
         self._connection = LocalConnection(self)
         return self._connection
