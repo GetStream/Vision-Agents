@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       - name: Run Ruff linter
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       - name: Run validation script
@@ -45,12 +45,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       # Restore mypy cache to speed up the run
       - name: Restore mypy cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .mypy_cache
           key: mypy-cache-${{ hashFiles('pyproject.toml') }}
@@ -60,7 +60,7 @@ jobs:
         run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
       # Save the updated mypy cache
       - name: Save mypy cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .mypy_cache
           key: mypy-cache-${{ hashFiles('pyproject.toml') }}
@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Clean space as per https://github.com/actions/virtual-environments/issues/709
         run: |
           sudo rm -rf "/usr/share/dotnet" || true
