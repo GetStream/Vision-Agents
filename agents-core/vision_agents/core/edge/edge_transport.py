@@ -59,3 +59,12 @@ class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
         self, track_id: str
     ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
         pass
+
+    @abc.abstractmethod
+    async def send_custom_event(self, data: dict[str, Any]) -> None:
+        """Send a custom event to all participants watching the call.
+
+        Args:
+            data: Custom event payload (must be JSON-serializable, max 5KB).
+        """
+        pass
