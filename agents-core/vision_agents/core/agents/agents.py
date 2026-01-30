@@ -143,6 +143,9 @@ class Agent:
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
+        # Metrics broadcasting to call participants
+        broadcast_metrics: bool = False,
+        broadcast_metrics_interval: float = 5.0,
     ):
         self._agent_user_initialized = False
         self.agent_user = agent_user
@@ -236,6 +239,11 @@ class Agent:
         self._video_track: Optional[VideoStreamTrack] = None
 
         self._audio_consumer_task: Optional[asyncio.Task] = None
+        self._metrics_broadcast_task: Optional[asyncio.Task] = None
+
+        # Metrics broadcasting settings
+        self._broadcast_metrics = broadcast_metrics
+        self._broadcast_metrics_interval = broadcast_metrics_interval
 
         # validation time
         self._validate_configuration()
@@ -589,6 +597,13 @@ class Agent:
             self._audio_consumer_task = asyncio.create_task(
                 self._consume_incoming_audio()
             )
+
+            # Start metrics broadcast if enabled
+            if self._broadcast_metrics:
+                self._metrics_broadcast_task = asyncio.create_task(
+                    self._metrics_broadcast_loop()
+                )
+
             self._call_ended_event = asyncio.Event()
             self._joined_at = time.time()
             yield
@@ -763,6 +778,11 @@ class Agent:
         if self._audio_consumer_task:
             await cancel_and_wait(self._audio_consumer_task)
             self._audio_consumer_task = None
+
+        # Stop metrics broadcast task
+        if self._metrics_broadcast_task:
+            await cancel_and_wait(self._metrics_broadcast_task)
+            self._metrics_broadcast_task = None
 
         # run stop on all subclasses
         await self._apply("stop")
@@ -1001,6 +1021,25 @@ class Agent:
             raise
         except Exception as e:
             self.logger.error(f"❌ Error in audio consumer: {e}", exc_info=True)
+
+    async def _metrics_broadcast_loop(self):
+        """Background task that periodically broadcasts metrics to call participants."""
+        try:
+            self.logger.info(
+                f"📊 Starting metrics broadcast (interval: {self._broadcast_metrics_interval}s)"
+            )
+            while True:
+                await asyncio.sleep(self._broadcast_metrics_interval)
+                try:
+                    await self.send_metrics_event()
+                except RuntimeError:
+                    # Not connected to a call, skip this iteration
+                    pass
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast metrics: {e}")
+        except asyncio.CancelledError:
+            self.logger.info("📊 Metrics broadcast task cancelled")
+            raise
 
     async def _track_to_video_processors(self, track: TrackInfo):
         """
@@ -1416,6 +1455,60 @@ class Agent:
     @property
     def metrics(self) -> AgentMetrics:
         return self._metrics
+
+    async def send_custom_event(self, data: dict) -> None:
+        """Send a custom event to all participants watching the call.
+
+        Custom events are delivered to clients via `call.on("custom", callback)`.
+        Use this to send real-time data to your app's UI, such as metrics,
+        status updates, or any custom application data.
+
+        Args:
+            data: Custom event payload (must be JSON-serializable, max 5KB).
+
+        Raises:
+            RuntimeError: If the agent is not connected to a call.
+
+        Example:
+            await agent.send_custom_event({
+                "type": "status_update",
+                "status": "processing",
+                "progress": 0.5
+            })
+        """
+        await self.edge.send_custom_event(data)
+
+    async def send_metrics_event(
+        self, event_type: str = "agent_metrics", fields: list[str] | None = None
+    ) -> None:
+        """Send current agent metrics as a custom event.
+
+        This is a convenience method that packages the agent's metrics
+        and sends them as a custom event to all participants.
+
+        Args:
+            event_type: The type identifier for the event (default: "agent_metrics").
+            fields: Optional list of specific metric fields to include.
+                   If None, includes all metrics.
+
+        Example:
+            # Send all metrics
+            await agent.send_metrics_event()
+
+            # Send only LLM-related metrics
+            await agent.send_metrics_event(fields=[
+                "llm_latency_ms__avg",
+                "llm_input_tokens__total",
+                "llm_output_tokens__total"
+            ])
+        """
+        metrics_data = self._metrics.to_dict(fields or ())
+        await self.send_custom_event(
+            {
+                "type": event_type,
+                "metrics": metrics_data,
+            }
+        )
 
 
 def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:

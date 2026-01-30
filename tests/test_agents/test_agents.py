@@ -80,6 +80,9 @@ class DummyEdge(EdgeTransport):
     def add_track_subscriber(self, track_id: str):
         pass
 
+    async def send_custom_event(self, data: dict) -> None:
+        self.last_custom_event = data
+
 
 @pytest.fixture
 def call():
@@ -141,3 +144,95 @@ class TestAgent:
         with pytest.raises(SomeException):
             async with agent.join(call):
                 ...
+
+    async def test_send_custom_event(self):
+        """Test that custom events are sent through the edge transport."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        test_data = {"type": "test_event", "value": 42}
+        await agent.send_custom_event(test_data)
+
+        assert edge.last_custom_event == test_data
+
+    async def test_send_metrics_event(self):
+        """Test that metrics are sent as custom events."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        # Update some metrics
+        agent.metrics.llm_input_tokens__total.inc(100)
+        agent.metrics.llm_output_tokens__total.inc(50)
+
+        await agent.send_metrics_event()
+
+        assert edge.last_custom_event["type"] == "agent_metrics"
+        assert "metrics" in edge.last_custom_event
+        assert edge.last_custom_event["metrics"]["llm_input_tokens__total"] == 100
+        assert edge.last_custom_event["metrics"]["llm_output_tokens__total"] == 50
+
+    async def test_send_metrics_event_with_fields_filter(self):
+        """Test that only specified metric fields are included."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        # Update metrics
+        agent.metrics.llm_input_tokens__total.inc(100)
+        agent.metrics.tts_characters__total.inc(500)
+
+        # Request only specific fields
+        await agent.send_metrics_event(
+            event_type="custom_metrics", fields=["llm_input_tokens__total"]
+        )
+
+        assert edge.last_custom_event["type"] == "custom_metrics"
+        assert edge.last_custom_event["metrics"] == {"llm_input_tokens__total": 100}
+
+    async def test_broadcast_metrics_enabled(self):
+        """Test that metrics are automatically broadcast when enabled."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+            broadcast_metrics=True,
+            broadcast_metrics_interval=0.1,  # Short interval for testing
+        )
+
+        # Update some metrics
+        agent.metrics.llm_input_tokens__total.inc(42)
+
+        # Start the broadcast task manually (normally happens during join)
+        agent._metrics_broadcast_task = asyncio.create_task(
+            agent._metrics_broadcast_loop()
+        )
+
+        # Wait for at least one broadcast
+        await asyncio.sleep(0.15)
+
+        # Cancel the task
+        agent._metrics_broadcast_task.cancel()
+        try:
+            await agent._metrics_broadcast_task
+        except asyncio.CancelledError:
+            pass
+
+        # Verify metrics were broadcast
+        assert edge.last_custom_event["type"] == "agent_metrics"
+        assert edge.last_custom_event["metrics"]["llm_input_tokens__total"] == 42

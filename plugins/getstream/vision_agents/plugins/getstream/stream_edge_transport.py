@@ -122,6 +122,7 @@ class StreamEdge(EdgeTransport):
         self._pending_tracks: dict = {}
 
         self._real_connection: Optional[ConnectionManager] = None
+        self._call: Optional[Call] = None
 
         # Register event handlers
         self.events.subscribe(self._on_track_published)
@@ -378,6 +379,7 @@ class StreamEdge(EdgeTransport):
         # Otherwise, we won't get the video track from participants joined before us.
         await connection.republish_tracks()
         self._real_connection = connection
+        self._call = call
 
         standardize_connection = StreamConnection(connection)
         return standardize_connection
@@ -422,7 +424,23 @@ class StreamEdge(EdgeTransport):
 
     async def close(self):
         # Note: Not calling super().close() as it's an abstract method with trivial body
-        pass
+        self._call = None
+
+    async def send_custom_event(self, data: dict) -> None:
+        """Send a custom event to all participants watching the call.
+
+        Custom events are delivered to clients subscribed to the call via
+        `call.on("custom", callback)`. The payload is limited to 5KB.
+
+        Args:
+            data: Custom event payload (must be JSON-serializable).
+
+        Raises:
+            RuntimeError: If not connected to a call.
+        """
+        if self._call is None:
+            raise RuntimeError("Cannot send custom event: not connected to a call")
+        await self._call.send_call_event(user_id=self.agent_user_id, custom=data)
 
     @tracer.start_as_current_span("stream_edge.open_demo")
     async def open_demo_for_agent(
