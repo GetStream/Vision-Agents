@@ -7,8 +7,12 @@ import pytest
 from getstream.video.rtc import Call
 from vision_agents.core import Agent, User
 from vision_agents.core.edge import EdgeTransport
-from vision_agents.core.edge.types import OutputAudioTrack
+from vision_agents.core.edge.types import OutputAudioTrack, Participant
 from vision_agents.core.events import EventManager
+from vision_agents.core.llm.events import (
+    RealtimeAgentSpeechTranscriptionEvent,
+    RealtimeUserSpeechTranscriptionEvent,
+)
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.tts import TTS
 from vision_agents.core.utils import audio_track
@@ -236,3 +240,280 @@ class TestAgent:
         # Verify metrics were broadcast
         assert edge.last_custom_event["type"] == "agent_metrics"
         assert edge.last_custom_event["metrics"]["llm_input_tokens__total"] == 42
+
+
+class DummyConversation:
+    """Minimal conversation mock for testing."""
+
+    def __init__(self):
+        self.messages = {}
+
+    async def upsert_message(self, **kwargs):
+        message_id = kwargs.get("message_id")
+        if message_id:
+            self.messages[message_id] = kwargs
+
+
+class TestRealtimeTranscriptAccumulation:
+    """Tests for realtime transcript accumulation behavior."""
+
+    async def test_user_transcripts_accumulate_into_single_message(self):
+        """Test that multiple user transcript events accumulate into a single message."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        # Mock conversation to allow event processing
+        agent.conversation = DummyConversation()
+
+        participant = Participant(original=None, user_id="user-123")
+
+        # Simulate multiple incremental transcript events (like Gemini sends)
+        events = [
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hello", participant=participant, plugin_name="test"
+            ),
+            RealtimeUserSpeechTranscriptionEvent(
+                text="how", participant=participant, plugin_name="test"
+            ),
+            RealtimeUserSpeechTranscriptionEvent(
+                text="are", participant=participant, plugin_name="test"
+            ),
+            RealtimeUserSpeechTranscriptionEvent(
+                text="you", participant=participant, plugin_name="test"
+            ),
+        ]
+
+        # Send all events
+        for event in events:
+            agent.events.send(event)
+
+        # Wait for event processing
+        await asyncio.sleep(0.1)
+
+        # Verify that there's only ONE message ID tracked for this user
+        assert len(agent._realtime_user_message_ids) == 1
+        assert "user-123" in agent._realtime_user_message_ids
+
+        # Verify the accumulated text
+        assert agent._realtime_user_accumulated_text["user-123"] == "Hello how are you"
+
+        # Verify that only ONE message was created in the conversation
+        assert len(agent.conversation.messages) == 1
+
+        # Verify the final message content
+        message_id = agent._realtime_user_message_ids["user-123"]
+        assert agent.conversation.messages[message_id]["content"] == "Hello how are you"
+
+    async def test_user_transcripts_reset_after_agent_response(self):
+        """Test that user transcript tracking resets when agent responds."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        # Mock conversation
+        agent.conversation = DummyConversation()
+
+        participant = Participant(original=None, user_id="user-123")
+
+        # Send user transcript
+        user_event = RealtimeUserSpeechTranscriptionEvent(
+            text="Hello", participant=participant, plugin_name="test"
+        )
+        agent.events.send(user_event)
+        await asyncio.sleep(0.05)
+
+        # Verify tracking is active
+        assert "user-123" in agent._realtime_user_message_ids
+        original_message_id = agent._realtime_user_message_ids["user-123"]
+
+        # Agent responds
+        agent_event = RealtimeAgentSpeechTranscriptionEvent(
+            text="Hi there!", plugin_name="test"
+        )
+        agent.events.send(agent_event)
+        await asyncio.sleep(0.05)
+
+        # Verify tracking was reset
+        assert len(agent._realtime_user_message_ids) == 0
+        assert len(agent._realtime_user_accumulated_text) == 0
+
+        # New user message should get a new message ID
+        user_event2 = RealtimeUserSpeechTranscriptionEvent(
+            text="Thanks", participant=participant, plugin_name="test"
+        )
+        agent.events.send(user_event2)
+        await asyncio.sleep(0.05)
+
+        assert "user-123" in agent._realtime_user_message_ids
+        new_message_id = agent._realtime_user_message_ids["user-123"]
+
+        # Message IDs should be different (new turn)
+        assert new_message_id != original_message_id
+
+    async def test_multiple_users_tracked_separately(self):
+        """Test that transcripts from different users are tracked separately."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        # Mock conversation
+        agent.conversation = DummyConversation()
+
+        participant1 = Participant(original=None, user_id="user-1")
+        participant2 = Participant(original=None, user_id="user-2")
+
+        # User 1 speaks
+        agent.events.send(
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hello", participant=participant1, plugin_name="test"
+            )
+        )
+        agent.events.send(
+            RealtimeUserSpeechTranscriptionEvent(
+                text="world", participant=participant1, plugin_name="test"
+            )
+        )
+
+        # User 2 speaks
+        agent.events.send(
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hi", participant=participant2, plugin_name="test"
+            )
+        )
+        agent.events.send(
+            RealtimeUserSpeechTranscriptionEvent(
+                text="there", participant=participant2, plugin_name="test"
+            )
+        )
+
+        await asyncio.sleep(0.1)
+
+        # Verify each user has their own tracking
+        assert len(agent._realtime_user_message_ids) == 2
+        assert agent._realtime_user_accumulated_text["user-1"] == "Hello world"
+        assert agent._realtime_user_accumulated_text["user-2"] == "Hi there"
+
+        # Verify different message IDs for each user
+        assert (
+            agent._realtime_user_message_ids["user-1"]
+            != agent._realtime_user_message_ids["user-2"]
+        )
+
+        # Verify two separate messages in conversation
+        assert len(agent.conversation.messages) == 2
+
+    async def test_already_accumulated_transcripts_not_duplicated(self):
+        """Test that already-accumulated transcripts (like from OpenAI) don't get duplicated."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        # Mock conversation
+        agent.conversation = DummyConversation()
+
+        participant = Participant(original=None, user_id="user-123")
+
+        # Simulate accumulated transcripts (each event contains full text so far)
+        # This is how some APIs might send transcripts
+        events = [
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hello", participant=participant, plugin_name="test"
+            ),
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hello how", participant=participant, plugin_name="test"
+            ),
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hello how are", participant=participant, plugin_name="test"
+            ),
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hello how are you", participant=participant, plugin_name="test"
+            ),
+        ]
+
+        # Send all events
+        for event in events:
+            agent.events.send(event)
+
+        # Wait for event processing
+        await asyncio.sleep(0.1)
+
+        # Verify the final text is NOT duplicated (not "Hello Hello how Hello how are...")
+        assert agent._realtime_user_accumulated_text["user-123"] == "Hello how are you"
+
+        # Verify only one message
+        assert len(agent.conversation.messages) == 1
+
+    async def test_mixed_delta_and_complete_transcripts(self):
+        """Test handling a mix of delta and complete transcripts."""
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        # Mock conversation
+        agent.conversation = DummyConversation()
+
+        participant = Participant(original=None, user_id="user-123")
+
+        # First turn: user speaks (deltas)
+        agent.events.send(
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hello", participant=participant, plugin_name="test"
+            )
+        )
+        agent.events.send(
+            RealtimeUserSpeechTranscriptionEvent(
+                text="there", participant=participant, plugin_name="test"
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        # Verify first turn accumulated
+        assert agent._realtime_user_accumulated_text["user-123"] == "Hello there"
+        first_message_id = agent._realtime_user_message_ids["user-123"]
+
+        # Agent responds - resets tracking
+        agent.events.send(
+            RealtimeAgentSpeechTranscriptionEvent(text="Hi!", plugin_name="test")
+        )
+        await asyncio.sleep(0.05)
+
+        # Second turn: user speaks (complete transcript from OpenAI-style API)
+        agent.events.send(
+            RealtimeUserSpeechTranscriptionEvent(
+                text="How are you doing today?",
+                participant=participant,
+                plugin_name="test",
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        # Verify second turn is a new message
+        assert (
+            agent._realtime_user_accumulated_text["user-123"]
+            == "How are you doing today?"
+        )
+        second_message_id = agent._realtime_user_message_ids["user-123"]
+
+        # Different message IDs for different turns
+        assert first_message_id != second_message_id
