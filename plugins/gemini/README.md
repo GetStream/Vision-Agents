@@ -75,21 +75,36 @@ For a full runnable example, see `examples/gemini_live/main.py`.
 
 ### Gemini Vision (VLM)
 
-Use Gemini 3 vision models with buffered video frames.
+Use Gemini 3 vision models with the Agent API (video frames are forwarded
+automatically when the call has active video).
 
 ```python
-from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.plugins import gemini
+from vision_agents.core import Agent, Runner, User
+from vision_agents.core.agents import AgentLauncher
+from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
-vlm = gemini.VLM(model="gemini-3-flash-preview")
-vlm.set_conversation(InMemoryConversation("be brief", []))
+async def create_agent(**kwargs) -> Agent:
+    vlm = gemini.VLM(model="gemini-3-flash-preview")
+    return Agent(
+        edge=getstream.Edge(),
+        agent_user=User(name="Gemini Vision Agent", id="gemini-vision-agent"),
+        instructions="Describe what you see in one sentence.",
+        llm=vlm,
+        stt=deepgram.STT(),
+        tts=elevenlabs.TTS(),
+    )
 
-await vlm.watch_video_track(track)
-response = await vlm.simple_response("Describe the scene.")
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    call = await agent.create_call(call_type, call_id)
+    async with agent.join(call):
+        await agent.finish()
+
+Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
 ```
 
-Key configuration knobs: `fps`, `frame_buffer_seconds`, `thinking_level`,
-`media_resolution`.
+Key configuration knobs for `GeminiVLM`: `fps`, `frame_buffer_seconds`,
+`thinking_level`, `media_resolution`. For a full example, see
+`plugins/gemini/example/gemini_vlm_agent_example.py`.
 
 ### Features
 
