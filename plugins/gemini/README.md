@@ -73,6 +73,24 @@ async def _on_track_added(track_id, kind, user):
 
 For a full runnable example, see `examples/gemini_live/main.py`.
 
+### Gemini Vision (VLM)
+
+Use Gemini 3 vision models with buffered video frames.
+
+```python
+from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.plugins import gemini
+
+vlm = gemini.VLM(model="gemini-3-flash-preview")
+vlm.set_conversation(InMemoryConversation("be brief", []))
+
+await vlm.watch_video_track(track)
+response = await vlm.simple_response("Describe the scene.")
+```
+
+Key configuration knobs: `fps`, `frame_buffer_seconds`, `thinking_level`,
+`media_resolution`.
+
 ### Features
 
 - **Bidirectional audio**: Streams microphone PCM to Gemini, and plays Gemini speech into the call using `output_track`.
@@ -85,6 +103,7 @@ For a full runnable example, see `examples/gemini_live/main.py`.
 ### API Overview
 
 - **`GeminiLive(api_key: str | None = None, model: str = "gemini-live-2.5-flash-preview", config: LiveConnectConfigDict | None = None)`**: Create a new Gemini Live session. If `api_key` is not provided, the plugin reads `GOOGLE_API_KEY` or `GEMINI_API_KEY` from the environment.
+- **`GeminiVLM(model: str = "gemini-3-flash-preview", fps: int = 1, frame_buffer_seconds: int = 10, ...)`**: Vision-language model that buffers video frames and sends them with prompts.
 - **`output_track`**: An `AudioStreamTrack` you can publish in your call via `add_tracks(audio=...)`.
 - **`await send_text(text: str)`**: Send a user text message to the current turn.
 - **`await send_audio_pcm(pcm: PcmData, target_rate: int = 48000)`**: Stream PCM frames to Gemini. Frames are converted to the required format and resampled if necessary.
