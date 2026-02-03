@@ -142,9 +142,13 @@ class EventManager:
         # Start background processing task
         self._start_processing_task()
 
-    def register(self, event_class, ignore_not_compatible=False):
+    def register(
+        self,
+        *event_classes: type,
+        ignore_not_compatible=False,
+    ):
         """
-        Register an event class for use with the event manager.
+        Register event classes for use with the event manager.
 
         Event classes must:
         - Have a name ending with 'Event'
@@ -156,31 +160,31 @@ class EventManager:
             from vision_agents.core.stt.events import STTTranscriptEvent
 
             manager = EventManager()
-            manager.register(VADSpeechStartEvent)
-            manager.register(STTTranscriptEvent)
+            manager.register(VADSpeechStartEvent, STTTranscriptEvent)
             ```
 
         Args:
-            event_class: The event class to register
+            event_classes: The event classes to register
             ignore_not_compatible (bool): If True, log warning instead of raising error
                 for incompatible classes. Defaults to False.
 
         Raises:
             ValueError: If event_class doesn't meet requirements and ignore_not_compatible is False
         """
-        if event_class.__name__.endswith("Event") and hasattr(event_class, "type"):
-            self._events[event_class.type] = event_class
-            logger.debug(f"Registered new event {event_class} - {event_class.type}")
-        elif event_class.__name__.endswith("BaseEvent"):
-            return
-        elif not ignore_not_compatible:
-            raise ValueError(
-                f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
-            )
-        else:
-            logger.warning(
-                f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
-            )
+        for event_class in event_classes:
+            if event_class.__name__.endswith("Event") and hasattr(event_class, "type"):
+                self._events[event_class.type] = event_class
+                logger.debug(f"Registered new event {event_class} - {event_class.type}")
+            elif event_class.__name__.endswith("BaseEvent"):
+                return
+            elif not ignore_not_compatible:
+                raise ValueError(
+                    f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
+                )
+            else:
+                logger.warning(
+                    f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
+                )
 
     def merge(self, em: "EventManager"):
         # Stop the processing task in the merged manager
