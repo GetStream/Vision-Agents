@@ -27,6 +27,7 @@ vision-agents-plugins-heygen = { workspace = true }
 vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
+vision-agents-plugins-voice-ai = { workspace = true }
 vision-agents-plugins-fast-whisper = { workspace = true }
 vision-agents-plugins-roboflow = { workspace = true }
 vision-agents-plugins-decart = { workspace = true }
@@ -65,6 +66,7 @@ members = [
     "plugins/heygen",
     "plugins/inworld",
     "plugins/vogent",
+    "plugins/voice_ai",
     "plugins/moondream",
     "plugins/fast_whisper",
     "plugins/roboflow",
