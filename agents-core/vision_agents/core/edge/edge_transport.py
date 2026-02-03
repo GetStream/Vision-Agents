@@ -4,6 +4,7 @@ from typing import Any, Optional
 import aiortc
 from vision_agents.core.events.manager import EventManager
 
+from .call import Call
 from .events import (
     AudioReceivedEvent,
     CallEndedEvent,
@@ -61,7 +62,7 @@ class EdgeTransport(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def create_conversation(self, call: Any, user: User, instructions):
+    async def create_conversation(self, call: Call, user: User, instructions):
         pass
 
     @abc.abstractmethod

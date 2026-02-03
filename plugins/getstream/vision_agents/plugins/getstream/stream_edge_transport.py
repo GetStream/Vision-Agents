@@ -13,7 +13,7 @@ from getstream import AsyncStream
 from getstream.chat.async_client import ChatClient
 from getstream.models import ChannelInput, ChannelMember, ChannelMemberRequest
 from getstream.video import rtc
-from getstream.video.async_call import Call
+from getstream.video.async_call import Call as StreamCall
 from getstream.video.rtc import ConnectionManager, audio_track
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
@@ -124,7 +124,7 @@ class StreamEdge(EdgeTransport):
         self._pending_tracks: dict = {}
 
         self._real_connection: Optional[ConnectionManager] = None
-        self._call: Optional[Call] = None
+        self._call: Optional[StreamCall] = None
 
         # Register event handlers
         self.events.subscribe(self._on_track_published)
@@ -305,7 +305,7 @@ class StreamEdge(EdgeTransport):
             )
         )
 
-    async def create_conversation(self, call: Call, user, instructions):
+    async def create_conversation(self, call: StreamCall, user, instructions):
         chat_client: ChatClient = call.client.stream.chat
         channel = chat_client.channel(self.channel_type, call.id)
         await channel.get_or_create(
@@ -328,7 +328,7 @@ class StreamEdge(EdgeTransport):
         response = await self.client.update_users(users_map)
         return [response.data.users[u.id] for u in users]
 
-    async def join(self, agent: "Agent", call: Call) -> StreamConnection:
+    async def join(self, agent: "Agent", call: StreamCall) -> StreamConnection:
         """
         The logic for joining a call is different for each edge network/realtime audio/video provider
 
@@ -454,7 +454,7 @@ class StreamEdge(EdgeTransport):
         return await self.open_demo(call)
 
     @tracer.start_as_current_span("stream_edge.open_demo")
-    async def open_demo(self, call: Call) -> str:
+    async def open_demo(self, call: StreamCall) -> str:
         client = call.client.stream
 
         # Create a human user for testing

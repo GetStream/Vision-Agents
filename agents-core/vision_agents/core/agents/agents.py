@@ -19,13 +19,13 @@ from typing import (
 from uuid import uuid4
 
 from aiortc import VideoStreamTrack
-from getstream.video.rtc import Call
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.context import Token
 from opentelemetry.trace import Tracer, set_span_in_context
 from opentelemetry.trace.propagation import Context, Span
+from vision_agents.core.edge import Call
 
 from ..edge.events import (
     AudioReceivedEvent,

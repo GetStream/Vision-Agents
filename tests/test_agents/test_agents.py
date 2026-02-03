@@ -1,12 +1,10 @@
 import asyncio
 from typing import Any, Optional
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from getstream.video.rtc import Call
 from vision_agents.core import Agent, User
-from vision_agents.core.edge import EdgeTransport
+from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.edge.types import OutputAudioTrack
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
@@ -84,9 +82,18 @@ class DummyEdge(EdgeTransport):
         self.last_custom_event = data
 
 
+class DummyCall(Call):
+    def __init__(self, call_id: str):
+        self._id = call_id
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+
 @pytest.fixture
 def call():
-    return Call(call_id=str(uuid4()), call_type="default", client=AsyncMock())
+    return DummyCall(call_id=str(uuid4()))
 
 
 class SomeException(Exception):
