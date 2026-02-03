@@ -209,6 +209,15 @@ class Agent:
             TranscriptBuffer
         )
 
+        # Track realtime transcripts: message IDs and accumulated text per participant
+        # Used to accumulate streaming transcripts into a single message
+        self._realtime_user_message_ids: Dict[str, str] = {}
+        self._realtime_user_accumulated_text: Dict[str, str] = {}
+
+        # Track agent transcripts (also streamed word-by-word in realtime mode)
+        self._realtime_agent_message_id: Optional[str] = None
+        self._realtime_agent_accumulated_text: str = ""
+
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, llm, edge, profiler]:
             if plugin and hasattr(plugin, "events"):
@@ -416,20 +425,65 @@ class Agent:
             if self.conversation is None or not event.text:
                 return
 
-            if user_id := event.user_id():
-                with self.span("agent.on_realtime_user_speech_transcription"):
-                    await self.conversation.upsert_message(
-                        message_id=str(uuid.uuid4()),
-                        role="user",
-                        user_id=user_id,
-                        content=event.text,
-                        completed=True,
-                        replace=True,
-                        original=event,
-                    )
-            else:
+            user_id = event.user_id()
+            if not user_id:
                 self.logger.info(
                     "RealtimeUserSpeechTranscriptionEvent event does not contain a user, skip sync to chat"
+                )
+                return
+
+            # Get or create message ID for this user's current turn
+            if user_id not in self._realtime_user_message_ids:
+                self._realtime_user_message_ids[user_id] = str(uuid.uuid4())
+                self._realtime_user_accumulated_text[user_id] = ""
+
+                # User is speaking - finalize and reset agent transcript
+                if (
+                    self._realtime_agent_message_id
+                    and self._realtime_agent_accumulated_text
+                ):
+                    await self.conversation.upsert_message(
+                        message_id=self._realtime_agent_message_id,
+                        role="assistant",
+                        user_id=self.agent_user.id or "",
+                        content=self._realtime_agent_accumulated_text,
+                        completed=True,  # Finalize agent message
+                        replace=True,
+                    )
+                self._realtime_agent_message_id = None
+                self._realtime_agent_accumulated_text = ""
+
+            # Handle transcript accumulation - realtime APIs may send either:
+            # 1. Incremental deltas: "hi", "my", "name" -> accumulate to "hi my name"
+            # 2. Already accumulated: "hi", "hi my", "hi my name" -> use latest directly
+            current_text = self._realtime_user_accumulated_text.get(user_id, "")
+            new_text = event.text.strip()
+
+            if not current_text:
+                # First transcript in this turn
+                self._realtime_user_accumulated_text[user_id] = new_text
+            elif new_text.startswith(current_text):
+                # New text already includes previous text (accumulated transcript)
+                # Use the new text directly as it's a superset
+                self._realtime_user_accumulated_text[user_id] = new_text
+            else:
+                # New text is a delta - append it
+                self._realtime_user_accumulated_text[user_id] = (
+                    f"{current_text} {new_text}"
+                )
+
+            message_id = self._realtime_user_message_ids[user_id]
+            accumulated_text = self._realtime_user_accumulated_text[user_id]
+
+            with self.span("agent.on_realtime_user_speech_transcription"):
+                await self.conversation.upsert_message(
+                    message_id=message_id,
+                    role="user",
+                    user_id=user_id,
+                    content=accumulated_text,
+                    completed=False,  # Keep streaming - will be finalized when agent responds
+                    replace=True,
+                    original=event,
                 )
 
         @self.events.subscribe
@@ -441,13 +495,46 @@ class Agent:
             if self.conversation is None or not event.text:
                 return
 
+            # Agent is responding - finalize and reset user transcripts
+            for uid, msg_id in self._realtime_user_message_ids.items():
+                accumulated = self._realtime_user_accumulated_text.get(uid, "")
+                if accumulated:
+                    await self.conversation.upsert_message(
+                        message_id=msg_id,
+                        role="user",
+                        user_id=uid,
+                        content=accumulated,
+                        completed=True,  # Finalize user message
+                        replace=True,
+                    )
+            self._realtime_user_message_ids.clear()
+            self._realtime_user_accumulated_text.clear()
+
+            # Get or create message ID for this agent response
+            if self._realtime_agent_message_id is None:
+                self._realtime_agent_message_id = str(uuid.uuid4())
+                self._realtime_agent_accumulated_text = ""
+
+            # Handle transcript accumulation - same logic as user transcripts
+            current_text = self._realtime_agent_accumulated_text
+            new_text = event.text.strip()
+
+            if not current_text:
+                self._realtime_agent_accumulated_text = new_text
+            elif new_text.startswith(current_text):
+                # New text already includes previous (accumulated transcript)
+                self._realtime_agent_accumulated_text = new_text
+            else:
+                # New text is a delta - append it
+                self._realtime_agent_accumulated_text = f"{current_text} {new_text}"
+
             with self.span("agent.on_realtime_agent_speech_transcription"):
                 await self.conversation.upsert_message(
-                    message_id=str(uuid.uuid4()),
+                    message_id=self._realtime_agent_message_id,
                     role="assistant",
                     user_id=self.agent_user.id or "",
-                    content=event.text,
-                    completed=True,
+                    content=self._realtime_agent_accumulated_text,
+                    completed=False,  # Keep streaming - will be finalized when user speaks
                     replace=True,
                     original=event,
                 )
