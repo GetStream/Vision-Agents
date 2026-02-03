@@ -10,6 +10,8 @@ from __future__ import annotations
 import pathlib
 from typing import (
     Dict as TypingDict,
+)
+from typing import (
     Iterable,
     List,
     Optional,
@@ -19,12 +21,10 @@ from typing import (
     Type,
 )
 
-from google.protobuf.descriptor import FieldDescriptor
-from google.protobuf.message import Message
-
 from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
 from getstream.video.rtc.pb.stream.video.sfu.models import models_pb2
-
+from google.protobuf.descriptor import FieldDescriptor
+from google.protobuf.message import Message
 
 HEADER_LINES: Sequence[str] = (
     "from __future__ import annotations",
@@ -455,7 +455,13 @@ def verify_generated_classes() -> bool:
     import sys
 
     # Import the generated module
-    target_path = pathlib.Path(__file__).parent / "vision_agents" / "plugins" / "getstream" / "sfu_events.py"
+    target_path = (
+        pathlib.Path(__file__).parent
+        / "vision_agents"
+        / "plugins"
+        / "getstream"
+        / "sfu_events.py"
+    )
     if not target_path.exists():
         print("Error: sfu_events.py not found. Run generation first.")
         return False
@@ -568,7 +574,13 @@ def main() -> None:
     import sys
 
     # Generate sfu_events.py in the Python package directory
-    target_path = pathlib.Path(__file__).parent / "vision_agents" / "plugins" / "getstream" / "sfu_events.py"
+    target_path = (
+        pathlib.Path(__file__).parent
+        / "vision_agents"
+        / "plugins"
+        / "getstream"
+        / "sfu_events.py"
+    )
     target_path.write_text(_build_module(), encoding="utf-8")
     print(f"Regenerated {target_path}")
 
