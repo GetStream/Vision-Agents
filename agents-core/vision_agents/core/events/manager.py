@@ -176,7 +176,7 @@ class EventManager:
                 self._events[event_class.type] = event_class
                 logger.debug(f"Registered new event {event_class} - {event_class.type}")
             elif event_class.__name__.endswith("BaseEvent"):
-                return
+                continue
             elif not ignore_not_compatible:
                 raise ValueError(
                     f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
