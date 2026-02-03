@@ -25,7 +25,6 @@ from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConf
 from vision_agents.core.agents.agents import tracer
 from vision_agents.core.edge import EdgeTransport, events
 from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
-from vision_agents.core.events.manager import EventManager
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
@@ -111,8 +110,7 @@ class StreamEdge(EdgeTransport):
         super().__init__()
         version = get_vision_agents_version()
         self.client = AsyncStream(user_agent=f"stream-vision-agents-{version}")
-        self.events = EventManager()
-        self.events.register_events_from_module(events)
+        # self.events is inherited from EdgeTransport (with required events already registered)
         self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(getstream.models, "call.")
         self.conversation: Optional[StreamConversation] = None

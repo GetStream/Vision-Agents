@@ -1,30 +1,40 @@
-"""
-Abstraction for stream vs other services here
-"""
-
 import abc
-
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import aiortc
-from pyee.asyncio import AsyncIOEventEmitter
+from vision_agents.core.events.manager import EventManager
 
-from vision_agents.core.edge.types import User, OutputAudioTrack
+from .events import (
+    AudioReceivedEvent,
+    CallEndedEvent,
+    TrackAddedEvent,
+    TrackRemovedEvent,
+)
+from .types import OutputAudioTrack, User
 
-if TYPE_CHECKING:
-    pass
 
+class EdgeTransport(abc.ABC):
+    """Abstract base class for edge transports.
 
-class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
+    Required Events (implementations must emit these):
+        - AudioReceivedEvent: When audio is received from a participant
+        - TrackAddedEvent: When a media track is added to the call
+        - TrackRemovedEvent: When a media track is removed from the call
+        - CallEndedEvent: When the call ends
     """
-    TODO: what's not done yet
 
-    - call type
-    - participant type
-    - audio track type
-    - pcm data type
+    events: EventManager
 
-    """
+    def __init__(self):
+        super().__init__()
+        self.events = EventManager()
+        # Register required events that all EdgeTransport implementations must emit
+        self.events.register(
+            AudioReceivedEvent,
+            TrackAddedEvent,
+            TrackRemovedEvent,
+            CallEndedEvent,
+        )
 
     @abc.abstractmethod
     async def create_user(self, user: User):
