@@ -126,7 +126,7 @@ class TestEventManager:
         # After processing, the recursive counter should be 2 (original failure + one re-raise)
         assert recursive_counter["count"] == 2
 
-    async def test_send_unknown_event_type_raises_key_error(self):
+    async def test_send_unknown_event_type_raises_runtime_error(self):
         manager = EventManager(ignore_unknown_events=False)
 
         # Define a dynamic event class that is not registered
