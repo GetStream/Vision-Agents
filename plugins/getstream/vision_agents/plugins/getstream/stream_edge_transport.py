@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlencode
 
 import aiortc
+import getstream.models
 from getstream import AsyncStream
 from getstream.chat.async_client import ChatClient
 from getstream.models import ChannelInput, ChannelMember, ChannelMemberRequest
@@ -22,11 +23,13 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.agents.agents import tracer
-from vision_agents.core.edge import EdgeTransport, events, sfu_events
+from vision_agents.core.edge import EdgeTransport, events
 from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
+
+from . import sfu_events
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
@@ -111,6 +114,7 @@ class StreamEdge(EdgeTransport):
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(sfu_events)
+        self.events.register_events_from_module(getstream.models, "call.")
         self.conversation: Optional[StreamConversation] = None
         self.channel_type = "messaging"
         self.agent_user_id: str | None = None

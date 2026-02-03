@@ -18,7 +18,6 @@ from typing import (
 )
 from uuid import uuid4
 
-import getstream.models
 from aiortc import VideoStreamTrack
 from getstream.video.rtc import Call
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
@@ -28,7 +27,6 @@ from opentelemetry.context import Token
 from opentelemetry.trace import Tracer, set_span_in_context
 from opentelemetry.trace.propagation import Context, Span
 
-from ..edge import sfu_events
 from ..edge.events import (
     AudioReceivedEvent,
     CallEndedEvent,
@@ -178,9 +176,7 @@ class Agent:
         self.logger = _AgentLoggerAdapter(logger, {"agent_id": self.agent_user.id})
 
         self.events = EventManager()
-        self.events.register_events_from_module(getstream.models, "call.")
         self.events.register_events_from_module(events)
-        self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(llm_events)
 
         self.llm = llm

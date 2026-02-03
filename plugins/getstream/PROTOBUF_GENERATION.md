@@ -6,8 +6,8 @@ The `_generate_sfu_events.py` script automatically generates Python dataclass wr
 
 ## Location
 
-- **Generator Script**: `agents-core/vision_agents/_generate_sfu_events.py`
-- **Generated Output**: `agents-core/vision_agents/core/edge/sfu_events.py`
+- **Generator Script**: `plugins/getstream/_generate_sfu_events.py`
+- **Generated Output**: `plugins/getstream/vision_agents/plugins/getstream/sfu_events.py`
 
 ## Key Features
 
@@ -91,8 +91,8 @@ Each generated class provides:
 ### Regenerating Events
 
 ```bash
-cd agents-core
-uv run python vision_agents/_generate_sfu_events.py
+cd plugins/getstream
+uv run python _generate_sfu_events.py
 ```
 
 ### Verification
@@ -101,19 +101,19 @@ Verify type mappings and generated classes:
 
 ```bash
 # Show type mappings
-uv run python vision_agents/_generate_sfu_events.py --verify-types
+uv run python _generate_sfu_events.py --verify-types
 
 # Verify generated classes
-uv run python vision_agents/_generate_sfu_events.py --verify
+uv run python _generate_sfu_events.py --verify
 
 # Both
-uv run python vision_agents/_generate_sfu_events.py --verify-types --verify
+uv run python _generate_sfu_events.py --verify-types --verify
 ```
 
 ### Example Usage
 
 ```python
-from vision_agents.core.edge.sfu_events import (
+from vision_agents.plugins.getstream.sfu_events import (
     AudioLevelEvent,
     TrackUnpublishedEvent,
     Participant  # Now properly typed!
@@ -225,12 +225,12 @@ class AudioLevelEvent(BaseEvent):
 
 ## Import Strategy
 
-The edge module uses absolute imports instead of relative imports to avoid naming conflicts with standard library modules (specifically avoiding conflicts with Python's `types` module).
+The sfu_events module is part of the GetStream plugin and should be imported from there:
 
 ```python
-# In edge/__init__.py
-from vision_agents.core.edge.edge_transport import EdgeTransport
-from vision_agents.core.edge import sfu_events
+# Import sfu_events from the getstream plugin
+from vision_agents.plugins.getstream import sfu_events
+from vision_agents.plugins.getstream.sfu_events import AudioLevelEvent
 ```
 
 ## Event Manager Integration
@@ -242,8 +242,8 @@ The EventManager has been updated to seamlessly handle the new protobuf events:
 1. **Register protobuf event classes** like any other event:
    ```python
    from vision_agents.core.events.manager import EventManager
-   from vision_agents.core.edge.sfu_events import AudioLevelEvent
-   
+   from vision_agents.plugins.getstream.sfu_events import AudioLevelEvent
+
    manager = EventManager()
    manager.register(AudioLevelEvent)
    ```
