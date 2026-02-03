@@ -8,7 +8,6 @@ from typing import AsyncIterator, Iterator, Optional
 import av
 import httpx
 from getstream.video.rtc.track_util import AudioFormat, PcmData
-
 from vision_agents.core import tts
 
 logger = logging.getLogger(__name__)
@@ -24,10 +23,10 @@ class TTS(tts.TTS):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        voice_id: Optional[str] = None,
+        voice_id: Optional[str] = "d1bf0f33-8e0e-4fbf-acf8-45c3c6262513",
         audio_format: str = "pcm",
-        model: Optional[str] = None,
-        language: Optional[str] = None,
+        model: Optional[str] = "voiceai-tts-v1-latest",
+        language: Optional[str] = "en",
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         base_url: str = DEFAULT_BASE_URL,
@@ -39,12 +38,12 @@ class TTS(tts.TTS):
 
         Args:
             api_key: Voice.ai API key. Falls back to VOICE_AI_API_KEY env var.
-            voice_id: Voice ID to use. Falls back to VOICE_AI_VOICE_ID env var.
+            voice_id: Voice ID to use. Defaults to voice called "Ellie".
             audio_format: Output format: "pcm" (streamed), "wav", or "mp3".
-            model: Optional model ID to use.
-            language: Optional language code.
-            temperature: Optional sampling temperature.
-            top_p: Optional top-p nucleus sampling.
+            model: Optional model ID to use (Available options: voiceai-tts-v1-latest, voiceai-tts-v1-2025-12-19, voiceai-tts-multilingual-v1-latest, voiceai-tts-multilingual-v1-2025-01-14). Defaults to "voiceai-tts-v1-latest".
+            language: Optional language code (Available options: en, ca, sv, es, fr, de, it, pt, pl, ru, nl). Defaults to "en".
+            temperature: Optional sampling temperature (range from 0.0-2.0). Defaults to 1.
+            top_p: Optional top-p nucleus sampling (range from 0.0-1.0). Defaults to 0.8.
             base_url: Voice.ai API base URL.
             timeout_s: HTTP timeout in seconds.
             client: Optional pre-configured httpx.AsyncClient.
@@ -78,8 +77,8 @@ class TTS(tts.TTS):
         self.top_p = top_p
         self.base_url = base_url.rstrip("/")
         self._owns_client = client is None
-        self.client = client if client is not None else httpx.AsyncClient(
-            timeout=timeout_s
+        self.client = (
+            client if client is not None else httpx.AsyncClient(timeout=timeout_s)
         )
 
     def _build_payload(self, text: str) -> dict:
@@ -148,6 +147,7 @@ class TTS(tts.TTS):
         payload = self._build_payload(text)
 
         if self.audio_format == "pcm":
+
             async def _stream_bytes() -> AsyncIterator[bytes]:
                 async with self.client.stream(
                     "POST", url, headers=headers, json=payload
@@ -164,7 +164,9 @@ class TTS(tts.TTS):
                 format=AudioFormat.S16,
             )
 
-        async with self.client.stream("POST", url, headers=headers, json=payload) as response:
+        async with self.client.stream(
+            "POST", url, headers=headers, json=payload
+        ) as response:
             await self._raise_for_status(response)
             data = await response.aread()
 
