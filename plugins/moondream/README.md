@@ -133,7 +133,7 @@ from dotenv import load_dotenv
 from vision_agents.core import User, Agent, Runner
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, getstream, elevenlabs, moondream
-from vision_agents.core.events import CallSessionParticipantJoinedEvent
+from vision_agents.plugins.getstream import CallSessionParticipantJoinedEvent
 
 load_dotenv()
 
