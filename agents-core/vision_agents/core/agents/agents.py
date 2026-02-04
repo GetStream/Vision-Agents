@@ -1397,10 +1397,8 @@ class Agent:
         # Variables are now initialized in __init__
 
         if self.publish_audio:
-            framerate = 48000
-            stereo = True
             self._audio_track = self.edge.create_audio_track(
-                framerate=framerate, stereo=stereo
+                sample_rate=48000, stereo=True
             )
 
             @self.events.subscribe
