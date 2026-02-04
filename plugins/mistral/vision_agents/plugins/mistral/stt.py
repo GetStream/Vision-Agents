@@ -117,7 +117,7 @@ class STT(stt.STT):
                 self._emit_error_event(e, context="receive_loop")
 
     def _handle_text_delta(self, event: TranscriptionStreamTextDelta):
-        """Handle text delta - accumulate and emit final on sentence boundaries."""
+        """Handle text delta - emit word-by-word partials, full text on complete."""
         text = event.text
         if not text:
             return
@@ -127,7 +127,7 @@ class STT(stt.STT):
             logger.warning("Received transcript but no participant set")
             return
 
-        # Accumulate text
+        # Accumulate text for complete events
         self._accumulated_text += text
 
         processing_time_ms: Optional[float] = None
@@ -139,13 +139,14 @@ class STT(stt.STT):
             processing_time_ms=processing_time_ms,
         )
 
-        # Emit partial with accumulated text
-        accumulated_stripped = self._accumulated_text.strip()
-        if accumulated_stripped:
-            self._emit_partial_transcript_event(accumulated_stripped, participant, response)
+        # Emit partial with just the new word/delta (not accumulated)
+        text_stripped = text.strip()
+        if text_stripped:
+            self._emit_partial_transcript_event(text_stripped, participant, response)
 
-        # Check for sentence-ending punctuation - emit final transcript
+        # Check for sentence-ending punctuation - emit complete transcript
         if text.rstrip().endswith((".", "?", "!")):
+            accumulated_stripped = self._accumulated_text.strip()
             if accumulated_stripped:
                 self._emit_transcript_event(accumulated_stripped, participant, response)
                 self._accumulated_text = ""

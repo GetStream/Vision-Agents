@@ -39,7 +39,7 @@ async def create_agent(**kwargs) -> Agent:
         tts=deepgram.TTS(),  # Uses Deepgram for text-to-speech
         stt=mistral.STT(),  # Uses Mistral Voxtral for speech-to-text
         llm=gemini.LLM("gemini-2.0-flash"),
-        turn_detection=smart_turn.TurnDetection(),  # Required since Mistral STT has no turn detection
+        # turn_detection=smart_turn.TurnDetection(),  # Required since Mistral STT has no turn detection
     )
     return agent
 
