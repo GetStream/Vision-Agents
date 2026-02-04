@@ -8,39 +8,54 @@ Mistral Voxtral realtime speech-to-text integration for Vision Agents.
 - Low-latency transcription using Voxtral models
 - Automatic language detection
 - Partial transcript streaming for responsive UX
+- Sentence-level final transcripts (triggered by `.`, `?`, `!`)
 
 ## Installation
 
 ```bash
-uv add vision-agents-plugins-mistral
+uv add vision-agents[mistral]
 ```
 
 ## Usage
 
 ```python
-from vision_agents.plugins import mistral
+from vision_agents.core import Agent, Runner, User
+from vision_agents.core.agents import AgentLauncher
+from vision_agents.plugins import deepgram, gemini, getstream, mistral
 
-stt = mistral.STT(
-    api_key="your-api-key",  # Or set MISTRAL_API_KEY env var
-    model="voxtral-mini-transcribe-realtime-2602",
-)
 
-await stt.start()
+async def create_agent(**kwargs) -> Agent:
+    return Agent(
+        edge=getstream.Edge(),
+        agent_user=User(name="Assistant", id="agent"),
+        instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
+        stt=mistral.STT(),
+        tts=deepgram.TTS(),
+        llm=gemini.LLM("gemini-2.0-flash"),
+    )
 
-# Process audio chunks (called every ~20ms)
-await stt.process_audio(pcm_data, participant)
 
-# Subscribe to transcript events
-@stt.events.subscribe
-async def on_transcript(event: STTTranscriptEvent):
-    print(f"Final: {event.text}")
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    await agent.create_user()
+    call = await agent.create_call(call_type, call_id)
 
-@stt.events.subscribe
-async def on_partial(event: STTPartialTranscriptEvent):
-    print(f"Partial: {event.text}")
+    async with agent.join(call):
+        await agent.run()
 
-await stt.close()
+
+if __name__ == "__main__":
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
 ```
+
+Run with:
+
+```bash
+uv run plugins/mistral/example/mistral_stt_example.py run
+```
+
+## Turn Detection
+
+Mistral Voxtral STT does not include built-in turn detection (`turn_detection=False`). You'll need to pair it with an external turn detection plugin.
 
 ## Configuration
 
@@ -48,8 +63,15 @@ await stt.close()
 |-----------|-------------|---------|
 | `api_key` | Mistral API key | `MISTRAL_API_KEY` env var |
 | `model` | Model identifier | `voxtral-mini-transcribe-realtime-2602` |
-| `sample_rate` | Audio sample rate (Hz) | `16000` |
+| `sample_rate` | Audio sample rate (Hz): 8000, 16000, 22050, 44100, 48000 | `16000` |
 | `client` | Pre-configured Mistral client | `None` |
+
+## Events
+
+The plugin emits standard STT events:
+
+- `STTTranscriptEvent`: Final transcript (emitted at sentence boundaries or stream end)
+- `STTPartialTranscriptEvent`: Partial word/delta as transcription streams
 
 ## Dependencies
 

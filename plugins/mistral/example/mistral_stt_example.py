@@ -23,7 +23,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import deepgram, gemini, getstream, mistral, smart_turn
+from vision_agents.plugins import deepgram, gemini, getstream, mistral
 
 logger = logging.getLogger(__name__)
 

@@ -68,6 +68,7 @@ fast-whisper = ["vision-agents-plugins-fast-whisper"]
 decart = ["vision-agents-plugins-decart"]
 twilio = ["vision-agents-plugins-twilio"]
 turbopuffer = ["vision-agents-plugins-turbopuffer"]
+mistral = ["vision-agents-plugins-mistral"]
 
 all-plugins = [
     "vision-agents-plugins-anthropic",
@@ -99,6 +100,7 @@ all-plugins = [
     "vision-agents-plugins-qwen",
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-turbopuffer",
+    "vision-agents-plugins-mistral",
 ]
 
 [tool.hatch.metadata]
