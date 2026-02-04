@@ -33,6 +33,7 @@ vision-agents-plugins-decart = { workspace = true }
 vision-agents-plugins-twilio = { workspace = true }
 vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
+vision-agents-plugins-mistral = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -72,6 +73,7 @@ members = [
     "plugins/twilio",
     "plugins/turbopuffer",
     "plugins/nvidia",
+    "plugins/mistral",
 ]
 exclude = [
     "**/__pycache__",
@@ -107,6 +109,7 @@ dev = [
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
     "asgi-lifespan>=2.1.0",
+    "mistralai[realtime]>=1.12.0",
 ]
 
 [tool.mypy]
