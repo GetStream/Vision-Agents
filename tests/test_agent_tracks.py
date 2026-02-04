@@ -122,7 +122,7 @@ class MockEdge:
         self.add_track_subscriber_calls.append(track_id)
         return MockVideoTrack(track_id)
 
-    def create_audio_track(self, framerate=48000, stereo=True):
+    def create_audio_track(self, sample_rate=48000, stereo=True):
         """Mock creating audio track"""
         return Mock(id="audio_track_1")
 

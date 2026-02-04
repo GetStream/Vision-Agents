@@ -14,7 +14,7 @@ from getstream.chat.async_client import ChatClient
 from getstream.models import ChannelInput, ChannelMember, ChannelMemberRequest
 from getstream.video import rtc
 from getstream.video.async_call import Call as StreamCall
-from getstream.video.rtc import ConnectionManager, audio_track
+from getstream.video.rtc import AudioStreamTrack, ConnectionManager
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
     Participant,
@@ -387,16 +387,13 @@ class StreamEdge(EdgeTransport):
         return standardize_connection
 
     def create_audio_track(
-        self, framerate: int = 48000, stereo: bool = True
+        self, sample_rate: int = 48000, stereo: bool = True
     ) -> OutputAudioTrack:
-        return audio_track.AudioStreamTrack(
+        return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
-            sample_rate=framerate,
+            sample_rate=sample_rate,
             channels=stereo and 2 or 1,
         )  # default to webrtc framerate
-
-    def create_video_track(self):
-        return aiortc.VideoStreamTrack()
 
     def add_track_subscriber(
         self, track_id: str
@@ -425,7 +422,6 @@ class StreamEdge(EdgeTransport):
         )
 
     async def close(self):
-        # Note: Not calling super().close() as it's an abstract method with trivial body
         self._call = None
 
     async def send_custom_event(self, data: dict) -> None:

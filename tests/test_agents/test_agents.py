@@ -3,13 +3,13 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import pytest
+from getstream.video.rtc import AudioStreamTrack
 from vision_agents.core import Agent, User
 from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.edge.types import OutputAudioTrack
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.tts import TTS
-from vision_agents.core.utils import audio_track
 from vision_agents.core.warmup import Warmable
 
 
@@ -50,7 +50,7 @@ class DummyEdge(EdgeTransport):
         return
 
     def create_audio_track(self, *args, **kwargs) -> OutputAudioTrack:
-        return audio_track.AudioStreamTrack(
+        return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
             sample_rate=48000,
             channels=2,
