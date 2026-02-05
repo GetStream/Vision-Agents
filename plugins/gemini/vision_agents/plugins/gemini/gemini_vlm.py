@@ -278,9 +278,7 @@ class GeminiVLM(VideoLLM):
 
             return LLMResponseEvent(final_chunk, total_text)
         except Exception as exc:
-            logger.exception(
-                f'Failed to get a response from the model "{self.model}"'
-            )
+            logger.exception(f'Failed to get a response from the model "{self.model}"')
             self.events.send(
                 events.LLMErrorEvent(
                     plugin_name=PLUGIN_NAME,
