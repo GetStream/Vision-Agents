@@ -319,15 +319,23 @@ class Agent:
         # listen to video tracks added/removed
         @self.edge.events.subscribe
         async def on_video_track_added(event: TrackAddedEvent | TrackRemovedEvent):
-            if event.track_id is None or event.track_type is None or event.user is None:
+            if (
+                event.track_id is None
+                or event.track_type is None
+                or event.participant is None
+            ):
                 return
             if isinstance(event, TrackRemovedEvent):
                 asyncio.create_task(
-                    self._on_track_removed(event.track_id, event.track_type, event.user)
+                    self._on_track_removed(
+                        event.track_id, event.track_type, event.participant
+                    )
                 )
             else:
                 asyncio.create_task(
-                    self._on_track_added(event.track_id, event.track_type, event.user)
+                    self._on_track_added(
+                        event.track_id, event.track_type, event.participant
+                    )
                 )
 
         # audio event for the user talking to the AI
@@ -882,13 +890,18 @@ class Agent:
             start_time = time.time()
 
             if self.tts is not None:
-                # Call TTS with user metadata
-                user_metadata = {"user_id": event.user_id}
-                if event.metadata:
-                    user_metadata.update(event.metadata)
+                # Create participant from event
+                participant = (
+                    Participant(
+                        original=event.metadata or {},
+                        user_id=event.user_id,
+                    )
+                    if event.user_id
+                    else None
+                )
 
                 sanitized_text = self._sanitize_text(event.text)
-                await self.tts.send(sanitized_text, user_metadata)
+                await self.tts.send(sanitized_text, participant)
 
                 # Calculate duration
                 duration_ms = (time.time() - start_time) * 1000
