@@ -1,13 +1,6 @@
 from dataclasses import dataclass
-from typing import (
-    Any,
-    Optional,
-    Protocol,
-    runtime_checkable,
-)
+from typing import Any, Optional
 
-
-from getstream.video.rtc import PcmData
 from pyee.asyncio import AsyncIOEventEmitter
 
 
@@ -33,17 +26,3 @@ class Connection(AsyncIOEventEmitter):
 
     async def close(self):
         pass
-
-
-@runtime_checkable
-class OutputAudioTrack(Protocol):
-    """
-    A protocol describing an output audio track, the actual implementation depends on the edge transported used
-    eg. getstream.video.rtc.audio_track.AudioStreamTrack
-    """
-
-    async def write(self, data: PcmData) -> None: ...
-
-    def stop(self) -> None: ...
-
-    async def flush(self) -> None: ...

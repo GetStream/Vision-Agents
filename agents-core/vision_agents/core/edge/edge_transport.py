@@ -1,7 +1,8 @@
 import abc
-from typing import Any, Optional
+from typing import Any, Generic, Optional, TypeVar
 
 import aiortc
+from getstream.video.rtc import AudioStreamTrack
 from vision_agents.core.events.manager import EventManager
 
 from .call import Call
@@ -11,10 +12,13 @@ from .events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from .types import OutputAudioTrack, User
+from .types import User
+
+T_AudioTrack = TypeVar("T_AudioTrack", bound=aiortc.mediastreams.MediaStreamTrack)
+T_VideoTrack = TypeVar("T_VideoTrack", bound=aiortc.mediastreams.MediaStreamTrack)
 
 
-class EdgeTransport(abc.ABC):
+class EdgeTransport(abc.ABC, Generic[T_AudioTrack, T_VideoTrack]):
     """Abstract base class for edge transports.
 
     Required Events (implementations must emit these):
@@ -42,7 +46,7 @@ class EdgeTransport(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def create_audio_track(self) -> OutputAudioTrack:
+    def create_audio_track(self) -> AudioStreamTrack:
         pass
 
     @abc.abstractmethod
@@ -58,7 +62,9 @@ class EdgeTransport(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def publish_tracks(self, audio_track, video_track):
+    async def publish_tracks(
+        self, audio_track: Optional[T_AudioTrack], video_track: Optional[T_VideoTrack]
+    ):
         pass
 
     @abc.abstractmethod

@@ -24,7 +24,7 @@ from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.agents.agents import tracer
 from vision_agents.core.edge import EdgeTransport, events
-from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
+from vision_agents.core.edge.types import Connection, User
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
@@ -97,7 +97,7 @@ class StreamConnection(Connection):
             self._idle_since = time.time()
 
 
-class StreamEdge(EdgeTransport):
+class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]):
     """
     StreamEdge uses getstream.io's edge network. To support multiple vendors, this means we expose
 
@@ -388,7 +388,7 @@ class StreamEdge(EdgeTransport):
 
     def create_audio_track(
         self, sample_rate: int = 48000, stereo: bool = True
-    ) -> OutputAudioTrack:
+    ) -> AudioStreamTrack:
         return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
             sample_rate=sample_rate,
@@ -400,7 +400,11 @@ class StreamEdge(EdgeTransport):
     ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
         return self._connection.subscriber_pc.add_track_subscriber(track_id)
 
-    async def publish_tracks(self, audio_track, video_track):
+    async def publish_tracks(
+        self,
+        audio_track: Optional[aiortc.MediaStreamTrack],
+        video_track: Optional[aiortc.MediaStreamTrack],
+    ):
         """
         Add the tracks to publish audio and video
         """

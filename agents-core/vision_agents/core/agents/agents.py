@@ -19,6 +19,7 @@ from typing import (
 from uuid import uuid4
 
 from aiortc import VideoStreamTrack
+from getstream.video.rtc import AudioStreamTrack, PcmData
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from opentelemetry import context as otel_context
 from opentelemetry import trace
@@ -33,7 +34,7 @@ from ..edge.events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import OutputAudioTrack, Participant, PcmData, User
+from ..edge.types import Participant, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -229,7 +230,7 @@ class Agent:
         self._video_track_override_path: Optional[str | Path] = None
 
         # the outgoing audio track
-        self._audio_track: Optional[OutputAudioTrack] = None
+        self._audio_track: Optional[AudioStreamTrack] = None
 
         # the outgoing video track
         self._video_track: Optional[VideoStreamTrack] = None

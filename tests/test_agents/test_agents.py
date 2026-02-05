@@ -6,7 +6,6 @@ import pytest
 from getstream.video.rtc import AudioStreamTrack
 from vision_agents.core import Agent, User
 from vision_agents.core.edge import Call, EdgeTransport
-from vision_agents.core.edge.types import OutputAudioTrack
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.tts import TTS
@@ -49,7 +48,7 @@ class DummyEdge(EdgeTransport):
     async def create_user(self, user: User):
         return
 
-    def create_audio_track(self, *args, **kwargs) -> OutputAudioTrack:
+    def create_audio_track(self, *args, **kwargs) -> AudioStreamTrack:
         return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
             sample_rate=48000,

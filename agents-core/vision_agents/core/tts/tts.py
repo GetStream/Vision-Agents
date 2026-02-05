@@ -5,12 +5,12 @@ import uuid
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, Optional, Union
 
 import av
+from getstream.video.rtc import PcmData
 from vision_agents.core.events import (
     AudioFormat,
 )
 from vision_agents.core.events.manager import EventManager
 
-from ..edge.types import PcmData
 from . import events
 from .events import (
     TTSAudioEvent,
