@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.events import PluginBaseEvent
@@ -13,7 +13,6 @@ class AudioReceivedEvent(PluginBaseEvent):
 
     type: str = field(default="plugin.edge.audio_received", init=False)
     pcm_data: Optional[PcmData] = None
-    participant: Optional[Any] = None
 
 
 @dataclass
@@ -23,7 +22,6 @@ class TrackAddedEvent(PluginBaseEvent):
     type: str = field(default="plugin.edge.track_added", init=False)
     track_id: Optional[str] = None
     track_type: Optional[TrackType] = None
-    user: Optional[Any] = None
 
 
 @dataclass
@@ -33,7 +31,6 @@ class TrackRemovedEvent(PluginBaseEvent):
     type: str = field(default="plugin.edge.track_removed", init=False)
     track_id: Optional[str] = None
     track_type: Optional[TrackType] = None
-    user: Optional[Any] = None
 
 
 @dataclass

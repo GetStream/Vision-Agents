@@ -17,7 +17,7 @@ from getstream.video.async_call import Call as StreamCall
 from getstream.video.rtc import AudioStreamTrack, ConnectionManager
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
-    Participant,
+    Participant as StreamParticipant,
 )
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
     TrackType as StreamTrackType,
@@ -26,7 +26,7 @@ from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.agents.agents import tracer
 from vision_agents.core.edge import EdgeTransport, events
-from vision_agents.core.edge.types import Connection, TrackType, User
+from vision_agents.core.edge.types import Connection, Participant, TrackType, User
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
@@ -36,6 +36,46 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
 
 logger = logging.getLogger(__name__)
+
+
+# Conversion maps and functions for getstream -> core types
+_TRACK_TYPE_MAP = {
+    StreamTrackType.TRACK_TYPE_UNSPECIFIED: TrackType.UNSPECIFIED,
+    StreamTrackType.TRACK_TYPE_VIDEO: TrackType.VIDEO,
+    StreamTrackType.TRACK_TYPE_AUDIO: TrackType.AUDIO,
+    StreamTrackType.TRACK_TYPE_SCREEN_SHARE: TrackType.SCREEN_SHARE,
+    StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO: TrackType.SCREEN_SHARE_AUDIO,
+}
+
+
+def _to_core_track_type(stream_track_type: StreamTrackType.ValueType) -> TrackType:
+    """Convert getstream TrackType to core TrackType."""
+    type_ = _TRACK_TYPE_MAP.get(stream_track_type)
+    if type_ is None:
+        raise ValueError(f"Unknown track type: {stream_track_type}")
+    return type_
+
+
+def _to_core_participant(
+    participant: sfu_events.Participant | StreamParticipant | None,
+) -> Participant | None:
+    """Convert plugin or protobuf participant to core Participant type.
+
+    Args:
+        participant: Plugin's sfu_events.Participant wrapper, protobuf
+            StreamParticipant, or None
+
+    Returns:
+        Core Participant with original and user_id, or None
+    """
+    if participant is None:
+        return None
+
+    user_id = getattr(participant, "user_id", None)
+    if not user_id:
+        return None
+
+    return Participant(original=participant, user_id=user_id)
 
 
 class StreamConnection(Connection):
@@ -83,7 +123,7 @@ class StreamConnection(Connection):
         except Exception as e:
             logger.error(f"Error during connection close: {e}")
 
-    def _on_participant_change(self, participants: list[Participant]) -> None:
+    def _on_participant_change(self, participants: list[StreamParticipant]) -> None:
         # Get all participants except the agent itself.
         other_participants = [
             p for p in participants if p.user_id != self._connection.user_id
@@ -170,7 +210,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
 
         # Convert Stream track type to the Vision agents track type
         track_type_int = event.payload.type  # TrackType enum int from SFU
-        track_type = _convert_track_type(track_type_int)
+        track_type = _to_core_track_type(track_type_int)
         webrtc_track_kind = self._get_webrtc_kind(track_type_int)
 
         # Skip processing the agent's own tracks - we don't subscribe to them
@@ -193,7 +233,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
                     plugin_name="getstream",
                     track_id=track_id,
                     track_type=track_type,
-                    user=event.participant,
+                    participant=_to_core_participant(event.participant),
                 )
             )
             return
@@ -238,8 +278,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
                         plugin_name="getstream",
                         track_id=track_id,
                         track_type=track_type,
-                        user=event.participant,
-                        participant=event.participant,
+                        participant=_to_core_participant(event.participant),
                     )
                 )
 
@@ -284,7 +323,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
 
         # Mark each track as unpublished and send TrackRemovedEvent
         for track_type_int in tracks_to_remove:
-            track_type = _convert_track_type(track_type_int)
+            track_type = _to_core_track_type(track_type_int)
             track_key = (user_id, session_id, track_type_int)
             track_info = self._track_map.get(track_key)
 
@@ -295,9 +334,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
                         plugin_name="getstream",
                         track_id=track_id,
                         track_type=track_type,
-                        user=participant,
-                        # TODO: user=participant?
-                        participant=participant,
+                        participant=_to_core_participant(participant),
                     )
                 )
                 # Mark as unpublished instead of removing
@@ -370,7 +407,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
                 events.AudioReceivedEvent(
                     plugin_name="getstream",
                     pcm_data=pcm,
-                    participant=pcm.participant,
+                    participant=_to_core_participant(pcm.participant),
                 )
             )
 
@@ -533,19 +570,3 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
             logger.warning(f"Please manually open this URL: {url}")
 
         return url
-
-
-_TRACK_TYPE_MAP = {
-    StreamTrackType.TRACK_TYPE_UNSPECIFIED: TrackType.UNSPECIFIED,
-    StreamTrackType.TRACK_TYPE_VIDEO: TrackType.VIDEO,
-    StreamTrackType.TRACK_TYPE_AUDIO: TrackType.AUDIO,
-    StreamTrackType.TRACK_TYPE_SCREEN_SHARE: TrackType.SCREEN_SHARE,
-    StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO: TrackType.SCREEN_SHARE_AUDIO,
-}
-
-
-def _convert_track_type(stream_track_type: StreamTrackType.ValueType) -> TrackType:
-    type_ = _TRACK_TYPE_MAP.get(stream_track_type)
-    if type_ is None:
-        raise ValueError(f"Unknown track type: {stream_track_type}")
-    return type_

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Conversation
 
 from getstream.video.rtc import PcmData
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.processors import Processor
 
