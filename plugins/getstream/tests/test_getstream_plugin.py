@@ -1,7 +1,6 @@
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
-
-from vision_agents.core.events.manager import EventManager
 from vision_agents.core.edge.events import TrackAddedEvent, TrackRemovedEvent
+from vision_agents.core.edge.types import TrackType
+from vision_agents.core.events.manager import EventManager
 
 
 class TestTrackRepublishing:
@@ -30,7 +29,7 @@ class TestTrackRepublishing:
 
         # Simulate track lifecycle: start -> stop -> start again
         track_id = "screenshare-track-1"
-        track_type = TrackType.TRACK_TYPE_SCREEN_SHARE
+        track_type = TrackType.SCREEN_SHARE
 
         # 1. Start screenshare
         event_manager.send(

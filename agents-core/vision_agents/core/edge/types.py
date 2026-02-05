@@ -1,3 +1,4 @@
+import enum
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -15,6 +16,14 @@ class User:
 class Participant:
     original: Any
     user_id: str
+
+
+class TrackType(enum.IntEnum):
+    UNSPECIFIED = 0
+    AUDIO = 1
+    VIDEO = 2
+    SCREEN_SHARE = 3
+    SCREEN_SHARE_AUDIO = 4
 
 
 class Connection(AsyncIOEventEmitter):

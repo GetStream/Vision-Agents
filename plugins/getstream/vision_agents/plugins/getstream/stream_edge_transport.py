@@ -18,13 +18,15 @@ from getstream.video.rtc import AudioStreamTrack, ConnectionManager
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
     Participant,
-    TrackType,
+)
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
+    TrackType as StreamTrackType,
 )
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.agents.agents import tracer
 from vision_agents.core.edge import EdgeTransport, events
-from vision_agents.core.edge.types import Connection, User
+from vision_agents.core.edge.types import Connection, TrackType, User
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
@@ -141,13 +143,13 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
         """Get the expected WebRTC kind (audio/video) for a SFU track type."""
         # Map SFU track types to WebRTC kinds
         if track_type_int in (
-            TrackType.TRACK_TYPE_AUDIO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
+            StreamTrackType.TRACK_TYPE_AUDIO,
+            StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
         ):
             return "audio"
         elif track_type_int in (
-            TrackType.TRACK_TYPE_VIDEO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE,
+            StreamTrackType.TRACK_TYPE_VIDEO,
+            StreamTrackType.TRACK_TYPE_SCREEN_SHARE,
         ):
             return "video"
         else:
@@ -166,17 +168,21 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
             user_id = event.payload.user_id
             session_id = event.payload.session_id
 
+        # Convert Stream track type to the Vision agents track type
         track_type_int = event.payload.type  # TrackType enum int from SFU
-        expected_kind = self._get_webrtc_kind(track_type_int)
-        track_key = (user_id, session_id, track_type_int)
-        is_agent_track = user_id == self.agent_user_id
+        track_type = _convert_track_type(track_type_int)
+        webrtc_track_kind = self._get_webrtc_kind(track_type_int)
 
         # Skip processing the agent's own tracks - we don't subscribe to them
+        is_agent_track = user_id == self.agent_user_id
         if is_agent_track:
-            logger.debug(f"Skipping agent's own track: {track_type_int} from {user_id}")
+            logger.debug(
+                f'Skipping agent\'s own track: "{track_type.name}" from {user_id}'
+            )
             return
 
         # First check if track already exists in map (e.g., from previous unpublish/republish)
+        track_key = (user_id, session_id, track_type_int)
         if track_key in self._track_map:
             self._track_map[track_key]["published"] = True
             track_id = self._track_map[track_key]["track_id"]
@@ -186,7 +192,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
                 events.TrackAddedEvent(
                     plugin_name="getstream",
                     track_id=track_id,
-                    track_type=track_type_int,
+                    track_type=track_type,
                     user=event.participant,
                 )
             )
@@ -207,7 +213,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
                 if (
                     pending_user == user_id
                     and pending_session == session_id
-                    and pending_kind == expected_kind
+                    and pending_kind == webrtc_track_kind
                 ):
                     track_id = tid
                     del self._pending_tracks[tid]
@@ -231,7 +237,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
                     events.TrackAddedEvent(
                         plugin_name="getstream",
                         track_id=track_id,
-                        track_type=track_type_int,
+                        track_type=track_type,
                         user=event.participant,
                         participant=event.participant,
                     )
@@ -239,7 +245,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
 
         else:
             raise TimeoutError(
-                f"Timeout waiting for pending track: {track_type_int} ({expected_kind}) from user {user_id}, "
+                f"Timeout waiting for pending track: {track_type.name} from user {user_id}, "
                 f"session {session_id}. Waited {timeout}s but WebRTC track_added with matching kind was never received."
                 f"Pending tracks: {self._pending_tracks}\n"
                 f"Key: {track_key}\n"
@@ -273,11 +279,12 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
             ) or []
             event_desc = "Participant left"
 
-        track_names = [TrackType.Name(t) for t in tracks_to_remove]
+        track_names = [StreamTrackType.Name(t) for t in tracks_to_remove]
         logger.info(f"{event_desc}: {user_id}, tracks: {track_names}")
 
         # Mark each track as unpublished and send TrackRemovedEvent
         for track_type_int in tracks_to_remove:
+            track_type = _convert_track_type(track_type_int)
             track_key = (user_id, session_id, track_type_int)
             track_info = self._track_map.get(track_key)
 
@@ -287,7 +294,7 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
                     events.TrackRemovedEvent(
                         plugin_name="getstream",
                         track_id=track_id,
-                        track_type=track_type_int,
+                        track_type=track_type,
                         user=participant,
                         # TODO: user=participant?
                         participant=participant,
@@ -418,10 +425,10 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
     def _get_subscription_config(self):
         return TrackSubscriptionConfig(
             track_types=[
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_AUDIO,
-                TrackType.TRACK_TYPE_SCREEN_SHARE,
-                TrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
+                StreamTrackType.TRACK_TYPE_VIDEO,
+                StreamTrackType.TRACK_TYPE_AUDIO,
+                StreamTrackType.TRACK_TYPE_SCREEN_SHARE,
+                StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
             ]
         )
 
@@ -526,3 +533,19 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
             logger.warning(f"Please manually open this URL: {url}")
 
         return url
+
+
+_TRACK_TYPE_MAP = {
+    StreamTrackType.TRACK_TYPE_UNSPECIFIED: TrackType.UNSPECIFIED,
+    StreamTrackType.TRACK_TYPE_VIDEO: TrackType.VIDEO,
+    StreamTrackType.TRACK_TYPE_AUDIO: TrackType.AUDIO,
+    StreamTrackType.TRACK_TYPE_SCREEN_SHARE: TrackType.SCREEN_SHARE,
+    StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO: TrackType.SCREEN_SHARE_AUDIO,
+}
+
+
+def _convert_track_type(stream_track_type: StreamTrackType.ValueType) -> TrackType:
+    type_ = _TRACK_TYPE_MAP.get(stream_track_type)
+    if type_ is None:
+        raise ValueError(f"Unknown track type: {stream_track_type}")
+    return type_
