@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1655,7 +1655,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "2.5.21"
+version = "2.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1670,9 +1670,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "twirp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/be/4998f63f4872ab5e4b8c30602af05d154669e9f095b9cf3a66aee533272a/getstream-2.5.21.tar.gz", hash = "sha256:cefa559e11c76179e7a2169b13550d04a54e9239fd6e963412426da3a04df076", size = 449483, upload-time = "2026-01-12T21:07:14.921Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/8f/4a9eba635964894bb373dc7ad90370720be37c2da16ff1c3578fea057d61/getstream-2.7.1.tar.gz", hash = "sha256:cf78bb0c52ed732e447ee59446ce1e3b999e146886ad73cbf799e2dcbe8d01ed", size = 445595, upload-time = "2026-01-30T17:40:17.486Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/9f/b5a5d4beabfb2ce4ce138663d75b47dede622fc5c5156467065ce2f04f5f/getstream-2.5.21-py3-none-any.whl", hash = "sha256:0181bda206ed725d6fcd372dd763eea3b702b645a842c2fc26c79539cf295a95", size = 260055, upload-time = "2026-01-12T21:07:13.573Z" },
+    { url = "https://files.pythonhosted.org/packages/40/ad/a71eeb8c6dda09eb93f0e1f41d331a9a1d9f867b296996a3b8b0b7bfda8f/getstream-2.7.1-py3-none-any.whl", hash = "sha256:7465eb344b0f1f422088f259b593b460dc3bc88150c2ade1f1497bb4a3ee1457", size = 275293, upload-time = "2026-01-30T17:40:18.563Z" },
 ]
 
 [package.optional-dependencies]
