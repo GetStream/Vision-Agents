@@ -4,14 +4,18 @@ import logging
 import os
 import time
 import webbrowser
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import urlencode
 
 import aiortc
 import getstream.models
 from getstream import AsyncStream
-from getstream.chat.async_client import ChatClient
-from getstream.models import ChannelInput, ChannelMember, ChannelMemberRequest
+from getstream.models import (
+    ChannelInput,
+    ChannelMember,
+    ChannelMemberRequest,
+    UserRequest,
+)
 from getstream.video import rtc
 from getstream.video.async_call import Call as StreamCall
 from getstream.video.rtc import AudioStreamTrack, ConnectionManager
@@ -25,7 +29,7 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.agents.agents import tracer
-from vision_agents.core.edge import EdgeTransport, events
+from vision_agents.core.edge import Call, EdgeTransport, events
 from vision_agents.core.edge.types import Connection, Participant, TrackType, User
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
@@ -349,9 +353,8 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
             )
         )
 
-    async def create_conversation(self, call: StreamCall, user, instructions):
-        chat_client: ChatClient = call.client.stream.chat
-        channel = chat_client.channel(self.channel_type, call.id)
+    async def create_conversation(self, call: Call, user: User, instructions: str):
+        channel = self.client.chat.channel(self.channel_type, call.id)
         await channel.get_or_create(
             data=ChannelInput(created_by_id=user.id),
         )
@@ -366,11 +369,22 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
 
     async def create_users(self, users: list[User]):
         """Create multiple users in a single API call."""
-        from getstream.models import UserRequest
 
         users_map = {u.id: UserRequest(name=u.name, id=u.id) for u in users}
         response = await self.client.update_users(users_map)
         return [response.data.users[u.id] for u in users]
+
+    async def create_call(
+        self,
+        call_id: str,
+        agent_user_id: Optional[str] = None,
+        **kwargs,
+    ) -> Call:
+        """Shortcut for creating a call/room etc."""
+        call_type = kwargs.get("call_type", "default")
+        call = self.client.video.call(call_type, call_id)
+        await call.get_or_create(data={"created_by_id": self.agent_user_id})
+        return call
 
     async def join(self, agent: "Agent", call: StreamCall) -> StreamConnection:
         """
@@ -439,10 +453,11 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
             channels=stereo and 2 or 1,
         )  # default to webrtc framerate
 
-    def add_track_subscriber(
-        self, track_id: str
-    ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
-        return self._connection.subscriber_pc.add_track_subscriber(track_id)
+    def add_track_subscriber(self, track_id: str) -> Optional[aiortc.VideoStreamTrack]:
+        subscriber = self._connection.subscriber_pc.add_track_subscriber(track_id)
+        if subscriber is not None:
+            subscriber = cast(aiortc.VideoStreamTrack, subscriber)
+        return subscriber
 
     async def publish_tracks(
         self,

@@ -12,7 +12,7 @@ from .events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from .types import User
+from .types import Connection, User
 
 T_AudioTrack = TypeVar("T_AudioTrack", bound=aiortc.mediastreams.MediaStreamTrack)
 T_VideoTrack = TypeVar("T_VideoTrack", bound=aiortc.mediastreams.MediaStreamTrack)
@@ -43,38 +43,85 @@ class EdgeTransport(abc.ABC, Generic[T_AudioTrack, T_VideoTrack]):
 
     @abc.abstractmethod
     async def create_user(self, user: User):
+        """Create or update a user in the transport system.
+
+        Args:
+            user: User object containing id, name, and optional image.
+        """
+        pass
+
+    @abc.abstractmethod
+    async def create_call(
+        self, call_id: str, agent_user_id: Optional[str] = None, **kwargs
+    ) -> Call:
+        """Create a new call or retrieve an existing one.
+
+        Args:
+            call_id: Unique identifier for the call.
+            agent_user_id: Optional user ID for the agent in this call.
+            **kwargs: Additional transport-specific call configuration.
+
+        Returns:
+            Call: A Call object representing the call session.
+        """
         pass
 
     @abc.abstractmethod
     def create_audio_track(self) -> AudioStreamTrack:
+        """Create an audio stream track for sending audio to the call.
+
+        Returns:
+            AudioStreamTrack: A track that can be used to stream audio data.
+        """
         pass
 
     @abc.abstractmethod
     async def close(self):
+        """Close the transport and clean up all resources.
+
+        This should disconnect from any active calls, release network resources,
+        and perform any necessary cleanup.
+        """
         pass
 
     @abc.abstractmethod
     def open_demo(self, *args, **kwargs):
+        """Open a demo/preview interface for the call.
+
+        Args:
+            *args: Transport-specific positional arguments.
+            **kwargs: Transport-specific keyword arguments.
+        """
         pass
 
     @abc.abstractmethod
-    async def join(self, *args, **kwargs):
+    async def join(self, *args, **kwargs) -> Connection:
+        """
+        Join a call and establish a connection.
+
+        Returns:
+            Connection: An active connection to the call/session.
+        """
         pass
 
     @abc.abstractmethod
     async def publish_tracks(
         self, audio_track: Optional[T_AudioTrack], video_track: Optional[T_VideoTrack]
     ):
+        """Publish audio and/or video tracks to the active call.
+
+        Args:
+            audio_track: Optional audio track to publish.
+            video_track: Optional video track to publish.
+        """
         pass
 
     @abc.abstractmethod
-    async def create_conversation(self, call: Call, user: User, instructions):
+    async def create_conversation(self, call: Call, user: User, instructions: str):
         pass
 
     @abc.abstractmethod
-    def add_track_subscriber(
-        self, track_id: str
-    ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
+    def add_track_subscriber(self, track_id: str) -> Optional[aiortc.VideoStreamTrack]:
         pass
 
     @abc.abstractmethod

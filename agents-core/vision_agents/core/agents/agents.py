@@ -7,12 +7,9 @@ from collections import defaultdict
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Any,
     AsyncIterator,
-    Dict,
     Iterator,
-    List,
     Optional,
     TypeGuard,
 )
@@ -25,15 +22,15 @@ from opentelemetry import trace
 from opentelemetry.context import Token
 from opentelemetry.trace import Tracer, set_span_in_context
 from opentelemetry.trace.propagation import Context, Span
-from vision_agents.core.edge import Call
 
+from ..edge import Call, EdgeTransport
 from ..edge.events import (
     AudioReceivedEvent,
     CallEndedEvent,
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import Participant, TrackType, User
+from ..edge.types import Connection, Participant, TrackType, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -76,12 +73,6 @@ from .agent_types import AgentOptions, LLMTurn, TrackInfo, default_agent_options
 from .conversation import Conversation
 from .transcript_buffer import TranscriptBuffer
 
-if TYPE_CHECKING:
-    from vision_agents.plugins.getstream.stream_edge_transport import (
-        StreamConnection,
-        StreamEdge,
-    )
-
 logger = logging.getLogger(__name__)
 
 tracer: Tracer = trace.get_tracer("agents")
@@ -112,7 +103,7 @@ class Agent:
     Note: Don't reuse the agent object. Create a new agent object each time.
 
     Dev guidelines
-    - Small methods so its easy to subclass/change behaviour
+    - Small methods so it's easy to subclass/change behaviour
     """
 
     options: AgentOptions
@@ -120,7 +111,7 @@ class Agent:
     def __init__(
         self,
         # edge network for video & audio
-        edge: "StreamEdge",
+        edge: EdgeTransport,
         # llm, optionally with sts/realtime capabilities
         llm: LLM | AudioLLM | VideoLLM,
         # the agent's user info
@@ -135,9 +126,9 @@ class Agent:
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
-        processors: Optional[List[Processor]] = None,
+        processors: Optional[list[Processor]] = None,
         # MCP servers for external tool and resource access
-        mcp_servers: Optional[List[MCPBaseServer]] = None,
+        mcp_servers: Optional[list[MCPBaseServer]] = None,
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
@@ -201,7 +192,7 @@ class Agent:
         self.conversation: Optional[Conversation] = None
 
         # Track pending transcripts for turn-based response triggering
-        self._pending_user_transcripts: Dict[str, TranscriptBuffer] = defaultdict(
+        self._pending_user_transcripts: dict[str, TranscriptBuffer] = defaultdict(
             TranscriptBuffer
         )
 
@@ -220,9 +211,9 @@ class Agent:
         self.events.subscribe(self._on_agent_say)
 
         # Track metadata: track_id -> TrackInfo
-        self._active_video_tracks: Dict[str, TrackInfo] = {}
-        self._video_forwarders: List[VideoForwarder] = []
-        self._connection: Optional[StreamConnection] = None
+        self._active_video_tracks: dict[str, TrackInfo] = {}
+        self._video_forwarders: list[VideoForwarder] = []
+        self._connection: Optional[Connection] = None
 
         # Optional local video track override for debugging.
         # This track will play instead of any incoming video track.
@@ -347,7 +338,7 @@ class Agent:
             await self._incoming_audio_queue.put(event.pcm_data)
 
         @self.edge.events.subscribe
-        async def on_call_ended(event: CallEndedEvent):
+        async def on_call_ended(_: CallEndedEvent):
             if self._call_ended_event is not None:
                 self._call_ended_event.set()
 
@@ -715,8 +706,14 @@ class Agent:
         self._context_token = otel_context.attach(self._root_ctx)
 
     async def _apply(self, function_name: str, *args, **kwargs):
-        subclasses = [self.llm, self.stt, self.tts, self.turn_detection, self.edge]
-        subclasses.extend(self.processors)
+        subclasses = [
+            self.llm,
+            self.stt,
+            self.tts,
+            self.turn_detection,
+            self.edge,
+            *self.processors,
+        ]
         for subclass in subclasses:
             if (
                 subclass is not None
@@ -862,9 +859,9 @@ class Agent:
 
     async def create_call(self, call_type: str, call_id: str) -> Call:
         """Shortcut for creating a call/room etc."""
-        call = self.edge.client.video.call(call_type, call_id)
-        await call.get_or_create(data={"created_by_id": self.agent_user.id})
-
+        call = await self.edge.create_call(
+            call_id=call_id, agent_user_id=self.agent_user.id, call_type=call_type
+        )
         return call
 
     def _on_rtc_reconnect(self):
@@ -937,7 +934,7 @@ class Agent:
         self,
         text: str,
         user_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ):
         """
         Make the agent say something using TTS.
@@ -1086,7 +1083,7 @@ class Agent:
             track.track.stop()
             await self._on_track_change(track_id)
 
-    async def _on_track_change(self, track_id: str):
+    async def _on_track_change(self, _: str):
         # shared logic between track remove and added
         # Select a track. Prioritize screenshare over regular
         # This is the track without processing
@@ -1138,6 +1135,7 @@ class Agent:
             f"📺 Track added: {track_type.name} from {participant.user_id}"
         )
 
+        track: VideoStreamTrack | None
         if self._video_track_override_path is not None:
             # If local video track is set, we override all other video tracks with it.
             # We override tracks instead of simply playing one in order to keep the same lifecycle within the call.
@@ -1401,9 +1399,7 @@ class Agent:
         # Variables are now initialized in __init__
 
         if self.publish_audio:
-            self._audio_track = self.edge.create_audio_track(
-                sample_rate=48000, stereo=True
-            )
+            self._audio_track = self.edge.create_audio_track()
 
             @self.events.subscribe
             async def forward_audio(event: RealtimeAudioOutputEvent):
