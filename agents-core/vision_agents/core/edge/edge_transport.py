@@ -97,12 +97,22 @@ class EdgeTransport(abc.ABC, Generic[T_Call]):
         pass
 
     @abc.abstractmethod
-    async def join(self, *args, **kwargs) -> Connection:
-        """
-        Join a call and establish a connection.
+    async def join(self, agent: "Agent", call: T_Call, **kwargs) -> Connection:
+        """Join a call and establish a connection.
+
+        This method connects the agent to an active call session, setting up
+        the necessary infrastructure for real-time audio/video communication.
+        Implementations should configure media subscriptions, set up event handlers,
+        and establish the transport-specific connection.
+
+        Args:
+            agent: The Agent instance joining the call.
+            call: Call object representing the call session to join.
+            **kwargs: Additional transport-specific configuration options.
 
         Returns:
-            Connection: An active connection to the call/session.
+            Connection: An active connection implementing the Connection interface,
+                which provides methods for managing the connection lifecycle.
         """
         pass
 
