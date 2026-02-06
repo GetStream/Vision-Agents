@@ -75,11 +75,10 @@ def _to_core_participant(
     if participant is None:
         return None
 
-    user_id = getattr(participant, "user_id", None)
-    if not user_id:
+    if not participant.user_id:
         return None
 
-    return Participant(original=participant, user_id=user_id)
+    return Participant(original=participant, user_id=participant.user_id)
 
 
 class StreamConnection(Connection):
@@ -184,7 +183,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         return self._real_connection
 
     def _get_webrtc_kind(self, track_type_int: int) -> str:
-        """Get the expected WebRTC kind (audio/video) for a SFU track type."""
+        """Get the expected WebRTC kind (audio/video) for an SFU track type."""
         # Map SFU track types to WebRTC kinds
         if track_type_int in (
             StreamTrackType.TRACK_TYPE_AUDIO,
