@@ -14,10 +14,7 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    vlm = gemini.VLM(
-        model=os.getenv("GEMINI_VLM_MODEL", "gemini-3-flash-preview"),
-        api_key=os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"),
-    )
+    vlm = gemini.VLM()
 
     agent = Agent(
         edge=getstream.Edge(),
