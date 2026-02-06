@@ -4,34 +4,81 @@ import logging
 import os
 import time
 import webbrowser
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import urlencode
 
 import aiortc
+import getstream.models
 from getstream import AsyncStream
-from getstream.chat.async_client import ChatClient
-from getstream.models import ChannelInput, ChannelMember, ChannelMemberRequest
+from getstream.models import (
+    ChannelInput,
+    ChannelMember,
+    ChannelMemberRequest,
+    UserRequest,
+)
 from getstream.video import rtc
-from getstream.video.async_call import Call
-from getstream.video.rtc import ConnectionManager, audio_track
+from getstream.video.async_call import Call as StreamCall
+from getstream.video.rtc import AudioStreamTrack, ConnectionManager
 from getstream.video.rtc.participants import ParticipantsState
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
-    Participant,
-    TrackType,
+    Participant as StreamParticipant,
+)
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
+    TrackType as StreamTrackType,
 )
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.agents.agents import tracer
-from vision_agents.core.edge import EdgeTransport, events, sfu_events
-from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
-from vision_agents.core.events.manager import EventManager
+from vision_agents.core.edge import Call, EdgeTransport, events
+from vision_agents.core.edge.types import Connection, Participant, TrackType, User
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
+
+from . import sfu_events
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
 
 logger = logging.getLogger(__name__)
+
+
+# Conversion maps and functions for getstream -> core types
+_TRACK_TYPE_MAP = {
+    StreamTrackType.TRACK_TYPE_UNSPECIFIED: TrackType.UNSPECIFIED,
+    StreamTrackType.TRACK_TYPE_VIDEO: TrackType.VIDEO,
+    StreamTrackType.TRACK_TYPE_AUDIO: TrackType.AUDIO,
+    StreamTrackType.TRACK_TYPE_SCREEN_SHARE: TrackType.SCREEN_SHARE,
+    StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO: TrackType.SCREEN_SHARE_AUDIO,
+}
+
+
+def _to_core_track_type(stream_track_type: StreamTrackType.ValueType) -> TrackType:
+    """Convert getstream TrackType to core TrackType."""
+    type_ = _TRACK_TYPE_MAP.get(stream_track_type)
+    if type_ is None:
+        raise ValueError(f"Unknown track type: {stream_track_type}")
+    return type_
+
+
+def _to_core_participant(
+    participant: sfu_events.Participant | StreamParticipant | None,
+) -> Participant | None:
+    """Convert plugin or protobuf participant to core Participant type.
+
+    Args:
+        participant: Plugin's sfu_events.Participant wrapper, protobuf
+            StreamParticipant, or None
+
+    Returns:
+        Core Participant with original and user_id, or None
+    """
+    if participant is None:
+        return None
+
+    if not participant.user_id:
+        return None
+
+    return Participant(original=participant, user_id=participant.user_id)
 
 
 class StreamConnection(Connection):
@@ -79,7 +126,7 @@ class StreamConnection(Connection):
         except Exception as e:
             logger.error(f"Error during connection close: {e}")
 
-    def _on_participant_change(self, participants: list[Participant]) -> None:
+    def _on_participant_change(self, participants: list[StreamParticipant]) -> None:
         # Get all participants except the agent itself.
         other_participants = [
             p for p in participants if p.user_id != self._connection.user_id
@@ -95,7 +142,7 @@ class StreamConnection(Connection):
             self._idle_since = time.time()
 
 
-class StreamEdge(EdgeTransport):
+class StreamEdge(EdgeTransport[StreamCall]):
     """
     StreamEdge uses getstream.io's edge network. To support multiple vendors, this means we expose
 
@@ -108,9 +155,9 @@ class StreamEdge(EdgeTransport):
         super().__init__()
         version = get_vision_agents_version()
         self.client = AsyncStream(user_agent=f"stream-vision-agents-{version}")
-        self.events = EventManager()
-        self.events.register_events_from_module(events)
+        # self.events is inherited from EdgeTransport (with required events already registered)
         self.events.register_events_from_module(sfu_events)
+        self.events.register_events_from_module(getstream.models, "call.")
         self.conversation: Optional[StreamConversation] = None
         self.channel_type = "messaging"
         self.agent_user_id: str | None = None
@@ -122,7 +169,7 @@ class StreamEdge(EdgeTransport):
         self._pending_tracks: dict = {}
 
         self._real_connection: Optional[ConnectionManager] = None
-        self._call: Optional[Call] = None
+        self._call: Optional[StreamCall] = None
 
         # Register event handlers
         self.events.subscribe(self._on_track_published)
@@ -136,16 +183,16 @@ class StreamEdge(EdgeTransport):
         return self._real_connection
 
     def _get_webrtc_kind(self, track_type_int: int) -> str:
-        """Get the expected WebRTC kind (audio/video) for a SFU track type."""
+        """Get the expected WebRTC kind (audio/video) for an SFU track type."""
         # Map SFU track types to WebRTC kinds
         if track_type_int in (
-            TrackType.TRACK_TYPE_AUDIO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
+            StreamTrackType.TRACK_TYPE_AUDIO,
+            StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
         ):
             return "audio"
         elif track_type_int in (
-            TrackType.TRACK_TYPE_VIDEO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE,
+            StreamTrackType.TRACK_TYPE_VIDEO,
+            StreamTrackType.TRACK_TYPE_SCREEN_SHARE,
         ):
             return "video"
         else:
@@ -164,17 +211,21 @@ class StreamEdge(EdgeTransport):
             user_id = event.payload.user_id
             session_id = event.payload.session_id
 
+        # Convert Stream track type to the Vision agents track type
         track_type_int = event.payload.type  # TrackType enum int from SFU
-        expected_kind = self._get_webrtc_kind(track_type_int)
-        track_key = (user_id, session_id, track_type_int)
-        is_agent_track = user_id == self.agent_user_id
+        track_type = _to_core_track_type(track_type_int)
+        webrtc_track_kind = self._get_webrtc_kind(track_type_int)
 
         # Skip processing the agent's own tracks - we don't subscribe to them
+        is_agent_track = user_id == self.agent_user_id
         if is_agent_track:
-            logger.debug(f"Skipping agent's own track: {track_type_int} from {user_id}")
+            logger.debug(
+                f'Skipping agent\'s own track: "{track_type.name}" from {user_id}'
+            )
             return
 
         # First check if track already exists in map (e.g., from previous unpublish/republish)
+        track_key = (user_id, session_id, track_type_int)
         if track_key in self._track_map:
             self._track_map[track_key]["published"] = True
             track_id = self._track_map[track_key]["track_id"]
@@ -184,8 +235,8 @@ class StreamEdge(EdgeTransport):
                 events.TrackAddedEvent(
                     plugin_name="getstream",
                     track_id=track_id,
-                    track_type=track_type_int,
-                    user=event.participant,
+                    track_type=track_type,
+                    participant=_to_core_participant(event.participant),
                 )
             )
             return
@@ -205,7 +256,7 @@ class StreamEdge(EdgeTransport):
                 if (
                     pending_user == user_id
                     and pending_session == session_id
-                    and pending_kind == expected_kind
+                    and pending_kind == webrtc_track_kind
                 ):
                     track_id = tid
                     del self._pending_tracks[tid]
@@ -229,15 +280,14 @@ class StreamEdge(EdgeTransport):
                     events.TrackAddedEvent(
                         plugin_name="getstream",
                         track_id=track_id,
-                        track_type=track_type_int,
-                        user=event.participant,
-                        participant=event.participant,
+                        track_type=track_type,
+                        participant=_to_core_participant(event.participant),
                     )
                 )
 
         else:
             raise TimeoutError(
-                f"Timeout waiting for pending track: {track_type_int} ({expected_kind}) from user {user_id}, "
+                f"Timeout waiting for pending track: {track_type.name} from user {user_id}, "
                 f"session {session_id}. Waited {timeout}s but WebRTC track_added with matching kind was never received."
                 f"Pending tracks: {self._pending_tracks}\n"
                 f"Key: {track_key}\n"
@@ -271,11 +321,12 @@ class StreamEdge(EdgeTransport):
             ) or []
             event_desc = "Participant left"
 
-        track_names = [TrackType.Name(t) for t in tracks_to_remove]
+        track_names = [StreamTrackType.Name(t) for t in tracks_to_remove]
         logger.info(f"{event_desc}: {user_id}, tracks: {track_names}")
 
         # Mark each track as unpublished and send TrackRemovedEvent
         for track_type_int in tracks_to_remove:
+            track_type = _to_core_track_type(track_type_int)
             track_key = (user_id, session_id, track_type_int)
             track_info = self._track_map.get(track_key)
 
@@ -285,10 +336,8 @@ class StreamEdge(EdgeTransport):
                     events.TrackRemovedEvent(
                         plugin_name="getstream",
                         track_id=track_id,
-                        track_type=track_type_int,
-                        user=participant,
-                        # TODO: user=participant?
-                        participant=participant,
+                        track_type=track_type,
+                        participant=_to_core_participant(participant),
                     )
                 )
                 # Mark as unpublished instead of removing
@@ -303,9 +352,8 @@ class StreamEdge(EdgeTransport):
             )
         )
 
-    async def create_conversation(self, call: Call, user, instructions):
-        chat_client: ChatClient = call.client.stream.chat
-        channel = chat_client.channel(self.channel_type, call.id)
+    async def create_conversation(self, call: Call, user: User, instructions: str):
+        channel = self.client.chat.channel(self.channel_type, call.id)
         await channel.get_or_create(
             data=ChannelInput(created_by_id=user.id),
         )
@@ -320,21 +368,37 @@ class StreamEdge(EdgeTransport):
 
     async def create_users(self, users: list[User]):
         """Create multiple users in a single API call."""
-        from getstream.models import UserRequest
 
         users_map = {u.id: UserRequest(name=u.name, id=u.id) for u in users}
         response = await self.client.update_users(users_map)
         return [response.data.users[u.id] for u in users]
 
-    async def join(self, agent: "Agent", call: Call) -> StreamConnection:
-        """
-        The logic for joining a call is different for each edge network/realtime audio/video provider
+    async def create_call(self, call_id: str, **kwargs) -> StreamCall:
+        """Shortcut for creating a call/room etc."""
+        call_type = kwargs.get("call_type", "default")
+        call = self.client.video.call(call_type, call_id)
+        await call.get_or_create(data={"created_by_id": self.agent_user_id})
+        return call
 
-        This function
-        - initializes the chat channel
-        - has the agent.agent_user join the call
-        - connects incoming audio/video to the agent
-        - connecting agent's outgoing audio/video to the call
+    async def join(
+        self, agent: "Agent", call: StreamCall, **kwargs
+    ) -> StreamConnection:
+        """Join a GetStream call and establish a WebRTC connection.
+
+        This method:
+        - Configures WebRTC subscription for audio/video tracks
+        - Joins the call with the agent's user ID
+        - Sets up track and audio event handlers
+        - Re-emits participant and track events for the agent to consume
+        - Establishes the connection and republishes existing tracks
+
+        Args:
+            agent: The Agent instance joining the call.
+            call: StreamCall object representing the GetStream call to join.
+            **kwargs: Additional configuration options (unused).
+
+        Returns:
+            StreamConnection: A connection wrapper implementing the core Connection interface.
         """
 
         # Traditional mode - use WebRTC connection
@@ -361,7 +425,7 @@ class StreamEdge(EdgeTransport):
                 events.AudioReceivedEvent(
                     plugin_name="getstream",
                     pcm_data=pcm,
-                    participant=pcm.participant,
+                    participant=_to_core_participant(pcm.participant),
                 )
             )
 
@@ -385,23 +449,25 @@ class StreamEdge(EdgeTransport):
         return standardize_connection
 
     def create_audio_track(
-        self, framerate: int = 48000, stereo: bool = True
-    ) -> OutputAudioTrack:
-        return audio_track.AudioStreamTrack(
+        self, sample_rate: int = 48000, stereo: bool = True
+    ) -> AudioStreamTrack:
+        return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
-            sample_rate=framerate,
+            sample_rate=sample_rate,
             channels=stereo and 2 or 1,
         )  # default to webrtc framerate
 
-    def create_video_track(self):
-        return aiortc.VideoStreamTrack()
+    def add_track_subscriber(self, track_id: str) -> Optional[aiortc.VideoStreamTrack]:
+        subscriber = self._connection.subscriber_pc.add_track_subscriber(track_id)
+        if subscriber is not None:
+            subscriber = cast(aiortc.VideoStreamTrack, subscriber)
+        return subscriber
 
-    def add_track_subscriber(
-        self, track_id: str
-    ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
-        return self._connection.subscriber_pc.add_track_subscriber(track_id)
-
-    async def publish_tracks(self, audio_track, video_track):
+    async def publish_tracks(
+        self,
+        audio_track: Optional[aiortc.MediaStreamTrack],
+        video_track: Optional[aiortc.MediaStreamTrack],
+    ):
         """
         Add the tracks to publish audio and video
         """
@@ -415,15 +481,14 @@ class StreamEdge(EdgeTransport):
     def _get_subscription_config(self):
         return TrackSubscriptionConfig(
             track_types=[
-                TrackType.TRACK_TYPE_VIDEO,
-                TrackType.TRACK_TYPE_AUDIO,
-                TrackType.TRACK_TYPE_SCREEN_SHARE,
-                TrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
+                StreamTrackType.TRACK_TYPE_VIDEO,
+                StreamTrackType.TRACK_TYPE_AUDIO,
+                StreamTrackType.TRACK_TYPE_SCREEN_SHARE,
+                StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
             ]
         )
 
     async def close(self):
-        # Note: Not calling super().close() as it's an abstract method with trivial body
         self._call = None
 
     async def send_custom_event(self, data: dict) -> None:
@@ -452,7 +517,7 @@ class StreamEdge(EdgeTransport):
         return await self.open_demo(call)
 
     @tracer.start_as_current_span("stream_edge.open_demo")
-    async def open_demo(self, call: Call) -> str:
+    async def open_demo(self, call: StreamCall) -> str:
         client = call.client.stream
 
         # Create a human user for testing

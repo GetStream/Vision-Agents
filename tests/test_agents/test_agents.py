@@ -1,17 +1,14 @@
 import asyncio
 from typing import Any, Optional
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from getstream.video.rtc import Call
+from getstream.video.rtc import AudioStreamTrack
 from vision_agents.core import Agent, User
-from vision_agents.core.edge import EdgeTransport
-from vision_agents.core.edge.types import OutputAudioTrack
+from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.tts import TTS
-from vision_agents.core.utils import audio_track
 from vision_agents.core.warmup import Warmable
 
 
@@ -51,8 +48,13 @@ class DummyEdge(EdgeTransport):
     async def create_user(self, user: User):
         return
 
-    def create_audio_track(self, *args, **kwargs) -> OutputAudioTrack:
-        return audio_track.AudioStreamTrack(
+    async def create_call(
+        self, call_id: str, agent_user_id: Optional[str] = None, **kwargs
+    ) -> Call:
+        return DummyCall(call_id=call_id)
+
+    def create_audio_track(self, *args, **kwargs) -> AudioStreamTrack:
+        return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
             sample_rate=48000,
             channels=2,
@@ -84,9 +86,18 @@ class DummyEdge(EdgeTransport):
         self.last_custom_event = data
 
 
+class DummyCall(Call):
+    def __init__(self, call_id: str):
+        self._id = call_id
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+
 @pytest.fixture
 def call():
-    return Call(call_id=str(uuid4()), call_type="default", client=AsyncMock())
+    return DummyCall(call_id=str(uuid4()))
 
 
 class SomeException(Exception):

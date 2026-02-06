@@ -44,7 +44,7 @@ async def create_agent(**kwargs) -> Agent:
         user_info = "unknown"
         if event.participant:
             user = event.participant
-            user_info = user.name if user.name else str(user)
+            user_info = user.user_id if user.user_id else str(user)
 
         logger.info(f"[{event.timestamp}] {user_info}: {event.text}")
         if event.confidence:

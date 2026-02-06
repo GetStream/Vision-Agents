@@ -1,30 +1,26 @@
 import asyncio
 import json
-from typing import Any, Optional, Callable, cast, Literal
+import logging
+from typing import Any, Callable, Literal, Optional, cast
 
 import av
 from aiortc import (
-    RTCPeerConnection,
-    RTCSessionDescription,
     RTCDataChannel,
+    RTCPeerConnection,
     RTCRtpSender,
+    RTCSessionDescription,
 )
+from aiortc.mediastreams import MediaStreamTrack
+from getstream.video.rtc.audio_track import AudioStreamTrack
+from getstream.video.rtc.track_util import PcmData
 from openai import AsyncOpenAI
-from openai.types.realtime import RealtimeSessionCreateRequestParam
 from openai.types.beta.realtime import (
-    ConversationItemCreateEvent,
     ConversationItem,
     ConversationItemContent,
+    ConversationItemCreateEvent,
 )
-
-from getstream.video.rtc.audio_track import AudioStreamTrack
-import logging
-from getstream.video.rtc.track_util import PcmData
-
-from aiortc.mediastreams import MediaStreamTrack
-
+from openai.types.realtime import RealtimeSessionCreateRequestParam
 from vision_agents.core.utils.audio_forwarder import AudioForwarder
-from vision_agents.core.utils.audio_track import QueuedAudioTrack
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
@@ -55,7 +51,7 @@ class RTCManager:
         self.data_channel: Optional[RTCDataChannel] = None
 
         # tracks for sharing audio & video
-        self._audio_to_openai_track: QueuedAudioTrack = QueuedAudioTrack(
+        self._audio_to_openai_track: AudioStreamTrack = AudioStreamTrack(
             sample_rate=48000
         )
         self._video_to_openai_track: QueuedVideoTrack = QueuedVideoTrack()

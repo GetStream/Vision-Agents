@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from dataclasses_json import DataClassJsonMixin
-from google.protobuf.json_format import MessageToDict
 from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
+from google.protobuf.json_format import MessageToDict
 from vision_agents.core.events.base import BaseEvent
 
 # Note: For enum fields typed as 'int', use the corresponding enum from:
@@ -1492,7 +1492,7 @@ class ParticipantJoinedEvent(BaseEvent):
             return None
         return getattr(self.payload, "call_cid", None)
 
-    @property  # type: ignore[misc]
+    @property  # type: ignore[override,misc]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
@@ -1541,7 +1541,7 @@ class ParticipantLeftEvent(BaseEvent):
             return None
         return getattr(self.payload, "call_cid", None)
 
-    @property  # type: ignore[misc]
+    @property  # type: ignore[misc,override]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
@@ -1621,7 +1621,7 @@ class ParticipantUpdatedEvent(BaseEvent):
             return None
         return getattr(self.payload, "call_cid", None)
 
-    @property  # type: ignore[misc]
+    @property  # type: ignore[misc,override]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
@@ -2096,7 +2096,7 @@ class TrackPublishedEvent(BaseEvent):
             return None
         return getattr(self.payload, "user_id", None)
 
-    @property  # type: ignore[misc]
+    @property  # type: ignore[misc,override]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
@@ -2152,7 +2152,7 @@ class TrackUnpublishedEvent(BaseEvent):
             return None
         return getattr(self.payload, "cause", None)
 
-    @property  # type: ignore[misc]
+    @property  # type: ignore[misc,override]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:

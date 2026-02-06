@@ -5,8 +5,8 @@ import os
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.core.events import CallSessionParticipantJoinedEvent
 from vision_agents.plugins import deepgram, elevenlabs, getstream, moondream
+from vision_agents.plugins.getstream import CallSessionParticipantJoinedEvent
 
 logger = logging.getLogger(__name__)
 
