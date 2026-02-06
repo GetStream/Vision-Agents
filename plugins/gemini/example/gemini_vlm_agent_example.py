@@ -2,10 +2,10 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
-from getstream.models import CallSessionParticipantJoinedEvent
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
+from vision_agents.plugins.getstream import CallSessionParticipantJoinedEvent
 
 logger = logging.getLogger(__name__)
 

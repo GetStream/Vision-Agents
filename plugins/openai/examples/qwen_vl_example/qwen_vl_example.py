@@ -1,8 +1,6 @@
 import asyncio
 
 from dotenv import load_dotenv
-from getstream.models import CallSessionParticipantJoinedEvent
-
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, elevenlabs, getstream, openai
