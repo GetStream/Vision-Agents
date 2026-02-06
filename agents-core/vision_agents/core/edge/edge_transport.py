@@ -1,5 +1,5 @@
 import abc
-from typing import Any, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 import aiortc
 from getstream.video.rtc import AudioStreamTrack
@@ -14,11 +14,13 @@ from .events import (
 )
 from .types import Connection, User
 
-T_AudioTrack = TypeVar("T_AudioTrack", bound=aiortc.mediastreams.MediaStreamTrack)
-T_VideoTrack = TypeVar("T_VideoTrack", bound=aiortc.mediastreams.MediaStreamTrack)
+if TYPE_CHECKING:
+    from vision_agents.core import Agent
+
+T_Call = TypeVar("T_Call", bound=Call)
 
 
-class EdgeTransport(abc.ABC, Generic[T_AudioTrack, T_VideoTrack]):
+class EdgeTransport(abc.ABC, Generic[T_Call]):
     """Abstract base class for edge transports.
 
     Required Events (implementations must emit these):
@@ -53,7 +55,7 @@ class EdgeTransport(abc.ABC, Generic[T_AudioTrack, T_VideoTrack]):
     @abc.abstractmethod
     async def create_call(
         self, call_id: str, agent_user_id: Optional[str] = None, **kwargs
-    ) -> Call:
+    ) -> T_Call:
         """Create a new call or retrieve an existing one.
 
         Args:
@@ -106,7 +108,9 @@ class EdgeTransport(abc.ABC, Generic[T_AudioTrack, T_VideoTrack]):
 
     @abc.abstractmethod
     async def publish_tracks(
-        self, audio_track: Optional[T_AudioTrack], video_track: Optional[T_VideoTrack]
+        self,
+        audio_track: Optional[aiortc.MediaStreamTrack],
+        video_track: Optional[aiortc.MediaStreamTrack],
     ):
         """Publish audio and/or video tracks to the active call.
 

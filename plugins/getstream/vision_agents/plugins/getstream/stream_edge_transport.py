@@ -143,7 +143,7 @@ class StreamConnection(Connection):
             self._idle_since = time.time()
 
 
-class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]):
+class StreamEdge(EdgeTransport[StreamCall]):
     """
     StreamEdge uses getstream.io's edge network. To support multiple vendors, this means we expose
 
@@ -379,22 +379,32 @@ class StreamEdge(EdgeTransport[aiortc.MediaStreamTrack, aiortc.MediaStreamTrack]
         call_id: str,
         agent_user_id: Optional[str] = None,
         **kwargs,
-    ) -> Call:
+    ) -> StreamCall:
         """Shortcut for creating a call/room etc."""
         call_type = kwargs.get("call_type", "default")
         call = self.client.video.call(call_type, call_id)
         await call.get_or_create(data={"created_by_id": self.agent_user_id})
         return call
 
-    async def join(self, agent: "Agent", call: StreamCall) -> StreamConnection:
-        """
-        The logic for joining a call is different for each edge network/realtime audio/video provider
+    async def join(
+        self, agent: "Agent", call: StreamCall, **kwargs
+    ) -> StreamConnection:
+        """Join a GetStream call and establish a WebRTC connection.
 
-        This function
-        - initializes the chat channel
-        - has the agent.agent_user join the call
-        - connects incoming audio/video to the agent
-        - connecting agent's outgoing audio/video to the call
+        This method:
+        - Configures WebRTC subscription for audio/video tracks
+        - Joins the call with the agent's user ID
+        - Sets up track and audio event handlers
+        - Re-emits participant and track events for the agent to consume
+        - Establishes the connection and republishes existing tracks
+
+        Args:
+            agent: The Agent instance joining the call.
+            call: StreamCall object representing the GetStream call to join.
+            **kwargs: Additional configuration options (unused).
+
+        Returns:
+            StreamConnection: A connection wrapper implementing the core Connection interface.
         """
 
         # Traditional mode - use WebRTC connection

@@ -48,6 +48,11 @@ class DummyEdge(EdgeTransport):
     async def create_user(self, user: User):
         return
 
+    async def create_call(
+        self, call_id: str, agent_user_id: Optional[str] = None, **kwargs
+    ) -> Call:
+        return DummyCall(call_id=call_id)
+
     def create_audio_track(self, *args, **kwargs) -> AudioStreamTrack:
         return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
