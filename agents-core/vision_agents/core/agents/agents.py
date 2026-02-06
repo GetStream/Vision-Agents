@@ -198,7 +198,7 @@ class Agent:
 
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, llm, edge, profiler]:
-            if plugin and hasattr(plugin, "events"):
+            if plugin is not None:
                 self.logger.debug(f"Register events from plugin {plugin}")
                 self.events.merge(plugin.events)
 
