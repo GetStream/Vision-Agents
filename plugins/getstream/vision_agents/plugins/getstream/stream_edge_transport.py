@@ -373,12 +373,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         response = await self.client.update_users(users_map)
         return [response.data.users[u.id] for u in users]
 
-    async def create_call(
-        self,
-        call_id: str,
-        agent_user_id: Optional[str] = None,
-        **kwargs,
-    ) -> StreamCall:
+    async def create_call(self, call_id: str, **kwargs) -> StreamCall:
         """Shortcut for creating a call/room etc."""
         call_type = kwargs.get("call_type", "default")
         call = self.client.video.call(call_type, call_id)

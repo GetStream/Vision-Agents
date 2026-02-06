@@ -53,14 +53,11 @@ class EdgeTransport(abc.ABC, Generic[T_Call]):
         pass
 
     @abc.abstractmethod
-    async def create_call(
-        self, call_id: str, agent_user_id: Optional[str] = None, **kwargs
-    ) -> T_Call:
+    async def create_call(self, call_id: str, **kwargs) -> T_Call:
         """Create a new call or retrieve an existing one.
 
         Args:
             call_id: Unique identifier for the call.
-            agent_user_id: Optional user ID for the agent in this call.
             **kwargs: Additional transport-specific call configuration.
 
         Returns:
