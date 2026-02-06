@@ -15,15 +15,17 @@ from google.genai.types import (
     GenerateContentConfig,
     GenerateContentResponse,
     MediaResolution,
+    ThinkingConfig,
     ThinkingLevel,
 )
+from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
+    VLMErrorEvent,
     VLMInferenceCompletedEvent,
     VLMInferenceStartEvent,
-    VLMErrorEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
 from vision_agents.core.processors import Processor
@@ -98,6 +100,7 @@ class GeminiVLM(VideoLLM):
             self._base_config = None
 
         self.chat: Optional[Any] = None
+        self._config = self._build_config()
 
         if client is not None:
             self.client = client
@@ -113,43 +116,28 @@ class GeminiVLM(VideoLLM):
         self._frame_height = frame_height
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
-    def _build_config(
-        self,
-        system_instruction: Optional[str] = None,
-        base_config: Optional[GenerateContentConfig] = None,
-    ) -> GenerateContentConfig:
-        """
-        Build GenerateContentConfig with Gemini 3 features.
-
-        Args:
-            system_instruction: Optional system instruction to include.
-            base_config: Optional base config to extend.
-
-        Returns:
-            GenerateContentConfig with configured Gemini settings.
-        """
-        if base_config is not None:
-            config = base_config
-        elif self._base_config is not None:
-            config = self._base_config
-        else:
-            config = GenerateContentConfig()
-
-        effective_instruction = (
-            system_instruction if system_instruction else self._instructions
+    def _build_config(self) -> GenerateContentConfig:
+        """Build GenerateContentConfig from current instance settings."""
+        config = (
+            self._base_config
+            if self._base_config is not None
+            else GenerateContentConfig()
         )
-        if effective_instruction:
-            config.system_instruction = effective_instruction
+
+        if self._instructions:
+            config.system_instruction = self._instructions
 
         if self.thinking_level:
-            from google.genai.types import ThinkingConfig
-
             config.thinking_config = ThinkingConfig(thinking_level=self.thinking_level)
 
         if self.media_resolution:
             config.media_resolution = self.media_resolution
 
         return config
+
+    def set_instructions(self, instructions: Instructions | str) -> None:
+        super().set_instructions(instructions)
+        self._config = self._build_config()
 
     async def simple_response(
         self,
@@ -172,8 +160,7 @@ class GeminiVLM(VideoLLM):
             )
 
         if self.chat is None:
-            config = self._build_config(system_instruction=self._instructions)
-            self.chat = self.client.chats.create(model=self.model, config=config)
+            self.chat = self.client.chats.create(model=self.model, config=self._config)
 
         frames_count = len(self._frame_buffer)
         inference_id = str(uuid.uuid4())
@@ -200,20 +187,9 @@ class GeminiVLM(VideoLLM):
 
         try:
             parts = await self._build_message_parts(text)
-            cfg = None
-            if (
-                self.thinking_level
-                or self.media_resolution
-                or self._base_config is not None
-            ):
-                cfg = self._build_config()
-
-            if cfg is None:
-                iterator = await self.chat.send_message_stream(message=parts)
-            else:
-                iterator = await self.chat.send_message_stream(
-                    message=parts, config=cfg
-                )
+            iterator = await self.chat.send_message_stream(
+                message=parts, config=self._config
+            )
 
             text_parts: list[str] = []
             final_chunk: Optional[GenerateContentResponse] = None
