@@ -32,7 +32,7 @@ class TestSmartTurn:
             assert 1.0 > result > 0.0
 
     async def test_turn_detection_chunks(self, smart_turn, mia_audio_16khz):
-        participant = Participant(user_id="mia", original={})
+        participant = Participant(user_id="mia", id="mia", original={})
         conversation = InMemoryConversation(instructions="be nice", messages=[])
 
         event_order = []
@@ -62,7 +62,7 @@ class TestSmartTurn:
         ]
 
     async def test_turn_detection(self, smart_turn, mia_audio_16khz):
-        participant = Participant(user_id="mia", original={})
+        participant = Participant(user_id="mia", id="mia", original={})
         conversation = InMemoryConversation(instructions="be nice", messages=[])
         event_order = []
 
