@@ -29,10 +29,9 @@ async def audio_filter(tmp_path):
     return f
 
 
-@pytest.mark.skip_blockbuster
 class TestFirstSpeakerWinsFilter:
     async def test_no_lock_on_silence(self, audio_filter, silence_1s_16khz):
-        """Silence does not acquire the lock."""
+        """Silent audio does not acquire the speaker lock."""
         alice = _participant("alice")
         chunk = _silence_chunk(silence_1s_16khz)
 
@@ -43,7 +42,7 @@ class TestFirstSpeakerWinsFilter:
         assert audio_filter.active_speaker_id is None
 
     async def test_lock_acquired_on_speech(self, audio_filter, mia_audio_16khz_chunked):
-        """First participant with speech acquires the lock."""
+        """The first participant whose audio contains speech acquires the speaker lock."""
         alice = _participant("alice")
 
         for chunk in mia_audio_16khz_chunked:
@@ -56,7 +55,7 @@ class TestFirstSpeakerWinsFilter:
     async def test_lock_blocks_other_participants(
         self, audio_filter, mia_audio_16khz_chunked, silence_1s_16khz
     ):
-        """Once someone holds the lock, other participants' audio is dropped."""
+        """While the lock is held, audio from other participants is dropped."""
         alice = _participant("alice")
         bob = _participant("bob")
 
@@ -72,7 +71,7 @@ class TestFirstSpeakerWinsFilter:
     async def test_active_speaker_audio_passes(
         self, audio_filter, mia_audio_16khz_chunked
     ):
-        """The active speaker's audio continues to pass through."""
+        """Audio from the active speaker continues to pass through the filter."""
         alice = _participant("alice")
         chunks = iter(mia_audio_16khz_chunked)
 
@@ -90,7 +89,7 @@ class TestFirstSpeakerWinsFilter:
     async def test_lock_released_on_silence_timeout(
         self, audio_filter, mia_audio_16khz_chunked, silence_1s_16khz
     ):
-        """Lock is released after sufficient silence from the active speaker."""
+        """The speaker lock is released after continuous silence exceeds the timeout."""
         alice = _participant("alice")
 
         for chunk in mia_audio_16khz_chunked:
@@ -107,7 +106,7 @@ class TestFirstSpeakerWinsFilter:
         assert audio_filter.active_speaker_id is None
 
     async def test_clear_releases_lock(self, audio_filter, mia_audio_16khz_chunked):
-        """clear() resets the active speaker lock."""
+        """Calling clear() without a participant unconditionally releases the lock."""
         alice = _participant("alice")
 
         for chunk in mia_audio_16khz_chunked:
@@ -122,7 +121,7 @@ class TestFirstSpeakerWinsFilter:
     async def test_second_speaker_can_acquire_after_release(
         self, audio_filter, mia_audio_16khz_chunked, silence_1s_16khz
     ):
-        """After release, another speaker can acquire the lock."""
+        """After the lock is released, a different speaker can acquire it."""
         alice = _participant("alice")
         bob = _participant("bob")
 
@@ -146,8 +145,39 @@ class TestFirstSpeakerWinsFilter:
                 break
         assert audio_filter.active_speaker_id == "bob"
 
+    async def test_clear_ignores_other_participant(
+        self, audio_filter, mia_audio_16khz_chunked
+    ):
+        """Clearing for a non-active participant does not release the lock."""
+        alice = _participant("alice")
+        bob = _participant("bob")
+
+        for chunk in mia_audio_16khz_chunked:
+            await audio_filter.process_audio(chunk, alice)
+            if audio_filter.active_speaker_id is not None:
+                break
+        assert audio_filter.active_speaker_id == "alice"
+
+        audio_filter.clear(bob)
+        assert audio_filter.active_speaker_id == "alice"
+
+    async def test_clear_with_active_participant(
+        self, audio_filter, mia_audio_16khz_chunked
+    ):
+        """Clearing for the active participant releases the lock."""
+        alice = _participant("alice")
+
+        for chunk in mia_audio_16khz_chunked:
+            await audio_filter.process_audio(chunk, alice)
+            if audio_filter.active_speaker_id is not None:
+                break
+        assert audio_filter.active_speaker_id == "alice"
+
+        audio_filter.clear(alice)
+        assert audio_filter.active_speaker_id is None
+
     async def test_raises_if_not_warmed_up(self, silence_1s_16khz):
-        """process_audio raises RuntimeError if warmup() was not called."""
+        """Calling process_audio before warmup() raises RuntimeError."""
         f = FirstSpeakerWinsFilter()
         alice = _participant("alice")
 
