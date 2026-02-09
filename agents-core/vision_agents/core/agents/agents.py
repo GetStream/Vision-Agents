@@ -347,6 +347,7 @@ class Agent:
                 await queue.put(pcm)
             else:
                 queue = AudioQueue(buffer_limit_ms=self._audio_buffer_limit_ms)
+                await queue.put(pcm)
                 self._participant_queues[participant.id] = (participant, queue)
 
         @self.edge.events.subscribe
