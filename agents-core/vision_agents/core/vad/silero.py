@@ -15,11 +15,6 @@ SILERO_ONNX_FILENAME = "silero_vad.onnx"
 SILERO_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
 
 
-def _ensure_dir(dir_path: str):
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-
-
 class SileroVADSessionPool:
     """
     Initialize Silero VAD pool.
@@ -45,7 +40,7 @@ class SileroVADSessionPool:
         Returns:
             an instance of SileroVADSessionPool
         """
-        await asyncio.to_thread(_ensure_dir, model_dir)
+        await asyncio.to_thread(os.makedirs, model_dir, exist_ok=True)
         path = os.path.join(model_dir, SILERO_ONNX_FILENAME)
         await ensure_model(path, SILERO_ONNX_URL)
         # Initialize VAD in thread pool to avoid blocking event loop
