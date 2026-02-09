@@ -1016,12 +1016,9 @@ class Agent:
                         # Pass audio through the filter
                         # if multiple participants are on the call
                         if len(queues) > 1:
-                            start = time.perf_counter()
                             pcm = await self._multi_speaker_filter.process_audio(
                                 pcm, participant
                             )
-                            end = time.perf_counter()
-                            print(f"vad latency: {end - start}ms")
                             if pcm is None:
                                 continue
 
