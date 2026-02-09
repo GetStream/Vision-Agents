@@ -1,11 +1,11 @@
 import asyncio
 import os
 import time
-from typing_extensions import Self
 
 import numpy as np
 import onnxruntime as ort
 from getstream.video.rtc import PcmData
+from typing_extensions import Self
 from vision_agents.core.utils.utils import ensure_model
 
 __all__ = ("SileroVADSession", "SileroVADSessionPool", "SILERO_CHUNK")
@@ -13,6 +13,11 @@ __all__ = ("SileroVADSession", "SileroVADSessionPool", "SILERO_CHUNK")
 SILERO_CHUNK = 512
 SILERO_ONNX_FILENAME = "silero_vad.onnx"
 SILERO_ONNX_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+
+
+def _ensure_dir(dir_path: str):
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
 
 
 class SileroVADSessionPool:
@@ -40,6 +45,7 @@ class SileroVADSessionPool:
         Returns:
             an instance of SileroVADSessionPool
         """
+        await asyncio.to_thread(_ensure_dir, model_dir)
         path = os.path.join(model_dir, SILERO_ONNX_FILENAME)
         await ensure_model(path, SILERO_ONNX_URL)
         # Initialize VAD in thread pool to avoid blocking event loop

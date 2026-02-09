@@ -19,7 +19,6 @@ async def smart_turn():
     await td.stop()
 
 
-@pytest.mark.skip_blockbuster
 class TestSmartTurn:
     async def test_silero_predict(self, mia_audio_16khz, tmp_path):
         vad_pool = await SileroVADSessionPool.load(tmp_path.as_posix())

@@ -177,7 +177,7 @@ class TestAgentTrackHandling:
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
 
         # Simulate adding a video track
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         await agent._on_track_added(
             track_id="video_track_1",
@@ -212,7 +212,7 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         # Add regular video track first
         await agent._on_track_added(
@@ -268,7 +268,7 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         # Add two video tracks
         await agent._on_track_added(
@@ -322,7 +322,7 @@ class TestAgentTrackHandling:
             llm=video_llm, processors=[processor1, processor2]
         )
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         await agent._on_track_added(
             track_id="video_track_1",
@@ -346,7 +346,7 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         # Add regular video track
         await agent._on_track_added(
@@ -384,7 +384,7 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=video_llm, processors=[], tts=mock_tts)
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         await agent._on_track_added(
             track_id="video_track_1",
@@ -407,7 +407,7 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=regular_llm, processors=[video_processor])
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         await agent._on_track_added(
             track_id="video_track_1",

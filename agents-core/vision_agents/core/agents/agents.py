@@ -59,6 +59,7 @@ from ..stt.stt import STT
 from ..tts.events import TTSAudioEvent
 from ..tts.tts import TTS
 from ..turn_detection import TurnDetector, TurnEndedEvent, TurnStartedEvent
+from ..utils.audio_filter import AudioFilter, FirstSpeakerWinsFilter
 from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
@@ -153,8 +154,12 @@ class Agent:
             options = default_agent_options().update(options)
         self.options = options
 
-        # audio incoming is enqueued to self._incoming_audio_queue (eg. human audio)
-        self._incoming_audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
+        # Per-participant audio queues keyed by participant.id
+        self._participant_queues: dict[str, tuple[Participant, AudioQueue]] = {}
+        self._audio_buffer_limit_ms = 8000
+
+        # Built-in first-speaker-wins filter for multi-participant calls
+        self._multi_speaker_filter: AudioFilter = FirstSpeakerWinsFilter()
 
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
@@ -334,8 +339,15 @@ class Agent:
         async def on_audio_received(event: AudioReceivedEvent):
             if event.pcm_data is None:
                 return
-
-            await self._incoming_audio_queue.put(event.pcm_data)
+            pcm = event.pcm_data
+            participant = event.participant
+            existing = self._participant_queues.get(participant.id)
+            if existing is not None:
+                _, queue = existing
+                await queue.put(pcm)
+            else:
+                queue = AudioQueue(buffer_limit_ms=self._audio_buffer_limit_ms)
+                self._participant_queues[participant.id] = (participant, queue)
 
         @self.edge.events.subscribe
         async def on_call_ended(_: CallEndedEvent):
@@ -974,36 +986,54 @@ class Agent:
         self._video_track_override_path = path
 
     async def _consume_incoming_audio(self) -> None:
-        """Consumer that continuously processes audio from the queue."""
+        """Consumer that continuously processes audio from per-participant queues."""
         interval_seconds = 0.02  # 20ms target interval
+
+        # Store audio processors in the variable to avoid calling
+        # the property all the time
+        audio_processors = self.audio_processors
+        is_audio_llm = _is_audio_llm(self.llm)
 
         try:
             while self._call_ended_event and not self._call_ended_event.is_set():
                 loop_start = time.perf_counter()
-                try:
-                    # Get audio data from queue with timeout to keep the loop running
-                    pcm = await asyncio.wait_for(
-                        self._incoming_audio_queue.get_duration(duration_ms=20),
-                        timeout=1.0,
-                    )
 
-                    participant = pcm.participant
+                # Snapshot the queues dict to avoid RuntimeError if a new
+                # participant is added by on_audio_received mid-iteration.
+                queues = self._participant_queues.copy()
 
-                    if (
-                        participant
-                        and getattr(participant, "user_id", None) != self.agent_user.id
-                    ):
-                        # first forward to processors
-                        for processor in self.audio_processors:
-                            if processor is None:
+                # Pull one 20ms chunk from each participant queue
+                for participant, queue in queues.values():
+                    try:
+                        pcm = await asyncio.wait_for(
+                            queue.get_duration(duration_ms=20),
+                            timeout=0.1,
+                        )
+                    except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                        continue
+
+                    if participant.user_id != self.agent_user.id:
+                        # Pass audio through the filter
+                        # if multiple participants are on the call
+                        if len(queues) > 1:
+                            start = time.perf_counter()
+                            pcm = await self._multi_speaker_filter.process_audio(
+                                pcm, participant
+                            )
+                            end = time.perf_counter()
+                            print(f"vad latency: {end - start}ms")
+                            if pcm is None:
                                 continue
+
+                        # Pass PCM through audio processors
+                        for processor in audio_processors:
                             await processor.process_audio(pcm)
 
-                        # when in Realtime mode call the Realtime directly (non-blocking)
-                        if _is_audio_llm(self.llm):
+                        # Pass audio directly to LLM if it supports it
+                        if is_audio_llm:
                             await self.simple_audio_response(pcm, participant)
 
-                        # Process audio through STT
+                        # Otherwise, go through stt
                         elif self.stt:
                             await self.stt.process_audio(pcm, participant)
 
@@ -1011,10 +1041,6 @@ class Agent:
                         await self.turn_detection.process_audio(
                             pcm, participant, conversation=self.conversation
                         )
-
-                except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                    # No audio data available, continue the loop
-                    pass
 
                 # Sleep for remaining time to maintain consistent interval
                 elapsed = time.perf_counter() - loop_start
@@ -1066,6 +1092,11 @@ class Agent:
     async def _on_track_removed(
         self, track_id: str, track_type: TrackType, participant: Participant
     ):
+        if track_type == TrackType.AUDIO:
+            self._participant_queues.pop(participant.id, None)
+            self._multi_speaker_filter.clear(participant)
+            return
+
         # We only process video tracks (camera video or screenshare)
         if track_type not in (
             TrackType.VIDEO,
@@ -1199,6 +1230,7 @@ class Agent:
                 )
                 self.logger.debug(f"👉 Turn started - agent speaking {participant_id}")
         elif isinstance(event, TurnEndedEvent):
+            self._multi_speaker_filter.clear()
             participant_id = (
                 event.participant.user_id if event.participant else "unknown"
             )
