@@ -94,7 +94,7 @@ class STT(stt.STT, Warmable[Optional[WhisperModel]]):
     async def process_audio(
         self,
         pcm_data: PcmData,
-        participant: Optional[Participant] = None,
+        participant: Participant,
     ):
         """
         Process audio data through faster-whisper for transcription.
@@ -145,7 +145,7 @@ class STT(stt.STT, Warmable[Optional[WhisperModel]]):
                 e, context="buffering_audio", participant=participant
             )
 
-    async def _process_buffer(self, participant: Optional[Participant] = None):
+    async def _process_buffer(self, participant: Participant):
         """
         Process the current audio buffer through faster-whisper.
 
@@ -180,10 +180,6 @@ class STT(stt.STT, Warmable[Optional[WhisperModel]]):
             return
 
         processing_time_ms = (time.time() - start_time) * 1000
-
-        # Create default participant if none provided
-        if participant is None:
-            participant = Participant(original=None, user_id="unknown")
 
         # Process segments
         text_parts = []

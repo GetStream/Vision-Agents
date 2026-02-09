@@ -193,7 +193,7 @@ def assets_dir():
 @pytest.fixture
 def participant():
     """Create a test participant for STT testing."""
-    return Participant({}, user_id="test-user")
+    return Participant({}, user_id="test-user", id="test_user")
 
 
 @pytest.fixture

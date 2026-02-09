@@ -337,7 +337,7 @@ class Agent:
         # audio event for the user talking to the AI
         @self.edge.events.subscribe
         async def on_audio_received(event: AudioReceivedEvent):
-            if event.pcm_data is None:
+            if event.pcm_data is None or event.participant is None:
                 return
             pcm = event.pcm_data
             participant = event.participant
@@ -884,6 +884,9 @@ class Agent:
 
     async def _on_agent_say(self, event: events.AgentSayEvent):
         """Handle agent say events by calling TTS if available."""
+        if not event.participant:
+            return None
+
         try:
             # Emit say started event
             synthesis_id = str(uuid4())
@@ -891,8 +894,8 @@ class Agent:
                 events.AgentSayStartedEvent(
                     plugin_name="agent",
                     text=event.text,
-                    user_id=event.user_id,
                     synthesis_id=synthesis_id,
+                    participant=event.participant,
                 )
             )
 
@@ -900,17 +903,8 @@ class Agent:
 
             if self.tts is not None:
                 # Create participant from event
-                participant = (
-                    Participant(
-                        original=event.metadata or {},
-                        user_id=event.user_id,
-                    )
-                    if event.user_id
-                    else None
-                )
-
                 sanitized_text = self._sanitize_text(event.text)
-                await self.tts.send(sanitized_text, participant)
+                await self.tts.send(sanitized_text, event.participant)
 
                 # Calculate duration
                 duration_ms = (time.time() - start_time) * 1000
@@ -920,9 +914,9 @@ class Agent:
                     events.AgentSayCompletedEvent(
                         plugin_name="agent",
                         text=event.text,
-                        user_id=event.user_id,
                         synthesis_id=synthesis_id,
                         duration_ms=duration_ms,
+                        participant=event.participant,
                     )
                 )
 
@@ -936,8 +930,8 @@ class Agent:
                 events.AgentSayErrorEvent(
                     plugin_name="agent",
                     text=event.text,
-                    user_id=event.user_id,
                     error=e,
+                    participant=event.participant,
                 )
             )
             self.logger.error(f"Error in agent say: {e}")
@@ -962,8 +956,12 @@ class Agent:
             events.AgentSayEvent(
                 plugin_name="agent",
                 text=text,
-                user_id=user_id or self.agent_user.id,
                 metadata=metadata,
+                participant=Participant(
+                    id=self.id,
+                    user_id=user_id or self.agent_user.id or self.id,
+                    original=None,
+                ),
             )
         )
 
