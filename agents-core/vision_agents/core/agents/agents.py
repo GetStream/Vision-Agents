@@ -59,6 +59,7 @@ from ..stt.stt import STT
 from ..tts.events import TTSAudioEvent
 from ..tts.tts import TTS
 from ..turn_detection import TurnDetector, TurnEndedEvent, TurnStartedEvent
+from ..utils.audio_filter import AudioFilter, FirstSpeakerWinsFilter
 from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
@@ -153,8 +154,12 @@ class Agent:
             options = default_agent_options().update(options)
         self.options = options
 
-        # audio incoming is enqueued to self._incoming_audio_queue (eg. human audio)
-        self._incoming_audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
+        # Per-participant audio queues keyed by participant.id
+        self._participant_queues: dict[str, tuple[Participant, AudioQueue]] = {}
+        self._audio_buffer_limit_ms = 8000
+
+        # Built-in first-speaker-wins filter for multi-participant calls
+        self._multi_speaker_filter: AudioFilter = FirstSpeakerWinsFilter()
 
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
@@ -332,10 +337,18 @@ class Agent:
         # audio event for the user talking to the AI
         @self.edge.events.subscribe
         async def on_audio_received(event: AudioReceivedEvent):
-            if event.pcm_data is None:
+            if event.pcm_data is None or event.participant is None:
                 return
-
-            await self._incoming_audio_queue.put(event.pcm_data)
+            pcm = event.pcm_data
+            participant = event.participant
+            existing = self._participant_queues.get(participant.id)
+            if existing is not None:
+                _, queue = existing
+                await queue.put(pcm)
+            else:
+                queue = AudioQueue(buffer_limit_ms=self._audio_buffer_limit_ms)
+                await queue.put(pcm)
+                self._participant_queues[participant.id] = (participant, queue)
 
         @self.edge.events.subscribe
         async def on_call_ended(_: CallEndedEvent):
@@ -872,6 +885,9 @@ class Agent:
 
     async def _on_agent_say(self, event: events.AgentSayEvent):
         """Handle agent say events by calling TTS if available."""
+        if not event.participant:
+            return None
+
         try:
             # Emit say started event
             synthesis_id = str(uuid4())
@@ -879,8 +895,8 @@ class Agent:
                 events.AgentSayStartedEvent(
                     plugin_name="agent",
                     text=event.text,
-                    user_id=event.user_id,
                     synthesis_id=synthesis_id,
+                    participant=event.participant,
                 )
             )
 
@@ -888,17 +904,8 @@ class Agent:
 
             if self.tts is not None:
                 # Create participant from event
-                participant = (
-                    Participant(
-                        original=event.metadata or {},
-                        user_id=event.user_id,
-                    )
-                    if event.user_id
-                    else None
-                )
-
                 sanitized_text = self._sanitize_text(event.text)
-                await self.tts.send(sanitized_text, participant)
+                await self.tts.send(sanitized_text, event.participant)
 
                 # Calculate duration
                 duration_ms = (time.time() - start_time) * 1000
@@ -908,9 +915,9 @@ class Agent:
                     events.AgentSayCompletedEvent(
                         plugin_name="agent",
                         text=event.text,
-                        user_id=event.user_id,
                         synthesis_id=synthesis_id,
                         duration_ms=duration_ms,
+                        participant=event.participant,
                     )
                 )
 
@@ -924,8 +931,8 @@ class Agent:
                 events.AgentSayErrorEvent(
                     plugin_name="agent",
                     text=event.text,
-                    user_id=event.user_id,
                     error=e,
+                    participant=event.participant,
                 )
             )
             self.logger.error(f"Error in agent say: {e}")
@@ -950,8 +957,12 @@ class Agent:
             events.AgentSayEvent(
                 plugin_name="agent",
                 text=text,
-                user_id=user_id or self.agent_user.id,
                 metadata=metadata,
+                participant=Participant(
+                    id=self.id,
+                    user_id=user_id or self.agent_user.id or self.id,
+                    original=None,
+                ),
             )
         )
 
@@ -973,37 +984,70 @@ class Agent:
         # Store the local video track.
         self._video_track_override_path = path
 
+    async def _poll_audio_queues(
+        self,
+        queues: dict[str, tuple[Participant, AudioQueue]],
+    ) -> AsyncIterator[tuple[Participant, PcmData]]:
+        """Poll all participant audio queues in parallel.
+
+        Yields (Participant, PcmData) tuples as each queue produces a chunk.
+        Queues that time out are silently skipped. On exit, any remaining
+        in-flight tasks are cancelled to avoid unhandled exceptions.
+        """
+
+        async def _poll(participant: Participant, queue: AudioQueue):
+            pcm = await asyncio.wait_for(
+                queue.get_duration(duration_ms=20), timeout=0.001
+            )
+            return participant, pcm
+
+        tasks = [asyncio.create_task(_poll(p, q)) for p, q in queues.values()]
+        try:
+            for fut in asyncio.as_completed(tasks):
+                try:
+                    yield await fut
+                except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                    continue
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
     async def _consume_incoming_audio(self) -> None:
-        """Consumer that continuously processes audio from the queue."""
+        """Consumer that continuously processes audio from per-participant queues."""
         interval_seconds = 0.02  # 20ms target interval
+
+        # Store audio processors in the variable to avoid calling
+        # the property all the time
+        audio_processors = self.audio_processors
+        is_audio_llm = _is_audio_llm(self.llm)
 
         try:
             while self._call_ended_event and not self._call_ended_event.is_set():
                 loop_start = time.perf_counter()
-                try:
-                    # Get audio data from queue with timeout to keep the loop running
-                    pcm = await asyncio.wait_for(
-                        self._incoming_audio_queue.get_duration(duration_ms=20),
-                        timeout=1.0,
-                    )
 
-                    participant = pcm.participant
-
-                    if (
-                        participant
-                        and getattr(participant, "user_id", None) != self.agent_user.id
-                    ):
-                        # first forward to processors
-                        for processor in self.audio_processors:
-                            if processor is None:
+                async for participant, pcm in self._poll_audio_queues(
+                    self._participant_queues
+                ):
+                    if participant.user_id != self.agent_user.id:
+                        # Pass audio through the filter
+                        # if multiple participants are on the call
+                        if len(self._participant_queues) > 1:
+                            pcm = await self._multi_speaker_filter.process_audio(
+                                pcm, participant
+                            )
+                            if pcm is None:
                                 continue
+
+                        # Pass PCM through audio processors
+                        for processor in audio_processors:
                             await processor.process_audio(pcm)
 
-                        # when in Realtime mode call the Realtime directly (non-blocking)
-                        if _is_audio_llm(self.llm):
+                        # Pass audio directly to LLM if it supports it
+                        if is_audio_llm:
                             await self.simple_audio_response(pcm, participant)
 
-                        # Process audio through STT
+                        # Otherwise, go through stt
                         elif self.stt:
                             await self.stt.process_audio(pcm, participant)
 
@@ -1011,10 +1055,6 @@ class Agent:
                         await self.turn_detection.process_audio(
                             pcm, participant, conversation=self.conversation
                         )
-
-                except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                    # No audio data available, continue the loop
-                    pass
 
                 # Sleep for remaining time to maintain consistent interval
                 elapsed = time.perf_counter() - loop_start
@@ -1066,6 +1106,11 @@ class Agent:
     async def _on_track_removed(
         self, track_id: str, track_type: TrackType, participant: Participant
     ):
+        if track_type == TrackType.AUDIO:
+            self._participant_queues.pop(participant.id, None)
+            self._multi_speaker_filter.clear(participant)
+            return
+
         # We only process video tracks (camera video or screenshare)
         if track_type not in (
             TrackType.VIDEO,
@@ -1199,6 +1244,7 @@ class Agent:
                 )
                 self.logger.debug(f"👉 Turn started - agent speaking {participant_id}")
         elif isinstance(event, TurnEndedEvent):
+            self._multi_speaker_filter.clear()
             participant_id = (
                 event.participant.user_id if event.participant else "unknown"
             )

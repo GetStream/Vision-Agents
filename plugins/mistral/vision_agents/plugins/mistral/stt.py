@@ -112,9 +112,11 @@ class STT(stt.STT):
             logger.debug("Mistral receive loop cancelled")
             raise
         except Exception as e:
-            logger.error(f"Error in Mistral receive loop: {e}")
+            logger.exception("Error in Mistral receive loop")
             if not self.closed:
-                self._emit_error_event(e, context="receive_loop")
+                self._emit_error_event(
+                    e, context="receive_loop", participant=self._current_participant
+                )
 
     def _handle_text_delta(self, event: TranscriptionStreamTextDelta):
         """Handle text delta - emit word-by-word partials, full text on complete."""
@@ -187,7 +189,7 @@ class STT(stt.STT):
     async def process_audio(
         self,
         pcm_data: PcmData,
-        participant: Optional[Participant] = None,
+        participant: Participant,
     ):
         """
         Process audio data through Mistral for transcription.

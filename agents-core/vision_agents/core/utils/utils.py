@@ -55,7 +55,7 @@ async def ensure_model(path: str, url: str) -> str:
         The path to the model file
     """
 
-    if not os.path.exists(path):
+    if not await asyncio.to_thread(os.path.exists, path):
         model_name = os.path.basename(path)
         logger.info(f"Downloading {model_name}...")
 

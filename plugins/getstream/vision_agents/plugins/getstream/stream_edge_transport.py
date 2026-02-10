@@ -75,10 +75,14 @@ def _to_core_participant(
     if participant is None:
         return None
 
-    if not participant.user_id:
-        return None
+    # These fields are required in the actual pb2 object
+    assert participant.user_id is not None, "user_id must be set"
+    assert participant.track_lookup_prefix is not None, (
+        "track_lookup_prefix must be set"
+    )
 
-    return Participant(original=participant, user_id=participant.user_id)
+    unique_id = f"{participant.user_id}__{participant.track_lookup_prefix}"
+    return Participant(original=participant, user_id=participant.user_id, id=unique_id)
 
 
 class StreamConnection(Connection):

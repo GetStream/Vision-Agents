@@ -39,7 +39,7 @@ async def create_agent(**kwargs) -> Agent:
         llm=llm,
         tts=elevenlabs.TTS(model_id="eleven_flash_v2_5"),
         stt=deepgram.STT(
-            eager_turn_detection=True
+            # eager_turn_detection=True
         ),  # eager_turn_detection -> lower latency (but higher token usage)
         # turn_detection=vogent.TurnDetection(), # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
         # realtime openai and gemini are supported (tts and stt not needed in that case)

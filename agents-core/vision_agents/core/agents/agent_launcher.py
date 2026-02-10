@@ -384,6 +384,10 @@ class AgentLauncher:
         if agent.turn_detection and isinstance(agent.turn_detection, Warmable):
             warmup_tasks.append(agent.turn_detection.warmup(self._warmup_cache))
 
+        # Warmup audio filter
+        if isinstance(agent._multi_speaker_filter, Warmable):
+            warmup_tasks.append(agent._multi_speaker_filter.warmup(self._warmup_cache))
+
         # Warmup processors
         for processor in agent.processors:
             if isinstance(processor, Warmable):
