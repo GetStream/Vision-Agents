@@ -157,7 +157,13 @@ class Agent:
                 to call participants as custom events.
             broadcast_metrics_interval: Interval in seconds between metric broadcasts.
             multi_speaker_filter: Audio filter for handling overlapping speech from
-                multiple participants. Defaults to `FirstSpeakerWinsFilter`.
+                multiple participants.
+                Takes an effect only more than one participant is present.
+                Defaults to `FirstSpeakerWinsFilter`, which uses VAD to lock onto
+                the first participant who starts speaking and drops audio from
+                everyone else until the active speaker's turn ends, or they go
+                silent.
+
         """
         self._agent_user_initialized = False
         self.agent_user = agent_user
