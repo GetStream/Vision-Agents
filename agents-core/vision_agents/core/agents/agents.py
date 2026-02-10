@@ -158,7 +158,7 @@ class Agent:
             broadcast_metrics_interval: Interval in seconds between metric broadcasts.
             multi_speaker_filter: Audio filter for handling overlapping speech from
                 multiple participants.
-                Takes an effect only more than one participant is present.
+                Takes effect only more than one participant is present.
                 Defaults to `FirstSpeakerWinsFilter`, which uses VAD to lock onto
                 the first participant who starts speaking and drops audio from
                 everyone else until the active speaker's turn ends, or they go
