@@ -96,6 +96,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         trust_remote_code: Allow custom model code (default ``True`` for VLMs).
         fps: Frames per second to capture from video stream.
         frame_buffer_seconds: Seconds of frames to keep in the buffer.
+        max_frames: Maximum frames to send per inference. Evenly sampled from buffer.
         max_new_tokens: Default maximum tokens to generate per response.
     """
 
@@ -108,6 +109,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         trust_remote_code: bool = True,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
+        max_frames: int = 4,
         max_new_tokens: int = 512,
     ):
         VideoLLM.__init__(self)
@@ -119,6 +121,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         self._trust_remote_code = trust_remote_code
         self._max_new_tokens = max_new_tokens
         self._fps = fps
+        self._max_frames = max_frames
 
         self._resources: Optional[VLMResources] = None
 
@@ -127,8 +130,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         self._frame_buffer: deque[av.VideoFrame] = deque(
             maxlen=fps * frame_buffer_seconds
         )
-        self._frame_width = 800
-        self._frame_height = 600
 
         self.events.register_events_from_module(events)
 
@@ -169,7 +170,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         )
 
         if self._device_config == "mps":
-            model = model.to("mps")
+            model = model.to(torch.device("mps"))  # type: ignore[arg-type]
 
         model.eval()
 
@@ -264,7 +265,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         request_start = time.perf_counter()
 
         try:
-            inputs = self._build_vlm_inputs(text)
+            inputs = await asyncio.to_thread(self._build_vlm_inputs, text)
         except Exception as e:
             logger.error(f"Failed to build VLM inputs: {e}")
             self.events.send(
@@ -297,7 +298,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             if pad_token_id is not None:
                 gen_kwargs["pad_token_id"] = pad_token_id
             with torch.no_grad():
-                return model.generate(**gen_kwargs)
+                return model.generate(**gen_kwargs)  # type: ignore[operator]
 
         try:
             outputs = await asyncio.to_thread(_do_generate)
@@ -362,8 +363,14 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         """
         processor = self._resources.processor  # type: ignore[union-attr]
 
-        # Convert buffered frames to PIL images
-        images = [frame.to_image() for frame in self._frame_buffer]
+        # Sample frames evenly from buffer to stay within context limits
+        all_frames = list(self._frame_buffer)
+        if len(all_frames) > self._max_frames:
+            step = len(all_frames) / self._max_frames
+            all_frames = [all_frames[int(i * step)] for i in range(self._max_frames)]
+
+        # Convert sampled frames to PIL images
+        images = [frame.to_image() for frame in all_frames]
 
         # Build chat messages
         messages: List[Dict[str, Any]] = []
@@ -399,9 +406,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                 )
             return result
         except Exception as e:
-            logger.warning(
-                f"processor.apply_chat_template failed, using fallback: {e}"
-            )
+            logger.warning(f"processor.apply_chat_template failed, using fallback: {e}")
             prompt = text or "Describe what you see."
             return processor(
                 text=prompt,

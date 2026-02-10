@@ -17,7 +17,6 @@ Requirements:
 First run will download the model (~4GB for Qwen2-VL-2B).
 """
 
-import asyncio
 import logging
 
 from dotenv import load_dotenv
