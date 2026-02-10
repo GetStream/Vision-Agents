@@ -25,7 +25,7 @@ import re
 import time
 import uuid
 from threading import Thread
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, cast
 
 import torch
 
@@ -198,7 +198,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         model = AutoModelForCausalLM.from_pretrained(self.model_id, **load_kwargs)
 
         if self._device_config == "mps":
-            model = model.to("mps")
+            model = model.to(torch.device("mps"))  # type: ignore[arg-type]
 
         model.eval()
 
@@ -274,14 +274,20 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             template_kwargs["tools"] = tools_param
 
         try:
-            inputs = tokenizer.apply_chat_template(messages, **template_kwargs)
+            inputs = cast(
+                Dict[str, Any],
+                tokenizer.apply_chat_template(messages, **template_kwargs),
+            )
         except Exception as e:
             if tools_param:
                 logger.warning(
                     f"apply_chat_template failed with tools, retrying without: {e}"
                 )
                 template_kwargs.pop("tools", None)
-                inputs = tokenizer.apply_chat_template(messages, **template_kwargs)
+                inputs = cast(
+                    Dict[str, Any],
+                    tokenizer.apply_chat_template(messages, **template_kwargs),
+                )
                 tools_param = None
             else:
                 logger.error(f"Failed to apply chat template: {e}")
@@ -344,7 +350,9 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                     loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
         streamer = _AsyncBridgeStreamer(
-            tokenizer, skip_prompt=True, skip_special_tokens=True
+            tokenizer,  # type: ignore[arg-type]
+            skip_prompt=True,
+            skip_special_tokens=True,
         )
 
         generate_kwargs = {
@@ -367,7 +375,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             nonlocal generation_error
             try:
                 with torch.no_grad():
-                    model.generate(**generate_kwargs)
+                    model.generate(**generate_kwargs)  # type: ignore[operator]
             except Exception as e:
                 generation_error = e
                 logger.error(f"Generation failed: {e}")
@@ -458,7 +466,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         def _do_generate() -> Any:
             with torch.no_grad():
-                return model.generate(**generate_kwargs)
+                return model.generate(**generate_kwargs)  # type: ignore[operator]
 
         try:
             outputs = await asyncio.to_thread(_do_generate)
