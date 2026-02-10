@@ -984,6 +984,35 @@ class Agent:
         # Store the local video track.
         self._video_track_override_path = path
 
+    async def _poll_audio_queues(
+        self,
+        queues: dict[str, tuple[Participant, AudioQueue]],
+    ) -> AsyncIterator[tuple[Participant, PcmData]]:
+        """Poll all participant audio queues in parallel.
+
+        Yields (Participant, PcmData) tuples as each queue produces a chunk.
+        Queues that time out are silently skipped. On exit, any remaining
+        in-flight tasks are cancelled to avoid unhandled exceptions.
+        """
+
+        async def _poll(participant: Participant, queue: AudioQueue):
+            pcm = await asyncio.wait_for(
+                queue.get_duration(duration_ms=20), timeout=0.001
+            )
+            return participant, pcm
+
+        tasks = [asyncio.create_task(_poll(p, q)) for p, q in queues.values()]
+        try:
+            for fut in asyncio.as_completed(tasks):
+                try:
+                    yield await fut
+                except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                    continue
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from per-participant queues."""
         interval_seconds = 0.02  # 20ms target interval
@@ -997,24 +1026,13 @@ class Agent:
             while self._call_ended_event and not self._call_ended_event.is_set():
                 loop_start = time.perf_counter()
 
-                # Snapshot the queues dict to avoid RuntimeError if a new
-                # participant is added by on_audio_received mid-iteration.
-                queues = self._participant_queues.copy()
-
-                # Pull one 20ms chunk from each participant queue
-                for participant, queue in queues.values():
-                    try:
-                        pcm = await asyncio.wait_for(
-                            queue.get_duration(duration_ms=20),
-                            timeout=0.1,
-                        )
-                    except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                        continue
-
+                async for participant, pcm in self._poll_audio_queues(
+                    self._participant_queues
+                ):
                     if participant.user_id != self.agent_user.id:
                         # Pass audio through the filter
                         # if multiple participants are on the call
-                        if len(queues) > 1:
+                        if len(self._participant_queues) > 1:
                             pcm = await self._multi_speaker_filter.process_audio(
                                 pcm, participant
                             )
