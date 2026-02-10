@@ -102,9 +102,6 @@ class Agent:
     * agent.close() // cleanup
 
     Note: Don't reuse the agent object. Create a new agent object each time.
-
-    Dev guidelines
-    - Small methods so it's easy to subclass/change behaviour
     """
 
     options: AgentOptions
@@ -136,7 +133,32 @@ class Agent:
         # Metrics broadcasting to call participants
         broadcast_metrics: bool = False,
         broadcast_metrics_interval: float = 5.0,
+        # Audio filter to process audio from multiple speakers
+        multi_speaker_filter: Optional[AudioFilter] = None,
     ):
+        """Initialize the Agent.
+
+        Args:
+            edge: Edge transport for video and audio connectivity.
+            llm: LLM, optionally with audio/video/realtime capabilities.
+            agent_user: The agent's user identity.
+            instructions: System instructions for the LLM. Supports `@file.md` references.
+            stt: Speech-to-text service. Not needed when using a realtime LLM.
+            tts: Text-to-speech service. Not needed when using a realtime LLM.
+            turn_detection: Turn detector for managing conversational turns.
+                Not needed when using a realtime LLM.
+            processors: Processors that run alongside the agent (e.g. video analysis,
+                data fetching). Their state is passed to the LLM.
+            mcp_servers: MCP servers for external tool and resource access.
+            options: Agent configuration options. Merged with defaults when provided.
+            tracer: OpenTelemetry tracer for distributed tracing.
+            profiler: Optional profiler for performance monitoring.
+            broadcast_metrics: Whether to periodically broadcast agent metrics
+                to call participants as custom events.
+            broadcast_metrics_interval: Interval in seconds between metric broadcasts.
+            multi_speaker_filter: Audio filter for handling overlapping speech from
+                multiple participants. Defaults to `FirstSpeakerWinsFilter`.
+        """
         self._agent_user_initialized = False
         self.agent_user = agent_user
         if not self.agent_user.id:
@@ -159,7 +181,9 @@ class Agent:
         self._audio_buffer_limit_ms = 8000
 
         # Built-in first-speaker-wins filter for multi-participant calls
-        self._multi_speaker_filter: AudioFilter = FirstSpeakerWinsFilter()
+        self._multi_speaker_filter: AudioFilter = (
+            multi_speaker_filter or FirstSpeakerWinsFilter()
+        )
 
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
