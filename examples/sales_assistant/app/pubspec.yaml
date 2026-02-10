@@ -1,0 +1,33 @@
+name: sales_assistant
+version: 0.1.0
+publish_to: none
+description: Sales Assistant - AI meeting coach with translucent macOS overlay.
+
+environment:
+  sdk: ^3.8.0
+  flutter: ">=3.32.0"
+
+dependencies:
+  cupertino_icons: ^1.0.8
+  flutter:
+    sdk: flutter
+  http: ^1.5.0
+  macos_window_utils: ^1.6.0
+  stream_chat: ^9.5.0
+  stream_video_flutter: ^1.2.4
+  stream_video_screen_sharing: ^1.2.4
+  uuid: ^4.5.1
+
+dependency_overrides:
+  stream_webrtc_flutter:
+    git:
+      url: https://github.com/GetStream/webrtc-flutter.git
+      ref: feature/macos-screen-audio-capture
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

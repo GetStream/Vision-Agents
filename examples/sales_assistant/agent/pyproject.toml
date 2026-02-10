@@ -1,0 +1,20 @@
+[project]
+name = "sales-assistant-agent"
+version = "0.1.0"
+description = "AI sales coaching agent powered by Vision Agents"
+requires-python = ">=3.12"
+
+dependencies = [
+    "python-dotenv>=1.0",
+    "vision-agents",
+    "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-gemini",
+    "getstream",
+]
+
+[tool.uv.sources]
+"vision-agents" = { path = "../../../agents-core", editable = true }
+"vision-agents-plugins-deepgram" = { path = "../../../plugins/deepgram", editable = true }
+"vision-agents-plugins-getstream" = { path = "../../../plugins/getstream", editable = true }
+"vision-agents-plugins-gemini" = { path = "../../../plugins/gemini", editable = true }

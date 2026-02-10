@@ -1,0 +1,9 @@
+include: ../../analysis_options.yaml
+
+formatter:
+  trailing_commas: preserve
+  page_width: 80
+
+analyzer:
+  exclude:
+    - lib/**/*.*.dart
