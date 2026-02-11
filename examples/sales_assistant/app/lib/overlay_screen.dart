@@ -257,16 +257,18 @@ class _OverlayScreenState extends State<OverlayScreen> {
                 height: 10,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _isActive ? Colors.greenAccent : Colors.white24,
+                  color: _isActive
+                      ? Colors.greenAccent.withValues(alpha: 0.7)
+                      : Colors.white.withValues(alpha: 0.15),
                 ),
               ),
               const SizedBox(width: 10),
-              const Text(
+              Text(
                 'Sales Assistant',
                 style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white.withValues(alpha: 0.8),
                   letterSpacing: -0.5,
                 ),
               ),
@@ -278,8 +280,8 @@ class _OverlayScreenState extends State<OverlayScreen> {
           Text(
             _status,
             style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.5),
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: 0.35),
             ),
           ),
         ],
@@ -300,9 +302,11 @@ class _OverlayScreenState extends State<OverlayScreen> {
       onPressed: _isActive ? _stop : _start,
       style: TextButton.styleFrom(
         backgroundColor: _isActive
-            ? Colors.redAccent.withValues(alpha: 0.2)
-            : Colors.blueAccent.withValues(alpha: 0.2),
-        foregroundColor: _isActive ? Colors.redAccent : Colors.blueAccent,
+            ? Colors.redAccent.withValues(alpha: 0.12)
+            : Colors.white.withValues(alpha: 0.08),
+        foregroundColor: _isActive
+            ? Colors.redAccent.withValues(alpha: 0.8)
+            : Colors.white.withValues(alpha: 0.6),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       ),
@@ -403,16 +407,16 @@ class _SuggestionCard extends StatelessWidget {
 
     if (suggestion.isError) {
       bgColor = Colors.redAccent.withValues(alpha: 0.12);
-      textColor = Colors.redAccent.shade100;
-      timeColor = Colors.redAccent.withValues(alpha: 0.4);
+      textColor = Colors.redAccent.shade100.withValues(alpha: 0.95);
+      timeColor = Colors.redAccent.withValues(alpha: 0.35);
     } else if (suggestion.isSystem) {
       bgColor = Colors.white.withValues(alpha: 0.05);
-      textColor = Colors.white54;
-      timeColor = Colors.white24;
+      textColor = Colors.white.withValues(alpha: 0.45);
+      timeColor = Colors.white.withValues(alpha: 0.2);
     } else {
-      bgColor = Colors.blueAccent.withValues(alpha: 0.1);
-      textColor = Colors.white.withValues(alpha: 0.9);
-      timeColor = Colors.blueAccent.withValues(alpha: 0.5);
+      bgColor = Colors.white.withValues(alpha: 0.1);
+      textColor = Colors.white.withValues(alpha: 0.92);
+      timeColor = Colors.white.withValues(alpha: 0.3);
     }
 
     final time = suggestion.time;

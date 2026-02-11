@@ -25,18 +25,31 @@ class MainFlutterWindow: NSWindow {
     self.titlebarAppearsTransparent = true
     self.titleVisibility = .hidden
     self.isOpaque = false
-    self.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.92)
+    self.backgroundColor = .clear
     self.hasShadow = true
 
     // Always-on-top floating overlay, draggable by background
     self.level = .floating
     self.isMovableByWindowBackground = true
 
-    // Rounded corners
+    // Insert an NSVisualEffectView behind the Flutter content for real
+    // translucency / frosted-glass blur.
     if let contentView = self.contentView {
+      let blurView = NSVisualEffectView()
+      blurView.material = .hudWindow
+      blurView.blendingMode = .behindWindow
+      blurView.state = .active
+      blurView.wantsLayer = true
+      blurView.frame = contentView.bounds
+      blurView.autoresizingMask = [.width, .height]
+      contentView.addSubview(blurView, positioned: .below, relativeTo: nil)
+
+      // Rounded corners on the whole window content
       contentView.wantsLayer = true
       contentView.layer?.cornerRadius = 16
       contentView.layer?.masksToBounds = true
+      contentView.layer?.borderWidth = 0.5
+      contentView.layer?.borderColor = NSColor(white: 1.0, alpha: 0.08).cgColor
     }
 
     RegisterGeneratedPlugins(registry: flutterViewController)

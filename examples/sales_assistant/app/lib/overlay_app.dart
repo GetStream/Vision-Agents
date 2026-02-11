@@ -95,13 +95,24 @@ class _OverlayAppState extends State<OverlayApp> {
       title: 'Sales Assistant',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true).copyWith(
-        scaffoldBackgroundColor: const Color(0xE0161622),
+        scaffoldBackgroundColor: Colors.transparent,
         colorScheme: const ColorScheme.dark(
           primary: Colors.blueAccent,
-          surface: Color(0xE0161622),
+          surface: Colors.transparent,
         ),
       ),
-      home: Scaffold(body: _buildBody()),
+      home: Scaffold(
+        body: Container(
+          decoration: BoxDecoration(
+            // Dark tint over the frosted glass so white text stays readable
+            // regardless of what's behind the window.
+            color: const Color(0x50000000),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: _buildBody(),
+        ),
+      ),
     );
   }
 
