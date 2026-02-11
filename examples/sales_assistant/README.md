@@ -121,6 +121,7 @@ The macOS overlay uses `NSVisualEffectView` with `.hudWindow` material for the f
 - Rounded corners
 - No titlebar buttons
 - Compact size (420x640), positioned in the top-right corner
+- **Hidden from screen capture** — the window sets `NSWindow.sharingType = .none`, so it is invisible to Zoom screen share, OBS, QuickTime, and any other screen-recording tool. Coaching suggestions stay private.
 
 ### Screen Audio Capture
 

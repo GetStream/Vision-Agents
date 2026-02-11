@@ -32,6 +32,10 @@ class MainFlutterWindow: NSWindow {
     self.level = .floating
     self.isMovableByWindowBackground = true
 
+    // Hide this window from all screen-capture / screen-sharing APIs
+    // (Zoom, OBS, QuickTime, etc.) so coaching suggestions stay private.
+    self.sharingType = .none
+
     // Insert an NSVisualEffectView behind the Flutter content for real
     // translucency / frosted-glass blur.
     if let contentView = self.contentView {
