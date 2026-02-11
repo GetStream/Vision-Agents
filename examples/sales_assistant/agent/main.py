@@ -95,7 +95,10 @@ if __name__ == "__main__":
         """Set meeting context for the next coaching session."""
         global _meeting_context
         _meeting_context = request.get("context", "")
-        logger.info("Meeting context updated: %s", _meeting_context[:80] if _meeting_context else "(cleared)")
+        logger.info(
+            "Meeting context updated: %s",
+            _meeting_context[:80] if _meeting_context else "(cleared)",
+        )
         return JSONResponse({"ok": True})
 
     @runner.fast_api.get("/auth/token")
