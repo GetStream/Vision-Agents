@@ -33,6 +33,7 @@ class _OverlayScreenState extends State<OverlayScreen> {
   bool _isActive = false;
   bool _isStarting = false;
   String _status = 'Ready';
+  String _meetingContext = '';
 
   /// The user ID the Vision Agents SDK uses for the agent.
   static const _agentUserId = 'sales-assistant-agent';
@@ -104,7 +105,10 @@ class _OverlayScreenState extends State<OverlayScreen> {
       debugPrint('[SalesAssistant] Chat channel ready: messaging:$callId');
       _listenForAgentMessages();
 
-      // 5. Tell the agent server to join
+      // 5. Send meeting context to the agent server.
+      await _agentService.setContext(_meetingContext.trim());
+
+      // 6. Tell the agent server to join
       setState(() => _status = 'Starting AI agent…');
       try {
         await _agentService.startSession(callId: callId);
@@ -230,6 +234,89 @@ class _OverlayScreenState extends State<OverlayScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // Context dialog
+  // ---------------------------------------------------------------------------
+
+  void _showContextDialog() {
+    final controller = TextEditingController(text: _meetingContext);
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black26,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xDD1a1a2e),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          'Meeting Context',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.8),
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        content: TextField(
+          controller: controller,
+          minLines: 3,
+          maxLines: 5,
+          autofocus: true,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.85),
+            fontSize: 13,
+          ),
+          cursorColor: Colors.white.withValues(alpha: 0.5),
+          decoration: InputDecoration(
+            hintText:
+                'e.g. "Enterprise SaaS sales call with a CTO"\n'
+                'or "Technical interview for a senior engineer"',
+            hintStyle: TextStyle(
+              color: Colors.white.withValues(alpha: 0.2),
+              fontSize: 13,
+            ),
+            filled: true,
+            fillColor: Colors.white.withValues(alpha: 0.05),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(
+                color: Colors.white.withValues(alpha: 0.08),
+              ),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(
+                color: Colors.white.withValues(alpha: 0.08),
+              ),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(
+                color: Colors.white.withValues(alpha: 0.15),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => _meetingContext = controller.text);
+              Navigator.pop(ctx);
+            },
+            child: Text(
+              'Save',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------------
 
@@ -272,7 +359,30 @@ class _OverlayScreenState extends State<OverlayScreen> {
                   letterSpacing: -0.5,
                 ),
               ),
+              if (_meetingContext.trim().isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Icon(
+                    Icons.circle,
+                    size: 6,
+                    color: Colors.blueAccent.withValues(alpha: 0.6),
+                  ),
+                ),
               const Spacer(),
+              IconButton(
+                onPressed: _isActive ? null : _showContextDialog,
+                icon: Icon(
+                  Icons.tune_rounded,
+                  size: 18,
+                  color: _isActive
+                      ? Colors.white.withValues(alpha: 0.15)
+                      : Colors.white.withValues(alpha: 0.4),
+                ),
+                tooltip: 'Meeting context',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              const SizedBox(width: 4),
               _buildActionButton(),
             ],
           ),
@@ -331,7 +441,8 @@ class _OverlayScreenState extends State<OverlayScreen> {
               Text(
                 'Press Start to begin coaching.\n'
                 'Your screen and its audio\n'
-                'will be shared with the AI agent.',
+                'will be shared with the AI agent.\n\n'
+                'Tap the tune icon to set meeting context.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.35),

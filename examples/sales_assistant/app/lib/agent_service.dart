@@ -11,6 +11,15 @@ class AgentService {
 
   String? get sessionId => _sessionId;
 
+  /// Set the meeting context for the next session.
+  Future<void> setContext(String context) async {
+    await http.put(
+      Uri.parse('$baseUrl/context'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'context': context}),
+    );
+  }
+
   /// Start a new agent session for the given call.
   Future<String> startSession({
     required String callId,
