@@ -2,14 +2,14 @@
 Tests for function calling functionality.
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
+import pytest
 from vision_agents.core.llm import FunctionRegistry, function_registry
 from vision_agents.core.llm.llm import LLM
-from vision_agents.plugins.openai import LLM as OpenAILLM
 from vision_agents.plugins.anthropic import LLM as ClaudeLLM
 from vision_agents.plugins.gemini import LLM as GeminiLLM
+from vision_agents.plugins.openai import LLM as OpenAILLM
 
 
 class TestFunctionRegistry:
@@ -342,7 +342,7 @@ class TestGeminiFunctionCalling:
         # send_message_stream is called and should return an async iterator
         mock_chat.send_message_stream = Mock(return_value=mock_iterator())
 
-        llm = GeminiLLM(model="gemini-2.0-flash")
+        llm = GeminiLLM()
 
         # Register a test function
         @llm.register_function(description="Get weather for a location")
@@ -398,7 +398,7 @@ class TestGeminiFunctionCalling:
         # send_message_stream is called and should return an async iterator
         mock_chat.send_message_stream = Mock(return_value=mock_iterator())
 
-        llm = GeminiLLM(model="gemini-2.0-flash")
+        llm = GeminiLLM()
 
         # Register a test function
         @llm.register_function(description="Get weather for a location")
@@ -531,7 +531,7 @@ class TestConcurrentToolExecution:
 
     async def test_tool_lifecycle_events(self):
         """Test that tool lifecycle events are emitted."""
-        from vision_agents.core.llm.events import ToolStartEvent, ToolEndEvent
+        from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
 
         llm = LLM()
 

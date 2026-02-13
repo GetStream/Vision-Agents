@@ -17,7 +17,6 @@ from google.genai.types import (
     CreateFileSearchStoreConfig,
     GenerateContentConfig,
 )
-
 from vision_agents.core.rag import RAG, Document
 
 logger = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ class GeminiFilesearchRAG(RAG):
         name: str,
         client: Client | None = None,
         api_key: str | None = None,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3-flash-preview",
     ):
         """
         Initialize a GeminiFilesearchRAG.
@@ -64,7 +63,7 @@ class GeminiFilesearchRAG(RAG):
             name: Display name for the file search store.
             client: Optional Gemini client. Creates one if not provided.
             api_key: Optional API key. By default loads from GOOGLE_API_KEY.
-            model: Model to use for search queries (default: gemini-2.0-flash).
+            model: Model to use for search queries (default: gemini-3-flash-preview).
         """
         self.name = name
         self._store_name: str | None = None

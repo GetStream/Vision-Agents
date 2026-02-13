@@ -36,7 +36,7 @@ async def create_agent(**kwargs) -> Agent:
         instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
         tts=deepgram.TTS(),  # Uses Deepgram Aura for text-to-speech
         stt=deepgram.STT(),  # Uses Deepgram Flux for speech-to-text
-        llm=gemini.LLM("gemini-2.0-flash"),
+        llm=gemini.LLM(),
     )
     return agent
 

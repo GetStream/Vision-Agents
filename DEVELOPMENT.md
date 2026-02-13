@@ -494,7 +494,7 @@ async def start_agent() -> None:
         edge=getstream.Edge(),
         agent_user=User(name="My AI friend", id="agent"),
         instructions="You're a helpful assistant.",
-        llm=gemini.LLM("gemini-2.0-flash"),
+        llm=gemini.LLM(),
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
         turn_detection=vogent.TurnDetection(),

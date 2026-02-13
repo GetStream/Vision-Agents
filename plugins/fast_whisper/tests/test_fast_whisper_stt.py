@@ -21,12 +21,12 @@ class TestFastWhisperSTT:
             await stt_instance.close()
 
     @pytest.mark.integration
-    async def test_transcribe_mia_audio(self, stt, mia_audio_16khz):
+    async def test_transcribe_mia_audio(self, stt, mia_audio_16khz, participant):
         """Test transcription with buffering."""
         session = STTSession(stt)
 
         # Process audio (will be buffered and processed after 1s or 2s interval)
-        await stt.process_audio(mia_audio_16khz)
+        await stt.process_audio(mia_audio_16khz, participant=participant)
 
         # Wait for processing to complete
         await session.wait_for_result(timeout=60.0)
