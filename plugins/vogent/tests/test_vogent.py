@@ -27,7 +27,7 @@ class TestVogentTurnDetection:
     async def test_turn_detection(
         self, vogent_turn_detection, mia_audio_16khz, silence_2s_48khz
     ):
-        participant = Participant(user_id="mia", original={})
+        participant = Participant(user_id="mia", original={}, id="mia")
         conversation = InMemoryConversation(instructions="be nice", messages=[])
         event_order = []
 

@@ -33,7 +33,7 @@ async def create_agent(**kwargs) -> Agent:
             "Don't use special characters or formatting."
         ),
         # Use regular streaming LLM (not Realtime) for lower latency
-        llm=gemini.LLM("gemini-2.0-flash-exp"),
+        llm=gemini.LLM(),
         # Add STT for speech input
         stt=deepgram.STT(),
         # Add HeyGen avatar as a video publisher
