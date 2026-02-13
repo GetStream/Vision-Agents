@@ -30,6 +30,7 @@ dependencies = [
     "fastapi>=0.128.0",
     "uvicorn>=0.38.0",
     "urllib3>=2.6.3",
+    "onnxruntime>=1.16.1",
 ]
 
 [project.urls]
