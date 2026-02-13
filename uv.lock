@@ -623,23 +623,19 @@ wheels = [
 
 [[package]]
 name = "cartesia"
-version = "2.0.15"
+version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohttp" },
-    { name = "audioop-lts", marker = "python_full_version >= '3.13' and python_full_version < '4'" },
+    { name = "anyio" },
+    { name = "distro" },
     { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "iterators" },
     { name = "pydantic" },
-    { name = "pydantic-core" },
-    { name = "pydub" },
+    { name = "sniffio" },
     { name = "typing-extensions" },
-    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/21/38/9cd79aa2ef511a1ab656983e0b79109f0902eae70b86e180ac0f323cec92/cartesia-2.0.15.tar.gz", hash = "sha256:6fad28e8fc5faf8d8b105dc872d0ee0af89f8fe67d1ccdb991ab28ad85b4d189", size = 78973, upload-time = "2025-10-29T16:44:15.312Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/91/294628eb1d344e0d0c91b38b6c9b66ec21e3704f09c6f591ad48a8f9f8e8/cartesia-3.0.0.tar.gz", hash = "sha256:a6a486ff013ca72c3f3cb69a0754c975a5b07bd167b19390b0a590ed920278cd", size = 576935, upload-time = "2026-02-09T17:20:18.697Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/d7/108f0faf2b6e7d253b60317ecbcff23d974546a2a74ad294007f07c7968a/cartesia-2.0.15-py3-none-any.whl", hash = "sha256:edfae98d149de90ce76b10d6db1c4523ddf94cdac6b904a29df87a403143ad5f", size = 152809, upload-time = "2025-10-29T16:44:13.825Z" },
+    { url = "https://files.pythonhosted.org/packages/03/6a/3c1a8f2f5d08782cf6a4dafce19f6f90b257f8dbbe1e671399dbdcf4d896/cartesia-3.0.0-py3-none-any.whl", hash = "sha256:0926778bea69cffae2612e14f067ab298f30d70b7c7be33e3e248a9250235532", size = 167184, upload-time = "2026-02-09T17:20:17.554Z" },
 ]
 
 [[package]]
@@ -2226,15 +2222,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/54/4d/e940025e2ce31a8ce1202635910747e5a87cc3a6a6bb2d00973375014749/isodate-0.7.2.tar.gz", hash = "sha256:4cd1aa0f43ca76f4a6c6c0292a85f40b35ec2e43e315b59f06e6d32171a953e6", size = 29705, upload-time = "2024-10-08T23:04:11.5Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/aa/0aca39a37d3c7eb941ba736ede56d689e7be91cab5d9ca846bde3999eba6/isodate-0.7.2-py3-none-any.whl", hash = "sha256:28009937d8031054830160fce6d409ed342816b543597cece116d966c6d99e15", size = 22320, upload-time = "2024-10-08T23:04:09.501Z" },
-]
-
-[[package]]
-name = "iterators"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/02/c4/135b5bdb9f14f728fe1274361b336f77c5f1606af9a5622a765fe75f5fa0/iterators-0.2.0.tar.gz", hash = "sha256:e9927a1ea1ef081830fd1512f3916857c36bd4b37272819a6cd29d0f44431b97", size = 4284, upload-time = "2023-01-23T16:07:02.46Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/a1/9c29772ac9f3bdf9837c92ba5c1fc93f75da14c2e0c3fc41e10485f68feb/iterators-0.2.0-py3-none-any.whl", hash = "sha256:1d7ff03f576c9de0e01bac66209556c066d6b1fc45583a99cfc9f4645be7900e", size = 5022, upload-time = "2023-01-23T16:07:00.352Z" },
 ]
 
 [[package]]
@@ -4855,15 +4842,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pydub"
-version = "0.25.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326, upload-time = "2021-03-10T02:09:54.659Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327, upload-time = "2021-03-10T02:09:53.503Z" },
-]
-
-[[package]]
 name = "pyee"
 version = "13.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7052,7 +7030,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cartesia", specifier = ">=2.0.15" },
+    { name = "cartesia", specifier = ">=3.0.0,<3.1" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
