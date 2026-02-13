@@ -27,12 +27,12 @@ class TestDeepgramSTT:
 
         # Process the mia audio
         await stt.process_audio(
-            mia_audio_48khz, participant=Participant({}, user_id="hi")
+            mia_audio_48khz, participant=Participant({}, user_id="hi", id="hi")
         )
 
         # Send 2 seconds of silence to trigger end of turn
         await stt.process_audio(
-            silence_2s_48khz, participant=Participant({}, user_id="hi")
+            silence_2s_48khz, participant=Participant({}, user_id="hi", id="hi")
         )
 
         # Wait for result

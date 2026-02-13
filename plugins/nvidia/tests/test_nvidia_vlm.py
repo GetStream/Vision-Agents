@@ -247,7 +247,7 @@ class TestNvidiaVLM:
     )
     async def test_with_participant(self, vlm: VLM):
         """Test that user message is added to conversation when participant is provided."""
-        test_participant = Participant(original=None, user_id="test_user_123")
+        test_participant = Participant(original=None, user_id="test_user_123", id="test_user_123")
         user_question = "What is 2 + 2?"
 
         response = await vlm.simple_response(
