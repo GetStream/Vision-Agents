@@ -1,3 +1,14 @@
+"""
+OpenRouter VLM Example
+
+This example demonstrates how to use OpenRouter as a provider for a Vision Language
+Model agent. Since OpenRouter is OpenAI-compatible, we use the OpenAI plugin's
+ChatCompletionsVLM pointed at OpenRouter's API.
+
+Set these environment variables before running:
+- OPENROUTER_API_KEY: Your OpenRouter API key
+"""
+
 import asyncio
 import os
 
@@ -11,19 +22,24 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
+    # OpenRouter is OpenAI-compatible, so we use ChatCompletionsVLM directly
     llm = openai.ChatCompletionsVLM(
-        model="qwen3.5-plus",
-        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        api_key=os.environ["DASHSCOPE_API_KEY"],
+        model="qwen/qwen-vl-plus",
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ["OPENROUTER_API_KEY"],
         frame_buffer_seconds=3,
         frame_width=512,
         frame_height=384,
     )
-    # Create an agent with video understanding capabilities
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Video Assistant", id="agent"),
-        instructions="You're a helpful video AI assistant. Analyze the video frames and respond to user questions about what you see. Keep responses to one sentence. Be concise and direct.",
+        instructions="""
+        - Your job is to roast the person in the video. 
+        - You must use the video. Be funny, concise and mean, meaner than you think you can get away with. 
+        - Analyze the video frames and respond to user questions about what you see to use in your roast. 
+        - Keep responses to one sentence. Be concise and direct.
+        """,
         llm=llm,
         stt=deepgram.STT(),
         tts=elevenlabs.TTS(),
@@ -40,11 +56,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
         if event.participant.user.id != "agent":
             await asyncio.sleep(2)
-            await agent.simple_response("Describe what you currently see")
+            # await agent.simple_response("Roast the person you see")
 
     async with agent.join(call):
-        await agent.edge.open_demo(call)
-        # The agent will automatically process video frames and respond to user input
         await agent.finish()
 
 
