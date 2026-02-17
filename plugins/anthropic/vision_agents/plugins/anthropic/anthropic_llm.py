@@ -107,6 +107,9 @@ class ClaudeLLM(LLM):
         if "stream" not in kwargs:
             kwargs["stream"] = True
 
+        if self._instructions and "system" not in kwargs:
+            kwargs["system"] = self._instructions
+
         # Add tools if available - use Anthropic format
         tools = self.get_available_functions()
         if tools:
@@ -115,13 +118,39 @@ class ClaudeLLM(LLM):
 
         # ensure the AI remembers the past conversation
         new_messages = kwargs["messages"]
-        if hasattr(self, "_conversation") and self._conversation:
-            old_messages = [m.original for m in self._conversation.messages]
-            kwargs["messages"] = old_messages + new_messages
-            # Add messages to conversation
-            normalized_messages = self._normalize_message(new_messages)
-            for msg in normalized_messages:
-                self._conversation.messages.append(msg)
+        if self._conversation:
+            old_messages = [
+                m.original
+                if isinstance(m.original, dict)
+                else {"role": m.role or "user", "content": m.content or ""}
+                for m in self._conversation.messages
+            ]
+            combined = old_messages + new_messages
+            # Anthropic requires alternating user/assistant roles. The agent's
+            # STT handler may have already added the user message, so dedupe
+            # consecutive same-role messages (keep the later one).
+            deduped: list = []
+            for msg in combined:
+                if deduped and msg.get("role") == deduped[-1].get("role"):
+                    deduped[-1] = msg
+                else:
+                    deduped.append(msg)
+            kwargs["messages"] = deduped
+
+            # Track new messages in conversation if not already present
+            # (the agent's STT handler adds user messages, but programmatic
+            # simple_response calls don't go through STT).
+            last = (
+                self._conversation.messages[-1] if self._conversation.messages else None
+            )
+            first_new = new_messages[0] if new_messages else None
+            if first_new and (
+                not last
+                or last.role != first_new.get("role")
+                or last.content != first_new.get("content")
+            ):
+                for msg in self._normalize_message(new_messages):
+                    self._conversation.messages.append(msg)
 
         # Note: Message history is tracked in _conversation, no need to emit as event here
 
