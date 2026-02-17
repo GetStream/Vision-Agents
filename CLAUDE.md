@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Python monorepo managed with **uv workspaces**. 
+Python monorepo managed with **uv workspaces**.
 The core framework lives in `agents-core/` and plugins live in `plugins/` (37+ packages).
 Python >= 3.10, 3.12 recommended.
 
@@ -32,7 +32,7 @@ uv run mypy
 
 - Framework: pytest. Never mock.
 - `@pytest.mark.asyncio` is not needed (asyncio_mode = auto).
-- Integration tests use `@pytest.mark.integration`. 
+- Integration tests use `@pytest.mark.integration`.
 - Never adjust `sys.path`.
 
 ## Python rules
@@ -58,15 +58,19 @@ uv run mypy
 - use them everywhere. Modern syntax: `X | Y` unions, `dict[str, T]` generics, full `Callable` signatures, `Optional` for nullable params.
 
 **Logging**:
-module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, `info` for notable events, `error` for failures without a tracebcak, `exception` for errors with traceback.
+module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, `info` for notable events, `error` for failures without a traceback,
+`exception` for errors with traceback.
 
 **Constructor validation**:
+
 - raise `ValueError` with a descriptive message for invalid args. Prefer custom domain exceptions over generic ones.
 
-**Async patterns**: 
-- async-first lifecycle methods (`start`/`stop`). Support `__aenter__`/`__aexit__` for context manager usage. 
-- Use `asyncio.Lock`, `asyncio.Task`, `asyncio.gather` for concurrency. 
+**Async patterns**:
+
+- async-first lifecycle methods (`start`/`stop`). Support `__aenter__`/`__aexit__` for context manager usage.
+- Use `asyncio.Lock`, `asyncio.Task`, `asyncio.gather` for concurrency.
 - Clean up resources in `finally` blocks.
 
 **Method order**:
+
 - `__init__`, public lifecycle methods, properties, public feature methods, private helpers, dunder methods.
