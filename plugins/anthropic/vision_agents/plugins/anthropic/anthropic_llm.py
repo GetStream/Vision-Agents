@@ -76,7 +76,7 @@ class ClaudeLLM(LLM):
         self,
         text: str,
         processors: Optional[List[Processor]] = None,
-        participant: Participant = None,
+        participant: Optional[Participant] = None,
     ):
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
