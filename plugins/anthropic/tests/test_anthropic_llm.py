@@ -81,6 +81,72 @@ class TestClaudeLLM:
 
         assert "8" in response.text or "eight" in response.text
 
+    def test_merge_messages_alternating_roles_unchanged(self, llm: ClaudeLLM):
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+            {"role": "user", "content": "bye"},
+        ]
+        assert llm._merge_messages(messages) == messages
+
+    def test_merge_messages_identical_consecutive_collapses(self, llm: ClaudeLLM):
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "user", "content": "hello"},
+        ]
+        result = llm._merge_messages(messages)
+        assert len(result) == 1
+        assert result[0] == {"role": "user", "content": "hello"}
+
+    def test_merge_messages_different_content_produces_blocks(self, llm: ClaudeLLM):
+        messages = [
+            {"role": "user", "content": "first"},
+            {"role": "user", "content": "second"},
+        ]
+        result = llm._merge_messages(messages)
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        assert result[0]["content"] == [
+            {"type": "text", "text": "first"},
+            {"type": "text", "text": "second"},
+        ]
+
+    def test_merge_messages_list_content_merges(self, llm: ClaudeLLM):
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": "a"}]},
+            {"role": "user", "content": "b"},
+        ]
+        result = llm._merge_messages(messages)
+        assert len(result) == 1
+        assert result[0]["content"] == [
+            {"type": "text", "text": "a"},
+            {"type": "text", "text": "b"},
+        ]
+
+    def test_merge_messages_empty_input(self, llm: ClaudeLLM):
+        assert llm._merge_messages([]) == []
+
+    def test_normalize_message_string_content(self, llm: ClaudeLLM):
+        messages = ClaudeLLM._normalize_message({"role": "user", "content": "hello"})
+        assert len(messages) == 1
+        assert messages[0].content == "hello"
+        assert messages[0].role == "user"
+
+    def test_normalize_message_list_content_stringified(self, llm: ClaudeLLM):
+        messages = ClaudeLLM._normalize_message(
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "hello"},
+                    {"type": "text", "text": "world"},
+                ],
+            }
+        )
+        assert len(messages) == 1
+        assert messages[0].content == "hello world"
+        assert isinstance(messages[0].content, str)
+        assert messages[0].role == "assistant"
+
     @pytest.mark.integration
     async def test_native_memory(self, llm: ClaudeLLM):
         await llm.create_message(

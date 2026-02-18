@@ -1,5 +1,6 @@
 from typing import Optional, List, TYPE_CHECKING, Any, Dict
 import json
+import logging
 import time
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
@@ -23,6 +24,8 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.processors import Processor
 from . import events
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
@@ -129,13 +132,7 @@ class ClaudeLLM(LLM):
             # Anthropic requires alternating user/assistant roles. The agent's
             # STT handler may have already added the user message, so dedupe
             # consecutive same-role messages (keep the later one).
-            deduped: list = []
-            for msg in combined:
-                if deduped and msg.get("role") == deduped[-1].get("role"):
-                    deduped[-1] = msg
-                else:
-                    deduped.append(msg)
-            kwargs["messages"] = deduped
+            kwargs["messages"] = self._merge_messages(combined)
 
             # Track new messages in conversation if not already present
             # (the agent's STT handler adds user messages, but programmatic
@@ -579,6 +576,12 @@ class ClaudeLLM(LLM):
         for m in claude_messages:
             if isinstance(m, dict):
                 content = m.get("content", "")
+                if isinstance(content, list):
+                    content = " ".join(
+                        item.get("text", "")
+                        for item in content
+                        if isinstance(item, dict)
+                    )
                 role = m.get("role", "user")
             else:
                 content = str(m)
@@ -587,6 +590,36 @@ class ClaudeLLM(LLM):
             messages.append(message)
 
         return messages
+
+    def _merge_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Merge consecutive same-role messages.
+
+        Anthropic requires alternating user/assistant roles. The STT handler
+        may add the user message before simple_response does, producing
+        consecutive same-role entries. This merges them so no content is lost.
+        """
+        merged: list[dict[str, Any]] = []
+        for msg in messages:
+            if merged and msg.get("role") == merged[-1].get("role"):
+                prev = merged[-1].get("content", "")
+                curr = msg.get("content", "")
+                if prev == curr:
+                    merged[-1] = msg
+                else:
+                    prev_blocks = (
+                        prev
+                        if isinstance(prev, list)
+                        else [{"type": "text", "text": str(prev)}]
+                    )
+                    curr_blocks = (
+                        curr
+                        if isinstance(curr, list)
+                        else [{"type": "text", "text": str(curr)}]
+                    )
+                    merged[-1] = {**msg, "content": prev_blocks + curr_blocks}
+            else:
+                merged.append(msg)
+        return merged
 
     def _convert_tools_to_provider_format(
         self, tools: List[ToolSchema]
