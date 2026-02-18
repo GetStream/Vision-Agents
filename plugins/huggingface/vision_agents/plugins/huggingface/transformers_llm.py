@@ -27,7 +27,16 @@ import uuid
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, cast
 
+import jinja2
 import torch
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+    TextStreamer,
+)
 
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
@@ -41,8 +50,6 @@ from vision_agents.core.warmup import Warmable
 from . import events
 
 if TYPE_CHECKING:
-    from transformers import PreTrainedModel, PreTrainedTokenizerBase
-
     from vision_agents.core.processors import Processor
 
 logger = logging.getLogger(__name__)
@@ -55,11 +62,10 @@ PLUGIN_NAME = "transformers_llm"
 
 DeviceType = Literal["auto", "cuda", "mps", "cpu"]
 QuantizationType = Literal["none", "4bit", "8bit"]
+TorchDtypeType = Literal["auto", "float16", "bfloat16", "float32"]
 
 
-def resolve_torch_dtype(
-    config: Literal["auto", "float16", "bfloat16", "float32"],
-) -> torch.dtype:
+def resolve_torch_dtype(config: TorchDtypeType) -> torch.dtype:
     """Map a string config to a concrete ``torch.dtype``.
 
     When *config* is ``"auto"`` the best dtype is chosen based on available
@@ -87,8 +93,6 @@ def get_quantization_config(quantization: QuantizationType) -> Optional[Any]:
     """
     if quantization == "none":
         return None
-
-    from transformers import BitsAndBytesConfig
 
     if quantization == "4bit":
         return BitsAndBytesConfig(
@@ -146,11 +150,11 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         model: str,
         device: DeviceType = "auto",
         quantization: QuantizationType = "none",
-        torch_dtype: Literal["auto", "float16", "bfloat16", "float32"] = "auto",
+        torch_dtype: TorchDtypeType = "auto",
         trust_remote_code: bool = False,
         max_new_tokens: int = 512,
     ):
-        LLM.__init__(self)
+        super().__init__()
 
         self.model_id = model
         self._device_config = device
@@ -177,13 +181,11 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self._resources = resource
 
     def _load_model_sync(self) -> ModelResources:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
 
         load_kwargs: Dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
-            "dtype": torch_dtype,
+            "torch_dtype": torch_dtype,
         }
 
         if self._device_config == "auto":
@@ -278,7 +280,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 Dict[str, Any],
                 tokenizer.apply_chat_template(messages, **template_kwargs),
             )
-        except Exception as e:
+        except (jinja2.TemplateError, TypeError, ValueError) as e:
             if tools_param:
                 logger.warning(
                     f"apply_chat_template failed with tools, retrying without: {e}"
@@ -290,7 +292,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 )
                 tools_param = None
             else:
-                logger.error(f"Failed to apply chat template: {e}")
+                logger.exception("Failed to apply chat template")
                 return LLMResponseEvent(original=None, text="")
 
         inputs = {k: v.to(device) for k, v in inputs.items()}
@@ -336,8 +338,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         temperature: float,
         do_sample: bool,
     ) -> LLMResponseEvent:
-        from transformers import TextStreamer
-
         loop = asyncio.get_running_loop()
         async_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
@@ -376,9 +376,9 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             try:
                 with torch.no_grad():
                     model.generate(**generate_kwargs)  # type: ignore[operator]
-            except Exception as e:
+            except RuntimeError as e:
                 generation_error = e
-                logger.error(f"Generation failed: {e}")
+                logger.exception("Generation failed")
                 # Unblock the async consumer so it doesn't hang forever
                 loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
@@ -470,8 +470,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         try:
             outputs = await asyncio.to_thread(_do_generate)
-        except Exception as e:
-            logger.error(f"Generation failed: {e}")
+        except RuntimeError as e:
+            logger.exception("Generation failed")
             self.events.send(
                 events.LLMErrorEvent(
                     plugin_name=PLUGIN_NAME,

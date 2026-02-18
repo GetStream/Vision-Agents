@@ -146,7 +146,7 @@ class TestTransformersVLM:
     async def test_processor_fallback(self, vlm):
         """When apply_chat_template fails, falls back to direct processor call."""
         processor = vlm._resources.processor
-        processor.apply_chat_template.side_effect = Exception("not supported")
+        processor.apply_chat_template.side_effect = TypeError("not supported")
 
         input_ids = torch.tensor([[1, 2, 3]])
         processor.return_value = {
@@ -154,7 +154,7 @@ class TestTransformersVLM:
             "attention_mask": torch.ones_like(input_ids),
         }
 
-        result = vlm._build_vlm_inputs("describe this")
+        result = vlm._build_vlm_inputs("describe this", [])
         assert "input_ids" in result
 
         call_kwargs = processor.call_args.kwargs

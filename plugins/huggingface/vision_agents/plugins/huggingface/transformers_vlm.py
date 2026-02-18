@@ -23,11 +23,12 @@ import logging
 import time
 import uuid
 from collections import deque
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 import av
 import torch
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
+from transformers import AutoModelForImageTextToText, AutoProcessor, PreTrainedModel
 
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
@@ -44,13 +45,12 @@ from . import events
 from .transformers_llm import (
     DeviceType,
     QuantizationType,
+    TorchDtypeType,
     get_quantization_config,
     resolve_torch_dtype,
 )
 
 if TYPE_CHECKING:
-    from transformers import PreTrainedModel
-
     from vision_agents.core.processors import Processor
 
 logger = logging.getLogger(__name__)
@@ -105,14 +105,14 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         model: str,
         device: DeviceType = "auto",
         quantization: QuantizationType = "none",
-        torch_dtype: Literal["auto", "float16", "bfloat16", "float32"] = "auto",
+        torch_dtype: TorchDtypeType = "auto",
         trust_remote_code: bool = True,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
         max_frames: int = 4,
         max_new_tokens: int = 512,
     ):
-        VideoLLM.__init__(self)
+        super().__init__()
 
         self.model_id = model
         self._device_config = device
@@ -147,13 +147,11 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         self._resources = resource
 
     def _load_model_sync(self) -> VLMResources:
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
 
         load_kwargs: Dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
-            "dtype": torch_dtype,
+            "torch_dtype": torch_dtype,
         }
 
         if self._device_config == "auto":
@@ -264,10 +262,14 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         request_start = time.perf_counter()
 
+        frames_snapshot = list(self._frame_buffer)
+
         try:
-            inputs = await asyncio.to_thread(self._build_vlm_inputs, text)
-        except Exception as e:
-            logger.error(f"Failed to build VLM inputs: {e}")
+            inputs = await asyncio.to_thread(
+                self._build_vlm_inputs, text, frames_snapshot
+            )
+        except (TypeError, ValueError, RuntimeError) as e:
+            logger.exception("Failed to build VLM inputs")
             self.events.send(
                 VLMErrorEvent(
                     plugin_name=PLUGIN_NAME,
@@ -302,8 +304,8 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         try:
             outputs = await asyncio.to_thread(_do_generate)
-        except Exception as e:
-            logger.error(f"VLM generation failed: {e}")
+        except RuntimeError as e:
+            logger.exception("VLM generation failed")
             self.events.send(
                 VLMErrorEvent(
                     plugin_name=PLUGIN_NAME,
@@ -355,16 +357,18 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
     # Input building
     # ------------------------------------------------------------------
 
-    def _build_vlm_inputs(self, text: str) -> Dict[str, Any]:
-        """Build processor inputs from text and buffered video frames.
+    def _build_vlm_inputs(
+        self, text: str, frames: list[av.VideoFrame]
+    ) -> Dict[str, Any]:
+        """Build processor inputs from text and video frames.
 
         Converts ``av.VideoFrame`` objects to PIL Images and passes them
         to the processor alongside a structured message list.
         """
         processor = self._resources.processor  # type: ignore[union-attr]
 
-        # Sample frames evenly from buffer to stay within context limits
-        all_frames = list(self._frame_buffer)
+        # Sample frames evenly to stay within context limits
+        all_frames = list(frames)
         if len(all_frames) > self._max_frames:
             step = len(all_frames) / self._max_frames
             all_frames = [all_frames[int(i * step)] for i in range(self._max_frames)]
@@ -405,7 +409,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                     padding=True,
                 )
             return result
-        except Exception as e:
+        except (TypeError, ValueError, RuntimeError) as e:
             logger.warning(f"processor.apply_chat_template failed, using fallback: {e}")
             prompt = text or "Describe what you see."
             return processor(
