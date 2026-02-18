@@ -1,34 +1,33 @@
-from typing import Optional, List, TYPE_CHECKING, Any, Dict
 import json
 import logging
 import time
+from typing import Any, Dict, List, Optional
+
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
 from anthropic.types import (
-    RawMessageStreamEvent,
     Message as ClaudeMessage,
+)
+from anthropic.types import (
     RawContentBlockDeltaEvent,
     RawMessageStopEvent,
+    RawMessageStreamEvent,
     TextDelta,
 )
-
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-
+from vision_agents.core.agents.conversation import Message
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.processors import Processor
+
 from . import events
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from vision_agents.core.agents.conversation import Message
 
 
 class ClaudeLLM(LLM):
@@ -71,11 +70,7 @@ class ClaudeLLM(LLM):
         self._pending_tool_uses_by_index: Dict[
             int, Dict[str, Any]
         ] = {}  # index -> {id, name, parts: []}
-
-        if client is not None:
-            self.client = client
-        else:
-            self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        self.client = client or anthropic.AsyncAnthropic(api_key=api_key)
 
     async def simple_response(
         self,

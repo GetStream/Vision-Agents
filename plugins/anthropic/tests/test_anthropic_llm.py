@@ -1,27 +1,23 @@
 import pytest
 from dotenv import load_dotenv
-
-
-from vision_agents.core.agents.conversation import InMemoryConversation
-
-from vision_agents.core.agents.conversation import Message
+from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
 
 load_dotenv()
 
 
+@pytest.fixture
+async def llm() -> ClaudeLLM:
+    """Test ClaudeLLM initialization with a provided client."""
+    llm = ClaudeLLM(model="claude-sonnet-4-6")
+    llm.set_conversation(InMemoryConversation("be friendly", []))
+    return llm
+
+
 class TestClaudeLLM:
     """Test suite for ClaudeLLM class with real API calls."""
 
-    @pytest.fixture
-    async def llm(self) -> ClaudeLLM:
-        """Test ClaudeLLM initialization with a provided client."""
-        llm = ClaudeLLM(model="claude-sonnet-4-20250514")
-        llm.set_conversation(InMemoryConversation("be friendly", []))
-        return llm
-
-    @pytest.mark.asyncio
     async def test_message(self, llm: ClaudeLLM):
         messages = ClaudeLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
@@ -29,7 +25,6 @@ class TestClaudeLLM:
         assert message.original is not None
         assert message.content == "say hi"
 
-    @pytest.mark.asyncio
     async def test_advanced_message(self, llm: ClaudeLLM):
         advanced = {
             "role": "user",
@@ -79,6 +74,20 @@ class TestClaudeLLM:
             text="How many paws are there in the room?",
         )
 
+        assert "8" in response.text or "eight" in response.text
+
+    @pytest.mark.integration
+    async def test_native_memory(self, llm: ClaudeLLM):
+        await llm.create_message(
+            messages=[{"role": "user", "content": "There are 2 dogs in the room"}],
+            max_tokens=1000,
+        )
+        response = await llm.create_message(
+            messages=[
+                {"role": "user", "content": "How many paws are there in the room?"}
+            ],
+            max_tokens=1000,
+        )
         assert "8" in response.text or "eight" in response.text
 
     def test_merge_messages_alternating_roles_unchanged(self, llm: ClaudeLLM):
@@ -146,17 +155,3 @@ class TestClaudeLLM:
         assert messages[0].content == "hello world"
         assert isinstance(messages[0].content, str)
         assert messages[0].role == "assistant"
-
-    @pytest.mark.integration
-    async def test_native_memory(self, llm: ClaudeLLM):
-        await llm.create_message(
-            messages=[{"role": "user", "content": "There are 2 dogs in the room"}],
-            max_tokens=1000,
-        )
-        response = await llm.create_message(
-            messages=[
-                {"role": "user", "content": "How many paws are there in the room?"}
-            ],
-            max_tokens=1000,
-        )
-        assert "8" in response.text or "eight" in response.text
