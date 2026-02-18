@@ -379,6 +379,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             except RuntimeError as e:
                 generation_error = e
                 logger.exception("Generation failed")
+            finally:
                 # Unblock the async consumer so it doesn't hang forever
                 loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
