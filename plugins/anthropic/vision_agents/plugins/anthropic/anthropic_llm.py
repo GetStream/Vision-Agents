@@ -114,6 +114,8 @@ class ClaudeLLM(LLM):
             kwargs["tools"] = self._convert_tools_to_provider_format(tools)
             kwargs.setdefault("tool_choice", {"type": "auto"})
 
+        if "messages" not in kwargs:
+            raise ValueError("messages are required")
         # ensure the AI remembers the past conversation
         new_messages = kwargs["messages"]
         if self._conversation:

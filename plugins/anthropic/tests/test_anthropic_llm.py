@@ -9,7 +9,6 @@ load_dotenv()
 
 @pytest.fixture
 async def llm() -> ClaudeLLM:
-    """Test ClaudeLLM initialization with a provided client."""
     llm = ClaudeLLM(model="claude-sonnet-4-6")
     llm.set_conversation(InMemoryConversation("be friendly", []))
     return llm
