@@ -13,7 +13,7 @@ import pytest
 from dotenv import load_dotenv
 
 from vision_agents.plugins import gemini
-from vision_agents.testing import TestSession
+from vision_agents.testing import TestEval
 
 load_dotenv()
 
@@ -34,18 +34,14 @@ async def test_greeting():
     llm = gemini.LLM(MODEL)
     judge_llm = gemini.LLM(MODEL)
 
-    async with TestSession(
+    async with TestEval(
         llm=llm,
+        judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        result = await session.run("Hello!")
-
-        await (
-            result.expect
-            .next_event(type="message")
-            .judge(judge_llm, intent="Responds with a friendly greeting")
-        )
-        result.expect.no_more_events()
+        await session.user_says("Hello!")
+        await session.agent_responds(intent="Responds with a friendly greeting")
+        session.no_more_events()
 
 
 async def test_grounding():
@@ -55,20 +51,15 @@ async def test_grounding():
     llm = gemini.LLM(MODEL)
     judge_llm = gemini.LLM(MODEL)
 
-    async with TestSession(
+    async with TestEval(
         llm=llm,
+        judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        result = await session.run("What city was I born in?")
-
-        await (
-            result.expect
-            .next_event(type="message")
-            .judge(
-                judge_llm,
-                intent="Does NOT claim to know the user's birthplace. "
-                "Instead asks for clarification or says it doesn't have that info.",
-            )
+        await session.user_says("What city was I born in?")
+        await session.agent_responds(
+            intent="Does NOT claim to know the user's birthplace. "
+            "Instead asks for clarification or says it doesn't have that info.",
         )
 
 
@@ -79,20 +70,15 @@ async def test_concise_response():
     llm = gemini.LLM(MODEL)
     judge_llm = gemini.LLM(MODEL)
 
-    async with TestSession(
+    async with TestEval(
         llm=llm,
+        judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        result = await session.run("Explain what Python is")
-
-        await (
-            result.expect
-            .next_event(type="message")
-            .judge(
-                judge_llm,
-                intent="Gives a brief, concise explanation of Python "
-                "(not a long multi-paragraph essay).",
-            )
+        await session.user_says("Explain what Python is")
+        await session.agent_responds(
+            intent="Gives a brief, concise explanation of Python "
+            "(not a long multi-paragraph essay).",
         )
 
 
@@ -107,26 +93,18 @@ async def test_function_call():
     async def get_weather(location: str) -> dict:
         return {"temperature": 22, "condition": "sunny", "unit": "celsius"}
 
-    async with TestSession(
+    async with TestEval(
         llm=llm,
+        judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise. "
         "Use the get_weather tool when asked about weather.",
     ) as session:
-        result = await session.run("What's the weather in Tokyo?")
-
-        breakpoint()
-
-        result.expect.next_event().is_function_call(
-            name="get_weather", arguments={"location": "Tokyo"}
+        await session.user_says("What's the weather in Tokyo?")
+        session.agent_calls("get_weather", arguments={"location": "Tokyo"})
+        await session.agent_responds(
+            intent="Reports weather for Tokyo including temperature"
         )
-        result.expect.next_event().is_function_call_output()
-        await (
-            result.expect
-            .next_event()
-            .is_message(role="assistant")
-            .judge(judge_llm, intent="Reports weather for Tokyo including temperature")
-        )
-        result.expect.no_more_events()
+        session.no_more_events()
 
 
 async def test_function_call_error_handling():
@@ -142,21 +120,17 @@ async def test_function_call_error_handling():
     async def get_weather(location: str) -> dict:
         return {"temperature": 22, "condition": "sunny"}
 
-    async with TestSession(
+    async with TestEval(
         llm=llm,
+        judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
         with mock_tools(llm, {"get_weather": lambda location: (_ for _ in ()).throw(RuntimeError("Service unavailable"))}):
-            result = await session.run("What's the weather in Paris?")
+            await session.user_says("What's the weather in Paris?")
 
-        await (
-            result.expect
-            .next_event(type="message")
-            .judge(
-                judge_llm,
-                intent="Informs the user that it could not get the weather "
-                "or that something went wrong.",
-            )
+        await session.agent_responds(
+            intent="Informs the user that it could not get the weather "
+            "or that something went wrong.",
         )
 
 
@@ -167,23 +141,17 @@ async def test_multi_turn_conversation():
     llm = gemini.LLM(MODEL)
     judge_llm = gemini.LLM(MODEL)
 
-    async with TestSession(
+    async with TestEval(
         llm=llm,
+        judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        result1 = await session.run("My name is Alice")
-        await (
-            result1.expect
-            .next_event(type="message")
-            .judge(judge_llm, intent="Acknowledges the user's name (Alice)")
+        await session.user_says("My name is Alice")
+        await session.agent_responds(
+            intent="Acknowledges the user's name (Alice)"
         )
 
-        result2 = await session.run("What's my name?")
-        await (
-            result2.expect
-            .next_event(type="message")
-            .judge(
-                judge_llm,
-                intent="Correctly recalls that the user's name is Alice",
-            )
+        await session.user_says("What's my name?")
+        await session.agent_responds(
+            intent="Correctly recalls that the user's name is Alice",
         )

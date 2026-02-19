@@ -6,20 +6,16 @@ infrastructure or edge connections.
 Example::
 
     from vision_agents.plugins import gemini
-    from vision_agents.testing import TestSession
+    from vision_agents.testing import TestEval
 
     async def test_greeting():
         llm = gemini.LLM("gemini-2.5-flash-lite")
         judge_llm = gemini.LLM("gemini-2.5-flash-lite")
 
-        async with TestSession(llm=llm, instructions="Be friendly") as session:
-            result = await session.run("Hello")
-            await (
-                result.expect.next_event()
-                .is_message(role="assistant")
-                .judge(judge_llm, intent="Friendly greeting")
-            )
-            result.expect.no_more_events()
+        async with TestEval(llm=llm, judge=judge_llm, instructions="Be friendly") as session:
+            await session.user_says("Hello")
+            await session.agent_responds(intent="Friendly greeting")
+            session.no_more_events()
 """
 
 from vision_agents.testing._events import (
@@ -29,26 +25,15 @@ from vision_agents.testing._events import (
     RunEvent,
 )
 from vision_agents.testing._mock_tools import mock_tools
-from vision_agents.testing._run_result import (
-    ChatMessageAssert,
-    EventAssert,
-    EventRangeAssert,
-    FunctionCallAssert,
-    FunctionCallOutputAssert,
-    RunAssert,
-    RunResult,
-)
-from vision_agents.testing._session import TestSession
+from vision_agents.testing._run_result import RunResult
+from vision_agents.testing._session import TestEval
+
+TestSession = TestEval  # backwards compat alias
 
 __all__ = [
+    "TestEval",
     "TestSession",
     "RunResult",
-    "RunAssert",
-    "EventAssert",
-    "EventRangeAssert",
-    "ChatMessageAssert",
-    "FunctionCallAssert",
-    "FunctionCallOutputAssert",
     "ChatMessageEvent",
     "FunctionCallEvent",
     "FunctionCallOutputEvent",
