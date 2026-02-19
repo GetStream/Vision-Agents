@@ -70,6 +70,7 @@ decart = ["vision-agents-plugins-decart"]
 twilio = ["vision-agents-plugins-twilio"]
 turbopuffer = ["vision-agents-plugins-turbopuffer"]
 mistral = ["vision-agents-plugins-mistral"]
+tencent = ["vision-agents-plugins-tencent"]
 
 all-plugins = [
     "vision-agents-plugins-anthropic",
@@ -102,6 +103,7 @@ all-plugins = [
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-turbopuffer",
     "vision-agents-plugins-mistral",
+    "vision-agents-plugins-tencent",
 ]
 
 [tool.hatch.metadata]

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -36,6 +36,7 @@ members = [
     "vision-agents-plugins-qwen",
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-smart-turn",
+    "vision-agents-plugins-tencent",
     "vision-agents-plugins-turbopuffer",
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-ultralytics",
@@ -6777,6 +6778,7 @@ all-plugins = [
     { name = "vision-agents-plugins-qwen" },
     { name = "vision-agents-plugins-roboflow" },
     { name = "vision-agents-plugins-smart-turn" },
+    { name = "vision-agents-plugins-tencent" },
     { name = "vision-agents-plugins-turbopuffer" },
     { name = "vision-agents-plugins-twilio" },
     { name = "vision-agents-plugins-ultralytics" },
@@ -6862,6 +6864,9 @@ roboflow = [
 smart-turn = [
     { name = "vision-agents-plugins-smart-turn" },
 ]
+tencent = [
+    { name = "vision-agents-plugins-tencent" },
+]
 turbopuffer = [
     { name = "vision-agents-plugins-turbopuffer" },
 ]
@@ -6945,6 +6950,8 @@ requires-dist = [
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'roboflow'", editable = "plugins/roboflow" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
+    { name = "vision-agents-plugins-tencent", marker = "extra == 'all-plugins'", editable = "plugins/tencent" },
+    { name = "vision-agents-plugins-tencent", marker = "extra == 'tencent'", editable = "plugins/tencent" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'all-plugins'", editable = "plugins/turbopuffer" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'turbopuffer'", editable = "plugins/turbopuffer" },
     { name = "vision-agents-plugins-twilio", marker = "extra == 'all-plugins'", editable = "plugins/twilio" },
@@ -6958,7 +6965,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "roboflow", "smart-turn", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
@@ -7614,6 +7621,28 @@ requires-dist = [
     { name = "transformers", specifier = ">=4.48.2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-tencent"
+source = { editable = "plugins/tencent" }
+dependencies = [
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "vision-agents", editable = "agents-core" }]
 
 [package.metadata.requires-dev]
 dev = [
