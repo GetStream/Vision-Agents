@@ -44,10 +44,10 @@ def _simple_events() -> list:
     ]
 
 
-class TestAgentCalls:
+class TestFunctionCalled:
     def test_matches_name(self):
         response = _make_response(_tool_call_events())
-        event = response.agent_calls("get_weather")
+        event = response.function_called("get_weather")
         assert event.name == "get_weather"
 
     def test_matches_arguments_partial(self):
@@ -59,18 +59,18 @@ class TestAgentCalls:
             FunctionCallOutputEvent(name="search", output="results"),
         ]
         response = _make_response(events)
-        event = response.agent_calls("search", arguments={"query": "hello"})
+        event = response.function_called("search", arguments={"query": "hello"})
         assert event.arguments["limit"] == 10
 
     def test_name_mismatch_raises(self):
         response = _make_response(_tool_call_events())
         with pytest.raises(AssertionError, match="Expected call name 'wrong_tool'"):
-            response.agent_calls("wrong_tool")
+            response.function_called("wrong_tool")
 
     def test_argument_mismatch_raises(self):
         response = _make_response(_tool_call_events())
         with pytest.raises(AssertionError, match="argument 'location'"):
-            response.agent_calls("get_weather", arguments={"location": "Berlin"})
+            response.function_called("get_weather", arguments={"location": "Berlin"})
 
     def test_wrong_event_type_skips_to_match(self):
         events = [
@@ -79,27 +79,27 @@ class TestAgentCalls:
             FunctionCallOutputEvent(name="search", output="ok"),
         ]
         response = _make_response(events)
-        event = response.agent_calls("search")
+        event = response.function_called("search")
         assert event.name == "search"
 
     def test_no_function_call_raises(self):
         response = _make_response(_simple_events())
         with pytest.raises(AssertionError, match="Expected FunctionCallEvent"):
-            response.agent_calls("anything")
+            response.function_called("anything")
 
     async def test_auto_skips_function_call_output(self):
         response = _make_response(_tool_call_events())
-        response.agent_calls("get_weather")
+        response.function_called("get_weather")
         event = await response.judge()
         assert isinstance(event, ChatMessageEvent)
 
     def test_none_name_skips_name_check(self):
         response = _make_response(_tool_call_events())
-        event = response.agent_calls()
+        event = response.function_called()
         assert event.name == "get_weather"
 
 
-class TestAgentCallsOutput:
+class TestFunctionOutput:
     def test_matches_output(self):
         events = [
             FunctionCallOutputEvent(
@@ -107,7 +107,7 @@ class TestAgentCallsOutput:
             ),
         ]
         response = _make_response(events)
-        event = response.agent_calls_output(
+        event = response.function_output(
             output={"temp": 70, "condition": "sunny"}
         )
         assert event.name == "get_weather"
@@ -118,7 +118,7 @@ class TestAgentCallsOutput:
         ]
         response = _make_response(events)
         with pytest.raises(AssertionError, match="Expected output"):
-            response.agent_calls_output(output="wrong")
+            response.function_output(output="wrong")
 
     def test_is_error_match(self):
         events = [
@@ -127,7 +127,7 @@ class TestAgentCallsOutput:
             ),
         ]
         response = _make_response(events)
-        event = response.agent_calls_output(is_error=True)
+        event = response.function_output(is_error=True)
         assert event.is_error is True
 
     def test_is_error_mismatch_raises(self):
@@ -136,7 +136,7 @@ class TestAgentCallsOutput:
         ]
         response = _make_response(events)
         with pytest.raises(AssertionError, match="Expected is_error=True"):
-            response.agent_calls_output(is_error=True)
+            response.function_output(is_error=True)
 
 
 class TestJudge:
@@ -179,7 +179,7 @@ class TestNoMoreEvents:
 class TestFullSequence:
     async def test_call_then_judge_then_no_more(self):
         response = _make_response(_tool_call_events())
-        response.agent_calls("get_weather", arguments={"location": "Tokyo"})
+        response.function_called("get_weather", arguments={"location": "Tokyo"})
         await response.judge()
         response.no_more_events()
 
@@ -192,8 +192,8 @@ class TestFullSequence:
             ChatMessageEvent(role="assistant", content="Here's the info."),
         ]
         response = _make_response(events)
-        response.agent_calls("get_weather")
-        response.agent_calls("get_news", arguments={"topic": "tech"})
+        response.function_called("get_weather")
+        response.function_called("get_news", arguments={"topic": "tech"})
         await response.judge()
         response.no_more_events()
 
@@ -207,7 +207,7 @@ class TestFullSequence:
         ]
         response = _make_response(events)
         response._advance_to_type(FunctionCallEvent, "FunctionCallEvent")
-        response.agent_calls_output(output={"temp": 70, "condition": "sunny"})
+        response.function_output(output={"temp": 70, "condition": "sunny"})
 
 
 class TestTestResponse:
@@ -238,9 +238,9 @@ class TestErrorMessages:
     def test_includes_context_in_error(self):
         response = _make_response(_tool_call_events())
         with pytest.raises(AssertionError, match="Context:"):
-            response.agent_calls("nonexistent_tool")
+            response.function_called("nonexistent_tool")
 
     def test_includes_event_list_in_error(self):
         response = _make_response(_tool_call_events())
         with pytest.raises(AssertionError, match="FunctionCallEvent"):
-            response.agent_calls("nonexistent_tool")
+            response.function_called("nonexistent_tool")

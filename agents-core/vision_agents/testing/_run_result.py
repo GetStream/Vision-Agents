@@ -63,7 +63,7 @@ class TestResponse:
             _judge_llm=judge_llm,
         )
 
-    def agent_calls(
+    def function_called(
         self,
         name: str | None = None,
         *,
@@ -108,7 +108,7 @@ class TestResponse:
 
         return event
 
-    def agent_calls_output(
+    def function_output(
         self,
         *,
         output: Any = _NOT_GIVEN,

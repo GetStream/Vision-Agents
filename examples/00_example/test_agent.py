@@ -100,7 +100,7 @@ async def test_function_call():
         "Use the get_weather tool when asked about weather.",
     ) as session:
         response = await session.simple_response("What's the weather in Tokyo?")
-        response.agent_calls("get_weather", arguments={"location": "Tokyo"})
+        response.function_called("get_weather", arguments={"location": "Tokyo"})
         await response.judge(
             intent="Reports weather for Tokyo including temperature"
         )
