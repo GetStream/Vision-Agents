@@ -1,43 +1,19 @@
 # Vision-Agents Testing API
 
-Text-only testing for Vision-Agents. Test agent responses, tool calls, and intent — no audio, video, or edge connection required.
+> Text-only testing for Vision-Agents.
+> Test agent responses, tool calls, and intent — no audio, video, or edge connection required.
 
-## What You Can Test
+## Table of Contents
 
-- **Agent responses** — verify the agent replied (`response.judge()`), check content via LLM judge (`response.judge(intent="...")`)
-- **Grounding** — verify the agent doesn't hallucinate (judge with intent like "Does NOT claim to know...")
-- **Tool calls** — verify the agent called the right function (`response.function_called("get_weather")`), with the right arguments (`arguments={"location": "Tokyo"}`), partial argument matching supported
-- **Tool outputs** — verify tool results (`response.function_output(output={...})`), error handling (`is_error=True`)
-- **Event order** — strict sequential checks (`function_called` → `judge` → `no_more_events()`), auto-skips `FunctionCallOutputEvent` after `function_called`
-- **Tool mocking** — swap tool implementations while keeping schemas intact (`mock_tools`), simulate errors
-- **Multi-turn conversations** — multiple `simple_response()` calls share conversation history, test context retention across turns
+- [Quick Start](#quick-start)
+- [TestEval](#testeval) — session lifecycle, sends input
+- [TestResponse](#testresponse) — response data + assertions
+- [mock_tools](#mock_tools) — swap tool implementations
+- [Event Types](#event-types) — ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent
+- [Recommended Pattern](#recommended-pattern)
+- [Environment Variables](#environment-variables)
 
-### Architecture: Why We Test the LLM, Not the Agent
-
-The testing framework operates at the **LLM level**, not the full Agent level. This is by design.
-
-`Agent` is an orchestrator that combines Edge (transport), STT, LLM, TTS, turn detection, and processors into a complete audio/video pipeline. Its constructor validates that at least one processing capability (audio or video) is present, making it impossible to instantiate without real infrastructure dependencies.
-
-However, all agent **behavior** — what it says, which tools it calls, how it follows instructions — happens inside the LLM. By testing the LLM directly, we cover:
-
-- Response content and intent
-- Function/tool calling with correct arguments
-- Grounding (not hallucinating)
-- Multi-turn context retention
-- Tool error handling
-
-What remains at the Agent level is **infrastructure**: audio-to-text (STT), text-to-audio (TTS), turn detection, media transport (Edge), and processor pipelines. These are candidates for future testing capabilities.
-
-### Not Yet Supported
-
-**Requires full Agent testing (infrastructure level):**
-- Audio/video stream testing (STT, TTS, Edge transport)
-- Latency/performance benchmarks (full pipeline measurement)
-
-**Can be added at LLM level (behavioral):**
-- Parallel multi-agent testing
-- MCP server testing
-- Snapshot testing (comparison against saved reference outputs)
+---
 
 ## Quick Start
 
@@ -55,151 +31,159 @@ async def test_greeting():
         response.no_more_events()
 ```
 
-## Running Tests
+```python
+async def test_tool_call():
+    # ...
+    async with TestEval(llm=llm, judge=judge_llm, instructions="...") as session:
+        response = await session.simple_response("What's the weather in Tokyo?")
+        response.function_called("get_weather", arguments={"location": "Tokyo"})
+        await response.judge(intent="Reports weather for Tokyo")
+        response.no_more_events()
+```
+
+### Running Tests
 
 ```bash
-# Run integration tests
-uv run py.test path/to/test_file.py -m integration
-
-# With verbose event output
-VISION_AGENTS_EVALS_VERBOSE=1 uv run py.test path/to/test_file.py -m integration
-
-# With debugger support
-uv run py.test path/to/test_file.py -m integration -s --timeout=0 --pdb --skip-bb
+uv run py.test path/to/test_file.py -m integration                        # integration tests
+VISION_AGENTS_EVALS_VERBOSE=1 uv run py.test path/to/test_file.py -m integration  # verbose output
+uv run py.test path/to/test_file.py -m integration -s --timeout=0 --pdb   # with debugger
 ```
 
 ---
 
 ## TestEval
 
-The main entry point. Manages the LLM session lifecycle, sends text input, and returns `TestResponse` objects.
+Manages the LLM session lifecycle, sends text input, returns [`TestResponse`](#testresponse) objects.
 
 ### Constructor
 
 ```python
-TestEval(llm: LLM, instructions: str = "You are a helpful assistant.", judge: LLM | None = None)
+TestEval(
+    llm: LLM,
+    instructions: str = "You are a helpful assistant.",
+    judge: LLM | None = None,
+)
 ```
 
-| Parameter | Type | Description |
-|---|---|---|
-| `llm` | `LLM` | The LLM instance with tools already registered. |
-| `instructions` | `str` | System instructions for the agent. |
-| `judge` | `LLM \| None` | Optional separate LLM for intent evaluation. Required if `response.judge(intent=...)` is used. |
+| Parameter      | Type           | Description                                                                 |
+|----------------|----------------|-----------------------------------------------------------------------------|
+| `llm`          | `LLM`          | The LLM instance with tools already registered.                             |
+| `instructions` | `str`          | System instructions for the agent.                                          |
+| `judge`        | `LLM \| None`  | Separate LLM for intent evaluation. Required for `response.judge(intent=...)`. |
 
-> **Important:** Use a separate LLM instance for `judge`. Using the agent's LLM would pollute its conversation history.
+> **Note:** Always use a **separate** LLM instance for `judge` — using the agent's LLM would pollute its conversation history.
 
-### Properties
+### `await session.simple_response(text) -> TestResponse`
 
-| Property | Type | Description |
-|---|---|---|
-| `llm` | `LLM` | The LLM instance (useful for `mock_tools(session.llm, {...})`). |
-
-### Usage as Context Manager
-
-```python
-async with TestEval(llm=llm, judge=judge_llm, instructions="...") as session:
-    response = await session.simple_response("Hello")
-    await response.judge(intent="Friendly greeting")
-```
-
-### Methods
-
-#### `await session.simple_response(text) -> TestResponse`
-
-Send user text to the LLM and capture the response events. Conversation history accumulates across successive calls.
+Send user text to the LLM and capture the response. Conversation history accumulates across calls.
 
 ```python
 response = await session.simple_response("What's the weather in Tokyo?")
 ```
 
-#### `await session.start()` / `await session.close()`
+### Properties
 
-Manually manage the session lifecycle. Prefer using `async with` instead.
+| Property | Type  | Description                                           |
+|----------|-------|-------------------------------------------------------|
+| `llm`    | `LLM` | The LLM instance (useful for `mock_tools(session.llm, ...)`). |
+
+### Lifecycle
+
+```python
+# Preferred — context manager
+async with TestEval(llm=llm, judge=judge_llm) as session:
+    ...
+
+# Manual
+session = TestEval(llm=llm, judge=judge_llm)
+await session.start()
+try:
+    ...
+finally:
+    await session.close()
+```
 
 ---
 
 ## TestResponse
 
-Returned by `simple_response()`. Holds captured data from a single conversation turn and provides assertion methods.
+Returned by [`simple_response()`](#await-sessionsimple_responsetext---testresponse). Contains both the response data and assertion methods.
 
 ### Data Fields
 
-| Field | Type | Description |
-|---|---|---|
-| `input` | `str` | The user input that produced this response. |
-| `output` | `str \| None` | The final assistant message text, or `None` if no message. |
-| `events` | `list[RunEvent]` | All captured events in chronological order. |
-| `function_calls` | `list[FunctionCallEvent]` | Filtered list of function call events. |
-| `duration_ms` | `float` | Wall-clock time for the turn in milliseconds. |
+| Field            | Type                       | Description                                     |
+|------------------|----------------------------|-------------------------------------------------|
+| `input`          | `str`                      | The user input that produced this response.      |
+| `output`         | `str \| None`              | Final assistant message text (`None` if absent). |
+| `events`         | `list[RunEvent]`           | All captured events in chronological order.      |
+| `function_calls` | `list[FunctionCallEvent]`  | Filtered list of function call events.           |
+| `duration_ms`    | `float`                    | Wall-clock time for the turn (ms).               |
 
 ```python
 response = await session.simple_response("What's the weather?")
-print(response.output)           # "The weather in Tokyo is sunny, 22°C"
-print(response.function_calls)   # [FunctionCallEvent(name='get_weather', ...)]
-print(response.duration_ms)      # 1234.5
+
+response.output           # "The weather in Tokyo is sunny, 22°C"
+response.function_calls   # [FunctionCallEvent(name='get_weather', ...)]
+response.duration_ms      # 1234.5
+response.events           # full event list
 ```
 
-### Assertion Methods
+### Assertions
 
-#### `response.function_called(name=None, *, arguments=None) -> FunctionCallEvent`
+#### `response.function_called(name?, *, arguments?) -> FunctionCallEvent`
 
-Assert the next event is a `FunctionCallEvent`. Checks name and arguments (partial match — only specified keys are checked). **Auto-skips** the following `FunctionCallOutputEvent`.
+Assert the next event is a `FunctionCallEvent`. Auto-skips the following `FunctionCallOutputEvent`.
 
 ```python
-# Check name only
-response.function_called("get_weather")
-
-# Check name and specific arguments
-response.function_called("get_weather", arguments={"location": "Tokyo"})
-
-# Partial match — extra arguments are ignored
-response.function_called("search", arguments={"query": "hello"})
-# passes even if arguments also has "limit" and "offset"
-
-# No name check — just advance to next function call
-response.function_called()
+response.function_called("get_weather")                              # name only
+response.function_called("get_weather", arguments={"location": "Tokyo"})  # name + args (partial match)
+response.function_called()                                           # any function call
 ```
 
-Returns the matched `FunctionCallEvent` for further inspection:
+**Partial matching** — only specified keys are checked:
+
+```python
+# passes even if arguments also has "limit" and "offset"
+response.function_called("search", arguments={"query": "hello"})
+```
+
+Returns the matched event for inspection:
 
 ```python
 event = response.function_called("get_weather")
-print(event.name)        # "get_weather"
-print(event.arguments)   # {"location": "Tokyo"}
+event.name        # "get_weather"
+event.arguments   # {"location": "Tokyo"}
 ```
 
-#### `response.function_output(*, output=..., is_error=None) -> FunctionCallOutputEvent`
+#### `response.function_output(*, output?, is_error?) -> FunctionCallOutputEvent`
 
-Assert the next event is a `FunctionCallOutputEvent`. Use this when you need to inspect the tool output explicitly (normally auto-skipped by `function_called`).
+Assert the next event is a `FunctionCallOutputEvent`. Use when you need to inspect the tool output explicitly (normally auto-skipped by `function_called`).
 
 ```python
 response.function_output(output={"temp": 70, "condition": "sunny"})
 response.function_output(is_error=True)
 ```
 
-#### `await response.judge(*, intent=None) -> ChatMessageEvent`
+#### `await response.judge(*, intent?) -> ChatMessageEvent`
 
-Assert the next event is a `ChatMessageEvent`. If `intent` is given and a judge LLM was provided to `TestEval`, evaluates whether the message fulfils the intent.
+Assert the next event is a `ChatMessageEvent`. If `intent` is given, evaluates whether the message fulfils it using the judge LLM.
 
 ```python
-# Just check a message exists
-await response.judge()
-
-# Check intent with LLM judge
-await response.judge(intent="Reports weather for Tokyo including temperature")
+await response.judge()                                                # message exists
+await response.judge(intent="Reports weather for Tokyo with temperature")  # intent check
 ```
 
-Returns the matched `ChatMessageEvent`:
+Returns the matched event:
 
 ```python
 event = await response.judge()
-print(event.content)  # "The weather in Tokyo is sunny, 70F."
-print(event.role)     # "assistant"
+event.content   # "The weather in Tokyo is sunny, 70F."
+event.role      # "assistant"
 ```
 
 #### `response.no_more_events()`
 
-Assert that no events remain after the cursor. Raises `AssertionError` if events are left.
+Assert no events remain. Raises `AssertionError` if there are unconsumed events.
 
 ```python
 response.function_called("get_weather")
@@ -211,7 +195,7 @@ response.no_more_events()
 
 ## mock_tools
 
-Context manager that temporarily replaces tool implementations. The tool schemas (name, description, parameters) remain visible to the LLM — only the callable is swapped.
+Context manager that temporarily swaps tool implementations. Schemas (name, description, parameters) stay intact — only the callable changes.
 
 ```python
 from vision_agents.testing import mock_tools
@@ -220,20 +204,20 @@ with mock_tools(session.llm, {"get_weather": lambda location: {"temp": 0, "condi
     response = await session.simple_response("What's the weather?")
 ```
 
-| Parameter | Type | Description |
-|---|---|---|
-| `llm` | `LLM` | The LLM instance whose tools to mock. |
-| `mocks` | `dict[str, Callable]` | Tool name to mock callable mapping. |
+| Parameter | Type                  | Description                         |
+|-----------|-----------------------|-------------------------------------|
+| `llm`     | `LLM`                 | The LLM instance whose tools to mock. |
+| `mocks`   | `dict[str, Callable]` | Tool name to mock callable mapping.   |
 
-Raises `KeyError` if a tool name is not registered.
-
-Originals are always restored, even if an exception occurs inside the block.
+- Raises `KeyError` if a tool name is not registered.
+- Originals are always restored, even on exception.
 
 ```python
 # Simulate a tool error
-with mock_tools(session.llm, {"get_weather": lambda location: (_ for _ in ()).throw(RuntimeError("down"))}):
+with mock_tools(session.llm, {
+    "get_weather": lambda location: (_ for _ in ()).throw(RuntimeError("Service down"))
+}):
     response = await session.simple_response("What's the weather?")
-    # Agent should handle the error gracefully
 ```
 
 ---
@@ -242,51 +226,43 @@ with mock_tools(session.llm, {"get_weather": lambda location: (_ for _ in ()).th
 
 ### `ChatMessageEvent`
 
-| Field | Type | Description |
-|---|---|---|
-| `role` | `str` | `"assistant"` |
-| `content` | `str` | Message text |
-| `type` | `"message"` | Always `"message"` |
+| Field     | Type          | Description          |
+|-----------|---------------|----------------------|
+| `role`    | `str`         | `"assistant"`        |
+| `content` | `str`         | Message text         |
+| `type`    | `"message"`   | Always `"message"`   |
 
 ### `FunctionCallEvent`
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | `str` | Function name |
-| `arguments` | `dict[str, Any]` | Call arguments |
-| `tool_call_id` | `str \| None` | Optional tool call ID |
-| `type` | `"function_call"` | Always `"function_call"` |
+| Field          | Type              | Description            |
+|----------------|-------------------|------------------------|
+| `name`         | `str`             | Function name          |
+| `arguments`    | `dict[str, Any]`  | Call arguments         |
+| `tool_call_id` | `str \| None`     | Optional tool call ID  |
+| `type`         | `"function_call"` | Always `"function_call"` |
 
 ### `FunctionCallOutputEvent`
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | `str` | Function name |
-| `output` | `Any` | Return value or error dict |
-| `is_error` | `bool` | `True` if the call failed |
-| `tool_call_id` | `str \| None` | Optional tool call ID |
-| `execution_time_ms` | `float \| None` | Execution time |
-| `type` | `"function_call_output"` | Always `"function_call_output"` |
+| Field              | Type                      | Description              |
+|--------------------|---------------------------|--------------------------|
+| `name`             | `str`                     | Function name            |
+| `output`           | `Any`                     | Return value or error    |
+| `is_error`         | `bool`                    | `True` if the call failed |
+| `tool_call_id`     | `str \| None`             | Optional tool call ID    |
+| `execution_time_ms`| `float \| None`           | Execution time (ms)      |
+| `type`             | `"function_call_output"`  | Always `"function_call_output"` |
 
 ### `RunEvent`
 
-Union type: `ChatMessageEvent | FunctionCallEvent | FunctionCallOutputEvent`
-
----
-
-## Backwards Compatibility
-
-`TestSession` is available as an alias for `TestEval`:
-
 ```python
-from vision_agents.testing import TestSession  # same as TestEval
+RunEvent = ChatMessageEvent | FunctionCallEvent | FunctionCallOutputEvent
 ```
 
 ---
 
-## Recommended Pattern for Examples
+## Recommended Pattern
 
-Separate LLM setup from Agent construction so tests can reuse the LLM without requiring Edge/STT/TTS infrastructure:
+Separate LLM setup from Agent construction so tests can reuse the LLM without Edge/STT/TTS:
 
 ```python
 # simple_agent_example.py
@@ -301,15 +277,6 @@ def setup_llm(model: str = "gemini-2.5-flash-lite") -> gemini.LLM:
         return await get_weather_by_location(location)
 
     return llm
-
-async def create_agent(**kwargs) -> Agent:
-    llm = setup_llm()
-    return Agent(
-        edge=getstream.Edge(),
-        llm=llm,
-        instructions=INSTRUCTIONS,
-        ...
-    )
 ```
 
 ```python
@@ -330,10 +297,35 @@ async def test_weather():
 
 ---
 
+## Backwards Compatibility
+
+```python
+from vision_agents.testing import TestSession  # alias for TestEval
+```
+
+---
+
 ## Environment Variables
 
-| Variable | Description |
-|---|---|
-| `GOOGLE_API_KEY` | API key for Gemini LLM |
-| `VISION_AGENTS_TEST_MODEL` | Override the model used in tests (default: `gemini-2.5-flash-lite`) |
-| `VISION_AGENTS_EVALS_VERBOSE` | Set to `1` to print events and judge results during test runs |
+| Variable                       | Description                                                     |
+|--------------------------------|-----------------------------------------------------------------|
+| `GOOGLE_API_KEY`               | API key for Gemini LLM                                          |
+| `VISION_AGENTS_TEST_MODEL`     | Override test model (default: `gemini-2.5-flash-lite`)          |
+| `VISION_AGENTS_EVALS_VERBOSE`  | Set to `1` for detailed event and judge output during test runs |
+
+---
+
+## Architecture: Why We Test the LLM, Not the Agent
+
+`Agent` combines Edge (transport), STT, LLM, TTS, turn detection, and processors into a full audio/video pipeline. It requires real infrastructure to instantiate.
+
+All agent **behavior** — responses, tool calls, instruction following — happens inside the **LLM**. By testing the LLM directly we cover everything behavioral without infrastructure dependencies:
+
+| Covered (LLM level)                | Not yet supported (Agent level)         |
+|-------------------------------------|-----------------------------------------|
+| Response content and intent         | Audio/video stream testing              |
+| Function calling with correct args  | STT/TTS pipeline testing                |
+| Grounding (no hallucination)        | Latency/performance benchmarks          |
+| Multi-turn context retention        | Parallel multi-agent testing            |
+| Tool error handling                 | MCP server testing                      |
+| Tool mocking                        | Snapshot testing                        |
