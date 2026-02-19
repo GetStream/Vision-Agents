@@ -13,8 +13,8 @@ Example::
         judge_llm = gemini.LLM("gemini-2.5-flash-lite")
 
         async with TestEval(llm=llm, judge=judge_llm, instructions="Be friendly") as session:
-            await session.user_says("Hello")
-            await session.agent_responds(intent="Friendly greeting")
+            await session.simple_response("Hello")
+            await session.judge(intent="Friendly greeting")
             session.no_more_events()
 """
 

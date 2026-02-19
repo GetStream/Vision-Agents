@@ -34,8 +34,8 @@ async def test_greeting():
     judge_llm = gemini.LLM(MODEL)
 
     async with TestEval(llm=llm, judge=judge_llm, instructions=INSTRUCTIONS) as session:
-        await session.user_says("Hey there!")
-        await session.agent_responds(intent="Friendly, short greeting")
+        await session.simple_response("Hey there!")
+        await session.judge(intent="Friendly, short greeting")
         session.no_more_events()
 
 
@@ -47,9 +47,9 @@ async def test_weather_tool_call():
     judge_llm = gemini.LLM(MODEL)
 
     async with TestEval(llm=llm, judge=judge_llm, instructions=INSTRUCTIONS) as session:
-        await session.user_says("What's the weather like in Berlin?")
+        await session.simple_response("What's the weather like in Berlin?")
         session.agent_calls("get_weather", arguments={"location": "Berlin"})
-        await session.agent_responds(
+        await session.judge(
             intent="Reports current weather for Berlin"
         )
         session.no_more_events()

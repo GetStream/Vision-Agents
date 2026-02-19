@@ -13,8 +13,8 @@ Example::
         llm = gemini.LLM("gemini-2.5-flash-lite")
         judge_llm = gemini.LLM("gemini-2.5-flash-lite")
         async with TestEval(llm=llm, judge=judge_llm, instructions="Be friendly") as session:
-            await session.user_says("Hello")
-            await session.agent_responds(intent="Friendly greeting")
+            await session.simple_response("Hello")
+            await session.judge(intent="Friendly greeting")
             session.no_more_events()
 """
 
@@ -56,7 +56,7 @@ class TestEval:
         llm: The LLM instance to use, with tools already registered.
         instructions: System instructions for the agent.
         judge: Optional LLM instance for intent evaluation. Required
-            if ``agent_responds(intent=...)`` is used.
+            if ``judge(intent=...)`` is used.
     """
 
     def __init__(
@@ -125,7 +125,7 @@ class TestEval:
         """The LLM instance (useful for ``mock_tools(session.llm, {...})``)."""
         return self._llm
 
-    async def user_says(self, text: str) -> RunResult:
+    async def simple_response(self, text: str) -> RunResult:
         """Send user text to the LLM and capture the response events.
 
         Resets the assertion cursor to 0 for the new turn's events.
@@ -181,7 +181,7 @@ class TestEval:
         if _evals_verbose:
             events_str = "\n    ".join(_format_events(self._events))
             print(
-                f"\n+ user_says(\"{text}\")\n"
+                f"\n+ simple_response(\"{text}\")\n"
                 f"  events:\n    {events_str}\n"
             )
 
@@ -266,12 +266,12 @@ class TestEval:
 
         return event
 
-    async def agent_responds(
+    async def judge(
         self,
         *,
         intent: str | None = None,
     ) -> ChatMessageEvent:
-        """Assert the next event is a ``ChatMessageEvent``.
+        """Assert the next event is a ``ChatMessageEvent`` and optionally judge it.
 
         Advances the cursor to the next ``ChatMessageEvent``. If *intent*
         is given and a judge LLM was provided, evaluates whether the

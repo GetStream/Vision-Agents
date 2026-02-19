@@ -90,7 +90,7 @@ class TestAgentCalls:
         session.agent_calls("get_weather")
         # Cursor should have auto-advanced past FunctionCallOutputEvent
         # so next assertion should find the ChatMessageEvent
-        event = await session.agent_responds()
+        event = await session.judge()
         assert isinstance(event, ChatMessageEvent)
 
     def test_none_name_skips_name_check(self):
@@ -139,15 +139,15 @@ class TestAgentCallsOutput:
             session.agent_calls_output(is_error=True)
 
 
-class TestAgentResponds:
+class TestJudge:
     async def test_finds_message(self):
         session = _make_eval(_simple_events())
-        event = await session.agent_responds()
+        event = await session.judge()
         assert event.content == "Hello! How can I help?"
 
     async def test_skips_non_message_events(self):
         session = _make_eval(_tool_call_events())
-        event = await session.agent_responds()
+        event = await session.judge()
         assert event.content == "The weather in Tokyo is sunny, 70F."
 
     async def test_no_message_raises(self):
@@ -156,12 +156,12 @@ class TestAgentResponds:
         ]
         session = _make_eval(events)
         with pytest.raises(AssertionError, match="Expected ChatMessageEvent"):
-            await session.agent_responds()
+            await session.judge()
 
     async def test_intent_without_judge_raises(self):
         session = _make_eval(_simple_events())
         with pytest.raises(ValueError, match="Cannot evaluate intent"):
-            await session.agent_responds(intent="Friendly greeting")
+            await session.judge(intent="Friendly greeting")
 
 
 class TestNoMoreEvents:
@@ -196,7 +196,7 @@ class TestFullSequence:
         session = _make_eval(events)
         session.agent_calls("get_weather")
         session.agent_calls("get_news", arguments={"topic": "tech"})
-        await session.agent_responds()
+        await session.judge()
         session.no_more_events()
 
     def test_explicit_output_check(self):
