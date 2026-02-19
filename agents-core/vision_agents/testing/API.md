@@ -12,10 +12,29 @@ Text-only testing for Vision-Agents. Test agent responses, tool calls, and inten
 - **Tool mocking** — swap tool implementations while keeping schemas intact (`mock_tools`), simulate errors
 - **Multi-turn conversations** — multiple `session.run()` calls share conversation history, test context retention across turns
 
+### Architecture: Why We Test the LLM, Not the Agent
+
+The testing framework operates at the **LLM level**, not the full Agent level. This is by design.
+
+`Agent` is an orchestrator that combines Edge (transport), STT, LLM, TTS, turn detection, and processors into a complete audio/video pipeline. Its constructor validates that at least one processing capability (audio or video) is present, making it impossible to instantiate without real infrastructure dependencies.
+
+However, all agent **behavior** — what it says, which tools it calls, how it follows instructions — happens inside the LLM. `Agent.simple_response()` simply delegates to `llm.simple_response()`. By testing the LLM directly, we cover:
+
+- Response content and intent
+- Function/tool calling with correct arguments
+- Grounding (not hallucinating)
+- Multi-turn context retention
+- Tool error handling
+
+What remains at the Agent level is **infrastructure**: audio-to-text (STT), text-to-audio (TTS), turn detection, media transport (Edge), and processor pipelines. These are candidates for future testing capabilities.
+
 ### Not Yet Supported
 
-- Audio/video stream testing
-- Latency/performance benchmarks
+**Requires full Agent testing (infrastructure level):**
+- Audio/video stream testing (STT, TTS, Edge transport)
+- Latency/performance benchmarks (full pipeline measurement)
+
+**Can be added at LLM level (behavioral):**
 - Parallel multi-agent testing
 - MCP server testing
 - Snapshot testing (comparison against saved reference outputs)
