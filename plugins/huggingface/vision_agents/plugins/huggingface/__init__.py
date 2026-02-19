@@ -9,11 +9,14 @@ try:
 
     __all__ += ["TransformersLLM", "TransformersVLM"]
 except ImportError as e:
-    if e.name not in ("torch", "transformers", "av", "aiortc", "jinja2"):
-        import warnings
+    import warnings
 
+    optional = {"torch", "transformers", "av", "aiortc", "jinja2"}
+    if e.name in optional:
         warnings.warn(
-            f"Failed to import Transformers plugins: {e}. "
-            "If you installed the [transformers] extra, this may indicate a broken installation.",
+            f"Optional dependency '{e.name}' is not installed. "
+            "Install the [transformers] extra to enable Transformers plugins.",
             stacklevel=2,
         )
+    else:
+        raise
