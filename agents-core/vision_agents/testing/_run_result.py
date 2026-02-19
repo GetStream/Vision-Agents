@@ -1,6 +1,11 @@
-"""RunResult — data container for a single conversation turn."""
+"""TestResponse — data container and assertions for a single conversation turn."""
 
 from __future__ import annotations
+
+import os
+import time
+from dataclasses import dataclass, field
+from typing import Any
 
 from vision_agents.testing._events import (
     ChatMessageEvent,
@@ -9,26 +14,209 @@ from vision_agents.testing._events import (
     RunEvent,
 )
 
+_evals_verbose = bool(int(os.getenv("VISION_AGENTS_EVALS_VERBOSE", "0")))
 
-class RunResult:
-    """Result of a single conversation turn."""
+_NOT_GIVEN = object()
 
-    def __init__(
-        self,
+
+@dataclass
+class TestResponse:
+    __test__ = False
+    """Result of a single conversation turn.
+
+    Holds the raw event list, convenient accessors (output text, function
+    calls, timing), and cursor-based assertion methods.
+    """
+
+    input: str
+    output: str | None
+    events: list[RunEvent]
+    function_calls: list[FunctionCallEvent]
+    duration_ms: float
+    _judge_llm: Any = field(default=None, repr=False)
+    _cursor: int = field(default=0, repr=False)
+
+    @staticmethod
+    def build(
+        *,
         events: list[RunEvent],
-        user_input: str | None = None,
-    ) -> None:
-        self._events = events
-        self._user_input = user_input
+        user_input: str,
+        start_time: float,
+        judge_llm: Any = None,
+    ) -> TestResponse:
+        """Construct a TestResponse from raw events and timing."""
+        output: str | None = None
+        function_calls: list[FunctionCallEvent] = []
 
-    @property
-    def events(self) -> list[RunEvent]:
-        """All captured events in chronological order."""
-        return self._events
+        for event in events:
+            if isinstance(event, ChatMessageEvent) and event.role == "assistant":
+                output = event.content
+            elif isinstance(event, FunctionCallEvent):
+                function_calls.append(event)
 
-    @property
-    def user_input(self) -> str | None:
-        return self._user_input
+        return TestResponse(
+            input=user_input,
+            output=output,
+            events=events,
+            function_calls=function_calls,
+            duration_ms=(time.monotonic() - start_time) * 1000,
+            _judge_llm=judge_llm,
+        )
+
+    def agent_calls(
+        self,
+        name: str | None = None,
+        *,
+        arguments: dict[str, Any] | None = None,
+    ) -> FunctionCallEvent:
+        """Assert the next event is a ``FunctionCallEvent``.
+
+        Advances the cursor to the next ``FunctionCallEvent``, checks
+        name and arguments (partial match), and auto-skips the following
+        ``FunctionCallOutputEvent`` if present.
+
+        Args:
+            name: Expected function name. ``None`` to skip the check.
+            arguments: Expected arguments (partial match — only specified
+                keys are checked).
+
+        Returns:
+            The matched ``FunctionCallEvent``.
+        """
+        __tracebackhide__ = True
+        event = self._advance_to_type(FunctionCallEvent, "FunctionCallEvent")
+        assert isinstance(event, FunctionCallEvent)
+
+        if name is not None and event.name != name:
+            self._raise_with_debug_info(
+                f"Expected call name '{name}', got '{event.name}'"
+            )
+
+        if arguments is not None:
+            for key, value in arguments.items():
+                actual = event.arguments.get(key)
+                if actual != value:
+                    self._raise_with_debug_info(
+                        f"For argument '{key}', expected {value!r}, got {actual!r}"
+                    )
+
+        if (
+            self._cursor < len(self.events)
+            and isinstance(self.events[self._cursor], FunctionCallOutputEvent)
+        ):
+            self._cursor += 1
+
+        return event
+
+    def agent_calls_output(
+        self,
+        *,
+        output: Any = _NOT_GIVEN,
+        is_error: bool | None = None,
+    ) -> FunctionCallOutputEvent:
+        """Assert the next event is a ``FunctionCallOutputEvent``.
+
+        Use this when you need to inspect the tool output explicitly.
+        Advances the cursor to the next ``FunctionCallOutputEvent``.
+
+        Args:
+            output: Expected output value (exact match). Omit to skip.
+            is_error: Expected error flag. ``None`` to skip the check.
+
+        Returns:
+            The matched ``FunctionCallOutputEvent``.
+        """
+        __tracebackhide__ = True
+        event = self._advance_to_type(FunctionCallOutputEvent, "FunctionCallOutputEvent")
+        assert isinstance(event, FunctionCallOutputEvent)
+
+        if output is not _NOT_GIVEN and event.output != output:
+            self._raise_with_debug_info(
+                f"Expected output {output!r}, got {event.output!r}"
+            )
+
+        if is_error is not None and event.is_error != is_error:
+            self._raise_with_debug_info(
+                f"Expected is_error={is_error}, got {event.is_error}"
+            )
+
+        return event
+
+    async def judge(
+        self,
+        *,
+        intent: str | None = None,
+    ) -> ChatMessageEvent:
+        """Assert the next event is a ``ChatMessageEvent`` and optionally judge it.
+
+        Advances the cursor to the next ``ChatMessageEvent``. If *intent*
+        is given and a judge LLM was provided, evaluates whether the
+        message fulfils the intent.
+
+        Args:
+            intent: Description of what the message should accomplish.
+                Requires a judge LLM to have been set on TestEval.
+
+        Returns:
+            The matched ``ChatMessageEvent``.
+        """
+        __tracebackhide__ = True
+        event = self._advance_to_type(ChatMessageEvent, "ChatMessageEvent")
+        assert isinstance(event, ChatMessageEvent)
+
+        if intent is not None:
+            if self._judge_llm is None:
+                raise ValueError(
+                    "Cannot evaluate intent without a judge LLM. "
+                    "Pass judge=<llm> to TestEval()."
+                )
+
+            from vision_agents.testing._judge import evaluate_intent
+
+            success, reason = await evaluate_intent(
+                llm=self._judge_llm,
+                message_content=event.content,
+                intent=intent,
+            )
+
+            if not success:
+                self._raise_with_debug_info(
+                    f"Judgment failed: {reason}"
+                )
+            elif _evals_verbose:
+                preview = event.content[:30].replace("\n", "\\n")
+                print(f"  judgment passed for `{preview}...`: `{reason}`")
+
+        return event
+
+    def no_more_events(self) -> None:
+        """Assert that no further events remain after the cursor."""
+        __tracebackhide__ = True
+        if self._cursor < len(self.events):
+            event = self.events[self._cursor]
+            self._raise_with_debug_info(
+                f"Expected no more events, but found: {type(event).__name__}"
+            )
+
+    def _advance_to_type(self, expected_type: type, type_name: str) -> RunEvent:
+        """Advance cursor to the next event of *expected_type*, skipping others."""
+        __tracebackhide__ = True
+        while self._cursor < len(self.events):
+            event = self.events[self._cursor]
+            self._cursor += 1
+            if isinstance(event, expected_type):
+                return event
+
+        self._raise_with_debug_info(
+            f"Expected {type_name}, but no matching event found."
+        )
+        raise RuntimeError("unreachable")
+
+    def _raise_with_debug_info(self, message: str) -> None:
+        __tracebackhide__ = True
+        marker = max(0, self._cursor - 1)
+        events_str = "\n".join(_format_events(self.events, selected_index=marker))
+        raise AssertionError(f"{message}\nContext:\n{events_str}")
 
 
 def _format_events(
@@ -36,7 +224,7 @@ def _format_events(
     *,
     selected_index: int | None = None,
 ) -> list[str]:
-    """Format events for debug output. Used by TestEval assertions."""
+    """Format events for debug output."""
     lines: list[str] = []
     for i, event in enumerate(events):
         prefix = ">>>" if (selected_index is not None and i == selected_index) else "   "

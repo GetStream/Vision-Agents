@@ -39,9 +39,9 @@ async def test_greeting():
         judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        await session.simple_response("Hello!")
-        await session.judge(intent="Responds with a friendly greeting")
-        session.no_more_events()
+        response = await session.simple_response("Hello!")
+        await response.judge(intent="Responds with a friendly greeting")
+        response.no_more_events()
 
 
 async def test_grounding():
@@ -56,8 +56,8 @@ async def test_grounding():
         judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        await session.simple_response("What city was I born in?")
-        await session.judge(
+        response = await session.simple_response("What city was I born in?")
+        await response.judge(
             intent="Does NOT claim to know the user's birthplace. "
             "Instead asks for clarification or says it doesn't have that info.",
         )
@@ -75,12 +75,11 @@ async def test_concise_response():
         judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        await session.simple_response("Explain what Python is")
-        await session.judge(
+        response = await session.simple_response("Explain what Python is")
+        await response.judge(
             intent="Gives a brief, concise explanation of Python "
             "(not a long multi-paragraph essay).",
         )
-
 
 
 async def test_function_call():
@@ -100,12 +99,12 @@ async def test_function_call():
         instructions="You're a helpful voice assistant. Be concise. "
         "Use the get_weather tool when asked about weather.",
     ) as session:
-        await session.simple_response("What's the weather in Tokyo?")
-        session.agent_calls("get_weather", arguments={"location": "Tokyo"})
-        await session.judge(
+        response = await session.simple_response("What's the weather in Tokyo?")
+        response.agent_calls("get_weather", arguments={"location": "Tokyo"})
+        await response.judge(
             intent="Reports weather for Tokyo including temperature"
         )
-        session.no_more_events()
+        response.no_more_events()
 
 
 async def test_function_call_error_handling():
@@ -127,9 +126,9 @@ async def test_function_call_error_handling():
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
         with mock_tools(llm, {"get_weather": lambda location: (_ for _ in ()).throw(RuntimeError("Service unavailable"))}):
-            await session.simple_response("What's the weather in Paris?")
+            response = await session.simple_response("What's the weather in Paris?")
 
-        await session.judge(
+        await response.judge(
             intent="Informs the user that it could not get the weather "
             "or that something went wrong.",
         )
@@ -147,12 +146,12 @@ async def test_multi_turn_conversation():
         judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        await session.simple_response("My name is Alice")
-        await session.judge(
+        response = await session.simple_response("My name is Alice")
+        await response.judge(
             intent="Acknowledges the user's name (Alice)"
         )
 
-        await session.simple_response("What's my name?")
-        await session.judge(
+        response = await session.simple_response("What's my name?")
+        await response.judge(
             intent="Correctly recalls that the user's name is Alice",
         )
