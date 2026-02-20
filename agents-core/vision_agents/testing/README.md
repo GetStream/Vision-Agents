@@ -184,9 +184,6 @@ assert response.duration_ms < 5000
 # Integration tests (requires GOOGLE_API_KEY in .env)
 uv run py.test path/to/test_file.py -m integration
 
-# See every event and judge result
-VISION_AGENTS_EVALS_VERBOSE=1 uv run py.test path/to/test_file.py -m integration
-
 # With debugger
 uv run py.test path/to/test_file.py -m integration -s --timeout=0 --pdb
 ```
@@ -267,4 +264,3 @@ async def test_weather():
 |---|---|
 | `GOOGLE_API_KEY` | API key for Gemini LLM |
 | `VISION_AGENTS_TEST_MODEL` | Override test model (default: `gemini-2.5-flash-lite`) |
-| `VISION_AGENTS_EVALS_VERBOSE` | Set to `1` for detailed output during test runs |

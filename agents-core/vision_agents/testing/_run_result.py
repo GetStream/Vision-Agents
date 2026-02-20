@@ -1,6 +1,5 @@
 """TestResponse — data container and assertions for a single conversation turn."""
 
-import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, NoReturn, TypeVar
@@ -12,8 +11,6 @@ from vision_agents.testing._events import (
     RunEvent,
 )
 from vision_agents.testing._judge import evaluate_intent
-
-_evals_verbose = bool(int(os.getenv("VISION_AGENTS_EVALS_VERBOSE", "0")))
 
 _NOT_GIVEN = object()
 
@@ -179,9 +176,6 @@ class TestResponse:
 
             if not success:
                 self._raise_with_debug_info(f"Judgment failed: {reason}")
-            elif _evals_verbose:
-                preview = event.content[:30].replace("\n", "\\n")
-                print(f"  judgment passed for `{preview}...`: `{reason}`")
 
         return event
 

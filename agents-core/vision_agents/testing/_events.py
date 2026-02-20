@@ -4,8 +4,6 @@ These normalized events represent what happened during a single
 conversation turn: messages, function calls, and their outputs.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any, Literal
 

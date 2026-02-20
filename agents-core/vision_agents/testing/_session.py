@@ -12,11 +12,7 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-from vision_agents.testing._run_result import (
-    TestResponse,
-    _evals_verbose,
-    _format_events,
-)
+from vision_agents.testing._run_result import TestResponse
 
 
 class TestEval:
@@ -142,10 +138,6 @@ class TestEval:
                     user_id="test-agent",
                     content=response.text,
                 )
-
-        if _evals_verbose:
-            events_str = "\n    ".join(_format_events(events))
-            print(f'\n+ simple_response("{text}")\n  events:\n    {events_str}\n')
 
         return TestResponse.build(
             events=events,

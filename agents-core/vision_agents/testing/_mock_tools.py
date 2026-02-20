@@ -9,8 +9,6 @@ Example::
         result = await session.run("What's the weather?")
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any
