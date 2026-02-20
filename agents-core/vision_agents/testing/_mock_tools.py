@@ -55,6 +55,4 @@ def mock_tools(
         yield
     finally:
         for tool_name, original_fn in originals.items():
-            func_def = registry._functions.get(tool_name)
-            if func_def is not None:
-                func_def.function = original_fn
+            registry._functions[tool_name].function = original_fn
