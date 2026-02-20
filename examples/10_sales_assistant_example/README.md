@@ -1,5 +1,7 @@
 # Sales Assistant — AI Meeting Coach
+<p align="center">
 <img src="https://github.com/GetStream/vision-agents-sales-assistant-demo/blob/main/gh_assets/screenshot.png" alt="Sales Assistant Example" height="300">
+</p>
 
 A real-time AI coaching example app that provides coaching suggestions during meetings and interviews. It captures your microphone audio, sends it to an AI agent for transcription and analysis, and displays coaching suggestions on a translucent macOS overlay.
 
