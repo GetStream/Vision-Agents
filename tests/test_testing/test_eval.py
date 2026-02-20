@@ -8,12 +8,12 @@ import time
 
 import pytest
 
-from vision_agents.testing._events import (
+from vision_agents.testing import (
     ChatMessageEvent,
     FunctionCallEvent,
     FunctionCallOutputEvent,
+    TestResponse,
 )
-from vision_agents.testing._run_result import TestResponse
 
 
 def _make_response(events: list, judge_llm: object | None = None) -> TestResponse:
@@ -206,7 +206,6 @@ class TestFullSequence:
             ChatMessageEvent(role="assistant", content="Sunny, 70F."),
         ]
         response = _make_response(events)
-        response._advance_to_type(FunctionCallEvent, "FunctionCallEvent")
         response.function_output(output={"temp": 70, "condition": "sunny"})
 
 

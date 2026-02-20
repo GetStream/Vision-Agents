@@ -3,7 +3,7 @@
 import pytest
 
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.testing._mock_tools import mock_tools
+from vision_agents.testing import mock_tools
 
 
 class _FakeLLM(LLM):
