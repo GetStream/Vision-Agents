@@ -290,6 +290,13 @@ class EventManager:
             except ValueError:
                 pass
 
+    def has_subscribers(self, event_class: type) -> bool:
+        """Check whether any handler is registered for the given event class."""
+        event_type = getattr(event_class, "type", None)  # noqa: B009
+        if not event_type:
+            raise ValueError(f"{event_class.__name__} has no 'type' attribute")
+        return bool(self._handlers.get(event_type))
+
     def subscribe(self, function):
         """
         Subscribe a function to handle specific event types.
