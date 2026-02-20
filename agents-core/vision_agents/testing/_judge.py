@@ -10,6 +10,10 @@ from vision_agents.core.llm.llm import LLM
 
 logger = logging.getLogger(__name__)
 
+# Verdict keywords mapped to success/failure for _parse_verdict.
+_VERDICTS = {"PASS": True, "FAIL": False}
+_ERROR_PREVIEW_MAX_LEN = 200  # max chars of LLM response shown in parse errors
+
 _JUDGE_SYSTEM_PROMPT = (
     "You are a strict test evaluator for conversational AI agents.\n"
     "You will be shown a message produced by an agent and a target intent.\n"
@@ -78,9 +82,6 @@ async def evaluate_intent(
         llm.set_instructions(original_instructions)
 
 
-_VERDICTS = {"PASS": True, "FAIL": False}
-
-
 def _parse_verdict(text: str) -> tuple[bool, str]:
     """Parse a PASS/FAIL verdict from the LLM response text."""
     for line in text.strip().splitlines():
@@ -89,4 +90,4 @@ def _parse_verdict(text: str) -> tuple[bool, str]:
             reason = line.strip()[len(word):].lstrip(":").strip()
             return _VERDICTS[word], reason or f"{word.title()}ed."
 
-    return False, f"Could not parse verdict from LLM response: {text[:200]}"
+    return False, f"Could not parse verdict from LLM response: {text[:_ERROR_PREVIEW_MAX_LEN]}"
