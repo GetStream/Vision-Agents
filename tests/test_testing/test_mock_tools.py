@@ -9,7 +9,9 @@ from vision_agents.testing import mock_tools
 class _FakeLLM(LLM):
     """Minimal LLM that doesn't call a real model."""
 
-    async def simple_response(self, text: str = "", **kwargs: object) -> LLMResponseEvent:
+    async def simple_response(
+        self, text: str = "", **kwargs: object
+    ) -> LLMResponseEvent:
         return LLMResponseEvent(original=None, text="fake")
 
 
