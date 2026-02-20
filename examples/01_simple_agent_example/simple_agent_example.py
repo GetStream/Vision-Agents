@@ -4,12 +4,7 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import (
-    deepgram,
-    elevenlabs,
-    gemini,
-    getstream,
-)
+from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream, lemonslice
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +30,11 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(name="My happy AI friend", id="agent"),
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        processors=[],  # processors can fetch extra data, check images/audio data or transform video
+        processors=[
+            lemonslice.LemonSliceAvatarPublisher(
+                agent_id="agent_d966c62a73645e66", width=800, height=600
+            ),
+        ],  # processors can fetch extra data, check images/audio data or transform video
         llm=llm,
         tts=elevenlabs.TTS(model_id="eleven_flash_v2_5"),
         stt=deepgram.STT(
@@ -60,7 +59,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # Have the agent join the call/room
     async with agent.join(call):
         # Use agent.simple response or...
-        await agent.simple_response("tell me something interesting in a short sentence")
+        # await agent.simple_response("tell me something interesting in a short sentence")
         # Alternatively: if you need more control, user the native openAI create_response
         # await llm.create_response(input=[
         #     {
