@@ -1534,7 +1534,11 @@ class Agent:
 
             @self.events.subscribe
             async def forward_audio(event: RealtimeAudioOutputEvent):
-                if self._audio_track is not None and not self.audio_publishers:
+                if (
+                    self._audio_track is not None
+                    and event.data is not None
+                    and not self.audio_publishers
+                ):
                     await self._audio_track.write(event.data)
 
         # Set up video track if video publishers are available
