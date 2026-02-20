@@ -78,16 +78,15 @@ async def evaluate_intent(
         llm.set_instructions(original_instructions)
 
 
+_VERDICTS = {"PASS": True, "FAIL": False}
+
+
 def _parse_verdict(text: str) -> tuple[bool, str]:
     """Parse a PASS/FAIL verdict from the LLM response text."""
     for line in text.strip().splitlines():
-        stripped = line.strip()
-        upper = stripped.upper()
-        if upper.startswith("PASS"):
-            reason = stripped[4:].lstrip(":").strip()
-            return True, reason or "Passed."
-        if upper.startswith("FAIL"):
-            reason = stripped[4:].lstrip(":").strip()
-            return False, reason or "Failed."
+        word = line.strip().split(":")[0].strip().upper()
+        if word in _VERDICTS:
+            reason = line.strip()[len(word):].lstrip(":").strip()
+            return _VERDICTS[word], reason or f"{word.title()}ed."
 
     return False, f"Could not parse verdict from LLM response: {text[:200]}"
