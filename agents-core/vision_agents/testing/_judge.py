@@ -87,7 +87,10 @@ def _parse_verdict(text: str) -> tuple[bool, str]:
     for line in text.strip().splitlines():
         word = line.strip().split(":")[0].strip().upper()
         if word in _VERDICTS:
-            reason = line.strip()[len(word):].lstrip(":").strip()
+            reason = line.strip()[len(word) :].lstrip(":").strip()
             return _VERDICTS[word], reason or f"{word.title()}ed."
 
-    return False, f"Could not parse verdict from LLM response: {text[:_ERROR_PREVIEW_MAX_LEN]}"
+    return (
+        False,
+        f"Could not parse verdict from LLM response: {text[:_ERROR_PREVIEW_MAX_LEN]}",
+    )
