@@ -28,13 +28,26 @@ This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_ex
 """
 
 
+INSTRUCTIONS = "You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful."
+
+
+def setup_llm(model: str = "gemini-2.5-flash-lite") -> gemini.LLM:
+    llm = gemini.LLM(model)
+
+    @llm.register_function(description="Get current weather for a location")
+    async def get_weather(location: str) -> Dict[str, Any]:
+        return await get_weather_by_location(location)
+
+    return llm
+
+
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-2.5-flash-lite")
+    llm = setup_llm()
 
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(name="My happy AI friend", id="agent"),
-        instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
+        instructions=INSTRUCTIONS,
         processors=[],  # processors can fetch extra data, check images/audio data or transform video
         llm=llm,
         tts=elevenlabs.TTS(model_id="eleven_flash_v2_5"),
@@ -45,11 +58,6 @@ async def create_agent(**kwargs) -> Agent:
         # realtime openai and gemini are supported (tts and stt not needed in that case)
         # llm=openai.Realtime()
     )
-
-    # MCP and function calling are supported. see https://visionagents.ai/guides/mcp-tool-calling
-    @llm.register_function(description="Get current weather for a location")
-    async def get_weather(location: str) -> Dict[str, Any]:
-        return await get_weather_by_location(location)
 
     return agent
 
