@@ -4,8 +4,6 @@ Uses a separate LLM instance with a structured PASS/FAIL prompt to
 evaluate whether an agent's message fulfils a given intent.
 """
 
-from __future__ import annotations
-
 import logging
 
 from vision_agents.core.llm.llm import LLM
@@ -72,7 +70,7 @@ async def evaluate_intent(
 
         return _parse_verdict(response.text)
 
-    except Exception as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         logger.exception("Judge evaluation failed")
         return False, f"Judge evaluation error: {exc}"
 

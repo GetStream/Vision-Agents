@@ -1,11 +1,9 @@
 """TestResponse — data container and assertions for a single conversation turn."""
 
-from __future__ import annotations
-
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn, TypeVar
 
 from vision_agents.testing._events import (
     ChatMessageEvent,
@@ -13,20 +11,24 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
+from vision_agents.testing._judge import evaluate_intent
 
 _evals_verbose = bool(int(os.getenv("VISION_AGENTS_EVALS_VERBOSE", "0")))
 
 _NOT_GIVEN = object()
 
+_T = TypeVar("_T", bound=RunEvent)
+
 
 @dataclass
 class TestResponse:
-    __test__ = False
     """Result of a single conversation turn.
 
     Holds the raw event list, convenient accessors (output text, function
     calls, timing), and cursor-based assertion methods.
     """
+
+    __test__ = False
 
     input: str
     output: str | None
@@ -43,7 +45,7 @@ class TestResponse:
         user_input: str,
         start_time: float,
         judge_llm: Any = None,
-    ) -> TestResponse:
+    ) -> "TestResponse":
         """Construct a TestResponse from raw events and timing."""
         output: str | None = None
         function_calls: list[FunctionCallEvent] = []
@@ -85,7 +87,6 @@ class TestResponse:
         """
         __tracebackhide__ = True
         event = self._advance_to_type(FunctionCallEvent, "FunctionCallEvent")
-        assert isinstance(event, FunctionCallEvent)
 
         if name is not None and event.name != name:
             self._raise_with_debug_info(
@@ -129,7 +130,6 @@ class TestResponse:
         event = self._advance_to_type(
             FunctionCallOutputEvent, "FunctionCallOutputEvent"
         )
-        assert isinstance(event, FunctionCallOutputEvent)
 
         if output is not _NOT_GIVEN and event.output != output:
             self._raise_with_debug_info(
@@ -163,7 +163,6 @@ class TestResponse:
         """
         __tracebackhide__ = True
         event = self._advance_to_type(ChatMessageEvent, "ChatMessageEvent")
-        assert isinstance(event, ChatMessageEvent)
 
         if intent is not None:
             if self._judge_llm is None:
@@ -171,8 +170,6 @@ class TestResponse:
                     "Cannot evaluate intent without a judge LLM. "
                     "Pass judge=<llm> to TestEval()."
                 )
-
-            from vision_agents.testing._judge import evaluate_intent
 
             success, reason = await evaluate_intent(
                 llm=self._judge_llm,
@@ -197,7 +194,7 @@ class TestResponse:
                 f"Expected no more events, but found: {type(event).__name__}"
             )
 
-    def _advance_to_type(self, expected_type: type, type_name: str) -> RunEvent:
+    def _advance_to_type(self, expected_type: type[_T], type_name: str) -> _T:
         """Advance cursor to the next event of *expected_type*, skipping others."""
         __tracebackhide__ = True
         while self._cursor < len(self.events):
@@ -209,9 +206,8 @@ class TestResponse:
         self._raise_with_debug_info(
             f"Expected {type_name}, but no matching event found."
         )
-        raise RuntimeError("unreachable")
 
-    def _raise_with_debug_info(self, message: str) -> None:
+    def _raise_with_debug_info(self, message: str) -> NoReturn:
         __tracebackhide__ = True
         marker = max(0, self._cursor - 1)
         events_str = "\n".join(_format_events(self.events, selected_index=marker))
@@ -239,7 +235,5 @@ def _format_events(
             if len(output_repr) > 80:
                 output_repr = output_repr[:77] + "..."
             line = f"{prefix} [{i}] FunctionCallOutputEvent(name='{event.name}', output={output_repr}, is_error={event.is_error})"
-        else:
-            line = f"{prefix} [{i}] {event}"
         lines.append(line)
     return lines

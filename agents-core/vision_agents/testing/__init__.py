@@ -28,11 +28,8 @@ from vision_agents.testing._mock_tools import mock_tools
 from vision_agents.testing._run_result import TestResponse
 from vision_agents.testing._session import TestEval
 
-TestSession = TestEval  # backwards compat alias
-
 __all__ = [
     "TestEval",
-    "TestSession",
     "TestResponse",
     "ChatMessageEvent",
     "FunctionCallEvent",

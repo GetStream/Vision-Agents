@@ -1,27 +1,3 @@
-"""TestEval — the primary interface for testing Vision-Agents.
-
-Works directly with an LLM instance in text-only mode (no audio, video,
-or edge connection required).  Captures tool call events and the final
-assistant response, returning a ``TestResponse`` for assertions.
-
-Example::
-
-    from vision_agents.plugins import gemini
-    from vision_agents.testing import TestEval
-
-    async def test_greeting():
-        llm = gemini.LLM("gemini-2.5-flash-lite")
-        judge_llm = gemini.LLM("gemini-2.5-flash-lite")
-        async with TestEval(llm=llm, judge=judge_llm, instructions="Be friendly") as session:
-            response = await session.simple_response("Hello")
-            await response.judge(intent="Friendly greeting")
-            response.no_more_events()
-"""
-
-from __future__ import annotations
-
-import logging
-import os
 import time
 from typing import Any
 
@@ -36,16 +12,14 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-from vision_agents.testing._run_result import TestResponse, _format_events
-
-logger = logging.getLogger(__name__)
-
-_evals_verbose = bool(int(os.getenv("VISION_AGENTS_EVALS_VERBOSE", "0")))
+from vision_agents.testing._run_result import (
+    TestResponse,
+    _evals_verbose,
+    _format_events,
+)
 
 
 class TestEval:
-    __test__ = False
-
     """Test evaluator for running LLMs in text-only mode.
 
     Manages the LLM session lifecycle and sends text input.
@@ -58,6 +32,8 @@ class TestEval:
         judge: Optional LLM instance for intent evaluation. Required
             if ``response.judge(intent=...)`` is used.
     """
+
+    __test__ = False
 
     def __init__(
         self,
@@ -75,7 +51,7 @@ class TestEval:
         self._capturing = False
         self._started = False
 
-    async def __aenter__(self) -> TestEval:
+    async def __aenter__(self) -> "TestEval":
         await self.start()
         return self
 
@@ -178,7 +154,7 @@ class TestEval:
             judge_llm=self._judge_llm,
         )
 
-    async def _on_tool_start(self, event: ToolStartEvent):
+    async def _on_tool_start(self, event: ToolStartEvent) -> None:
         if self._capturing:
             self._captured_events.append(
                 FunctionCallEvent(
@@ -188,7 +164,7 @@ class TestEval:
                 )
             )
 
-    async def _on_tool_end(self, event: ToolEndEvent):
+    async def _on_tool_end(self, event: ToolEndEvent) -> None:
         if self._capturing:
             self._captured_events.append(
                 FunctionCallOutputEvent(
