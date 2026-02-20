@@ -39,12 +39,15 @@ def mock_tools(
         KeyError: If a tool name is not registered on the LLM.
     """
     registry = llm.function_registry
+
+    for tool_name in mocks:
+        if registry._functions.get(tool_name) is None:
+            raise KeyError(f"Tool '{tool_name}' is not registered on this LLM")
+
     originals: dict[str, Callable[..., Any]] = {}
 
     for tool_name, mock_fn in mocks.items():
-        func_def = registry._functions.get(tool_name)
-        if func_def is None:
-            raise KeyError(f"Tool '{tool_name}' is not registered on this LLM")
+        func_def = registry._functions[tool_name]
         originals[tool_name] = func_def.function
         func_def.function = mock_fn
 

@@ -76,3 +76,20 @@ async def test_mock_tools_multiple_tools():
 
     assert llm.function_registry.call_function("tool_a", {"x": 1}) == 1
     assert llm.function_registry.call_function("tool_b", {"y": "hi"}) == "hi"
+
+
+async def test_mock_tools_unknown_with_valid_does_not_mutate():
+    """A KeyError for one tool must not leave other tools partially swapped."""
+    llm = _FakeLLM()
+
+    @llm.register_function(description="a")
+    def tool_a(x: int) -> int:
+        return x
+
+    original_fn = llm.function_registry._functions["tool_a"].function
+
+    with pytest.raises(KeyError, match="nonexistent"):
+        with mock_tools(llm, {"tool_a": lambda x: 999, "nonexistent": lambda: None}):
+            pass
+
+    assert llm.function_registry._functions["tool_a"].function is original_fn
