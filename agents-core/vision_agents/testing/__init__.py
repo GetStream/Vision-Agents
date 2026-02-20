@@ -3,19 +3,30 @@
 Provides text-only testing of agents without requiring audio/video
 infrastructure or edge connections.
 
-Example::
+Usage:
 
-    from vision_agents.plugins import gemini
-    from vision_agents.testing import TestEval
+Verify a greeting::
 
     async def test_greeting():
-        llm = gemini.LLM("gemini-2.5-flash-lite")
-        judge_llm = gemini.LLM("gemini-2.5-flash-lite")
-
         async with TestEval(llm=llm, judge=judge_llm, instructions="Be friendly") as session:
             response = await session.simple_response("Hello")
             await response.judge(intent="Friendly greeting")
             response.no_more_events()
+
+Verify tool calls::
+
+    async def test_weather():
+        async with TestEval(llm=llm, judge=judge_llm, instructions="...") as session:
+            response = await session.simple_response("Weather in Tokyo?")
+            response.function_called("get_weather", arguments={"location": "Tokyo"})
+            await response.judge(intent="Reports weather for Tokyo")
+            response.no_more_events()
+
+Key exports:
+    TestEval: async context manager that wraps an LLM for testing.
+    TestResponse: returned by ``simple_response()`` — carries events and assertions.
+    mock_tools: context manager to temporarily replace tool implementations.
+    RunEvent: union of ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent.
 """
 
 from vision_agents.testing._events import (
