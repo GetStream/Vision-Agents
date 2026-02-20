@@ -16,8 +16,6 @@ from vision_agents.testing import TestEval
 
 load_dotenv()
 
-pytestmark = pytest.mark.integration
-
 MODEL = os.getenv("VISION_AGENTS_TEST_MODEL", "gemini-2.5-flash-lite")
 
 
@@ -26,6 +24,7 @@ def _skip_if_no_key():
         pytest.skip("GOOGLE_API_KEY not set")
 
 
+@pytest.mark.integration
 async def test_greeting():
     """Agent gives a friendly, short greeting."""
     _skip_if_no_key()
@@ -39,6 +38,7 @@ async def test_greeting():
         response.no_more_events()
 
 
+@pytest.mark.integration
 async def test_weather_tool_call():
     """Agent calls get_weather with the right location and reports back."""
     _skip_if_no_key()
