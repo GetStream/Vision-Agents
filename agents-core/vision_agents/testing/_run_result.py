@@ -100,9 +100,8 @@ class TestResponse:
                         f"For argument '{key}', expected {value!r}, got {actual!r}"
                     )
 
-        if (
-            self._cursor < len(self.events)
-            and isinstance(self.events[self._cursor], FunctionCallOutputEvent)
+        if self._cursor < len(self.events) and isinstance(
+            self.events[self._cursor], FunctionCallOutputEvent
         ):
             self._cursor += 1
 
@@ -127,7 +126,9 @@ class TestResponse:
             The matched ``FunctionCallOutputEvent``.
         """
         __tracebackhide__ = True
-        event = self._advance_to_type(FunctionCallOutputEvent, "FunctionCallOutputEvent")
+        event = self._advance_to_type(
+            FunctionCallOutputEvent, "FunctionCallOutputEvent"
+        )
         assert isinstance(event, FunctionCallOutputEvent)
 
         if output is not _NOT_GIVEN and event.output != output:
@@ -180,9 +181,7 @@ class TestResponse:
             )
 
             if not success:
-                self._raise_with_debug_info(
-                    f"Judgment failed: {reason}"
-                )
+                self._raise_with_debug_info(f"Judgment failed: {reason}")
             elif _evals_verbose:
                 preview = event.content[:30].replace("\n", "\\n")
                 print(f"  judgment passed for `{preview}...`: `{reason}`")
@@ -227,7 +226,9 @@ def _format_events(
     """Format events for debug output."""
     lines: list[str] = []
     for i, event in enumerate(events):
-        prefix = ">>>" if (selected_index is not None and i == selected_index) else "   "
+        prefix = (
+            ">>>" if (selected_index is not None and i == selected_index) else "   "
+        )
         if isinstance(event, ChatMessageEvent):
             preview = event.content[:80].replace("\n", "\\n")
             line = f"{prefix} [{i}] ChatMessageEvent(role='{event.role}', content='{preview}')"

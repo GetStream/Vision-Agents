@@ -158,9 +158,7 @@ class TestEval:
 
         events: list[RunEvent] = list(self._captured_events)
         if response and response.text:
-            events.append(
-                ChatMessageEvent(role="assistant", content=response.text)
-            )
+            events.append(ChatMessageEvent(role="assistant", content=response.text))
 
             if self._conversation is not None:
                 await self._conversation.send_message(
@@ -171,10 +169,7 @@ class TestEval:
 
         if _evals_verbose:
             events_str = "\n    ".join(_format_events(events))
-            print(
-                f"\n+ simple_response(\"{text}\")\n"
-                f"  events:\n    {events_str}\n"
-            )
+            print(f'\n+ simple_response("{text}")\n  events:\n    {events_str}\n')
 
         return TestResponse.build(
             events=events,

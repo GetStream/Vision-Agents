@@ -33,7 +33,9 @@ def _tool_call_events() -> list:
         FunctionCallOutputEvent(
             name="get_weather", output={"temp": 70, "condition": "sunny"}
         ),
-        ChatMessageEvent(role="assistant", content="The weather in Tokyo is sunny, 70F."),
+        ChatMessageEvent(
+            role="assistant", content="The weather in Tokyo is sunny, 70F."
+        ),
     ]
 
 
@@ -107,9 +109,7 @@ class TestFunctionOutput:
             ),
         ]
         response = _make_response(events)
-        event = response.function_output(
-            output={"temp": 70, "condition": "sunny"}
-        )
+        event = response.function_output(output={"temp": 70, "condition": "sunny"})
         assert event.name == "get_weather"
 
     def test_output_mismatch_raises(self):

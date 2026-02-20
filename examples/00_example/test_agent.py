@@ -101,9 +101,7 @@ async def test_function_call():
     ) as session:
         response = await session.simple_response("What's the weather in Tokyo?")
         response.function_called("get_weather", arguments={"location": "Tokyo"})
-        await response.judge(
-            intent="Reports weather for Tokyo including temperature"
-        )
+        await response.judge(intent="Reports weather for Tokyo including temperature")
         response.no_more_events()
 
 
@@ -125,7 +123,14 @@ async def test_function_call_error_handling():
         judge=judge_llm,
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
-        with mock_tools(llm, {"get_weather": lambda location: (_ for _ in ()).throw(RuntimeError("Service unavailable"))}):
+        with mock_tools(
+            llm,
+            {
+                "get_weather": lambda location: (_ for _ in ()).throw(
+                    RuntimeError("Service unavailable")
+                )
+            },
+        ):
             response = await session.simple_response("What's the weather in Paris?")
 
         await response.judge(
@@ -147,9 +152,7 @@ async def test_multi_turn_conversation():
         instructions="You're a helpful voice assistant. Be concise.",
     ) as session:
         response = await session.simple_response("My name is Alice")
-        await response.judge(
-            intent="Acknowledges the user's name (Alice)"
-        )
+        await response.judge(intent="Acknowledges the user's name (Alice)")
 
         response = await session.simple_response("What's my name?")
         await response.judge(

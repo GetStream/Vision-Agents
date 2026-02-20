@@ -49,7 +49,5 @@ async def test_weather_tool_call():
     async with TestEval(llm=llm, judge=judge_llm, instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("What's the weather like in Berlin?")
         response.function_called("get_weather", arguments={"location": "Berlin"})
-        await response.judge(
-            intent="Reports current weather for Berlin"
-        )
+        await response.judge(intent="Reports current weather for Berlin")
         response.no_more_events()
