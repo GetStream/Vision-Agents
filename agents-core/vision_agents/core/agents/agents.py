@@ -383,7 +383,11 @@ class Agent:
         # write tts pcm to output track (this is the AI talking to us)
         @self.events.subscribe
         async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
-            if self._audio_track is not None:
+            if (
+                self._audio_track is not None
+                and event.data is not None
+                and not self.audio_publishers
+            ):
                 await self._audio_track.write(event.data)
 
         # listen to video tracks added/removed
@@ -1402,6 +1406,11 @@ class Agent:
         )
 
     @property
+    def audio_track(self) -> Optional[AudioStreamTrack]:
+        """The outgoing audio track published to the call."""
+        return self._audio_track
+
+    @property
     def publish_audio(self) -> bool:
         """Whether the agent should publish an outbound audio track.
 
@@ -1517,21 +1526,25 @@ class Agent:
                 )
 
     def _prepare_rtc(self):
-        # Variables are now initialized in __init__
-
         if self.publish_audio:
-            self._audio_track = self.edge.create_audio_track()
+            if self.audio_publishers:
+                self._audio_track = self.audio_publishers[0].publish_audio_track()
+            else:
+                self._audio_track = self.edge.create_audio_track()
 
             @self.events.subscribe
             async def forward_audio(event: RealtimeAudioOutputEvent):
-                if self._audio_track is not None:
+                if (
+                    self._audio_track is not None
+                    and event.data is not None
+                    and not self.audio_publishers
+                ):
                     await self._audio_track.write(event.data)
 
         # Set up video track if video publishers are available
         if self.publish_video:
             # Get the first video publisher to create the track
             video_publisher = self.video_publishers[0]
-            # TODO: some lLms like moondream publish video
             self._video_track = video_publisher.publish_video_track()
             forwarder = VideoForwarder(
                 self._video_track,  # type: ignore[arg-type]

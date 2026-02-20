@@ -2,13 +2,18 @@ import asyncio
 from typing import Any, Optional
 from uuid import uuid4
 
+import numpy as np
 import pytest
 from getstream.video.rtc import AudioStreamTrack
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import Agent, User
 from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.events import EventManager
+from vision_agents.core.llm.events import RealtimeAudioOutputEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.processors.base_processor import AudioPublisher
 from vision_agents.core.tts import TTS
+from vision_agents.core.tts.events import TTSAudioEvent
 from vision_agents.core.warmup import Warmable
 
 
@@ -102,6 +107,36 @@ def call():
 
 class SomeException(Exception):
     pass
+
+
+class WriteRecordingTrack:
+    def __init__(self):
+        self.writes: list[PcmData] = []
+
+    async def write(self, data: PcmData) -> None:
+        self.writes.append(data)
+
+
+class DummyAudioPublisher(AudioPublisher):
+    name = "dummy_audio"
+
+    def __init__(self):
+        self.track = WriteRecordingTrack()
+
+    def publish_audio_track(self) -> WriteRecordingTrack:
+        return self.track
+
+    async def close(self) -> None:
+        pass
+
+
+class RecordingEdge(DummyEdge):
+    def __init__(self):
+        super().__init__()
+        self.recorded_audio_track = WriteRecordingTrack()
+
+    def create_audio_track(self, *args, **kwargs) -> WriteRecordingTrack:
+        return self.recorded_audio_track
 
 
 class TestAgent:
@@ -247,3 +282,89 @@ class TestAgent:
         # Verify metrics were broadcast
         assert edge.last_custom_event["type"] == "agent_metrics"
         assert edge.last_custom_event["metrics"]["llm_input_tokens__total"] == 42
+
+    async def test_audio_track_from_publisher(self):
+        publisher = DummyAudioPublisher()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            processors=[publisher],
+        )
+        assert agent.audio_track is publisher.track
+
+    async def test_audio_track_from_edge_without_publisher(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        assert agent.audio_track is not None
+        assert not agent.audio_publishers
+
+    async def test_audio_publishers_property(self):
+        publisher = DummyAudioPublisher()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            processors=[publisher],
+        )
+        assert agent.audio_publishers == [publisher]
+
+    async def test_tts_audio_not_forwarded_with_publisher(self):
+        publisher = DummyAudioPublisher()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            processors=[publisher],
+        )
+        pcm = PcmData(
+            samples=np.zeros(160, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+        )
+        agent.events.send(TTSAudioEvent(data=pcm))
+        await agent.events.wait()
+        assert publisher.track.writes == []
+
+    async def test_tts_audio_forwarded_without_publisher(self):
+        edge = RecordingEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        pcm = PcmData(
+            samples=np.zeros(160, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+        )
+        agent.events.send(TTSAudioEvent(data=pcm))
+        await agent.events.wait()
+        assert len(edge.recorded_audio_track.writes) == 1
+        assert edge.recorded_audio_track.writes[0] is pcm
+
+    async def test_realtime_audio_not_forwarded_with_publisher(self):
+        publisher = DummyAudioPublisher()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            processors=[publisher],
+        )
+        pcm = PcmData(
+            samples=np.zeros(160, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+        )
+        agent.events.send(RealtimeAudioOutputEvent(data=pcm))
+        await agent.events.wait()
+        assert publisher.track.writes == []
