@@ -13,8 +13,12 @@ from vision_agents.testing._events import (
 from vision_agents.testing._judge import evaluate_intent
 
 _NOT_GIVEN = object()
-
 _T = TypeVar("_T", bound=RunEvent)
+
+# Debug formatting for assertion error messages (_format_event / _format_events).
+_PREVIEW_MAX_LEN = 80  # max chars for content/output previews
+_CURSOR_MARKER = ">>>"  # prefix for the event that caused the failure
+_CURSOR_PADDING = "   "  # prefix for all other events
 
 
 @dataclass
@@ -204,30 +208,38 @@ class TestResponse:
     def _raise_with_debug_info(self, message: str) -> NoReturn:
         __tracebackhide__ = True
         marker = max(0, self._cursor - 1)
-        events_str = "\n".join(_format_events(self.events, selected_index=marker))
+        events_str = "\n".join(self._format_events(self.events, selected_index=marker))
         raise AssertionError(f"{message}\nContext:\n{events_str}")
 
+    @staticmethod
+    def _truncate(text: str, max_len: int = _PREVIEW_MAX_LEN) -> str:
+        if len(text) <= max_len:
+            return text
+        return text[: max_len - 3] + "..."
 
-def _format_events(
-    events: list[RunEvent],
-    *,
-    selected_index: int | None = None,
-) -> list[str]:
-    """Format events for debug output."""
-    lines: list[str] = []
-    for i, event in enumerate(events):
-        prefix = (
-            ">>>" if (selected_index is not None and i == selected_index) else "   "
-        )
+    @staticmethod
+    def _format_event(event: RunEvent) -> str:
         if isinstance(event, ChatMessageEvent):
-            preview = event.content[:80].replace("\n", "\\n")
-            line = f"{prefix} [{i}] ChatMessageEvent(role='{event.role}', content='{preview}')"
-        elif isinstance(event, FunctionCallEvent):
-            line = f"{prefix} [{i}] FunctionCallEvent(name='{event.name}', arguments={event.arguments})"
-        elif isinstance(event, FunctionCallOutputEvent):
-            output_repr = repr(event.output)
-            if len(output_repr) > 80:
-                output_repr = output_repr[:77] + "..."
-            line = f"{prefix} [{i}] FunctionCallOutputEvent(name='{event.name}', output={output_repr}, is_error={event.is_error})"
-        lines.append(line)
-    return lines
+            preview = event.content[:_PREVIEW_MAX_LEN].replace("\n", "\\n")
+            return f"ChatMessageEvent(role='{event.role}', content='{preview}')"
+        if isinstance(event, FunctionCallEvent):
+            return (
+                f"FunctionCallEvent(name='{event.name}', arguments={event.arguments})"
+            )
+        if isinstance(event, FunctionCallOutputEvent):
+            output_repr = TestResponse._truncate(repr(event.output))
+            return f"FunctionCallOutputEvent(name='{event.name}', output={output_repr}, is_error={event.is_error})"
+        return repr(event)
+
+    @staticmethod
+    def _format_events(
+        events: list[RunEvent],
+        *,
+        selected_index: int | None = None,
+    ) -> list[str]:
+        """Format events for debug output."""
+        lines: list[str] = []
+        for i, event in enumerate(events):
+            marker = _CURSOR_MARKER if i == selected_index else _CURSOR_PADDING
+            lines.append(f"{marker} [{i}] {TestResponse._format_event(event)}")
+        return lines
