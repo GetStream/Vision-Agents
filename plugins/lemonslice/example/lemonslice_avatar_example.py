@@ -31,7 +31,7 @@ async def create_agent(**kwargs) -> Agent:
             "You're a friendly AI assistant with a visual avatar. "
             "Keep responses short and conversational."
         ),
-        llm=gemini.LLM("gemini-2.5-flash-lite"),
+        llm=gemini.LLM("gemini-3-flash-preview"),
         tts=cartesia.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),
         processors=[
