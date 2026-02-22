@@ -37,6 +37,7 @@ uv run mypy
 
 ## Python rules
 
+- Never use `from __future__ import annotations`.
 - Never write `except Exception as e`. Catch specific exceptions.
 - Avoid `getattr`, `hasattr`, `delattr`, `setattr`; prefer normal attribute access.
 - Docstrings: Google style, keep them short.

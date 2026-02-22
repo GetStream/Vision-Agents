@@ -157,7 +157,7 @@ class TestResponse:
 
         Args:
             intent: Description of what the message should accomplish.
-                Requires a judge LLM to have been set on TestEval.
+                Requires a judge LLM to have been set on TestSession.
 
         Returns:
             The matched ``ChatMessageEvent``.
@@ -169,7 +169,7 @@ class TestResponse:
             if self._judge_llm is None:
                 raise ValueError(
                     "Cannot evaluate intent without a judge LLM. "
-                    "Pass judge=<llm> to TestEval()."
+                    "Pass judge=<llm> to TestSession()."
                 )
 
             success, reason = await evaluate_intent(

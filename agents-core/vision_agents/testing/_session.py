@@ -15,7 +15,7 @@ from vision_agents.testing._events import (
 from vision_agents.testing._run_result import TestResponse
 
 
-class TestEval:
+class TestSession:
     """Test evaluator for running LLMs in text-only mode.
 
     Manages the LLM session lifecycle and sends text input.
@@ -47,7 +47,7 @@ class TestEval:
         self._capturing = False
         self._started = False
 
-    async def __aenter__(self) -> "TestEval":
+    async def __aenter__(self) -> "TestSession":
         await self.start()
         return self
 
@@ -104,7 +104,7 @@ class TestEval:
         __tracebackhide__ = True
         if not self._started:
             raise RuntimeError(
-                "TestEval not started. Use 'async with' or call start()."
+                "TestSession not started. Use 'async with' or call start()."
             )
 
         start_time = time.monotonic()
