@@ -1,0 +1,25 @@
+name: Bug Report
+description: Report a reproducible bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      description: Which OS are you using?
+  - type: input
+    id: python
+    attributes:
+      label: Python Version
+      description: e.g. 3.9, 3.10
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Provide clear steps
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should happen?
