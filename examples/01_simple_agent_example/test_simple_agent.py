@@ -35,7 +35,8 @@ async def test_greeting():
     async with TestSession(llm=llm, instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("Hey there!")
         event = response.assistant_message()
-        await judge.evaluate(event, intent="Friendly, short greeting")
+        verdict = await judge.evaluate(event, intent="Friendly, short greeting")
+        assert verdict.success, verdict.reason
 
 
 @pytest.mark.integration
@@ -50,4 +51,7 @@ async def test_weather_tool_call():
         response = await session.simple_response("What's the weather like in Berlin?")
         response.function_called("get_weather", arguments={"location": "Berlin"})
         event = response.assistant_message()
-        await judge.evaluate(event, intent="Reports current weather for Berlin")
+        verdict = await judge.evaluate(
+            event, intent="Reports current weather for Berlin"
+        )
+        assert verdict.success, verdict.reason
