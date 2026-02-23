@@ -136,7 +136,7 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
             )
             self._connected = True
             logger.info("LemonSlice avatar connection established")
-        except Exception as exc:
+        except Exception:
             logger.exception("Failed to create a LemonSlice session")
             await self._rtc_manager.close()
 
