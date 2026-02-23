@@ -5,7 +5,10 @@ from typing import Any
 import av
 from getstream.video.rtc import audio_track
 from getstream.video.rtc.track_util import PcmData
-from vision_agents.core.llm.events import RealtimeAudioOutputEvent
+from vision_agents.core.llm.events import (
+    RealtimeAudioOutputDoneEvent,
+    RealtimeAudioOutputEvent,
+)
 from vision_agents.core.processors.base_processor import AudioPublisher, VideoPublisher
 from vision_agents.core.tts.events import TTSAudioEvent
 from vision_agents.core.utils.video_track import QueuedVideoTrack
@@ -124,8 +127,14 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
 
         @self._agent.events.subscribe
         async def on_realtime_audio(event: RealtimeAudioOutputEvent):
-            if event.data is not None:
-                await self._rtc_manager.send_audio(event.data)
+            async with self._send_lock:
+                if event.data is not None:
+                    await self._rtc_manager.send_audio(event.data)
+
+        @self._agent.events.subscribe
+        async def on_realtime_audio_done(_: RealtimeAudioOutputDoneEvent):
+            async with self._send_lock:
+                await self._rtc_manager.flush()
 
     async def _connect(self) -> None:
         credentials = self._rtc_manager.generate_credentials()
