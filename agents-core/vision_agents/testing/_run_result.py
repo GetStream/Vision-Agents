@@ -2,7 +2,7 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from vision_agents.testing._events import (
     ChatMessageEvent,
@@ -15,12 +15,10 @@ if TYPE_CHECKING:
     from vision_agents.testing._judge import Judge
 
 _NOT_GIVEN = object()
-_T = TypeVar("_T", bound=RunEvent)
 
-# Debug formatting for assertion error messages (_format_event / _format_events).
 _PREVIEW_MAX_LEN = 80  # max chars for content/output previews
-_CURSOR_MARKER = ">>>"  # prefix for the event that caused the failure
-_CURSOR_PADDING = "   "  # prefix for all other events
+_SELECTED_MARKER = ">>>"  # prefix for the event that caused the failure
+_DEFAULT_PADDING = "   "  # prefix for all other events
 
 
 @dataclass
@@ -28,7 +26,7 @@ class TestResponse:
     """Result of a single conversation turn.
 
     Holds the raw event list, convenient accessors (output text, function
-    calls, timing), and cursor-based assertion methods.
+    calls, timing), and assertion methods that use linear search.
     """
 
     __test__ = False
@@ -39,7 +37,6 @@ class TestResponse:
     function_calls: list[FunctionCallEvent]
     duration_ms: float
     _judge: "Judge | None" = field(default=None, repr=False)
-    _cursor: int = field(default=0, repr=False)
 
     @staticmethod
     def build(
@@ -74,11 +71,10 @@ class TestResponse:
         *,
         arguments: dict[str, Any] | None = None,
     ) -> FunctionCallEvent:
-        """Assert the next event is a ``FunctionCallEvent``.
+        """Assert the events contain a ``FunctionCallEvent``.
 
-        Advances the cursor to the next ``FunctionCallEvent``, checks
-        name and arguments (partial match), and auto-skips the following
-        ``FunctionCallOutputEvent`` if present.
+        Scans ``self.events`` for the first ``FunctionCallEvent`` and
+        validates name and arguments (partial match).
 
         Args:
             name: Expected function name. ``None`` to skip the check.
@@ -89,27 +85,28 @@ class TestResponse:
             The matched ``FunctionCallEvent``.
         """
         __tracebackhide__ = True
-        event = self._advance_to_type(FunctionCallEvent, "FunctionCallEvent")
-
-        if name is not None and event.name != name:
-            self._raise_with_debug_info(
-                f"Expected call name '{name}', got '{event.name}'"
-            )
-
-        if arguments is not None:
-            for key, value in arguments.items():
-                actual = event.arguments.get(key)
-                if actual != value:
+        for i, event in enumerate(self.events):
+            if isinstance(event, FunctionCallEvent):
+                if name is not None and event.name != name:
                     self._raise_with_debug_info(
-                        f"For argument '{key}', expected {value!r}, got {actual!r}"
+                        f"Expected call name '{name}', got '{event.name}'",
+                        event_index=i,
                     )
 
-        if self._cursor < len(self.events) and isinstance(
-            self.events[self._cursor], FunctionCallOutputEvent
-        ):
-            self._cursor += 1
+                if arguments is not None:
+                    for key, value in arguments.items():
+                        actual = event.arguments.get(key)
+                        if actual != value:
+                            self._raise_with_debug_info(
+                                f"For argument '{key}', expected {value!r}, got {actual!r}",
+                                event_index=i,
+                            )
 
-        return event
+                return event
+
+        self._raise_with_debug_info(
+            "Expected FunctionCallEvent, but no matching event found."
+        )
 
     def function_output(
         self,
@@ -117,10 +114,10 @@ class TestResponse:
         output: Any = _NOT_GIVEN,
         is_error: bool | None = None,
     ) -> FunctionCallOutputEvent:
-        """Assert the next event is a ``FunctionCallOutputEvent``.
+        """Assert the events contain a ``FunctionCallOutputEvent``.
 
-        Use this when you need to inspect the tool output explicitly.
-        Advances the cursor to the next ``FunctionCallOutputEvent``.
+        Scans ``self.events`` for the first ``FunctionCallOutputEvent``
+        and validates output and error flag.
 
         Args:
             output: Expected output value (exact match). Omit to skip.
@@ -130,31 +127,35 @@ class TestResponse:
             The matched ``FunctionCallOutputEvent``.
         """
         __tracebackhide__ = True
-        event = self._advance_to_type(
-            FunctionCallOutputEvent, "FunctionCallOutputEvent"
+        for i, event in enumerate(self.events):
+            if isinstance(event, FunctionCallOutputEvent):
+                if output is not _NOT_GIVEN and event.output != output:
+                    self._raise_with_debug_info(
+                        f"Expected output {output!r}, got {event.output!r}",
+                        event_index=i,
+                    )
+
+                if is_error is not None and event.is_error != is_error:
+                    self._raise_with_debug_info(
+                        f"Expected is_error={is_error}, got {event.is_error}",
+                        event_index=i,
+                    )
+
+                return event
+
+        self._raise_with_debug_info(
+            "Expected FunctionCallOutputEvent, but no matching event found."
         )
-
-        if output is not _NOT_GIVEN and event.output != output:
-            self._raise_with_debug_info(
-                f"Expected output {output!r}, got {event.output!r}"
-            )
-
-        if is_error is not None and event.is_error != is_error:
-            self._raise_with_debug_info(
-                f"Expected is_error={is_error}, got {event.is_error}"
-            )
-
-        return event
 
     async def judge(
         self,
         *,
         intent: str | None = None,
     ) -> ChatMessageEvent:
-        """Assert the next event is a ``ChatMessageEvent`` and optionally judge it.
+        """Assert the events contain a ``ChatMessageEvent`` and optionally judge it.
 
-        Advances the cursor to the next ``ChatMessageEvent``. If *intent*
-        is given, evaluates whether the message fulfils the intent.
+        Scans ``self.events`` for the first ``ChatMessageEvent``. If
+        *intent* is given, evaluates whether the message fulfils the intent.
 
         Args:
             intent: Description of what the message should accomplish.
@@ -164,51 +165,41 @@ class TestResponse:
             The matched ``ChatMessageEvent``.
         """
         __tracebackhide__ = True
-        event = self._advance_to_type(ChatMessageEvent, "ChatMessageEvent")
+        for i, event in enumerate(self.events):
+            if isinstance(event, ChatMessageEvent):
+                if intent is not None:
+                    if self._judge is None:
+                        raise ValueError(
+                            "Cannot evaluate intent without a judge. "
+                            "Pass judge=<Judge> to TestSession()."
+                        )
 
-        if intent is not None:
-            if self._judge is None:
-                raise ValueError(
-                    "Cannot evaluate intent without a judge. "
-                    "Pass judge=<Judge> to TestSession()."
-                )
+                    success, reason = await self._judge.evaluate(
+                        content=event.content,
+                        intent=intent,
+                    )
 
-            success, reason = await self._judge.evaluate(
-                content=event.content,
-                intent=intent,
-            )
+                    if not success:
+                        self._raise_with_debug_info(
+                            f"Judgment failed: {reason}",
+                            event_index=i,
+                        )
 
-            if not success:
-                self._raise_with_debug_info(f"Judgment failed: {reason}")
-
-        return event
-
-    def no_more_events(self) -> None:
-        """Assert that no further events remain after the cursor."""
-        __tracebackhide__ = True
-        if self._cursor < len(self.events):
-            event = self.events[self._cursor]
-            self._raise_with_debug_info(
-                f"Expected no more events, but found: {type(event).__name__}"
-            )
-
-    def _advance_to_type(self, expected_type: type[_T], type_name: str) -> _T:
-        """Advance cursor to the next event of *expected_type*, skipping others."""
-        __tracebackhide__ = True
-        while self._cursor < len(self.events):
-            event = self.events[self._cursor]
-            self._cursor += 1
-            if isinstance(event, expected_type):
                 return event
 
         self._raise_with_debug_info(
-            f"Expected {type_name}, but no matching event found."
+            "Expected ChatMessageEvent, but no matching event found."
         )
 
-    def _raise_with_debug_info(self, message: str) -> NoReturn:
+    def _raise_with_debug_info(
+        self,
+        message: str,
+        event_index: int | None = None,
+    ) -> NoReturn:
         __tracebackhide__ = True
-        marker = max(0, self._cursor - 1)
-        events_str = "\n".join(self._format_events(self.events, selected_index=marker))
+        events_str = "\n".join(
+            self._format_events(self.events, selected_index=event_index)
+        )
         raise AssertionError(f"{message}\nContext:\n{events_str}")
 
     @staticmethod
@@ -240,6 +231,6 @@ class TestResponse:
         """Format events for debug output."""
         lines: list[str] = []
         for i, event in enumerate(events):
-            marker = _CURSOR_MARKER if i == selected_index else _CURSOR_PADDING
+            marker = _SELECTED_MARKER if i == selected_index else _DEFAULT_PADDING
             lines.append(f"{marker} [{i}] {TestResponse._format_event(event)}")
         return lines

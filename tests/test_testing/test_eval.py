@@ -88,12 +88,6 @@ class TestFunctionCalled:
         with pytest.raises(AssertionError, match="Expected FunctionCallEvent"):
             response.function_called("anything")
 
-    async def test_auto_skips_function_call_output(self):
-        response = _make_response(_tool_call_events())
-        response.function_called("get_weather")
-        event = await response.judge()
-        assert isinstance(event, ChatMessageEvent)
-
     def test_none_name_skips_name_check(self):
         response = _make_response(_tool_call_events())
         event = response.function_called()
@@ -163,24 +157,11 @@ class TestJudge:
             await response.judge(intent="Friendly greeting")
 
 
-class TestNoMoreEvents:
-    def test_pass_at_end(self):
-        response = _make_response(_simple_events())
-        response._cursor = 1
-        response.no_more_events()
-
-    def test_fail_when_events_remain(self):
-        response = _make_response(_simple_events())
-        with pytest.raises(AssertionError, match="Expected no more events"):
-            response.no_more_events()
-
-
 class TestFullSequence:
-    async def test_call_then_judge_then_no_more(self):
+    async def test_call_then_judge(self):
         response = _make_response(_tool_call_events())
         response.function_called("get_weather", arguments={"location": "Tokyo"})
         await response.judge()
-        response.no_more_events()
 
     async def test_multiple_tool_calls(self):
         events = [
@@ -191,10 +172,11 @@ class TestFullSequence:
             ChatMessageEvent(role="assistant", content="Here's the info."),
         ]
         response = _make_response(events)
+        assert len(response.function_calls) == 2
         response.function_called("get_weather")
-        response.function_called("get_news", arguments={"topic": "tech"})
+        assert response.function_calls[1].name == "get_news"
+        assert response.function_calls[1].arguments == {"topic": "tech"}
         await response.judge()
-        response.no_more_events()
 
     def test_explicit_output_check(self):
         events = [

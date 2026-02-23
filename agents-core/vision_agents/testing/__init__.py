@@ -12,7 +12,6 @@ Verify a greeting::
         async with TestSession(llm=llm, judge=judge, instructions="Be friendly") as session:
             response = await session.simple_response("Hello")
             await response.judge(intent="Friendly greeting")
-            response.no_more_events()
 
 Verify tool calls::
 
@@ -22,7 +21,6 @@ Verify tool calls::
             response = await session.simple_response("Weather in Tokyo?")
             response.function_called("get_weather", arguments={"location": "Tokyo"})
             await response.judge(intent="Reports weather for Tokyo")
-            response.no_more_events()
 
 Key exports:
     TestSession: async context manager that wraps an LLM for testing.
