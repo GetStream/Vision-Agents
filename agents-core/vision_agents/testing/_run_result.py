@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from vision_agents.testing._events import (
+from vision_agents.testing import (
     ChatMessageEvent,
     FunctionCallEvent,
     FunctionCallOutputEvent,

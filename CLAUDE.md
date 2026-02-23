@@ -50,6 +50,7 @@ uv run mypy
 **Imports**:
 
 - ordered as: stdlib, third-party, local package, relative. Use `TYPE_CHECKING` guard for imports only needed by type annotations.
+- Never import from private modules (`_foo`) outside of the package's own `__init__.py`. Use the public re-export (e.g. `from vision_agents.testing import TestResponse`, not `from vision_agents.testing._run_result import TestResponse`).
 
 **Naming**:
 

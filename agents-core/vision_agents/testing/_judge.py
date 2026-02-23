@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from vision_agents.core.llm.llm import LLM
-from vision_agents.testing._events import ChatMessageEvent
+from vision_agents.testing import ChatMessageEvent
 
 logger = logging.getLogger(__name__)
 

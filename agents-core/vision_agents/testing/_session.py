@@ -6,13 +6,13 @@ from vision_agents.core.events.manager import EventManager
 from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
 from vision_agents.core.llm.llm import LLM
 
-from vision_agents.testing._events import (
+from vision_agents.testing import (
     ChatMessageEvent,
     FunctionCallEvent,
     FunctionCallOutputEvent,
     RunEvent,
+    TestResponse,
 )
-from vision_agents.testing._run_result import TestResponse
 
 
 class TestSession:
