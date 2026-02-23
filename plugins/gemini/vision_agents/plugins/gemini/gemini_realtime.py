@@ -440,6 +440,12 @@ class GeminiRealtime(realtime.Realtime):
                             # Handle function calls from Gemini Live
                             await self._handle_function_call(part.function_call)
 
+            elif (
+                server_message.server_content
+                and server_message.server_content.turn_complete
+            ):
+                self._emit_audio_output_done_event()
+
             elif server_message.tool_call:
                 # Handle tool calls from Gemini Live
                 await self._handle_tool_calls(server_message.tool_call)

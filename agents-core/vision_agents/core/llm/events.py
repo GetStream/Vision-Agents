@@ -47,6 +47,14 @@ class RealtimeAudioOutputEvent(PluginBaseEvent):
 
 
 @dataclass
+class RealtimeAudioOutputDoneEvent(PluginBaseEvent):
+    """Event emitted when audio output generation is complete for a response."""
+
+    type: str = field(default="plugin.realtime_audio_output_done", init=False)
+    response_id: Optional[str] = None
+
+
+@dataclass
 class RealtimeResponseEvent(PluginBaseEvent):
     """Event emitted when realtime session provides a response."""
 

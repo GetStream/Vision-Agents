@@ -244,6 +244,7 @@ class Qwen3Realtime(Realtime):
             elif event_type == "response.output_item.added":
                 self._current_item_id = event.get("item", {}).get("id")
             elif event_type == "response.done":
+                self._emit_audio_output_done_event()
                 self._is_responding = False
                 self._current_response_id = None
                 self._current_item_id = None
