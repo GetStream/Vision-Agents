@@ -34,8 +34,9 @@ class TestResponse:
     function_calls: list[FunctionCallEvent]
     duration_ms: float
 
-    @staticmethod
+    @classmethod
     def build(
+        cls,
         *,
         events: list[RunEvent],
         user_input: str,
@@ -51,7 +52,7 @@ class TestResponse:
             elif isinstance(event, FunctionCallEvent):
                 function_calls.append(event)
 
-        return TestResponse(
+        return cls(
             input=user_input,
             output=output,
             events=events,
@@ -167,14 +168,14 @@ class TestResponse:
         )
         raise AssertionError(f"{message}\nContext:\n{events_str}")
 
-    @staticmethod
-    def _truncate(text: str, max_len: int = _PREVIEW_MAX_LEN) -> str:
+    @classmethod
+    def _truncate(cls, text: str, max_len: int = _PREVIEW_MAX_LEN) -> str:
         if len(text) <= max_len:
             return text
         return text[: max_len - 3] + "..."
 
-    @staticmethod
-    def _format_event(event: RunEvent) -> str:
+    @classmethod
+    def _format_event(cls, event: RunEvent) -> str:
         if isinstance(event, ChatMessageEvent):
             preview = event.content[:_PREVIEW_MAX_LEN].replace("\n", "\\n")
             return f"ChatMessageEvent(role='{event.role}', content='{preview}')"
@@ -183,12 +184,13 @@ class TestResponse:
                 f"FunctionCallEvent(name='{event.name}', arguments={event.arguments})"
             )
         if isinstance(event, FunctionCallOutputEvent):
-            output_repr = TestResponse._truncate(repr(event.output))
+            output_repr = cls._truncate(repr(event.output))
             return f"FunctionCallOutputEvent(name='{event.name}', output={output_repr}, is_error={event.is_error})"
         return repr(event)
 
-    @staticmethod
+    @classmethod
     def _format_events(
+        cls,
         events: list[RunEvent],
         *,
         selected_index: int | None = None,
@@ -197,5 +199,5 @@ class TestResponse:
         lines: list[str] = []
         for i, event in enumerate(events):
             marker = _SELECTED_MARKER if i == selected_index else _DEFAULT_PADDING
-            lines.append(f"{marker} [{i}] {TestResponse._format_event(event)}")
+            lines.append(f"{marker} [{i}] {cls._format_event(event)}")
         return lines
