@@ -75,6 +75,11 @@ class TestFunctionCalled:
                 "get_weather", arguments={"location": "Berlin"}
             )
 
+    def test_missing_argument_key_raises(self):
+        response = _make_response(_tool_call_events())
+        with pytest.raises(AssertionError, match="not present"):
+            response.assert_function_called("get_weather", arguments={"city": None})
+
     def test_wrong_event_type_skips_to_match(self):
         events = [
             ChatMessageEvent(role="assistant", content="Thinking..."),

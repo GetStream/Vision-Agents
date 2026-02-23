@@ -87,10 +87,14 @@ class TestResponse:
 
                 if arguments is not None:
                     for key, value in arguments.items():
-                        actual = event.arguments.get(key)
-                        if actual != value:
+                        if key not in event.arguments:
                             self._raise_with_debug_info(
-                                f"For argument '{key}', expected {value!r}, got {actual!r}",
+                                f"Argument '{key}' not present in call arguments {list(event.arguments)}",
+                                event_index=i,
+                            )
+                        if event.arguments[key] != value:
+                            self._raise_with_debug_info(
+                                f"For argument '{key}', expected {value!r}, got {event.arguments[key]!r}",
                                 event_index=i,
                             )
 
