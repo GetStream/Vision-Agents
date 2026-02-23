@@ -142,9 +142,12 @@ class LemonSliceRTCManager:
 
         @room.on("disconnected")
         def on_disconnected(reason: str) -> None:
-            logger.info(f"Room disconnected; reason: {reason}")
-            self._connected = False
-            self._create_task(self._on_disconnect())
+            # The "disconnected" callback may be triggered multiple times
+            # because we disconnect ourselves when the avatar leaves the call.
+            if self._connected:
+                logger.info(f"Room disconnected; reason: {reason}")
+                self._connected = False
+                self._create_task(self._on_disconnect())
 
         logger.info(f"Connecting to LiveKit room {credentials.room_name}")
         await room.connect(self._livekit_url, credentials.agent_token)
