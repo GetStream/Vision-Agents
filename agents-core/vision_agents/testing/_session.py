@@ -149,7 +149,7 @@ class TestSession:
             judge=self._judge,
         )
 
-    async def _on_tool_start(self, event: ToolStartEvent) -> None:
+    async def _on_tool_start(self, event: ToolStartEvent):
         if self._capturing:
             self._captured_events.append(
                 FunctionCallEvent(
@@ -159,7 +159,7 @@ class TestSession:
                 )
             )
 
-    async def _on_tool_end(self, event: ToolEndEvent) -> None:
+    async def _on_tool_end(self, event: ToolEndEvent):
         if self._capturing:
             self._captured_events.append(
                 FunctionCallOutputEvent(
