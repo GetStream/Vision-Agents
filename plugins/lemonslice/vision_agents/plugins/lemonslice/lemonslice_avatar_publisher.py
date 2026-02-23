@@ -103,12 +103,14 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
 
     async def close(self) -> None:
         self._video_track.stop()
-
-        await self._rtc_manager.close()
-        await self._client.close()
-
-        self._connected = False
-        logger.debug("LemonSlice avatar publisher closed")
+        try:
+            await self._rtc_manager.close()
+        except Exception as exc:
+            logger.warning(f"Failed to close LemonSlice RTC manager: {exc}")
+        finally:
+            await self._client.close()
+            self._connected = False
+            logger.debug("LemonSlice avatar publisher closed")
 
     def _subscribe_to_audio_events(self) -> None:
         @self._agent.events.subscribe
@@ -126,8 +128,11 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
                 await self._rtc_manager.send_audio(event.data)
 
     async def _connect(self) -> None:
-        credentials = await self._rtc_manager.connect()
-        await self._client.create_session(credentials.url, credentials.token)
+        credentials = self._rtc_manager.generate_credentials()
+        await self._rtc_manager.connect(credentials)
+        await self._client.create_session(
+            credentials.livekit_url, credentials.livekit_token
+        )
 
         self._connected = True
         logger.info("LemonSlice avatar connection established")

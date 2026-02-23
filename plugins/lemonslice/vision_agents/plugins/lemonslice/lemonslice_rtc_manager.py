@@ -21,11 +21,13 @@ _NUM_CHANNELS = 1
 
 
 @dataclass(frozen=True)
-class Credentials:
-    """Credentials for LemonSlice to join the LiveKit room."""
+class ConnectionCredentials:
+    """All credentials needed for a LemonSlice LiveKit session."""
 
-    url: str
-    token: str
+    room_name: str
+    agent_token: str
+    livekit_url: str
+    livekit_token: str
 
 
 class LemonSliceRTCManager:
@@ -74,18 +76,30 @@ class LemonSliceRTCManager:
     def is_connected(self) -> bool:
         return self._connected
 
-    async def connect(self) -> Credentials:
-        """Connect to a LiveKit room.
+    def generate_credentials(self) -> ConnectionCredentials:
+        """Generate credentials for a new LiveKit room session.
 
         Returns:
-            Credentials for the LemonSlice participant to join the same room.
+            Credentials for both the agent and the LemonSlice participant.
         """
         room_name = f"lemonslice-{uuid4()}"
         agent_token = self._generate_token(room_name, _PLUGIN_IDENTITY, kind="agent")
         lemonslice_token = self._generate_token(
             room_name, _AVATAR_IDENTITY, kind="agent"
         )
+        return ConnectionCredentials(
+            room_name=room_name,
+            agent_token=agent_token,
+            livekit_url=self._livekit_url,
+            livekit_token=lemonslice_token,
+        )
 
+    async def connect(self, credentials: ConnectionCredentials) -> None:
+        """Connect to a LiveKit room.
+
+        Args:
+            credentials: Connection credentials from generate_credentials().
+        """
         room = rtc.Room()
 
         @room.on("connected")
@@ -132,9 +146,9 @@ class LemonSliceRTCManager:
             self._connected = False
             self._create_task(self._on_disconnect())
 
-        logger.info(f"Connecting to LiveKit room {room_name}")
-        await room.connect(self._livekit_url, agent_token)
-        logger.info(f"Connected to LiveKit room {room_name}")
+        logger.info(f"Connecting to LiveKit room {credentials.room_name}")
+        await room.connect(self._livekit_url, credentials.agent_token)
+        logger.info(f"Connected to LiveKit room {credentials.room_name}")
 
         room.local_participant.register_rpc_method(
             "lk.playback_finished", self._rpc_on_playback_finished
@@ -142,8 +156,6 @@ class LemonSliceRTCManager:
 
         self._room = room
         self._connected = True
-
-        return Credentials(url=self._livekit_url, token=lemonslice_token)
 
     async def send_audio(self, pcm: PcmData) -> None:
         """Send a PCM audio chunk to LemonSlice via a LiveKit byte stream.
