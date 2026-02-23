@@ -108,14 +108,14 @@ class TestSession:
         self._captured_events.clear()
         self._capturing = True
 
-        if self._conversation is not None:
-            await self._conversation.send_message(
-                role="user",
-                user_id="test-user",
-                content=text,
-            )
-
         try:
+            if self._conversation is not None:
+                await self._conversation.send_message(
+                    role="user",
+                    user_id="test-user",
+                    content=text,
+                )
+
             response = await self._llm.simple_response(text=text)
 
             if self._event_manager is not None:
