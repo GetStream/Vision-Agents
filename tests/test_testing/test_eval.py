@@ -16,13 +16,12 @@ from vision_agents.testing import (
 )
 
 
-def _make_response(events: list, judge_llm: object | None = None) -> TestResponse:
+def _make_response(events: list) -> TestResponse:
     """Create a TestResponse with pre-populated events for unit testing."""
     return TestResponse.build(
         events=events,
         user_input="test input",
         start_time=time.monotonic(),
-        judge_llm=judge_llm,
     )
 
 

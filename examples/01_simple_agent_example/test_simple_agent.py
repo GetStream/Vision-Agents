@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from .simple_agent_example import INSTRUCTIONS, setup_llm
 
 from vision_agents.plugins import gemini
-from vision_agents.testing import TestSession
+from vision_agents.testing import LLMJudge, TestSession
 
 load_dotenv()
 
@@ -30,11 +30,9 @@ async def test_greeting():
     _skip_if_no_key()
 
     llm = setup_llm(MODEL)
-    judge_llm = gemini.LLM(MODEL)
+    judge = LLMJudge(gemini.LLM(MODEL))
 
-    async with TestSession(
-        llm=llm, judge=judge_llm, instructions=INSTRUCTIONS
-    ) as session:
+    async with TestSession(llm=llm, judge=judge, instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("Hey there!")
         await response.judge(intent="Friendly, short greeting")
         response.no_more_events()
@@ -46,11 +44,9 @@ async def test_weather_tool_call():
     _skip_if_no_key()
 
     llm = setup_llm(MODEL)
-    judge_llm = gemini.LLM(MODEL)
+    judge = LLMJudge(gemini.LLM(MODEL))
 
-    async with TestSession(
-        llm=llm, judge=judge_llm, instructions=INSTRUCTIONS
-    ) as session:
+    async with TestSession(llm=llm, judge=judge, instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("What's the weather like in Berlin?")
         response.function_called("get_weather", arguments={"location": "Berlin"})
         await response.judge(intent="Reports current weather for Berlin")

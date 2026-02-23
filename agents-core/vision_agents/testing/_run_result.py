@@ -2,7 +2,7 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, NoReturn, TypeVar
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 
 from vision_agents.testing._events import (
     ChatMessageEvent,
@@ -10,7 +10,9 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-from vision_agents.testing._judge import evaluate_intent
+
+if TYPE_CHECKING:
+    from vision_agents.testing._judge import Judge
 
 _NOT_GIVEN = object()
 _T = TypeVar("_T", bound=RunEvent)
@@ -36,7 +38,7 @@ class TestResponse:
     events: list[RunEvent]
     function_calls: list[FunctionCallEvent]
     duration_ms: float
-    _judge_llm: Any = field(default=None, repr=False)
+    _judge: "Judge | None" = field(default=None, repr=False)
     _cursor: int = field(default=0, repr=False)
 
     @staticmethod
@@ -45,7 +47,7 @@ class TestResponse:
         events: list[RunEvent],
         user_input: str,
         start_time: float,
-        judge_llm: Any = None,
+        judge: "Judge | None" = None,
     ) -> "TestResponse":
         """Construct a TestResponse from raw events and timing."""
         output: str | None = None
@@ -63,7 +65,7 @@ class TestResponse:
             events=events,
             function_calls=function_calls,
             duration_ms=(time.monotonic() - start_time) * 1000,
-            _judge_llm=judge_llm,
+            _judge=judge,
         )
 
     def function_called(
@@ -152,12 +154,11 @@ class TestResponse:
         """Assert the next event is a ``ChatMessageEvent`` and optionally judge it.
 
         Advances the cursor to the next ``ChatMessageEvent``. If *intent*
-        is given and a judge LLM was provided, evaluates whether the
-        message fulfils the intent.
+        is given, evaluates whether the message fulfils the intent.
 
         Args:
             intent: Description of what the message should accomplish.
-                Requires a judge LLM to have been set on TestSession.
+                Requires a judge to have been set on ``TestSession``.
 
         Returns:
             The matched ``ChatMessageEvent``.
@@ -166,15 +167,14 @@ class TestResponse:
         event = self._advance_to_type(ChatMessageEvent, "ChatMessageEvent")
 
         if intent is not None:
-            if self._judge_llm is None:
+            if self._judge is None:
                 raise ValueError(
-                    "Cannot evaluate intent without a judge LLM. "
-                    "Pass judge=<llm> to TestSession()."
+                    "Cannot evaluate intent without a judge. "
+                    "Pass judge=<Judge> to TestSession()."
                 )
 
-            success, reason = await evaluate_intent(
-                llm=self._judge_llm,
-                message_content=event.content,
+            success, reason = await self._judge.evaluate(
+                content=event.content,
                 intent=intent,
             )
 

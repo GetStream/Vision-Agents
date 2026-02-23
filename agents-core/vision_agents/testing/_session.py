@@ -1,10 +1,13 @@
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
 from vision_agents.core.llm.llm import LLM
+
+if TYPE_CHECKING:
+    from vision_agents.testing._judge import Judge
 
 from vision_agents.testing._events import (
     ChatMessageEvent,
@@ -25,7 +28,7 @@ class TestSession:
     Args:
         llm: The LLM instance to use, with tools already registered.
         instructions: System instructions for the agent.
-        judge: Optional LLM instance for intent evaluation. Required
+        judge: Optional ``Judge`` for intent evaluation. Required
             if ``response.judge(intent=...)`` is used.
     """
 
@@ -35,11 +38,11 @@ class TestSession:
         self,
         llm: LLM,
         instructions: str = "You are a helpful assistant.",
-        judge: LLM | None = None,
+        judge: "Judge | None" = None,
     ) -> None:
         self._llm = llm
         self._instructions = instructions
-        self._judge_llm = judge
+        self._judge = judge
 
         self._event_manager: EventManager | None = None
         self._conversation: InMemoryConversation | None = None
@@ -143,7 +146,7 @@ class TestSession:
             events=events,
             user_input=text,
             start_time=start_time,
-            judge_llm=self._judge_llm,
+            judge=self._judge,
         )
 
     async def _on_tool_start(self, event: ToolStartEvent) -> None:

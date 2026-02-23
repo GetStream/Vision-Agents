@@ -8,7 +8,8 @@ Usage:
 Verify a greeting::
 
     async def test_greeting():
-        async with TestSession(llm=llm, judge=judge_llm, instructions="Be friendly") as session:
+        judge = LLMJudge(gemini.LLM(MODEL))
+        async with TestSession(llm=llm, judge=judge, instructions="Be friendly") as session:
             response = await session.simple_response("Hello")
             await response.judge(intent="Friendly greeting")
             response.no_more_events()
@@ -16,7 +17,8 @@ Verify a greeting::
 Verify tool calls::
 
     async def test_weather():
-        async with TestSession(llm=llm, judge=judge_llm, instructions="...") as session:
+        judge = LLMJudge(gemini.LLM(MODEL))
+        async with TestSession(llm=llm, judge=judge, instructions="...") as session:
             response = await session.simple_response("Weather in Tokyo?")
             response.function_called("get_weather", arguments={"location": "Tokyo"})
             await response.judge(intent="Reports weather for Tokyo")
@@ -25,6 +27,8 @@ Verify tool calls::
 Key exports:
     TestSession: async context manager that wraps an LLM for testing.
     TestResponse: returned by ``simple_response()`` — carries events and assertions.
+    Judge: protocol for intent evaluation strategies.
+    LLMJudge: default judge backed by an LLM instance.
     mock_tools: context manager to temporarily replace tool implementations.
     RunEvent: union of ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent.
 """
@@ -35,11 +39,14 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
+from vision_agents.testing._judge import Judge, LLMJudge
 from vision_agents.testing._mock_tools import mock_tools
 from vision_agents.testing._run_result import TestResponse
 from vision_agents.testing._session import TestSession
 
 __all__ = [
+    "Judge",
+    "LLMJudge",
     "TestSession",
     "TestResponse",
     "ChatMessageEvent",
