@@ -6,7 +6,7 @@ import typing
 import uuid
 from typing import Any, Deque, Dict, Optional, Union, get_args, get_origin
 
-from .base import ExceptionEvent
+from .base import BaseEvent, ExceptionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +128,12 @@ class EventManager:
         """
         self._queue: Deque[Any] = collections.deque([])
         self._events: Dict[str, type] = {}
-        self._handlers: Dict[type, typing.List[typing.Callable]] = {}
+        self._handlers: Dict[str, typing.List[typing.Callable]] = {}
         self._modules: Dict[str, typing.List[type]] = {}
         self._ignore_unknown_events = ignore_unknown_events
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
-        self._silent_events: set[type] = set()
+        self._silent_events: set[str] = set()
         self._handler_tasks: Dict[uuid.UUID, asyncio.Task[Any]] = {}
         self._received_event = asyncio.Event()
 
@@ -144,7 +144,7 @@ class EventManager:
 
     def register(
         self,
-        *event_classes: type,
+        *event_classes: type[BaseEvent] | type[ExceptionEvent],
         ignore_not_compatible=False,
     ):
         """
@@ -290,12 +290,9 @@ class EventManager:
             except ValueError:
                 pass
 
-    def has_subscribers(self, event_class: type) -> bool:
+    def has_subscribers(self, event_class: type[BaseEvent]) -> bool:
         """Check whether any handler is registered for the given event class."""
-        event_type = getattr(event_class, "type", None)  # noqa: B009
-        if not event_type:
-            raise ValueError(f"{event_class.__name__} has no 'type' attribute")
-        return bool(self._handlers.get(event_type))
+        return bool(self._handlers.get(event_class.type))
 
     def subscribe(self, function):
         """
@@ -424,7 +421,7 @@ class EventManager:
         else:
             raise RuntimeError(f"Event not registered {event}")
 
-    def silent(self, event_class):
+    def silent(self, event_class: type[BaseEvent]):
         """
         Silence logging for an event class from being processed.
 
