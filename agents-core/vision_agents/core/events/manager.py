@@ -145,7 +145,7 @@ class EventManager:
     def register(
         self,
         *event_classes: type[BaseEvent] | type[ExceptionEvent],
-        ignore_not_compatible=False,
+        ignore_not_compatible: bool = False,
     ):
         """
         Register event classes for use with the event manager.
@@ -290,7 +290,9 @@ class EventManager:
             except ValueError:
                 pass
 
-    def has_subscribers(self, event_class: type[BaseEvent]) -> bool:
+    def has_subscribers(
+        self, event_class: type[BaseEvent] | type[ExceptionEvent]
+    ) -> bool:
         """Check whether any handler is registered for the given event class."""
         return bool(self._handlers.get(event_class.type))
 
