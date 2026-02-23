@@ -65,7 +65,7 @@ class TestResponse:
         name: str | None = None,
         *,
         arguments: dict[str, Any] | None = None,
-    ) -> FunctionCallEvent:
+    ) -> None:
         """Assert the events contain a ``FunctionCallEvent``.
 
         Scans ``self.events`` for the first ``FunctionCallEvent`` and
@@ -75,9 +75,6 @@ class TestResponse:
             name: Expected function name. ``None`` to skip the check.
             arguments: Expected arguments (partial match — only specified
                 keys are checked).
-
-        Returns:
-            The matched ``FunctionCallEvent``.
         """
         __tracebackhide__ = True
         for i, event in enumerate(self.events):
@@ -97,23 +94,18 @@ class TestResponse:
                                 event_index=i,
                             )
 
-                return event
+                return
 
         self._raise_with_debug_info(
             "Expected FunctionCallEvent, but no matching event found."
         )
 
-    def assert_function_called_times(
-        self, name: str, count: int
-    ) -> list[FunctionCallEvent]:
+    def assert_function_called_times(self, name: str, count: int) -> None:
         """Assert that a function was called exactly ``count`` times.
 
         Args:
             name: Expected function name.
             count: Expected number of calls.
-
-        Returns:
-            The list of matched ``FunctionCallEvent`` instances.
         """
         __tracebackhide__ = True
         matches = [fc for fc in self.function_calls if fc.name == name]
@@ -122,7 +114,6 @@ class TestResponse:
                 f"Expected '{name}' to be called {count} time(s), "
                 f"but was called {len(matches)} time(s)",
             )
-        return matches
 
     def assert_function_not_called(self, name: str) -> None:
         """Assert that a function was never called.
@@ -143,7 +134,7 @@ class TestResponse:
         *,
         output: Any = _NOT_GIVEN,
         is_error: bool | None = None,
-    ) -> FunctionCallOutputEvent:
+    ) -> None:
         """Assert the events contain a ``FunctionCallOutputEvent``.
 
         Scans ``self.events`` for the first ``FunctionCallOutputEvent``
@@ -152,9 +143,6 @@ class TestResponse:
         Args:
             output: Expected output value (exact match). Omit to skip.
             is_error: Expected error flag. ``None`` to skip the check.
-
-        Returns:
-            The matched ``FunctionCallOutputEvent``.
         """
         __tracebackhide__ = True
         for i, event in enumerate(self.events):
@@ -171,7 +159,7 @@ class TestResponse:
                         event_index=i,
                     )
 
-                return event
+                return
 
         self._raise_with_debug_info(
             "Expected FunctionCallOutputEvent, but no matching event found."

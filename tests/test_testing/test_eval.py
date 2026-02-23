@@ -48,8 +48,8 @@ def _simple_events() -> list:
 class TestFunctionCalled:
     def test_matches_name(self):
         response = _make_response(_tool_call_events())
-        event = response.assert_function_called("get_weather")
-        assert event.name == "get_weather"
+        response.assert_function_called("get_weather")
+        assert response.function_calls[0].name == "get_weather"
 
     def test_matches_arguments_partial(self):
         events = [
@@ -60,8 +60,8 @@ class TestFunctionCalled:
             FunctionCallOutputEvent(name="search", output="results"),
         ]
         response = _make_response(events)
-        event = response.assert_function_called("search", arguments={"query": "hello"})
-        assert event.arguments["limit"] == 10
+        response.assert_function_called("search", arguments={"query": "hello"})
+        assert response.function_calls[0].arguments["limit"] == 10
 
     def test_name_mismatch_raises(self):
         response = _make_response(_tool_call_events())
@@ -82,8 +82,8 @@ class TestFunctionCalled:
             FunctionCallOutputEvent(name="search", output="ok"),
         ]
         response = _make_response(events)
-        event = response.assert_function_called("search")
-        assert event.name == "search"
+        response.assert_function_called("search")
+        assert response.function_calls[0].name == "search"
 
     def test_no_function_call_raises(self):
         response = _make_response(_simple_events())
@@ -92,8 +92,8 @@ class TestFunctionCalled:
 
     def test_none_name_skips_name_check(self):
         response = _make_response(_tool_call_events())
-        event = response.assert_function_called()
-        assert event.name == "get_weather"
+        response.assert_function_called()
+        assert response.function_calls[0].name == "get_weather"
 
 
 class TestFunctionOutput:
@@ -104,10 +104,7 @@ class TestFunctionOutput:
             ),
         ]
         response = _make_response(events)
-        event = response.assert_function_output(
-            output={"temp": 70, "condition": "sunny"}
-        )
-        assert event.name == "get_weather"
+        response.assert_function_output(output={"temp": 70, "condition": "sunny"})
 
     def test_output_mismatch_raises(self):
         events = [
@@ -124,8 +121,7 @@ class TestFunctionOutput:
             ),
         ]
         response = _make_response(events)
-        event = response.assert_function_output(is_error=True)
-        assert event.is_error is True
+        response.assert_function_output(is_error=True)
 
     def test_is_error_mismatch_raises(self):
         events = [
@@ -235,10 +231,9 @@ class TestCallCounting:
             ChatMessageEvent(role="assistant", content="Done."),
         ]
         response = _make_response(events)
-        matches = response.assert_function_called_times("search", 2)
-        assert len(matches) == 2
-        assert matches[0].arguments == {"q": "a"}
-        assert matches[1].arguments == {"q": "b"}
+        response.assert_function_called_times("search", 2)
+        assert response.function_calls[0].arguments == {"q": "a"}
+        assert response.function_calls[1].arguments == {"q": "b"}
 
     def test_called_times_mismatch(self):
         events = [
