@@ -107,6 +107,7 @@ class LLMJudge:
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
+            logger.exception("Could not parse JSON from LLM response")
             return JudgeVerdict(
                 success=False,
                 reason=f"Could not parse JSON from LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}",
