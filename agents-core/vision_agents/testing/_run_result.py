@@ -60,7 +60,7 @@ class TestResponse:
             duration_ms=(time.monotonic() - start_time) * 1000,
         )
 
-    def function_called(
+    def assert_function_called(
         self,
         name: str | None = None,
         *,
@@ -103,7 +103,9 @@ class TestResponse:
             "Expected FunctionCallEvent, but no matching event found."
         )
 
-    def function_called_times(self, name: str, count: int) -> list[FunctionCallEvent]:
+    def assert_function_called_times(
+        self, name: str, count: int
+    ) -> list[FunctionCallEvent]:
         """Assert that a function was called exactly ``count`` times.
 
         Args:
@@ -122,7 +124,7 @@ class TestResponse:
             )
         return matches
 
-    def function_not_called(self, name: str) -> None:
+    def assert_function_not_called(self, name: str) -> None:
         """Assert that a function was never called.
 
         Args:
@@ -136,7 +138,7 @@ class TestResponse:
                 f"but was called {len(matches)} time(s)",
             )
 
-    def function_output(
+    def assert_function_output(
         self,
         *,
         output: Any = _NOT_GIVEN,
