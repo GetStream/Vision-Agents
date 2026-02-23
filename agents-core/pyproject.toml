@@ -47,6 +47,7 @@ elevenlabs = ["vision-agents-plugins-elevenlabs"]
 gemini = ["vision-agents-plugins-gemini"]
 getstream = ["vision-agents-plugins-getstream"]
 heygen = ["vision-agents-plugins-heygen"]
+lemonslice = ["vision-agents-plugins-lemonslice"]
 inworld = ["vision-agents-plugins-inworld"]
 kokoro = ["vision-agents-plugins-kokoro"]
 moonshine = ["vision-agents-plugins-moonshine"]
@@ -79,6 +80,7 @@ all-plugins = [
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-heygen",
+    "vision-agents-plugins-lemonslice",
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
     "vision-agents-plugins-moonshine",

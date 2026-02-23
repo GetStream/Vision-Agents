@@ -4,12 +4,7 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import (
-    deepgram,
-    elevenlabs,
-    gemini,
-    getstream,
-)
+from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +63,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # Have the agent join the call/room
     async with agent.join(call):
         # Use agent.simple response or...
-        await agent.simple_response("tell me something interesting in a short sentence")
+        # await agent.simple_response("tell me something interesting in a short sentence")
         # Alternatively: if you need more control, user the native openAI create_response
         # await llm.create_response(input=[
         #     {

@@ -43,6 +43,7 @@ uv run mypy
 - Docstrings: Google style, keep them short.
 - Do not use section comments like `# -- some section --`
 - Prefer `logger.exception()` when logging an error with a traceback instead of `logger.error("Error: {exc}")`
+- Do not use local imports, import at the top of the module
 
 ## Code style
 
