@@ -103,6 +103,39 @@ class TestResponse:
             "Expected FunctionCallEvent, but no matching event found."
         )
 
+    def function_called_times(self, name: str, count: int) -> list[FunctionCallEvent]:
+        """Assert that a function was called exactly ``count`` times.
+
+        Args:
+            name: Expected function name.
+            count: Expected number of calls.
+
+        Returns:
+            The list of matched ``FunctionCallEvent`` instances.
+        """
+        __tracebackhide__ = True
+        matches = [fc for fc in self.function_calls if fc.name == name]
+        if len(matches) != count:
+            self._raise_with_debug_info(
+                f"Expected '{name}' to be called {count} time(s), "
+                f"but was called {len(matches)} time(s)",
+            )
+        return matches
+
+    def function_not_called(self, name: str) -> None:
+        """Assert that a function was never called.
+
+        Args:
+            name: Function name that should be absent.
+        """
+        __tracebackhide__ = True
+        matches = [fc for fc in self.function_calls if fc.name == name]
+        if matches:
+            self._raise_with_debug_info(
+                f"Expected '{name}' not to be called, "
+                f"but was called {len(matches)} time(s)",
+            )
+
     def function_output(
         self,
         *,
