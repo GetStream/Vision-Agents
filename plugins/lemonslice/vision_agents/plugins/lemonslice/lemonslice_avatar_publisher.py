@@ -130,12 +130,15 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
     async def _connect(self) -> None:
         credentials = self._rtc_manager.generate_credentials()
         await self._rtc_manager.connect(credentials)
-        await self._client.create_session(
-            credentials.livekit_url, credentials.livekit_token
-        )
-
-        self._connected = True
-        logger.info("LemonSlice avatar connection established")
+        try:
+            await self._client.create_session(
+                credentials.livekit_url, credentials.livekit_token
+            )
+            self._connected = True
+            logger.info("LemonSlice avatar connection established")
+        except Exception as exc:
+            logger.exception("Failed to create a LemonSlice session")
+            await self._rtc_manager.close()
 
     async def _on_video_frame(self, frame: av.VideoFrame) -> None:
         await self._video_track.add_frame(frame)
