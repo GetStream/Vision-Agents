@@ -132,38 +132,33 @@ class TestFunctionOutput:
             response.function_output(is_error=True)
 
 
-class TestJudge:
-    async def test_finds_message(self):
+class TestAssistantMessage:
+    def test_finds_message(self):
         response = _make_response(_simple_events())
-        event = await response.judge()
+        event = response.assistant_message()
         assert event.content == "Hello! How can I help?"
 
-    async def test_skips_non_message_events(self):
+    def test_skips_non_message_events(self):
         response = _make_response(_tool_call_events())
-        event = await response.judge()
+        event = response.assistant_message()
         assert event.content == "The weather in Tokyo is sunny, 70F."
 
-    async def test_no_message_raises(self):
+    def test_no_message_raises(self):
         events = [
             FunctionCallEvent(name="tool", arguments={}),
         ]
         response = _make_response(events)
         with pytest.raises(AssertionError, match="Expected ChatMessageEvent"):
-            await response.judge()
-
-    async def test_intent_without_judge_raises(self):
-        response = _make_response(_simple_events())
-        with pytest.raises(ValueError, match="Cannot evaluate intent"):
-            await response.judge(intent="Friendly greeting")
+            response.assistant_message()
 
 
 class TestFullSequence:
-    async def test_call_then_judge(self):
+    def test_call_then_assistant_message(self):
         response = _make_response(_tool_call_events())
         response.function_called("get_weather", arguments={"location": "Tokyo"})
-        await response.judge()
+        response.assistant_message()
 
-    async def test_multiple_tool_calls(self):
+    def test_multiple_tool_calls(self):
         events = [
             FunctionCallEvent(name="get_weather", arguments={"location": "Tokyo"}),
             FunctionCallOutputEvent(name="get_weather", output={"temp": 70}),
@@ -176,7 +171,7 @@ class TestFullSequence:
         response.function_called("get_weather")
         assert response.function_calls[1].name == "get_news"
         assert response.function_calls[1].arguments == {"topic": "tech"}
-        await response.judge()
+        response.assistant_message()
 
     def test_explicit_output_check(self):
         events = [

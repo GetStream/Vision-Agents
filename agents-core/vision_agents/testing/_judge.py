@@ -8,6 +8,7 @@ import logging
 from typing import Protocol, runtime_checkable
 
 from vision_agents.core.llm.llm import LLM
+from vision_agents.testing._events import ChatMessageEvent
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,8 @@ _JUDGE_SYSTEM_PROMPT = (
 class Judge(Protocol):
     """Evaluates whether an agent message fulfils a given intent."""
 
-    async def evaluate(self, content: str, intent: str) -> tuple[bool, str]:
-        """Return ``(success, reason)`` for *content* against *intent*."""
+    async def evaluate(self, event: ChatMessageEvent, intent: str) -> tuple[bool, str]:
+        """Return ``(success, reason)`` for *event* against *intent*."""
         ...
 
 
@@ -51,8 +52,8 @@ class LLMJudge:
     def __init__(self, llm: LLM) -> None:
         self._llm = llm
 
-    async def evaluate(self, content: str, intent: str) -> tuple[bool, str]:
-        if not content:
+    async def evaluate(self, event: ChatMessageEvent, intent: str) -> tuple[bool, str]:
+        if not event.content:
             return False, "The message is empty."
 
         if not intent:
@@ -65,7 +66,7 @@ class LLMJudge:
             prompt = (
                 f"Check if the following message fulfils the given intent.\n\n"
                 f"Intent:\n{intent}\n\n"
-                f"Message:\n{content}\n\n"
+                f"Message:\n{event.content}\n\n"
                 f"Respond with EXACTLY one line: PASS: <reason> or FAIL: <reason>"
             )
 

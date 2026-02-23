@@ -1,8 +1,8 @@
 """TestResponse — data container and assertions for a single conversation turn."""
 
 import time
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NoReturn
+from dataclasses import dataclass
+from typing import Any, NoReturn
 
 from vision_agents.testing._events import (
     ChatMessageEvent,
@@ -10,9 +10,6 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-
-if TYPE_CHECKING:
-    from vision_agents.testing._judge import Judge
 
 _NOT_GIVEN = object()
 
@@ -36,7 +33,6 @@ class TestResponse:
     events: list[RunEvent]
     function_calls: list[FunctionCallEvent]
     duration_ms: float
-    _judge: "Judge | None" = field(default=None, repr=False)
 
     @staticmethod
     def build(
@@ -44,7 +40,6 @@ class TestResponse:
         events: list[RunEvent],
         user_input: str,
         start_time: float,
-        judge: "Judge | None" = None,
     ) -> "TestResponse":
         """Construct a TestResponse from raw events and timing."""
         output: str | None = None
@@ -62,7 +57,6 @@ class TestResponse:
             events=events,
             function_calls=function_calls,
             duration_ms=(time.monotonic() - start_time) * 1000,
-            _judge=judge,
         )
 
     def function_called(
@@ -147,44 +141,15 @@ class TestResponse:
             "Expected FunctionCallOutputEvent, but no matching event found."
         )
 
-    async def judge(
-        self,
-        *,
-        intent: str | None = None,
-    ) -> ChatMessageEvent:
-        """Assert the events contain a ``ChatMessageEvent`` and optionally judge it.
-
-        Scans ``self.events`` for the first ``ChatMessageEvent``. If
-        *intent* is given, evaluates whether the message fulfils the intent.
-
-        Args:
-            intent: Description of what the message should accomplish.
-                Requires a judge to have been set on ``TestSession``.
+    def assistant_message(self) -> ChatMessageEvent:
+        """Find the first ``ChatMessageEvent`` in the events.
 
         Returns:
             The matched ``ChatMessageEvent``.
         """
         __tracebackhide__ = True
-        for i, event in enumerate(self.events):
+        for event in self.events:
             if isinstance(event, ChatMessageEvent):
-                if intent is not None:
-                    if self._judge is None:
-                        raise ValueError(
-                            "Cannot evaluate intent without a judge. "
-                            "Pass judge=<Judge> to TestSession()."
-                        )
-
-                    success, reason = await self._judge.evaluate(
-                        content=event.content,
-                        intent=intent,
-                    )
-
-                    if not success:
-                        self._raise_with_debug_info(
-                            f"Judgment failed: {reason}",
-                            event_index=i,
-                        )
-
                 return event
 
         self._raise_with_debug_info(

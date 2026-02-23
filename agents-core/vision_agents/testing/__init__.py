@@ -9,18 +9,20 @@ Verify a greeting::
 
     async def test_greeting():
         judge = LLMJudge(gemini.LLM(MODEL))
-        async with TestSession(llm=llm, judge=judge, instructions="Be friendly") as session:
+        async with TestSession(llm=llm, instructions="Be friendly") as session:
             response = await session.simple_response("Hello")
-            await response.judge(intent="Friendly greeting")
+            event = response.assistant_message()
+            await judge.evaluate(event, intent="Friendly greeting")
 
 Verify tool calls::
 
     async def test_weather():
         judge = LLMJudge(gemini.LLM(MODEL))
-        async with TestSession(llm=llm, judge=judge, instructions="...") as session:
+        async with TestSession(llm=llm, instructions="...") as session:
             response = await session.simple_response("Weather in Tokyo?")
             response.function_called("get_weather", arguments={"location": "Tokyo"})
-            await response.judge(intent="Reports weather for Tokyo")
+            event = response.assistant_message()
+            await judge.evaluate(event, intent="Reports weather for Tokyo")
 
 Key exports:
     TestSession: async context manager that wraps an LLM for testing.

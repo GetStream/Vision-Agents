@@ -32,9 +32,10 @@ async def test_greeting():
     llm = setup_llm(MODEL)
     judge = LLMJudge(gemini.LLM(MODEL))
 
-    async with TestSession(llm=llm, judge=judge, instructions=INSTRUCTIONS) as session:
+    async with TestSession(llm=llm, instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("Hey there!")
-        await response.judge(intent="Friendly, short greeting")
+        event = response.assistant_message()
+        await judge.evaluate(event, intent="Friendly, short greeting")
 
 
 @pytest.mark.integration
@@ -45,7 +46,8 @@ async def test_weather_tool_call():
     llm = setup_llm(MODEL)
     judge = LLMJudge(gemini.LLM(MODEL))
 
-    async with TestSession(llm=llm, judge=judge, instructions=INSTRUCTIONS) as session:
+    async with TestSession(llm=llm, instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("What's the weather like in Berlin?")
         response.function_called("get_weather", arguments={"location": "Berlin"})
-        await response.judge(intent="Reports current weather for Berlin")
+        event = response.assistant_message()
+        await judge.evaluate(event, intent="Reports current weather for Berlin")
