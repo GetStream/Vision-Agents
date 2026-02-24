@@ -1206,7 +1206,7 @@ wheels = [
 
 [[package]]
 name = "deepgram-sdk"
-version = "5.3.0"
+version = "6.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -1215,9 +1215,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/9c/4529cc5818e9305ac9be3c24545249ad57418cbc3736c3f1c0a8397b59f5/deepgram_sdk-5.3.0.tar.gz", hash = "sha256:4e682a53f64c26dc49d8fd70865eae1e98236d313870d1bcf5f107f125e53793", size = 148179, upload-time = "2025-11-03T15:24:02.436Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/73/46/6dc45de574d766a20853452d7beccf17cb0cfeb685a0f03460f1fe49b48e/deepgram_sdk-6.0.1.tar.gz", hash = "sha256:88558a43d6173a861c8b6d6491b9ee8805679fb09fb81ef51eeb6871dad77767", size = 176743, upload-time = "2026-02-24T13:52:17.163Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/e2/cda09edad156199cc9e330533f6b72cb5276c0d476cab7f1744be7ffa16e/deepgram_sdk-5.3.0-py3-none-any.whl", hash = "sha256:431418fdffbd93cdf6a78a168984e3df3cb696818ced1cfc52ce336e0bc6a7fe", size = 390669, upload-time = "2025-11-03T15:24:01.078Z" },
+    { url = "https://files.pythonhosted.org/packages/58/a4/53b9075816edc566694aed014d9864febedf232677b74f5d30bdde64b5de/deepgram_sdk-6.0.1-py3-none-any.whl", hash = "sha256:1b33d621b1c0b1d7a6a7b46fdc393aef4212e670521fada99764f5fb3f9d55fd", size = 490751, upload-time = "2026-02-24T13:52:15.998Z" },
 ]
 
 [[package]]
@@ -7153,7 +7153,6 @@ name = "vision-agents-plugins-deepgram"
 source = { editable = "plugins/deepgram" }
 dependencies = [
     { name = "deepgram-sdk" },
-    { name = "numpy" },
     { name = "vision-agents" },
 ]
 
@@ -7168,8 +7167,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=5,!=5.3.1,<6" },
-    { name = "numpy", specifier = ">=2.2.6,<2.3" },
+    { name = "deepgram-sdk", specifier = ">=6.0.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
