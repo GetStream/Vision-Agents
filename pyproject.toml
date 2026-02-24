@@ -36,6 +36,7 @@ vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
 vision-agents-plugins-mistral = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
+liteav = { path = "../tencent_rtc_sdk/python/python_x86_64", editable = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts

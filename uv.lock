@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -37,6 +37,7 @@ members = [
     "vision-agents-plugins-qwen",
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-smart-turn",
+    "vision-agents-plugins-tencent",
     "vision-agents-plugins-turbopuffer",
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-ultralytics",
@@ -2735,6 +2736,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/24/d4/7e4be20993dc6a782639625bd2f97f3c66125c7aa80c82426956811cfccf/librt-0.7.8-cp314-cp314t-win_amd64.whl", hash = "sha256:445b7304145e24c60288a2f172b5ce2ca35c0f81605f5299f3fa567e189d2e32", size = 47668, upload-time = "2026-01-14T12:56:00.261Z" },
     { url = "https://files.pythonhosted.org/packages/fc/85/69f92b2a7b3c0f88ffe107c86b952b397004b5b8ea5a81da3d9c04c04422/librt-0.7.8-cp314-cp314t-win_arm64.whl", hash = "sha256:8766ece9de08527deabcd7cb1b4f1a967a385d26e33e536d6d8913db6ef74f06", size = 40550, upload-time = "2026-01-14T12:56:01.542Z" },
 ]
+
+[[package]]
+name = "liteav"
+version = "1.0.0"
+source = { editable = "../tencent_rtc_sdk/python/python_x86_64" }
 
 [[package]]
 name = "livekit"
@@ -6291,6 +6297,12 @@ wheels = [
 ]
 
 [[package]]
+name = "tls-sig-api-v2"
+version = "1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/a1/18028516d9e31d50c11b96323586b57906b08dddf0ec4a3fc3e2293531ac/tls-sig-api-v2-1.1.tar.gz", hash = "sha256:5b153a4e739d2fd0c931daf371292c97472f59b4308f3220a85950c3c90f4377", size = 2328, upload-time = "2019-06-20T07:17:33.962Z" }
+
+[[package]]
 name = "tokenizers"
 version = "0.22.1"
 source = { registry = "https://pypi.org/simple" }
@@ -6852,6 +6864,7 @@ all-plugins = [
     { name = "vision-agents-plugins-qwen" },
     { name = "vision-agents-plugins-roboflow" },
     { name = "vision-agents-plugins-smart-turn" },
+    { name = "vision-agents-plugins-tencent" },
     { name = "vision-agents-plugins-turbopuffer" },
     { name = "vision-agents-plugins-twilio" },
     { name = "vision-agents-plugins-ultralytics" },
@@ -6940,6 +6953,9 @@ roboflow = [
 smart-turn = [
     { name = "vision-agents-plugins-smart-turn" },
 ]
+tencent = [
+    { name = "vision-agents-plugins-tencent" },
+]
 turbopuffer = [
     { name = "vision-agents-plugins-turbopuffer" },
 ]
@@ -7025,6 +7041,8 @@ requires-dist = [
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'roboflow'", editable = "plugins/roboflow" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
+    { name = "vision-agents-plugins-tencent", marker = "extra == 'all-plugins'", editable = "plugins/tencent" },
+    { name = "vision-agents-plugins-tencent", marker = "extra == 'tencent'", editable = "plugins/tencent" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'all-plugins'", editable = "plugins/turbopuffer" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'turbopuffer'", editable = "plugins/turbopuffer" },
     { name = "vision-agents-plugins-twilio", marker = "extra == 'all-plugins'", editable = "plugins/twilio" },
@@ -7038,7 +7056,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "roboflow", "smart-turn", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
@@ -7741,6 +7759,34 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.20.1" },
     { name = "transformers", specifier = ">=4.48.2" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-tencent"
+source = { editable = "plugins/tencent" }
+dependencies = [
+    { name = "liteav" },
+    { name = "tls-sig-api-v2" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "liteav", editable = "../tencent_rtc_sdk/python/python_x86_64" },
+    { name = "tls-sig-api-v2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

@@ -6,11 +6,14 @@ installed (see SDK python/python_x86_64). LD_LIBRARY_PATH must point to liblitea
 
 import asyncio
 import logging
+import os
 import threading
 import time
 from collections import deque
 from typing import TYPE_CHECKING, Any, Optional
 
+import TLSSigAPIv2
+from dotenv import load_dotenv
 from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.edge import Call, EdgeTransport, events
@@ -18,6 +21,8 @@ from vision_agents.core.edge.types import Connection, Participant, TrackType, Us
 
 if TYPE_CHECKING:
     from vision_agents.core import Agent
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +67,15 @@ BYTES_PER_20MS = 640
 class TencentCall(Call):
     """Call backed by a Tencent TRTC room."""
 
-    def __init__(self, call_id: str, room_id: int):
+    def __init__(
+        self,
+        call_id: str,
+        room_id: int = 0,
+        str_room_id: str | None = None,
+    ):
         self._id = call_id
         self.room_id = room_id
+        self.str_room_id = str_room_id
 
     @property
     def id(self) -> str:
@@ -188,12 +199,24 @@ class TencentEdge(EdgeTransport[TencentCall]):
 
     def __init__(
         self,
-        sdk_app_id: int,
-        user_sig: Optional[str] = None,
-        key: Optional[str] = None,
+        sdk_app_id: int | None = None,
+        user_sig: str | None = None,
+        key: str | None = None,
     ):
         _require_liteav()
         super().__init__()
+
+        if sdk_app_id is None:
+            raw = os.environ.get("TENCENT_SDKAppID")
+            if raw is None:
+                raise ValueError(
+                    "sdk_app_id must be provided or set TENCENT_SDKAppID env var"
+                )
+            sdk_app_id = int(raw)
+
+        if not key:
+            key = os.environ.get("TENCENT_SDKSecretKey")
+
         self._sdk_app_id = sdk_app_id
         self._user_sig = user_sig
         self._key = key
@@ -211,8 +234,12 @@ class TencentEdge(EdgeTransport[TencentCall]):
     async def create_call(
         self, call_id: str, room_id: Optional[int] = None, **kwargs: Any
     ) -> TencentCall:
-        rid = room_id if room_id is not None else int(call_id)
-        return TencentCall(call_id=call_id, room_id=rid)
+        if room_id is not None:
+            return TencentCall(call_id=call_id, room_id=room_id)
+        try:
+            return TencentCall(call_id=call_id, room_id=int(call_id))
+        except ValueError:
+            return TencentCall(call_id=call_id, str_room_id=call_id)
 
     def create_audio_track(self) -> AudioStreamTrack:
         track = TencentAudioTrack(edge=self)
@@ -256,15 +283,8 @@ class TencentEdge(EdgeTransport[TencentCall]):
         _require_liteav()
         user_sig = self._user_sig
         if not user_sig and self._key and self._agent_user_id:
-            try:
-                import TLSSigAPIv2
-
-                api = TLSSigAPIv2.TLSSigAPIv2(self._sdk_app_id, self._key)
-                user_sig = api.gen_sig(self._agent_user_id)
-            except ImportError:
-                raise RuntimeError(
-                    "Provide user_sig or install TLSSigAPIv2 and pass key= to generate it"
-                )
+            api = TLSSigAPIv2.TLSSigAPIv2(self._sdk_app_id, self._key)
+            user_sig = api.gen_sig(self._agent_user_id)
         if not user_sig:
             raise ValueError(
                 "Tencent edge requires user_sig (or key= with TLSSigAPIv2)"
@@ -291,7 +311,10 @@ class TencentEdge(EdgeTransport[TencentCall]):
 
         room_param = EnterRoomParams()
         room_param.room.sdk_app_id = self._sdk_app_id
-        room_param.room.room_id = call.room_id
+        if call.str_room_id is not None:
+            room_param.room.str_room_id = TrtcString(call.str_room_id)
+        else:
+            room_param.room.room_id = call.room_id
         room_param.room.user_id = TrtcString(self._agent_user_id or "")
         room_param.room.user_sig = TrtcString(user_sig)
         room_param.role = TRTC_ROLE_ANCHOR
@@ -424,7 +447,25 @@ if TRTCCloudDelegate is not None:
             if self._edge._audio_track and self._edge._cloud:
                 self._edge._audio_track.set_cloud(self._edge._cloud)
 
+        def OnConnectionStateChanged(self, old_state: int, new_state: int) -> None:
+            logger.debug("Tencent TRTC connection state: %s -> %s", old_state, new_state)
+
         def OnLocalAudioChannelDestroyed(self) -> None:
+            pass
+
+        def OnLocalVideoChannelCreated(self, stream_type: int) -> None:
+            pass
+
+        def OnLocalVideoChannelDestroyed(self, stream_type: int) -> None:
+            pass
+
+        def OnRequestChangeVideoEncodeBitrate(self, stream_type: int, bitrate_bps: int) -> None:
+            pass
+
+        def OnRequestKeyFrame(self, stream_type: int) -> None:
+            pass
+
+        def OnRemoteAudioAvailable(self, user_id: str, available: bool) -> None:
             pass
 
         def OnRemoteUserEnterRoom(self, info: Any) -> None:

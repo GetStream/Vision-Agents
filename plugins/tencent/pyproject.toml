@@ -12,6 +12,8 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
+    "liteav",
+    "tls-sig-api-v2",
 ]
 
 [project.urls]
@@ -31,6 +33,7 @@ include = ["/vision_agents"]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
+liteav = { path = "../../../tencent_rtc_sdk/python/python_x86_64", editable = true }
 
 [dependency-groups]
 dev = [
