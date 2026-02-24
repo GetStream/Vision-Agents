@@ -57,3 +57,32 @@ async def test_weather_tool_call():
             event, intent="Reports current weather for Berlin"
         )
         assert verdict.success, verdict.reason
+
+
+@pytest.mark.integration
+async def test_weather_tool_call_mocked():
+    """Agent calls get_weather with mocked return value; verify via AsyncMock."""
+    _skip_if_no_key()
+
+    llm = setup_llm(MODEL)
+    judge = LLMJudge(gemini.LLM(MODEL))
+
+    async with TestSession(llm=llm, instructions=INSTRUCTIONS) as session:
+        with session.mock_functions(
+            {"get_weather": lambda **_: {"temp_f": 55, "condition": "rainy"}}
+        ) as mocked:
+            response = await session.simple_response(
+                "What's the weather like in Berlin?"
+            )
+            mocked["get_weather"].assert_called_once()
+            mocked["get_weather"].assert_called_with(location="Berlin")
+
+            response.assert_function_called(
+                "get_weather", arguments={"location": "Berlin"}
+            )
+            response.assert_function_output(output={"temp_f": 55, "condition": "rainy"})
+            event = response.assistant_message()
+            verdict = await judge.evaluate(
+                event, intent="Reports rainy weather for Berlin"
+            )
+            assert verdict.success, verdict.reason

@@ -1,5 +1,8 @@
 import time
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from typing import Any
+from unittest.mock import AsyncMock
 
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.events.manager import EventManager
@@ -13,6 +16,7 @@ from vision_agents.testing import (
     RunEvent,
     TestResponse,
 )
+from vision_agents.testing._mock_tools import mock_functions as _mock_functions
 
 
 class TestSession:
@@ -84,6 +88,24 @@ class TestSession:
     def llm(self) -> LLM:
         """The LLM instance (useful for ``mock_tools(session.llm, {...})``)."""
         return self._llm
+
+    @contextmanager
+    def mock_functions(
+        self,
+        mocks: dict[str, Callable[..., Any]],
+    ) -> Generator[dict[str, AsyncMock], None, None]:
+        """Temporarily replace tool implementations with ``AsyncMock`` wrappers.
+
+        Thin wrapper around ``mock_functions(self._llm, mocks)``.
+
+        Args:
+            mocks: Mapping of tool name to mock callable.
+
+        Yields:
+            ``dict[str, AsyncMock]`` keyed by tool name.
+        """
+        with _mock_functions(self._llm, mocks) as wrapped:
+            yield wrapped
 
     async def simple_response(self, text: str) -> TestResponse:
         """Send user text to the LLM and capture the response events.
