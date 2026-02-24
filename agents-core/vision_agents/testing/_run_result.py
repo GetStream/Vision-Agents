@@ -71,10 +71,10 @@ class TestResponse:
         *,
         arguments: dict[str, Any] | None = None,
     ) -> None:
-        """Assert the events contain a ``FunctionCallEvent``.
+        """Assert the events contain a matching ``FunctionCallEvent``.
 
-        Scans ``self.events`` for the first ``FunctionCallEvent`` and
-        validates name and arguments (partial match).
+        Scans all ``FunctionCallEvent`` entries looking for one that
+        matches the given name and arguments (partial match).
 
         Args:
             name: Expected function name. ``None`` to skip the check.
@@ -82,32 +82,28 @@ class TestResponse:
                 keys are checked).
         """
         __tracebackhide__ = True
-        for i, event in enumerate(self.events):
-            if isinstance(event, FunctionCallEvent):
-                if name is not None and event.name != name:
-                    self._raise_with_debug_info(
-                        f"Expected call name '{name}', got '{event.name}'",
-                        event_index=i,
-                    )
+        for event in self.function_calls:
+            if name is not None and event.name != name:
+                continue
 
-                if arguments is not None:
-                    for key, value in arguments.items():
-                        if key not in event.arguments:
-                            self._raise_with_debug_info(
-                                f"Argument '{key}' not present in call arguments {list(event.arguments)}",
-                                event_index=i,
-                            )
-                        if event.arguments[key] != value:
-                            self._raise_with_debug_info(
-                                f"For argument '{key}', expected {value!r}, got {event.arguments[key]!r}",
-                                event_index=i,
-                            )
+            if arguments is not None and not self._arguments_match(
+                event.arguments, arguments
+            ):
+                continue
 
-                return
+            return
 
         self._raise_with_debug_info(
             "Expected FunctionCallEvent, but no matching event found."
         )
+
+    @staticmethod
+    def _arguments_match(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
+        """Check whether *actual* contains all key/value pairs from *expected*."""
+        for key, value in expected.items():
+            if key not in actual or actual[key] != value:
+                return False
+        return True
 
     def assert_function_output(
         self,

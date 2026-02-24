@@ -65,19 +65,19 @@ class TestFunctionCalled:
 
     def test_name_mismatch_raises(self):
         response = _make_response(_tool_call_events())
-        with pytest.raises(AssertionError, match="Expected call name 'wrong_tool'"):
+        with pytest.raises(AssertionError, match="no matching event found"):
             response.assert_function_called("wrong_tool")
 
     def test_argument_mismatch_raises(self):
         response = _make_response(_tool_call_events())
-        with pytest.raises(AssertionError, match="argument 'location'"):
+        with pytest.raises(AssertionError, match="no matching event found"):
             response.assert_function_called(
                 "get_weather", arguments={"location": "Berlin"}
             )
 
     def test_missing_argument_key_raises(self):
         response = _make_response(_tool_call_events())
-        with pytest.raises(AssertionError, match="not present"):
+        with pytest.raises(AssertionError, match="no matching event found"):
             response.assert_function_called("get_weather", arguments={"city": None})
 
     def test_wrong_event_type_skips_to_match(self):
@@ -99,6 +99,19 @@ class TestFunctionCalled:
         response = _make_response(_tool_call_events())
         response.assert_function_called()
         assert response.function_calls[0].name == "get_weather"
+
+    def test_matches_among_multiple_calls(self):
+        events = [
+            FunctionCallEvent(name="get_weather", arguments={"location": "Berlin"}),
+            FunctionCallEvent(name="get_weather", arguments={"location": "Chicago"}),
+            FunctionCallEvent(name="get_weather", arguments={"location": "Tokyo"}),
+        ]
+        response = _make_response(events)
+        response.assert_function_called(
+            "get_weather", arguments={"location": "Chicago"}
+        )
+        response.assert_function_called("get_weather", arguments={"location": "Tokyo"})
+        response.assert_function_called("get_weather", arguments={"location": "Berlin"})
 
 
 class TestFunctionOutput:
