@@ -76,7 +76,9 @@ async def test_weather_tool_call_mocked():
             )
             mocked["get_weather"].assert_called_once()
             mocked["get_weather"].assert_called_with(location="Berlin")
-            response.assert_function_output(output={"temp_f": 55, "condition": "rainy"})
+            response.assert_function_output(
+                "get_weather", output={"temp_f": 55, "condition": "rainy"}
+            )
 
             verdict = await judge.evaluate(
                 response.chat_messages[0], intent="Reports rainy weather for Berlin"

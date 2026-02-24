@@ -122,15 +122,17 @@ class TestFunctionOutput:
             ),
         ]
         response = _make_response(events)
-        response.assert_function_output(output={"temp": 70, "condition": "sunny"})
+        response.assert_function_output(
+            "get_weather", output={"temp": 70, "condition": "sunny"}
+        )
 
     def test_output_mismatch_raises(self):
         events = [
             FunctionCallOutputEvent(name="tool", output="actual"),
         ]
         response = _make_response(events)
-        with pytest.raises(AssertionError, match="Expected output"):
-            response.assert_function_output(output="wrong")
+        with pytest.raises(AssertionError, match="no matching event found"):
+            response.assert_function_output("tool", output="wrong")
 
     def test_is_error_match(self):
         events = [
@@ -139,15 +141,26 @@ class TestFunctionOutput:
             ),
         ]
         response = _make_response(events)
-        response.assert_function_output(is_error=True)
+        response.assert_function_output("tool", is_error=True)
 
     def test_is_error_mismatch_raises(self):
         events = [
             FunctionCallOutputEvent(name="tool", output="ok", is_error=False),
         ]
         response = _make_response(events)
-        with pytest.raises(AssertionError, match="Expected is_error=True"):
-            response.assert_function_output(is_error=True)
+        with pytest.raises(AssertionError, match="no matching event found"):
+            response.assert_function_output("tool", is_error=True)
+
+    def test_matches_among_multiple_outputs(self):
+        events = [
+            FunctionCallOutputEvent(name="get_weather", output={"temp": 70}),
+            FunctionCallOutputEvent(name="get_weather", output={"temp": 55}),
+            FunctionCallOutputEvent(name="get_weather", output={"temp": 30}),
+        ]
+        response = _make_response(events)
+        response.assert_function_output("get_weather", output={"temp": 55})
+        response.assert_function_output("get_weather", output={"temp": 30})
+        response.assert_function_output("get_weather", output={"temp": 70})
 
 
 class TestChatMessages:
@@ -201,7 +214,9 @@ class TestFullSequence:
             ChatMessageEvent(role="assistant", content="Sunny, 70F."),
         ]
         response = _make_response(events)
-        response.assert_function_output(output={"temp": 70, "condition": "sunny"})
+        response.assert_function_output(
+            "get_weather", output={"temp": 70, "condition": "sunny"}
+        )
 
 
 class TestTestResponse:

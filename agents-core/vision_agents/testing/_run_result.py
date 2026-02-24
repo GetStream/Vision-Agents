@@ -107,35 +107,36 @@ class TestResponse:
 
     def assert_function_output(
         self,
+        name: str,
         *,
         output: Any = _NOT_GIVEN,
         is_error: bool | None = None,
     ) -> None:
-        """Assert the events contain a ``FunctionCallOutputEvent``.
+        """Assert the events contain a matching ``FunctionCallOutputEvent``.
 
-        Scans ``self.events`` for the first ``FunctionCallOutputEvent``
-        and validates output and error flag.
+        Scans all ``FunctionCallOutputEvent`` entries looking for one
+        that matches the given name, output, and error flag.
 
         Args:
+            name: Expected function name.
             output: Expected output value (exact match). Omit to skip.
             is_error: Expected error flag. ``None`` to skip the check.
         """
         __tracebackhide__ = True
-        for i, event in enumerate(self.events):
-            if isinstance(event, FunctionCallOutputEvent):
-                if output is not _NOT_GIVEN and event.output != output:
-                    self._raise_with_debug_info(
-                        f"Expected output {output!r}, got {event.output!r}",
-                        event_index=i,
-                    )
+        for event in self.events:
+            if not isinstance(event, FunctionCallOutputEvent):
+                continue
 
-                if is_error is not None and event.is_error != is_error:
-                    self._raise_with_debug_info(
-                        f"Expected is_error={is_error}, got {event.is_error}",
-                        event_index=i,
-                    )
+            if event.name != name:
+                continue
 
-                return
+            if output is not _NOT_GIVEN and event.output != output:
+                continue
+
+            if is_error is not None and event.is_error != is_error:
+                continue
+
+            return
 
         self._raise_with_debug_info(
             "Expected FunctionCallOutputEvent, but no matching event found."
