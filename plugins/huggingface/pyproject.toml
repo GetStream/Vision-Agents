@@ -15,6 +15,17 @@ dependencies = [
     "huggingface_hub<1.0",
 ]
 
+[project.optional-dependencies]
+transformers = [
+    "transformers>=4.45.0",
+    "torch>=2.0.0",
+    "accelerate>=0.25.0",
+]
+transformers-quantized = [
+    "vision-agents-plugins-huggingface[transformers]",
+    "bitsandbytes>=0.41.0",
+]
+
 [project.urls]
 Documentation = "https://visionagents.ai/"
 Website = "https://visionagents.ai/"

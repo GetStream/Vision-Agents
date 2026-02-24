@@ -498,6 +498,7 @@ class XAIRealtime(realtime.Realtime):
 
             elif event_type == "response.output_audio.done":
                 logger.debug("Audio output complete")
+                self._emit_audio_output_done_event(response_id=data.get("response_id"))
 
             elif event_type == "response.done":
                 self._handle_response_done(data)

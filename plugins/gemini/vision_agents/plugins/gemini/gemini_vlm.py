@@ -153,10 +153,9 @@ class GeminiVLM(VideoLLM):
             processors: List of processors (unused).
             participant: Optional participant object for message attribution.
         """
-        user_id = participant.user_id if participant else "user"
-        if self._conversation is not None:
+        if participant is None and self._conversation is not None:
             await self._conversation.send_message(
-                role="user", user_id=user_id, content=text
+                role="user", user_id="user", content=text
             )
 
         if self.chat is None:

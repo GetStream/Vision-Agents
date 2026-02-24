@@ -1,36 +1,35 @@
 import json
 import logging
-from typing import Any, Optional, List, Dict, Union
+from typing import Any, Dict, List, Optional, Union
 
 import aiortc
+from dotenv import load_dotenv
+from getstream.video.rtc.track_util import PcmData
 from openai import AsyncOpenAI
 from openai.types.realtime import (
-    RateLimitsUpdatedEvent,
-    SessionUpdatedEvent,
-    RealtimeSessionCreateRequestParam,
-    RealtimeAudioConfigParam,
-    RealtimeAudioConfigOutputParam,
-    RealtimeAudioConfigInputParam,
     AudioTranscriptionParam,
-    ResponseAudioTranscriptDoneEvent,
-    InputAudioBufferSpeechStartedEvent,
     ConversationItemInputAudioTranscriptionCompletedEvent,
+    InputAudioBufferSpeechStartedEvent,
+    RateLimitsUpdatedEvent,
+    RealtimeAudioConfigInputParam,
+    RealtimeAudioConfigOutputParam,
+    RealtimeAudioConfigParam,
+    RealtimeSessionCreateRequest,
+    RealtimeSessionCreateRequestParam,
+    RealtimeTranscriptionSessionCreateRequest,
+    ResponseAudioTranscriptDoneEvent,
     ResponseDoneEvent,
     SessionCreatedEvent,
-    RealtimeSessionCreateRequest,
-    RealtimeTranscriptionSessionCreateRequest,
+    SessionUpdatedEvent,
 )
 from openai.types.realtime.realtime_transcription_session_audio_input_turn_detection_param import (
     SemanticVad,
 )
-from dotenv import load_dotenv
-from getstream.video.rtc.track_util import PcmData
-
-from vision_agents.core.llm import realtime
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.instructions import Instructions
+from vision_agents.core.llm import realtime
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
-from vision_agents.core.instructions import Instructions
 
 from .rtc_manager import RTCManager
 from .tool_utils import convert_tools_to_openai_format, parse_tool_arguments
@@ -71,7 +70,7 @@ class Realtime(realtime.Realtime):
 
     def __init__(
         self,
-        model: str = "gpt-realtime",
+        model: str = "gpt-realtime-1.5",
         api_key: Optional[str] = None,
         voice: str = "marin",
         client: Optional[AsyncOpenAI] = None,
@@ -333,7 +332,7 @@ class Realtime(realtime.Realtime):
             pass
         elif et == "response.audio.done":
             # Audio generation complete for this response item
-            pass
+            self._emit_audio_output_done_event()
         elif et == "response.output_audio.done":
             # Output audio generation complete for this response item
             pass

@@ -24,6 +24,7 @@ vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
 vision-agents-plugins-heygen = { workspace = true }
+vision-agents-plugins-lemonslice = { workspace = true }
 vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
@@ -65,6 +66,7 @@ members = [
     "plugins/smart_turn",
     "plugins/wizper",
     "plugins/heygen",
+    "plugins/lemonslice",
     "plugins/inworld",
     "plugins/vogent",
     "plugins/moondream",

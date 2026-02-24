@@ -37,17 +37,20 @@ uv run mypy
 
 ## Python rules
 
+- Never use `from __future__ import annotations`.
 - Never write `except Exception as e`. Catch specific exceptions.
 - Avoid `getattr`, `hasattr`, `delattr`, `setattr`; prefer normal attribute access.
 - Docstrings: Google style, keep them short.
 - Do not use section comments like `# -- some section --`
 - Prefer `logger.exception()` when logging an error with a traceback instead of `logger.error("Error: {exc}")`
+- Do not use local imports, import at the top of the module
 
 ## Code style
 
 **Imports**:
 
 - ordered as: stdlib, third-party, local package, relative. Use `TYPE_CHECKING` guard for imports only needed by type annotations.
+- Never import from private modules (`_foo`) outside of the package's own `__init__.py`. Use the public re-export (e.g. `from vision_agents.testing import TestResponse`, not `from vision_agents.testing._run_result import TestResponse`).
 
 **Naming**:
 

@@ -130,6 +130,10 @@ class Agent:
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
+        # Send text to TTS as sentences stream from the LLM rather than
+        # waiting for the complete response. Reduces perceived latency for
+        # non-realtime LLMs that emit LLMResponseChunkEvent.
+        streaming_tts: bool = False,
         # Metrics broadcasting to call participants
         broadcast_metrics: bool = False,
         broadcast_metrics_interval: float = 5.0,
@@ -208,6 +212,8 @@ class Agent:
         self.llm = llm
         self.stt = stt
         self.tts = tts
+        self.streaming_tts = streaming_tts
+        self._streaming_tts_buffer: str = ""
         self.turn_detection = turn_detection
         self.processors: list[Processor] = processors or []
         self.mcp_servers = mcp_servers or []
@@ -300,9 +306,18 @@ class Agent:
         turn = self._pending_turn
         self._pending_turn = None
         event = turn.response
-        if self.tts and event and event.text and event.text.strip():
+        if self.streaming_tts:
+            await self._flush_streaming_tts_buffer()
+        elif self.tts and event and event.text and event.text.strip():
             sanitized_text = self._sanitize_text(event.text)
             await self.tts.send(sanitized_text)
+
+    async def _flush_streaming_tts_buffer(self):
+        """Send any remaining text in the streaming TTS buffer."""
+        remaining = self._streaming_tts_buffer.strip()
+        self._streaming_tts_buffer = ""
+        if remaining and self.tts:
+            await self.tts.send(self._sanitize_text(remaining))
 
     def setup_event_handling(self):
         """
@@ -312,6 +327,11 @@ class Agent:
         - Eager: AudioReceivedEvent -> STTTranscriptEvent -> EagerTurnCompleted -> LLMResponseCompletedEvent
             - > if TurnCompleted -> TTSAudioEvent
         - Realtime: Transcriptions
+        - Streaming TTS (``streaming_tts=True``):
+            LLMResponseChunkEvent chunks are accumulated and sent to TTS at
+            sentence boundaries. The completed handler flushes any remaining
+            buffer instead of re-sending the full text. Barge-in clears the
+            buffer via ``_on_turn_event``.
 
         Other events
         - Tracks for video added/removed
@@ -325,7 +345,9 @@ class Agent:
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
             # turns started outside of the agent (instructions from code)
             if self._pending_turn is None:
-                if self.tts and event.text and event.text.strip():
+                if self.streaming_tts:
+                    await self._flush_streaming_tts_buffer()
+                elif self.tts and event.text and event.text.strip():
                     sanitized_text = self._sanitize_text(event.text)
                     await self.tts.send(sanitized_text)
             else:
@@ -336,10 +358,36 @@ class Agent:
                     # we are in eager turn completion mode. wait for confirmation
                     self._pending_turn.response = event
 
+        # Stream LLM text chunks to TTS as sentences complete
+        if self.streaming_tts:
+
+            @self.llm.events.subscribe
+            async def _stream_llm_chunks_to_tts(event: LLMResponseChunkEvent):
+                if not self.tts or not event.delta:
+                    return
+                if event.is_first_chunk:
+                    self._streaming_tts_buffer = ""
+                self._streaming_tts_buffer += event.delta
+                # Send complete sentences to TTS immediately
+                buf = self._streaming_tts_buffer
+                boundary = -1
+                for i in range(len(buf) - 1):
+                    if buf[i] in ".!?" and buf[i + 1] in " \n":
+                        boundary = i
+                if boundary >= 0:
+                    to_send = buf[: boundary + 1]
+                    self._streaming_tts_buffer = buf[boundary + 1 :].lstrip()
+                    if to_send.strip():
+                        await self.tts.send(self._sanitize_text(to_send))
+
         # write tts pcm to output track (this is the AI talking to us)
         @self.events.subscribe
         async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
-            if self._audio_track is not None:
+            if (
+                self._audio_track is not None
+                and event.data is not None
+                and not self.audio_publishers
+            ):
                 await self._audio_track.write(event.data)
 
         # listen to video tracks added/removed
@@ -1256,6 +1304,7 @@ class Agent:
                         f"👉 Turn started - interrupting TTS for participant {event.participant.user_id}"
                     )
                     await self.tts.stop_audio()
+                    self._streaming_tts_buffer = ""
                 else:
                     participant_id = (
                         event.participant.user_id if event.participant else "unknown"
@@ -1355,6 +1404,11 @@ class Agent:
         return self.turn_detection is not None or (
             self.stt is not None and self.stt.turn_detection
         )
+
+    @property
+    def audio_track(self) -> Optional[AudioStreamTrack]:
+        """The outgoing audio track published to the call."""
+        return self._audio_track
 
     @property
     def publish_audio(self) -> bool:
@@ -1472,21 +1526,25 @@ class Agent:
                 )
 
     def _prepare_rtc(self):
-        # Variables are now initialized in __init__
-
         if self.publish_audio:
-            self._audio_track = self.edge.create_audio_track()
+            if self.audio_publishers:
+                self._audio_track = self.audio_publishers[0].publish_audio_track()
+            else:
+                self._audio_track = self.edge.create_audio_track()
 
             @self.events.subscribe
             async def forward_audio(event: RealtimeAudioOutputEvent):
-                if self._audio_track is not None:
+                if (
+                    self._audio_track is not None
+                    and event.data is not None
+                    and not self.audio_publishers
+                ):
                     await self._audio_track.write(event.data)
 
         # Set up video track if video publishers are available
         if self.publish_video:
             # Get the first video publisher to create the track
             video_publisher = self.video_publishers[0]
-            # TODO: some lLms like moondream publish video
             self._video_track = video_publisher.publish_video_track()
             forwarder = VideoForwarder(
                 self._video_track,  # type: ignore[arg-type]

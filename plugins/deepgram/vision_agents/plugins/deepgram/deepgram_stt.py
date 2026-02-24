@@ -6,24 +6,13 @@ from typing import Any, Optional
 
 from deepgram import AsyncDeepgramClient
 from deepgram.core import EventType
+from deepgram.listen import ListenV2CloseStream
 from deepgram.listen.v2.socket_client import AsyncV2SocketClient
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.utils.utils import cancel_and_wait
-
-# Handle API changes between deepgram-sdk 5.3.0 and 5.3.1
-try:
-    # deepgram-sdk >= 5.3.1
-    from deepgram.listen.v2.types import ListenV2CloseStream
-
-    _USE_NEW_API = True
-except ImportError:
-    # deepgram-sdk 5.3.0
-    from deepgram.extensions.types.sockets import ListenV2ControlMessage
-
-    _USE_NEW_API = False
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +168,7 @@ class STT(stt.STT):
         # Mark connection as ready
         self._connection_ready.set()
 
-    def _on_message(self, message):
+    def _on_message(self, message: Any) -> None:
         """
         Event handler for messages from Deepgram.
 
@@ -275,7 +264,7 @@ class STT(stt.STT):
                 )
 
     def _on_open(self, message):
-        pass
+        logger.debug("Deepgram WebSocket connection opened")
 
     def _on_error(self, error):
         """
@@ -309,12 +298,8 @@ class STT(stt.STT):
         if self.connection and self._connection_context:
             try:
                 # Handle API differences between deepgram-sdk versions
-                if _USE_NEW_API and hasattr(self.connection, "send_close_stream"):
-                    close_msg = ListenV2CloseStream(type="CloseStream")
-                    await self.connection.send_close_stream(close_msg)
-                else:
-                    close_msg = ListenV2ControlMessage(type="CloseStream")
-                    await self.connection.send_control(close_msg)
+                close_msg = ListenV2CloseStream(type="CloseStream")
+                await self.connection.send_close_stream(close_msg)
                 await self._connection_context.__aexit__(None, None, None)
             except Exception as exc:
                 logger.warning(f"Error closing Deepgram websocket connection: {exc}")

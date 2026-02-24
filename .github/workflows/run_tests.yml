@@ -82,10 +82,13 @@ jobs:
       STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
       STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
-      AWS_BEARER_TOKEN_BEDROCK: "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
-      _BEARER_TOKEN_BEDROCK: "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      TURBOPUFFER_API_KEY: ${{ secrets.TURBOPUFFER_API_KEY }}
+      AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+      AWS_BEDROCK_API_KEY: ${{ secrets.AWS_BEDROCK_API_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -98,17 +101,6 @@ jobs:
           sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
-      - name: Export AWS_BEARER_TOKEN_BEDROCK (heredoc)
-        shell: bash
-        run: |
-          {
-            echo 'AWS_BEARER_TOKEN_BEDROCK<<EOF'
-            echo "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
-            echo 'EOF'
-          } >> "$GITHUB_ENV"
-
-      - name: Verify presence
-        run: uv run python -c "import os; v=os.getenv('AWS_BEARER_TOKEN_BEDROCK'); print('exists', v is not None, 'len', 0 if v is None else len(v))"
       - name: Run core tests
         run: uv run pytest -n auto -m "${{ inputs.marker }}" tests/
       - name: Run plugin tests

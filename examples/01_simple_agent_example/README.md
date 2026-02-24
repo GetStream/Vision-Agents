@@ -151,6 +151,15 @@ You can swap out any component:
 Add items to the `processors` list to give your agent new capabilities. See the golf coach example for how to use YOLO
 for object detection.
 
+## Running Tests
+
+Run the integration tests to verify the example works end-to-end. Requires a `GOOGLE_API_KEY`.
+
+```bash
+cd examples/01_simple_agent_example
+uv run py.test -m integration
+```
+
 ## Next Steps
 
 - Check out the [golf coach example](../02_golf_coach_example) to learn about video processing
@@ -162,4 +171,3 @@ for object detection.
 - [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
 - [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
 - [Main Vision Agents README](../../README.md)
-

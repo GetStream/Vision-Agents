@@ -268,3 +268,13 @@ class TestEventManager:
         # Should NOT see "Called handler" for either event (both are silent)
         assert not any("Called handler valid_handler" in msg for msg in log_messages)
         assert not any("Called handler another_handler" in msg for msg in log_messages)
+
+    async def test_has_subscribers(self):
+        manager = EventManager()
+        assert not manager.has_subscribers(ValidEvent)
+        manager.register(ValidEvent)
+
+        @manager.subscribe
+        async def on_event(event: ValidEvent): ...
+
+        assert manager.has_subscribers(ValidEvent)
