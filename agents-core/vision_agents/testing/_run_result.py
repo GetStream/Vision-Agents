@@ -32,6 +32,7 @@ class TestResponse:
     output: str | None
     events: list[RunEvent]
     function_calls: list[FunctionCallEvent]
+    chat_messages: list[ChatMessageEvent]
     duration_ms: float
 
     @classmethod
@@ -45,10 +46,13 @@ class TestResponse:
         """Construct a TestResponse from raw events and timing."""
         output: str | None = None
         function_calls: list[FunctionCallEvent] = []
+        chat_messages: list[ChatMessageEvent] = []
 
         for event in events:
-            if isinstance(event, ChatMessageEvent) and event.role == "assistant":
-                output = event.content
+            if isinstance(event, ChatMessageEvent):
+                chat_messages.append(event)
+                if event.role == "assistant":
+                    output = event.content
             elif isinstance(event, FunctionCallEvent):
                 function_calls.append(event)
 
@@ -57,6 +61,7 @@ class TestResponse:
             output=output,
             events=events,
             function_calls=function_calls,
+            chat_messages=chat_messages,
             duration_ms=(time.monotonic() - start_time) * 1000,
         )
 
@@ -138,21 +143,6 @@ class TestResponse:
 
         self._raise_with_debug_info(
             "Expected FunctionCallOutputEvent, but no matching event found."
-        )
-
-    def assistant_message(self) -> ChatMessageEvent:
-        """Find the first ``ChatMessageEvent`` in the events.
-
-        Returns:
-            The matched ``ChatMessageEvent``.
-        """
-        __tracebackhide__ = True
-        for event in self.events:
-            if isinstance(event, ChatMessageEvent):
-                return event
-
-        self._raise_with_debug_info(
-            "Expected ChatMessageEvent, but no matching event found."
         )
 
     def _raise_with_debug_info(

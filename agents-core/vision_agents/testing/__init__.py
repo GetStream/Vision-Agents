@@ -11,8 +11,7 @@ Verify a greeting::
         judge = LLMJudge(gemini.LLM(MODEL))
         async with TestSession(llm=llm, instructions="Be friendly") as session:
             response = await session.simple_response("Hello")
-            event = response.assistant_message()
-            verdict = await judge.evaluate(event, intent="Friendly greeting")
+            verdict = await judge.evaluate(response.chat_messages[0], intent="Friendly greeting")
             assert verdict.success, verdict.reason
 
 Verify tool calls::
@@ -22,8 +21,7 @@ Verify tool calls::
         async with TestSession(llm=llm, instructions="...") as session:
             response = await session.simple_response("Weather in Tokyo?")
             response.assert_function_called("get_weather", arguments={"location": "Tokyo"})
-            event = response.assistant_message()
-            verdict = await judge.evaluate(event, intent="Reports weather for Tokyo")
+            verdict = await judge.evaluate(response.chat_messages[0], intent="Reports weather for Tokyo")
             assert verdict.success, verdict.reason
 
 Key exports:

@@ -137,31 +137,32 @@ class TestFunctionOutput:
             response.assert_function_output(is_error=True)
 
 
-class TestAssistantMessage:
+class TestChatMessages:
     def test_finds_message(self):
         response = _make_response(_simple_events())
-        event = response.assistant_message()
-        assert event.content == "Hello! How can I help?"
+        assert len(response.chat_messages) == 1
+        assert response.chat_messages[0].content == "Hello! How can I help?"
 
     def test_skips_non_message_events(self):
         response = _make_response(_tool_call_events())
-        event = response.assistant_message()
-        assert event.content == "The weather in Tokyo is sunny, 70F."
+        assert len(response.chat_messages) == 1
+        assert (
+            response.chat_messages[0].content == "The weather in Tokyo is sunny, 70F."
+        )
 
-    def test_no_message_raises(self):
+    def test_no_message_returns_empty(self):
         events = [
             FunctionCallEvent(name="tool", arguments={}),
         ]
         response = _make_response(events)
-        with pytest.raises(AssertionError, match="Expected ChatMessageEvent"):
-            response.assistant_message()
+        assert response.chat_messages == []
 
 
 class TestFullSequence:
-    def test_call_then_assistant_message(self):
+    def test_call_then_chat_message(self):
         response = _make_response(_tool_call_events())
         response.assert_function_called("get_weather", arguments={"location": "Tokyo"})
-        response.assistant_message()
+        assert len(response.chat_messages) == 1
 
     def test_multiple_tool_calls(self):
         events = [
@@ -176,7 +177,7 @@ class TestFullSequence:
         response.assert_function_called("get_weather")
         assert response.function_calls[1].name == "get_news"
         assert response.function_calls[1].arguments == {"topic": "tech"}
-        response.assistant_message()
+        assert len(response.chat_messages) == 1
 
     def test_explicit_output_check(self):
         events = [
@@ -199,7 +200,7 @@ class TestTestResponse:
         assert resp.function_calls[0].name == "get_weather"
         assert resp.duration_ms >= 0
 
-    def test_build_no_assistant_message(self):
+    def test_build_no_chat_messages(self):
         events = [
             FunctionCallEvent(name="tool", arguments={}),
             FunctionCallOutputEvent(name="tool", output="ok"),
@@ -207,6 +208,7 @@ class TestTestResponse:
         resp = _make_response(events)
         assert resp.output is None
         assert len(resp.function_calls) == 1
+        assert resp.chat_messages == []
 
     def test_build_simple_message(self):
         resp = _make_response(_simple_events())
