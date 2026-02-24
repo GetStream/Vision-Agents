@@ -65,19 +65,19 @@ class TestFunctionCalled:
 
     def test_name_mismatch_raises(self):
         response = _make_response(_tool_call_events())
-        with pytest.raises(AssertionError, match="no matching event found"):
+        with pytest.raises(AssertionError, match="no matching call was found"):
             response.assert_function_called("wrong_tool")
 
     def test_argument_mismatch_raises(self):
         response = _make_response(_tool_call_events())
-        with pytest.raises(AssertionError, match="no matching event found"):
+        with pytest.raises(AssertionError, match="no matching call was found"):
             response.assert_function_called(
                 "get_weather", arguments={"location": "Berlin"}
             )
 
     def test_missing_argument_key_raises(self):
         response = _make_response(_tool_call_events())
-        with pytest.raises(AssertionError, match="no matching event found"):
+        with pytest.raises(AssertionError, match="no matching call was found"):
             response.assert_function_called("get_weather", arguments={"city": None})
 
     def test_wrong_event_type_skips_to_match(self):
@@ -92,7 +92,7 @@ class TestFunctionCalled:
 
     def test_no_function_call_raises(self):
         response = _make_response(_simple_events())
-        with pytest.raises(AssertionError, match="Expected FunctionCallEvent"):
+        with pytest.raises(AssertionError, match="no matching call was found"):
             response.assert_function_called("anything")
 
     def test_none_name_skips_name_check(self):
@@ -131,7 +131,7 @@ class TestFunctionOutput:
             FunctionCallOutputEvent(name="tool", output="actual"),
         ]
         response = _make_response(events)
-        with pytest.raises(AssertionError, match="no matching event found"):
+        with pytest.raises(AssertionError, match="no matching output was found"):
             response.assert_function_output("tool", output="wrong")
 
     def test_is_error_match(self):
@@ -148,7 +148,7 @@ class TestFunctionOutput:
             FunctionCallOutputEvent(name="tool", output="ok", is_error=False),
         ]
         response = _make_response(events)
-        with pytest.raises(AssertionError, match="no matching event found"):
+        with pytest.raises(AssertionError, match="no matching output was found"):
             response.assert_function_output("tool", is_error=True)
 
     def test_matches_among_multiple_outputs(self):
@@ -245,12 +245,14 @@ class TestTestResponse:
 
 
 class TestErrorMessages:
-    def test_includes_context_in_error(self):
+    def test_includes_actual_calls_in_error(self):
         response = _make_response(_tool_call_events())
-        with pytest.raises(AssertionError, match="Context:"):
+        with pytest.raises(AssertionError, match="Function calls:"):
             response.assert_function_called("nonexistent_tool")
 
-    def test_includes_event_list_in_error(self):
+    def test_includes_event_details_in_error(self):
         response = _make_response(_tool_call_events())
-        with pytest.raises(AssertionError, match="FunctionCallEvent"):
+        with pytest.raises(
+            AssertionError, match=r"FunctionCallEvent\(name='get_weather'"
+        ):
             response.assert_function_called("nonexistent_tool")

@@ -93,9 +93,20 @@ class TestResponse:
 
             return
 
-        self._raise_with_debug_info(
-            "Expected FunctionCallEvent, but no matching event found."
-        )
+        if name and arguments:
+            args = ", ".join(f"{k}={v!r}" for k, v in arguments.items())
+            expected = f"a call to '{name}({args})'"
+        elif name:
+            expected = f"a call to '{name}'"
+        else:
+            expected = "a function call"
+        msg = f"Expected {expected}, but no matching call was found."
+        if self.function_calls:
+            calls = "\n".join(
+                f"   {self._format_event(fc)}" for fc in self.function_calls
+            )
+            msg += f"\nFunction calls:\n{calls}"
+        raise AssertionError(msg)
 
     @staticmethod
     def _arguments_match(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
@@ -138,9 +149,18 @@ class TestResponse:
 
             return
 
-        self._raise_with_debug_info(
-            "Expected FunctionCallOutputEvent, but no matching event found."
-        )
+        error_prefix = "an error output" if is_error else "an output"
+        if output is not _NOT_GIVEN:
+            expected = f"{error_prefix} {output!r} from '{name}'"
+        else:
+            expected = f"{error_prefix} from '{name}'"
+
+        outputs = [e for e in self.events if isinstance(e, FunctionCallOutputEvent)]
+        msg = f"Expected {expected}, but no matching output was found."
+        if outputs:
+            lines = "\n".join(f"   {self._format_event(o)}" for o in outputs)
+            msg += f"\nFunction outputs:\n{lines}"
+        raise AssertionError(msg)
 
     def _raise_with_debug_info(
         self,
