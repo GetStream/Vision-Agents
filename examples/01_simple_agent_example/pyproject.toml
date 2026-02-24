@@ -21,6 +21,8 @@ dependencies = [
   "google-genai>=1.33.0",
   "fal-client>=0.5.3",
   "pyinstrument>=5.1.1",
+  "pytest>=8.0",
+  "pytest-asyncio>=1.0",
 ]
 
 [tool.uv.sources]

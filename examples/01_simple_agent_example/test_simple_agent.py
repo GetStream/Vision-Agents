@@ -1,7 +1,8 @@
 """Integration tests for the 01_simple_agent_example.
 
 Run:
-    uv run py.test examples/01_simple_agent_example/test_simple_agent.py -m integration
+    cd examples/01_simple_agent_example
+    uv run py.test -m integration
 """
 
 import os
@@ -9,7 +10,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 
-from .simple_agent_example import INSTRUCTIONS, setup_llm
+from simple_agent_example import INSTRUCTIONS, setup_llm
 
 from vision_agents.plugins import gemini
 from vision_agents.testing import LLMJudge, TestSession
