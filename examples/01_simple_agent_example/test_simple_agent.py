@@ -17,7 +17,7 @@ from vision_agents.testing import LLMJudge, TestSession
 
 load_dotenv()
 
-MODEL = os.getenv("VISION_AGENTS_TEST_MODEL", "gemini-2.5-flash-lite")
+MODEL = os.getenv("VISION_AGENTS_TEST_MODEL", "gemini-3-flash-preview")
 
 
 def _skip_if_no_key():
