@@ -34,7 +34,7 @@ async def test_greeting():
 
     async with TestSession(llm=llm, instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("Hey there!")
-        response.assert_function_not_called("get_weather")
+        assert response.function_calls == []
         event = response.assistant_message()
         verdict = await judge.evaluate(event, intent="Friendly, short greeting")
         assert verdict.success, verdict.reason
@@ -51,7 +51,6 @@ async def test_weather_tool_call():
     async with TestSession(llm=llm, instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("What's the weather like in Berlin?")
         response.assert_function_called("get_weather", arguments={"location": "Berlin"})
-        response.assert_function_called_times("get_weather", 1)
         event = response.assistant_message()
         verdict = await judge.evaluate(
             event, intent="Reports current weather for Berlin"

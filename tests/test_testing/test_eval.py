@@ -224,38 +224,3 @@ class TestErrorMessages:
         response = _make_response(_tool_call_events())
         with pytest.raises(AssertionError, match="FunctionCallEvent"):
             response.assert_function_called("nonexistent_tool")
-
-
-class TestCallCounting:
-    def test_called_times_exact(self):
-        events = [
-            FunctionCallEvent(name="search", arguments={"q": "a"}),
-            FunctionCallOutputEvent(name="search", output="r1"),
-            FunctionCallEvent(name="search", arguments={"q": "b"}),
-            FunctionCallOutputEvent(name="search", output="r2"),
-            ChatMessageEvent(role="assistant", content="Done."),
-        ]
-        response = _make_response(events)
-        response.assert_function_called_times("search", 2)
-        assert response.function_calls[0].arguments == {"q": "a"}
-        assert response.function_calls[1].arguments == {"q": "b"}
-
-    def test_called_times_mismatch(self):
-        events = [
-            FunctionCallEvent(name="search", arguments={}),
-            FunctionCallOutputEvent(name="search", output="ok"),
-        ]
-        response = _make_response(events)
-        with pytest.raises(AssertionError, match="called 1 time"):
-            response.assert_function_called_times("search", 3)
-
-    def test_not_called_passes(self):
-        response = _make_response(_simple_events())
-        response.assert_function_not_called("search")
-
-    def test_not_called_raises(self):
-        response = _make_response(_tool_call_events())
-        with pytest.raises(
-            AssertionError, match="Expected 'get_weather' not to be called"
-        ):
-            response.assert_function_not_called("get_weather")
