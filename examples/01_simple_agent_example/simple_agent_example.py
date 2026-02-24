@@ -26,7 +26,7 @@ This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_ex
 INSTRUCTIONS = "You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful."
 
 
-def setup_llm(model: str ="gemini-3-flash-preview") -> gemini.LLM:
+def setup_llm(model: str = "gemini-3-flash-preview") -> gemini.LLM:
     llm = gemini.LLM(model)
 
     @llm.register_function(description="Get current weather for a location")
