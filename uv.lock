@@ -7353,12 +7353,16 @@ dependencies = [
 [package.optional-dependencies]
 transformers = [
     { name = "accelerate" },
+    { name = "opencv-python" },
+    { name = "supervision" },
     { name = "torch" },
     { name = "transformers" },
 ]
 transformers-quantized = [
     { name = "accelerate" },
     { name = "bitsandbytes" },
+    { name = "opencv-python" },
+    { name = "supervision" },
     { name = "torch" },
     { name = "transformers" },
 ]
@@ -7375,6 +7379,10 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'transformers-quantized'", specifier = ">=0.25.0" },
     { name = "bitsandbytes", marker = "extra == 'transformers-quantized'", specifier = ">=0.41.0" },
     { name = "huggingface-hub", specifier = "<1.0" },
+    { name = "opencv-python", marker = "extra == 'transformers'", specifier = ">=4.8.0" },
+    { name = "opencv-python", marker = "extra == 'transformers-quantized'", specifier = ">=4.8.0" },
+    { name = "supervision", marker = "extra == 'transformers'", specifier = ">=0.21.0" },
+    { name = "supervision", marker = "extra == 'transformers-quantized'", specifier = ">=0.21.0" },
     { name = "torch", marker = "extra == 'transformers'", specifier = ">=2.0.0" },
     { name = "torch", marker = "extra == 'transformers-quantized'", specifier = ">=2.0.0" },
     { name = "transformers", marker = "extra == 'transformers'", specifier = ">=4.45.0" },

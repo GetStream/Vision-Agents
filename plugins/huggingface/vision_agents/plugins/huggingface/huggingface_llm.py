@@ -48,6 +48,7 @@ class HuggingFaceLLM(LLM):
         model: str,
         api_key: Optional[str] = None,
         provider: Optional[PROVIDER_OR_POLICY_T] = None,
+        base_url: Optional[str] = None,
         client: Optional[AsyncInferenceClient] = None,
     ):
         """
@@ -57,6 +58,8 @@ class HuggingFaceLLM(LLM):
             model: The HuggingFace model ID to use.
             api_key: HuggingFace API token. Defaults to HF_TOKEN environment variable.
             provider: Inference provider (e.g., "together", "groq", "fireworks-ai"). Defaults to "auto" which auto-selects.
+            base_url: Custom API base URL for OpenAI-compatible endpoints (e.g., Baseten).
+                Mutually exclusive with provider.
             client: Optional AsyncInferenceClient instance for dependency injection.
         """
         super().__init__()
@@ -67,6 +70,11 @@ class HuggingFaceLLM(LLM):
 
         if client is not None:
             self._client = client
+        elif base_url is not None:
+            self._client = AsyncInferenceClient(
+                base_url=base_url,
+                api_key=api_key,
+            )
         else:
             self._client = AsyncInferenceClient(
                 token=api_key,
