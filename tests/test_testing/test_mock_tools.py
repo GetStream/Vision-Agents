@@ -26,35 +26,38 @@ async def test_mock_tools_swaps_and_restores():
     llm = _FakeLLM()
 
     @llm.register_function(description="original tool")
-    def my_tool(x: int) -> int:
+    async def my_tool(x: int) -> int:
         return x * 2
 
     original_fn = llm.function_registry._functions["my_tool"].function
 
-    def mock_fn(x: int) -> int:
+    async def mock_fn(x: int) -> int:
         return x * 100
 
     with mock_tools(llm, {"my_tool": mock_fn}):
         active_fn = llm.function_registry._functions["my_tool"].function
         assert active_fn is mock_fn
-        assert llm.function_registry.call_function("my_tool", {"x": 5}) == 500
+        assert await llm.function_registry.call_function("my_tool", {"x": 5}) == 500
 
     restored_fn = llm.function_registry._functions["my_tool"].function
     assert restored_fn is original_fn
-    assert llm.function_registry.call_function("my_tool", {"x": 5}) == 10
+    assert await llm.function_registry.call_function("my_tool", {"x": 5}) == 10
 
 
 async def test_mock_tools_restores_on_exception():
     llm = _FakeLLM()
 
     @llm.register_function(description="tool")
-    def my_tool(x: int) -> int:
+    async def my_tool(x: int) -> int:
         return x
 
     original_fn = llm.function_registry._functions["my_tool"].function
 
+    async def mock_fn(x: int) -> int:
+        return x
+
     with pytest.raises(ValueError, match="boom"):
-        with mock_tools(llm, {"my_tool": lambda x: x}):
+        with mock_tools(llm, {"my_tool": mock_fn}):
             raise ValueError("boom")
 
     assert llm.function_registry._functions["my_tool"].function is original_fn
@@ -63,8 +66,11 @@ async def test_mock_tools_restores_on_exception():
 async def test_mock_tools_unknown_tool():
     llm = _FakeLLM()
 
+    async def noop() -> None:
+        return None
+
     with pytest.raises(KeyError, match="nonexistent"):
-        with mock_tools(llm, {"nonexistent": lambda: None}):
+        with mock_tools(llm, {"nonexistent": noop}):
             pass
 
 
@@ -72,19 +78,27 @@ async def test_mock_tools_multiple_tools():
     llm = _FakeLLM()
 
     @llm.register_function(description="a")
-    def tool_a(x: int) -> int:
+    async def tool_a(x: int) -> int:
         return x
 
     @llm.register_function(description="b")
-    def tool_b(y: str) -> str:
+    async def tool_b(y: str) -> str:
         return y
 
-    with mock_tools(llm, {"tool_a": lambda x: 999, "tool_b": lambda y: "mocked"}):
-        assert llm.function_registry.call_function("tool_a", {"x": 1}) == 999
-        assert llm.function_registry.call_function("tool_b", {"y": "hi"}) == "mocked"
+    async def mock_a(x: int) -> int:
+        return 999
 
-    assert llm.function_registry.call_function("tool_a", {"x": 1}) == 1
-    assert llm.function_registry.call_function("tool_b", {"y": "hi"}) == "hi"
+    async def mock_b(y: str) -> str:
+        return "mocked"
+
+    with mock_tools(llm, {"tool_a": mock_a, "tool_b": mock_b}):
+        assert await llm.function_registry.call_function("tool_a", {"x": 1}) == 999
+        assert (
+            await llm.function_registry.call_function("tool_b", {"y": "hi"}) == "mocked"
+        )
+
+    assert await llm.function_registry.call_function("tool_a", {"x": 1}) == 1
+    assert await llm.function_registry.call_function("tool_b", {"y": "hi"}) == "hi"
 
 
 async def test_mock_tools_unknown_with_valid_does_not_mutate():
@@ -92,13 +106,19 @@ async def test_mock_tools_unknown_with_valid_does_not_mutate():
     llm = _FakeLLM()
 
     @llm.register_function(description="a")
-    def tool_a(x: int) -> int:
+    async def tool_a(x: int) -> int:
         return x
 
     original_fn = llm.function_registry._functions["tool_a"].function
 
+    async def mock_a(x: int) -> int:
+        return 999
+
+    async def noop() -> None:
+        return None
+
     with pytest.raises(KeyError, match="nonexistent"):
-        with mock_tools(llm, {"tool_a": lambda x: 999, "nonexistent": lambda: None}):
+        with mock_tools(llm, {"tool_a": mock_a, "nonexistent": noop}):
             pass
 
     assert llm.function_registry._functions["tool_a"].function is original_fn
@@ -108,7 +128,7 @@ async def test_mock_functions_returns_async_mocks():
     llm = _FakeLLM()
 
     @llm.register_function(description="weather tool")
-    def get_weather(location: str) -> dict:
+    async def get_weather(location: str) -> dict:
         return {"temp": 70}
 
     with mock_functions(llm, {"get_weather": lambda **_: {"temp": 70}}) as mocked:
@@ -121,7 +141,7 @@ async def test_mock_functions_assert_called():
     llm = _FakeLLM()
 
     @llm.register_function(description="weather tool")
-    def get_weather(location: str) -> dict:
+    async def get_weather(location: str) -> dict:
         return {"temp": 70}
 
     with mock_functions(llm, {"get_weather": lambda **_: {"temp": 70}}) as mocked:
@@ -137,7 +157,7 @@ async def test_mock_functions_assert_not_called():
     llm = _FakeLLM()
 
     @llm.register_function(description="weather tool")
-    def get_weather(location: str) -> dict:
+    async def get_weather(location: str) -> dict:
         return {"temp": 70}
 
     with mock_functions(llm, {"get_weather": lambda **_: {"temp": 70}}) as mocked:
@@ -148,7 +168,7 @@ async def test_mock_functions_restores_on_exit():
     llm = _FakeLLM()
 
     @llm.register_function(description="weather tool")
-    def get_weather(location: str) -> dict:
+    async def get_weather(location: str) -> dict:
         return {"temp": 70}
 
     original_fn = llm.function_registry._functions["get_weather"].function

@@ -45,7 +45,7 @@ async def create_agent(**kwargs) -> Agent:
     @agent.llm.register_function(
         name="calculate", description="Perform a mathematical calculation"
     )
-    def calculate(operation: str, a: float, b: float) -> dict:
+    async def calculate(operation: str, a: float, b: float) -> dict:
         """Perform a calculation.
 
         Args:
