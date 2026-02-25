@@ -42,7 +42,7 @@ class SessionKVStore(abc.ABC):
         await self.start()
         return self
 
-    async def __aexit__(self, *exc) -> None:
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.close()
 
     @abc.abstractmethod
