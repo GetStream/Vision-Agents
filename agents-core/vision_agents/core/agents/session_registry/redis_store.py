@@ -76,7 +76,7 @@ class RedisSessionKVStore(SessionKVStore):
         """Atomically store multiple values via a MULTI/EXEC pipeline."""
         async with self._redis.pipeline() as pipe:
             for key, value, ttl in items:
-                await pipe.set(self._prefixed(key), value, px=int(ttl * 1000))
+                pipe.set(self._prefixed(key), value, px=int(ttl * 1000))
             await pipe.execute()
 
     async def expire(self, *keys: str, ttl: float) -> None:
