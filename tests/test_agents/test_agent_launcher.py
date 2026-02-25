@@ -1,13 +1,24 @@
 import asyncio
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import redis.asyncio as redis
+from testcontainers.redis import RedisContainer
 from vision_agents.core import Agent, AgentLauncher, User
 from vision_agents.core.agents.exceptions import (
     MaxConcurrentSessionsExceeded,
     MaxSessionsPerCallExceeded,
 )
+from vision_agents.core.agents.session_registry import SessionRegistry
+from vision_agents.core.agents.session_registry.in_memory_storage import (
+    InMemorySessionKVStore,
+)
+from vision_agents.core.agents.session_registry.redis_storage import (
+    RedisSessionKVStore,
+)
+from vision_agents.core.agents.session_registry.storage import SessionKVStore
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM
 from vision_agents.core.llm.llm import LLMResponseEvent
@@ -47,6 +58,34 @@ async def stream_edge_mock() -> MagicMock:
 
 async def join_call_noop(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     await asyncio.sleep(10)
+
+
+@pytest.fixture(scope="module")
+def redis_url():
+    with RedisContainer() as container:
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(6379)
+        yield f"redis://{host}:{port}/0"
+
+
+@pytest.fixture(params=["memory", "redis"])
+async def storage(request, redis_url) -> AsyncIterator[SessionKVStore]:
+    if request.param == "memory":
+        store = InMemorySessionKVStore()
+        await store.start()
+        yield store
+        await store.close()
+    else:
+        client = redis.from_url(redis_url)
+        store = RedisSessionKVStore(client=client, key_prefix="test:")
+        await store.start()
+        try:
+            yield store
+        finally:
+            keys = await store.keys("")
+            if keys:
+                await store.delete(keys)
+            await client.aclose()
 
 
 class TestAgentLauncher:
@@ -99,7 +138,7 @@ class TestAgentLauncher:
             create_agent=create_agent,
             join_call=join_call_noop,
             agent_idle_timeout=1.0,
-            cleanup_interval=0.5,
+            maintenance_interval=0.5,
         )
         with patch.object(Agent, "idle_for", return_value=10):
             # Start the launcher internals
@@ -133,7 +172,7 @@ class TestAgentLauncher:
             create_agent=create_agent,
             join_call=join_call_noop,
             agent_idle_timeout=0,
-            cleanup_interval=0.5,
+            maintenance_interval=0.5,
         )
         with patch.object(Agent, "idle_for", return_value=idle_for):
             # Start the launcher internals
@@ -164,7 +203,7 @@ class TestAgentLauncher:
             create_agent=create_agent,
             join_call=join_call_noop,
             agent_idle_timeout=1.0,
-            cleanup_interval=0.5,
+            maintenance_interval=0.5,
         )
         with patch.object(Agent, "idle_for", return_value=0):
             # Start the launcher internals
@@ -204,7 +243,6 @@ class TestAgentLauncher:
             assert session.call_id
             assert session.agent
             assert session.started_at
-            assert session.created_by is None
             assert not session.finished
 
             assert launcher.get_session(session_id=session.id)
@@ -622,7 +660,7 @@ class TestAgentLauncher:
             join_call=join_call_noop,
             max_session_duration_seconds=1.0,
             agent_idle_timeout=0,  # Disable idle timeout
-            cleanup_interval=0.5,
+            maintenance_interval=0.5,
         )
         with patch.object(Agent, "on_call_for", return_value=10):
             async with launcher:
@@ -654,7 +692,7 @@ class TestAgentLauncher:
             join_call=join_call_noop,
             max_session_duration_seconds=None,
             agent_idle_timeout=10,
-            cleanup_interval=0.5,
+            maintenance_interval=0.5,
         )
         with patch.object(Agent, "on_call_for", return_value=10):
             async with launcher:
@@ -666,3 +704,101 @@ class TestAgentLauncher:
                 # The agents must NOT be closed because max_session_duration_seconds=None
                 assert not session1.finished
                 assert not session2.finished
+
+
+class TestAgentLauncherWithStorage:
+    """Tests that exercise AgentLauncher with both in-memory and Redis storage."""
+
+    async def test_start_session(self, stream_edge_mock, storage):
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        registry = SessionRegistry(store=storage)
+        launcher = AgentLauncher(
+            create_agent=create_agent,
+            join_call=join_call_noop,
+            registry=registry,
+        )
+        async with launcher:
+            session = await launcher.start_session(call_id="test", call_type="default")
+            assert session.id
+            assert session.call_id == "test"
+            assert not session.finished
+            assert launcher.get_session(session.id) is not None
+
+            info = await launcher.get_session_info(session.id)
+            assert info is not None
+            assert info.session_id == session.id
+            assert info.call_id == "test"
+
+    async def test_close_session(self, stream_edge_mock, storage):
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        registry = SessionRegistry(store=storage)
+        launcher = AgentLauncher(
+            create_agent=create_agent,
+            join_call=join_call_noop,
+            registry=registry,
+        )
+        async with launcher:
+            session = await launcher.start_session(call_id="test")
+            assert await launcher.close_session(session.id, wait=True)
+            assert session.finished
+            assert launcher.get_session(session.id) is None
+            assert await launcher.get_session_info(session.id) is None
+
+    async def test_request_close_session(self, stream_edge_mock, storage):
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        registry = SessionRegistry(store=storage)
+        launcher = AgentLauncher(
+            create_agent=create_agent,
+            join_call=join_call_noop,
+            maintenance_interval=0.5,
+            registry=registry,
+        )
+        async with launcher:
+            session = await launcher.start_session(call_id="call")
+            assert not session.finished
+
+            await launcher.request_close_session(session.id)
+            # Let the maintenance task to run
+            await asyncio.sleep(1.5)
+
+            assert session.finished
+            assert launcher.get_session(session.id) is None
+
+    async def test_get_session_info_not_found(self, stream_edge_mock, storage):
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        registry = SessionRegistry(store=storage)
+        launcher = AgentLauncher(
+            create_agent=create_agent,
+            join_call=join_call_noop,
+            registry=registry,
+        )
+        async with launcher:
+            assert await launcher.get_session_info("nonexistent") is None
