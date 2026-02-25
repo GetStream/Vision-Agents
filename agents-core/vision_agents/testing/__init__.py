@@ -30,7 +30,6 @@ Key exports:
     Judge: protocol for intent evaluation strategies.
     JudgeVerdict: dataclass returned by ``Judge.evaluate()``.
     LLMJudge: default judge backed by an LLM instance.
-    mock_tools: context manager to temporarily replace tool implementations.
     mock_functions: context manager that wraps tools in AsyncMock for call tracking.
     RunEvent: union of ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent.
 """
@@ -42,7 +41,7 @@ from vision_agents.testing._events import (
     RunEvent,
 )
 from vision_agents.testing._judge import Judge, JudgeVerdict, LLMJudge
-from vision_agents.testing._mock_tools import mock_functions, mock_tools
+from vision_agents.testing._mock_tools import mock_functions
 from vision_agents.testing._run_result import TestResponse
 from vision_agents.testing._session import TestSession
 
@@ -57,5 +56,4 @@ __all__ = [
     "FunctionCallOutputEvent",
     "RunEvent",
     "mock_functions",
-    "mock_tools",
 ]

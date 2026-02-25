@@ -86,7 +86,7 @@ class TestSession:
 
     @property
     def llm(self) -> LLM:
-        """The LLM instance (useful for ``mock_tools(session.llm, {...})``)."""
+        """The LLM instance (useful for ``mock_functions(session.llm, {...})``)."""
         return self._llm
 
     @contextmanager
