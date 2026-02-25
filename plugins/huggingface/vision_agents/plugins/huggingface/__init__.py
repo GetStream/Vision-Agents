@@ -1,13 +1,21 @@
+from .events import DetectionCompletedEvent
 from .huggingface_llm import HuggingFaceLLM as LLM
 from .huggingface_vlm import HuggingFaceVLM as VLM
 
-__all__ = ["LLM", "VLM"]
+__all__ = ["DetectionCompletedEvent", "LLM", "VLM"]
 
 try:
     from .transformers_llm import TransformersLLM
     from .transformers_vlm import TransformersVLM
 
     __all__ += ["TransformersLLM", "TransformersVLM"]
+
+    try:
+        from .transformers_detection import TransformersDetectionProcessor
+
+        __all__ += ["TransformersDetectionProcessor"]
+    except ImportError:
+        pass
 except ImportError as e:
     import warnings
 

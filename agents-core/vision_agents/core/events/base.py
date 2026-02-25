@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from types import FunctionType
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 from dataclasses_json import DataClassJsonMixin
 from vision_agents.core.edge.types import Participant
@@ -59,6 +59,17 @@ class ExceptionEvent:
     exc: Exception
     handler: FunctionType
     type: str = "base.exception"
+
+
+class DetectedObject(TypedDict):
+    """An object detected by a video processor."""
+
+    label: str
+    confidence: float
+    x1: int
+    y1: int
+    x2: int
+    y2: int
 
 
 @dataclass
