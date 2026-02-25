@@ -5,7 +5,10 @@ without changing the tool schema visible to the LLM.
 
 Example::
 
-    with mock_tools(llm, {"get_weather": lambda location: "sunny, 70F"}):
+    async def fake_weather(location: str) -> str:
+        return "sunny, 70F"
+
+    with mock_tools(llm, {"get_weather": fake_weather}):
         result = await session.run("What's the weather?")
 
     with mock_functions(llm, {"get_weather": lambda location: {"temp": 70}}) as mocked:

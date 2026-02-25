@@ -41,7 +41,7 @@ async def create_agent(**kwargs) -> Agent:
 
     # Register local functions that the LLM can call
     @llm.register_function(description="Get current weather for a location")
-    def get_weather(location: str):
+    async def get_weather(location: str):
         """Get the current weather for a location."""
         return {
             "location": location,
@@ -51,7 +51,7 @@ async def create_agent(**kwargs) -> Agent:
         }
 
     @llm.register_function(description="Calculate the sum of two numbers")
-    def calculate_sum(a: int, b: int):
+    async def calculate_sum(a: int, b: int):
         """Calculate the sum of two numbers."""
         return a + b
 
@@ -77,9 +77,9 @@ async def create_agent(**kwargs) -> Agent:
 
 TOOL USE RULES:
 1. When you need info, call tools silently - don't narrate what you're doing
-2. Don't ask the user for information you can look up yourself. e.g. for GitHub tasks requiring a username/owner: 
+2. Don't ask the user for information you can look up yourself. e.g. for GitHub tasks requiring a username/owner:
     ALWAYS call get_me first, then use the returned username
-3. Chain multiple tool calls as needed - for example, if asked about user repositories 
+3. Chain multiple tool calls as needed - for example, if asked about user repositories
    and you need a username, call get_me first, then use that for subsequent calls
 4. Example: "How many PRs in my repo?" → call get_me → use username for list_pull_requests → report count
 
