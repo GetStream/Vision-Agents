@@ -12,13 +12,13 @@ from vision_agents.core.agents.exceptions import (
     MaxSessionsPerCallExceeded,
 )
 from vision_agents.core.agents.session_registry import SessionRegistry
-from vision_agents.core.agents.session_registry.in_memory_storage import (
+from vision_agents.core.agents.session_registry.in_memory_store import (
     InMemorySessionKVStore,
 )
-from vision_agents.core.agents.session_registry.redis_storage import (
+from vision_agents.core.agents.session_registry.redis_store import (
     RedisSessionKVStore,
 )
-from vision_agents.core.agents.session_registry.storage import SessionKVStore
+from vision_agents.core.agents.session_registry.store import SessionKVStore
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM
 from vision_agents.core.llm.llm import LLMResponseEvent

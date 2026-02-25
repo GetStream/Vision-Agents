@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from vision_agents.core.agents.session_registry.in_memory_storage import (
+from vision_agents.core.agents.session_registry.in_memory_store import (
     InMemorySessionKVStore,
 )
 

@@ -4,7 +4,7 @@ import pytest
 import redis.asyncio as redis
 from testcontainers.redis import RedisContainer
 from vision_agents.core.agents.session_registry import SessionRegistry
-from vision_agents.core.agents.session_registry.redis_storage import (
+from vision_agents.core.agents.session_registry.redis_store import (
     RedisSessionKVStore,
 )
 

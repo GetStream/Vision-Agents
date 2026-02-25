@@ -4,8 +4,8 @@ import time
 from dataclasses import asdict
 from uuid import uuid4
 
-from .in_memory_storage import InMemorySessionKVStore
-from .storage import SessionKVStore
+from .in_memory_store import InMemorySessionKVStore
+from .store import SessionKVStore
 from .types import SessionInfo
 
 logger = logging.getLogger(__name__)

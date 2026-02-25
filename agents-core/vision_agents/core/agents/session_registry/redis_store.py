@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 
 import redis.asyncio as redis
 
-from .storage import SessionKVStore
+from .store import SessionKVStore
 
 logger = logging.getLogger(__name__)
 

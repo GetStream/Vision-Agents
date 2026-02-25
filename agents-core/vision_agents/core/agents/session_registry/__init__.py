@@ -1,6 +1,6 @@
-from .in_memory_storage import InMemorySessionKVStore as InMemorySessionKVStore
+from .in_memory_store import InMemorySessionKVStore as InMemorySessionKVStore
 from .registry import SessionRegistry as SessionRegistry
-from .storage import SessionKVStore as SessionKVStore
+from .store import SessionKVStore as SessionKVStore
 from .types import SessionInfo as SessionInfo
 
 __all__ = [
@@ -11,7 +11,7 @@ __all__ = [
 ]
 
 try:
-    from .redis_storage import RedisSessionKVStore as RedisSessionKVStore
+    from .redis_store import RedisSessionKVStore as RedisSessionKVStore
 
     __all__ += ["RedisSessionKVStore"]
 except ImportError:

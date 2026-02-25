@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 from vision_agents.core.utils.utils import cancel_and_wait
 
-from .storage import SessionKVStore
+from .store import SessionKVStore
 
 logger = logging.getLogger(__name__)
 
