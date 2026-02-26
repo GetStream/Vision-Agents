@@ -5,6 +5,7 @@ installed (see SDK python/python_x86_64). LD_LIBRARY_PATH must point to liblitea
 """
 
 import asyncio
+import faulthandler
 import logging
 import os
 import threading
@@ -22,6 +23,7 @@ from vision_agents.core.edge.types import Connection, Participant, TrackType, Us
 if TYPE_CHECKING:
     from vision_agents.core import Agent
 
+faulthandler.enable()
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -30,8 +32,10 @@ _LITEAV_IMPORT_ERROR: Optional[ImportError] = None
 try:
     from liteav import (
         AUDIO_CODEC_TYPE_PCM,
+        AUDIO_OBTAIN_METHOD_CALLBACK,
         AudioEncodeParams,
         AudioFrame,
+        AudioFrame_getdata,
         CreateTRTCCloud,
         DestroyTRTCCloud,
         EnterRoomParams,
@@ -62,6 +66,17 @@ FRAME_MS = 20
 SAMPLE_RATE = 16000
 CHANNELS = 1
 BYTES_PER_20MS = 640
+
+
+def _extract_pcm(frame: Any) -> bytes:
+    """Extract PCM bytes from a SWIG AudioFrame.
+
+    Guards against null internal buffers that cause segfaults in the C
+    extension by checking size() before touching the data pointer.
+    """
+    if frame.size() <= 0:
+        return b""
+    return AudioFrame_getdata(frame)
 
 
 class TencentCall(Call):
@@ -123,7 +138,7 @@ class TencentConnection(Connection):
 
 
 class TencentAudioTrack:
-    """Duck-typed audio track: write(PcmData), stop(), flush(). Sends via Tencent SendAudioFrame."""
+    """Duck-typed audio track that sends PCM via Tencent SendAudioFrame."""
 
     def __init__(self, edge: "TencentEdge"):
         self._edge = edge
@@ -143,18 +158,13 @@ class TencentAudioTrack:
     def write(self, pcm: PcmData) -> None:
         if not self._running or pcm is None:
             return
-        try:
-            if pcm.samples is not None and pcm.samples.size > 0:
-                data = pcm.samples.tobytes()
-            else:
-                data = pcm.to_bytes()
-            if data:
-                with self._lock:
-                    self._queue.append(data)
-        except (AttributeError, TypeError) as e:
-            logger.debug("TencentAudioTrack.write: %s", e)
-        except Exception as e:
-            logger.exception("TencentAudioTrack.write failed: %s", e)
+        if pcm.samples is not None and pcm.samples.size > 0:
+            data = pcm.samples.tobytes()
+        else:
+            data = pcm.to_bytes()
+        if data:
+            with self._lock:
+                self._queue.append(data)
 
     def stop(self) -> None:
         self._running = False
@@ -179,23 +189,20 @@ class TencentAudioTrack:
                             BYTES_PER_20MS - len(frame_bytes)
                         )
                     if len(frame_bytes) == BYTES_PER_20MS:
-                        try:
-                            frame = AudioFrame()
-                            frame.sample_rate = SAMPLE_RATE
-                            frame.channels = CHANNELS
-                            frame.bits_per_sample = 16
-                            frame.codec = AUDIO_CODEC_TYPE_PCM
-                            frame.pts = self._pts
-                            self._pts += FRAME_MS
-                            frame.SetData(frame_bytes)
-                            self._cloud.SendAudioFrame(frame)
-                        except Exception as e:
-                            logger.debug("SendAudioFrame: %s", e)
+                        frame = AudioFrame()
+                        frame.sample_rate = SAMPLE_RATE
+                        frame.channels = CHANNELS
+                        frame.bits_per_sample = 16
+                        frame.codec = AUDIO_CODEC_TYPE_PCM
+                        frame.pts = self._pts
+                        self._pts += FRAME_MS
+                        frame.SetData(frame_bytes)
+                        self._cloud.SendAudioFrame(frame)
             time.sleep(0.01)
 
 
 class TencentEdge(EdgeTransport[TencentCall]):
-    """Edge transport using Tencent TRTC. Plugin-only; no core changes."""
+    """Edge transport using Tencent TRTC."""
 
     def __init__(
         self,
@@ -248,28 +255,19 @@ class TencentEdge(EdgeTransport[TencentCall]):
 
     def _exit_room(self) -> None:
         if self._cloud is not None:
-            try:
-                self._cloud.ExitRoom()
-            except Exception as e:
-                logger.debug("ExitRoom: %s", e)
+            self._cloud.ExitRoom()
         if self._audio_track is not None:
             self._audio_track.stop()
 
     async def close(self) -> None:
         self._exit_room()
         if self._cloud is not None:
-            try:
-                DestroyTRTCCloud(self._cloud)
-            except Exception as e:
-                logger.debug("DestroyTRTCCloud: %s", e)
+            DestroyTRTCCloud(self._cloud)
             self._cloud = None
         if self._audio_track is not None:
             self._audio_track = None
         if self._delegate is not None:
-            try:
-                self._delegate.__disown__()
-            except Exception:
-                pass
+            self._delegate.__disown__()
             self._delegate = None
         self._connection = None
         self._call = None
@@ -319,11 +317,11 @@ class TencentEdge(EdgeTransport[TencentCall]):
         room_param.room.user_sig = TrtcString(user_sig)
         room_param.role = TRTC_ROLE_ANCHOR
         room_param.scene = TRTC_SCENE_RECORD
-        room_param.audio_obtain_params.audio_obtain_method = 1
+        room_param.audio_obtain_params.audio_obtain_method = AUDIO_OBTAIN_METHOD_CALLBACK
         room_param.audio_obtain_params.output_sample_rate = SAMPLE_RATE
         room_param.audio_obtain_params.output_channles = CHANNELS
         room_param.audio_obtain_params.output_frame_length_ms = FRAME_MS
-        room_param.audio_obtain_params.output_audio_codec_type = 0
+        room_param.audio_obtain_params.output_audio_codec_type = AUDIO_CODEC_TYPE_PCM
 
         assert self._cloud is not None
         self._cloud.EnterRoom(room_param)
@@ -347,27 +345,20 @@ class TencentEdge(EdgeTransport[TencentCall]):
     async def send_custom_event(self, data: dict[str, Any]) -> None:
         if self._cloud is None:
             return
-        try:
-            raw = str(data).encode("utf-8")[: 5 * 1024]
-            self._cloud.SendCustomCmdMsg(1, bytearray(raw), True, True)
-        except Exception as e:
-            logger.debug("SendCustomCmdMsg: %s", e)
+        raw = str(data).encode("utf-8")[: 5 * 1024]
+        self._cloud.SendCustomCmdMsg(1, bytearray(raw), True, True)
 
     def _emit_audio_received(
         self, user_id: str, pcm_bytes: bytes, sample_rate: int, channels: int
     ) -> None:
         if not self._loop or not pcm_bytes:
             return
-        try:
-            pcm = PcmData.from_bytes(
-                pcm_bytes,
-                sample_rate=sample_rate,
-                channels=channels,
-                format=AudioFormat.S16,
-            )
-        except Exception as e:
-            logger.debug("PcmData.from_bytes: %s", e)
-            return
+        pcm = PcmData.from_bytes(
+            pcm_bytes,
+            sample_rate=sample_rate,
+            channels=channels,
+            format=AudioFormat.S16,
+        )
         participant = Participant(original=None, user_id=user_id, id=user_id)
         event = events.AudioReceivedEvent(
             plugin_name="tencent",
@@ -408,7 +399,12 @@ _TencentDelegate: Any = None
 if TRTCCloudDelegate is not None:
 
     class _TencentDelegateCls(TRTCCloudDelegate):
-        """TRTCCloudDelegate that forwards callbacks to the edge and connection."""
+        """TRTCCloudDelegate that forwards callbacks to the edge and connection.
+
+        All callbacks are wrapped in try/except because any unhandled Python
+        exception in a SWIG director callback triggers Swig::DirectorMethodException
+        on the C++ side, which calls std::terminate and kills the process.
+        """
 
         def __init__(
             self,
@@ -420,32 +416,45 @@ if TRTCCloudDelegate is not None:
             self._edge = edge
             self._connection = connection
             self._agent_user_id = edge._agent_user_id or ""
+            self._remote_audio_seen: set[str] = set()
 
         def OnError(self, error: int) -> None:
-            logger.error("Tencent TRTC OnError: %s", error)
-            self._edge._emit_call_ended()
+            try:
+                logger.error("Tencent TRTC OnError: %s", error)
+                self._edge._emit_call_ended()
+            except BaseException:
+                logger.exception("OnError callback failed")
 
         def OnEnterRoom(self) -> None:
-            logger.info("Tencent TRTC OnEnterRoom")
-            cloud = self._edge._cloud
-            if cloud is None:
-                return
-            param = AudioEncodeParams()
-            param.sample_rate = SAMPLE_RATE
-            param.channels = CHANNELS
-            param.bitrate_bps = 54000
-            cloud.CreateLocalAudioChannel(param)
+            try:
+                logger.info("Tencent TRTC OnEnterRoom")
+                cloud = self._edge._cloud
+                if cloud is None:
+                    return
+                param = AudioEncodeParams()
+                param.sample_rate = SAMPLE_RATE
+                param.channels = CHANNELS
+                param.bitrate_bps = 54000
+                cloud.CreateLocalAudioChannel(param)
+            except BaseException:
+                logger.exception("OnEnterRoom callback failed")
 
         def OnExitRoom(self) -> None:
-            logger.info("Tencent TRTC OnExitRoom")
-            cloud = self._edge._cloud
-            if cloud is not None:
-                cloud.DestroyLocalAudioChannel()
-            self._edge._emit_call_ended()
+            try:
+                logger.info("Tencent TRTC OnExitRoom")
+                cloud = self._edge._cloud
+                if cloud is not None:
+                    cloud.DestroyLocalAudioChannel()
+                self._edge._emit_call_ended()
+            except BaseException:
+                logger.exception("OnExitRoom callback failed")
 
         def OnLocalAudioChannelCreated(self) -> None:
-            if self._edge._audio_track and self._edge._cloud:
-                self._edge._audio_track.set_cloud(self._edge._cloud)
+            try:
+                if self._edge._audio_track and self._edge._cloud:
+                    self._edge._audio_track.set_cloud(self._edge._cloud)
+            except BaseException:
+                logger.exception("OnLocalAudioChannelCreated callback failed")
 
         def OnConnectionStateChanged(self, old_state: int, new_state: int) -> None:
             logger.debug("Tencent TRTC connection state: %s -> %s", old_state, new_state)
@@ -466,46 +475,78 @@ if TRTCCloudDelegate is not None:
             pass
 
         def OnRemoteAudioAvailable(self, user_id: str, available: bool) -> None:
+            try:
+                if user_id and user_id != self._agent_user_id:
+                    if available:
+                        self._edge._emit_track_added(user_id)
+                    else:
+                        self._edge._emit_track_removed(user_id)
+            except BaseException:
+                logger.exception("OnRemoteAudioAvailable callback failed")
+
+        def OnRemoteVideoAvailable(self, user_id: str, available: bool, stream_type: int) -> None:
+            pass
+
+        def OnRemoteVideoFrameReceived(self, user_id: str, stream_type: int, frame: Any) -> None:
+            pass
+
+        def OnRemotePixelFrameReceived(self, user_id: str, stream_type: int, frame: Any) -> None:
+            pass
+
+        def OnSeiMessageReceived(self, user_id: str, stream_type: int, message_type: int, message: Any) -> None:
+            pass
+
+        def OnReceiveCustomCmdMsg(self, user_id: str, cmd_id: int, seq: int, message: Any) -> None:
+            pass
+
+        def OnMissCustomCmdMsg(self, user_id: str, cmd_id: int, error_code: int, missed: int) -> None:
+            pass
+
+        def OnNetworkQuality(self, local_quality: Any, remote_qualities: Any) -> None:
             pass
 
         def OnRemoteUserEnterRoom(self, info: Any) -> None:
-            user_id = info.user_id.GetValue() if info and info.user_id else ""
-            if user_id and user_id != self._agent_user_id:
-                self._connection._on_remote_entered()
-                self._edge._emit_track_added(user_id)
-            logger.info("Tencent TRTC OnRemoteUserEnterRoom: %s", user_id)
+            try:
+                user_id = info.user_id.GetValue() if info and info.user_id else ""
+                if user_id and user_id != self._agent_user_id:
+                    self._connection._on_remote_entered()
+                logger.info("Tencent TRTC OnRemoteUserEnterRoom: %s", user_id)
+            except BaseException:
+                logger.exception("OnRemoteUserEnterRoom callback failed")
 
         def OnRemoteUserExitRoom(self, info: Any, reason: int) -> None:
-            user_id = info.user_id.GetValue() if info and info.user_id else ""
-            if user_id and user_id != self._agent_user_id:
-                self._connection._on_remote_left()
-                self._edge._emit_track_removed(user_id)
-            logger.info(
-                "Tencent TRTC OnRemoteUserExitRoom: %s reason=%s", user_id, reason
-            )
+            try:
+                user_id = info.user_id.GetValue() if info and info.user_id else ""
+                if user_id and user_id != self._agent_user_id:
+                    self._connection._on_remote_left()
+                logger.info(
+                    "Tencent TRTC OnRemoteUserExitRoom: %s reason=%s", user_id, reason
+                )
+            except BaseException:
+                logger.exception("OnRemoteUserExitRoom callback failed")
 
         def OnRemoteAudioReceived(self, user_id: str, frame: Any) -> None:
-            if not frame:
-                return
             try:
-                data = frame.PcmData()
-                sr = getattr(frame, "sample_rate", None) or SAMPLE_RATE
-                ch = getattr(frame, "channels", None) or CHANNELS
+                if user_id not in self._remote_audio_seen:
+                    self._remote_audio_seen.add(user_id)
+                    logger.info("Skipping first remote audio frame from %s (SDK buffer unsafe)", user_id)
+                    return
+                data = _extract_pcm(frame)
+                sr = frame.sample_rate or SAMPLE_RATE
+                ch = frame.channels or CHANNELS
                 if data:
                     self._edge._emit_audio_received(user_id, data, sr, ch)
-            except Exception as e:
-                logger.debug("OnRemoteAudioReceived: %s", e)
+            except BaseException:
+                logger.exception("OnRemoteAudioReceived failed")
 
         def OnRemoteMixedAudioReceived(self, frame: Any) -> None:
-            if not frame:
-                return
             try:
-                data = frame.PcmData()
-                sr = getattr(frame, "sample_rate", None) or SAMPLE_RATE
-                ch = getattr(frame, "channels", None) or CHANNELS
+                data = _extract_pcm(frame)
+                sr = frame.sample_rate or SAMPLE_RATE
+                ch = frame.channels or CHANNELS
                 if data:
                     self._edge._emit_audio_received("mixed", data, sr, ch)
-            except Exception as e:
-                logger.debug("OnRemoteMixedAudioReceived: %s", e)
+            except BaseException:
+                pass
 
     _TencentDelegate = _TencentDelegateCls
