@@ -26,5 +26,8 @@ try:
     from vision_agents.core.agents.session_registry import RedisSessionKVStore
 
     __all__ += ["RedisSessionKVStore"]
-except ImportError:
-    pass
+except ModuleNotFoundError as exc:
+    # Only swallow a missing `redis` package; re-raise anything else
+    # so real import errors in redis_store.py surface immediately.
+    if not exc.name or not exc.name.startswith("redis"):
+        raise
