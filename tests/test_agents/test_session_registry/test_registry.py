@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 import redis.asyncio as redis
@@ -8,6 +9,7 @@ from vision_agents.core.agents.session_registry.in_memory_store import (
     InMemorySessionKVStore,
 )
 from vision_agents.core.agents.session_registry.redis_store import RedisSessionKVStore
+from vision_agents.core.agents.session_registry.types import SessionInfo
 
 
 @pytest.fixture(scope="module")
@@ -106,3 +108,80 @@ class TestSessionRegistry:
         await short_registry.register("call-e", "sess-expire")
         await asyncio.sleep(1.5)
         assert await short_registry.get("call-e", "sess-expire") is None
+
+    async def test_get_ignores_extra_keys(self, registry: SessionRegistry) -> None:
+        data = {
+            "session_id": "s-extra",
+            "call_id": "c-extra",
+            "node_id": registry.node_id,
+            "started_at": 1.0,
+            "metrics_updated_at": 1.0,
+            "metrics": {},
+            "unknown_field": "should be ignored",
+            "another": 42,
+        }
+        key = "sessions/c-extra/s-extra"
+        await registry._store.set(key, json.dumps(data).encode(), 10.0)
+
+        info = await registry.get("c-extra", "s-extra")
+        assert info is not None
+        assert info.session_id == "s-extra"
+        assert info.call_id == "c-extra"
+
+    async def test_get_for_call_ignores_extra_keys(
+        self, registry: SessionRegistry
+    ) -> None:
+        data = {
+            "session_id": "s-fc",
+            "call_id": "c-fc",
+            "node_id": registry.node_id,
+            "started_at": 1.0,
+            "metrics_updated_at": 1.0,
+            "metrics": {},
+            "future_field": True,
+        }
+        key = "sessions/c-fc/s-fc"
+        await registry._store.set(key, json.dumps(data).encode(), 10.0)
+
+        sessions = await registry.get_for_call("c-fc")
+        assert len(sessions) == 1
+        assert sessions[0].session_id == "s-fc"
+
+    def test_invalid_ttl(self) -> None:
+        with pytest.raises(ValueError, match="ttl must be >= 0"):
+            SessionRegistry(ttl=0)
+
+        with pytest.raises(ValueError, match="ttl must be >= 0"):
+            SessionRegistry(ttl=-5.0)
+
+
+class TestSessionInfo:
+    def test_from_dict_exact_keys(self) -> None:
+        data = {
+            "session_id": "s1",
+            "call_id": "c1",
+            "node_id": "n1",
+            "started_at": 1.0,
+            "metrics_updated_at": 2.0,
+            "metrics": {"latency": 10},
+        }
+        info = SessionInfo.from_dict(data)
+        assert info.session_id == "s1"
+        assert info.metrics == {"latency": 10}
+
+    def test_from_dict_extra_keys_ignored(self) -> None:
+        data = {
+            "session_id": "s1",
+            "call_id": "c1",
+            "node_id": "n1",
+            "started_at": 1.0,
+            "metrics_updated_at": 2.0,
+            "unknown": "value",
+            "another_unknown": [1, 2, 3],
+        }
+        info = SessionInfo.from_dict(data)
+        assert info.session_id == "s1"
+
+    def test_from_dict_missing_required_key_raises(self) -> None:
+        with pytest.raises(TypeError):
+            SessionInfo.from_dict({"session_id": "s1"})

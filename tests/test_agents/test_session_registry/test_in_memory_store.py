@@ -93,3 +93,10 @@ class TestInMemorySessionKVStore:
 
     async def test_delete_empty(self, store: InMemorySessionKVStore) -> None:
         await store.delete([])
+
+    def test_invalid_cleanup_interval(self) -> None:
+        with pytest.raises(ValueError, match="cleanup_interval must be >= 0"):
+            InMemorySessionKVStore(cleanup_interval=0)
+
+        with pytest.raises(ValueError, match="cleanup_interval must be >= 0"):
+            InMemorySessionKVStore(cleanup_interval=-1)
