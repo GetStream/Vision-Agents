@@ -20,13 +20,13 @@ const SCENARIOS = [
     id: "runout",
     label: "⚡ Run Out Review",
     color: "#ff4444",
-    decision: "DECISION: OUT\nREVIEW TYPE: Run Out\nREASON: The bat was clearly in the air when the bails were removed. No part of bat or body was grounded behind the crease.\nCONFIDENCE: High"
+    decision: "Awaiting Third Umpire verdict..."
   },
   {
     id: "lbw",
     label: "🦵 LBW Review",
     color: "#0088ff",
-    decision: "DECISION: OUT\nREVIEW TYPE: LBW\nREASON: Ball pitched in line, impacted the pad in line with the stumps, and trajectory analysis confirms it would have hit middle stump.\nCONFIDENCE: High"
+    decision: "Awaiting Third Umpire verdict..."
   },
 ];
 
