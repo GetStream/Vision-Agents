@@ -13,11 +13,7 @@ import "./App.css";
 const API_KEY = import.meta.env.VITE_STREAM_API_KEY;
 const CALL_TYPE = "default";
 const CALL_ID = "cricket-umpire-agent";
-
-const USER = {
-  id: "cricket-viewer",
-  name: "On-field Umpire",
-};
+const USER = { id: "cricket-viewer", name: "On-field Umpire" };
 
 const SCENARIOS = [
   {
@@ -58,10 +54,14 @@ function CricketCallUI({ call, onDecision }) {
       time: new Date().toLocaleTimeString()
     }]);
 
-    // Send to agent via custom event (agent also hears via voice)
-    try { await call.sendCustomEvent({ type: "scenario_review", scenario: scenario.label }); } catch (e) {}
+    // Trigger real Gemini analysis via backend HTTP endpoint
+    try {
+      await fetch("http://localhost:8002/review/" + scenario.id, { method: "POST" });
+    } catch (e) {
+      console.error("Review trigger failed:", e);
+    }
 
-    // Show decision after delay (agent speaks it simultaneously via audio)
+    // Show fallback decision after agent has time to analyze
     setTimeout(() => {
       setTranscript((prev) => [...prev, {
         id: Date.now() + 1, role: "umpire",
@@ -70,14 +70,7 @@ function CricketCallUI({ call, onDecision }) {
       }]);
       onDecision?.(scenario.decision);
       setSending(null);
-      // Speak the verdict aloud
-      const utterance = new SpeechSynthesisUtterance(scenario.decision);
-      utterance.rate = 0.85;
-      utterance.pitch = 0.9;
-      utterance.volume = 1;
-      speechSynthesis.cancel(); // cancel any ongoing speech
-      speechSynthesis.speak(utterance);
-    }, 3000);
+    }, 6000);
   };
 
   return (
@@ -124,13 +117,13 @@ function CricketCallUI({ call, onDecision }) {
             🎤 Mic
           </button>
           <div className="controls-hint">
-            Share a cricket video tab so the AI can watch it
+            Share cricket video tab then click a review type
           </div>
         </div>
 
         <div className="yolo-badge">
           <span className="yolo-dot" />
-          Gemini Live Vision Active
+          YOLO Pose Detection Active
         </div>
       </div>
 
@@ -144,7 +137,7 @@ function CricketCallUI({ call, onDecision }) {
           {SCENARIOS.map((s) => (
             <button
               key={s.id}
-              className={`scenario-btn ${sending === s.id ? "sending" : ""}`}
+              className={"scenario-btn" + (sending === s.id ? " sending" : "")}
               style={{ "--accent": s.color }}
               onClick={() => sendScenario(s)}
               disabled={!!sending}
@@ -165,7 +158,7 @@ function CricketCallUI({ call, onDecision }) {
               </div>
             ) : (
               transcript.map((msg) => (
-                <div key={msg.id} className={`transcript-msg ${msg.role}`}>
+                <div key={msg.id} className={"transcript-msg " + msg.role}>
                   <div className="msg-header">
                     <span className="msg-role">
                       {msg.role === "umpire" ? "⚖️ Third Umpire" : "👤 On-field Umpire"}
@@ -198,7 +191,7 @@ export default function App() {
         apiKey: API_KEY,
         user: USER,
         tokenProvider: async () => {
-          const res = await fetch(`http://localhost:8001/token?user_id=${USER.id}`);
+          const res = await fetch("http://localhost:8001/token?user_id=" + USER.id);
           if (!res.ok) throw new Error("Failed to get token");
           const data = await res.json();
           return data.token;
@@ -255,7 +248,7 @@ export default function App() {
               <p>Real-time cricket decision review using Gemini Live AI and computer vision.</p>
               <div className="feature-list">
                 <div className="feature">🧠 Gemini Live Vision</div>
-                <div className="feature">🎯 Pose Detection</div>
+                <div className="feature">🎯 YOLO Pose Detection</div>
                 <div className="feature">🏏 Run Out + LBW</div>
                 <div className="feature">⚡ Real-time</div>
               </div>
