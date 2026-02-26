@@ -57,7 +57,9 @@ jobs:
       - name: Run mypy for core
         run: uv run mypy --install-types --non-interactive agents-core/vision_agents
       - name: Run mypy for plugins
-        run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
+        run: |
+          export MYPYPATH=$(echo plugins/*/ | tr ' ' ':')
+          uv run mypy --install-types --non-interactive --exclude '/(tests|examples?)/' plugins
       # Save the updated mypy cache
       - name: Save mypy cache
         uses: actions/cache/save@v5

@@ -88,6 +88,11 @@ def lint():
     run("uv run ruff format --check .")
 
 
+def _plugin_mypypath() -> str:
+    """Build MYPYPATH with all plugin root directories."""
+    return ":".join(str(p) for p in sorted(Path(PLUGINS_DIR).iterdir()) if p.is_dir())
+
+
 @cli.command()
 def mypy():
     """Run mypy type checks on main package."""
@@ -100,7 +105,8 @@ def mypy_plugins():
     """Run mypy type checks on all plugins."""
     click.echo("Running mypy on plugins...")
     run(
-        "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
+        "uv run mypy --install-types --non-interactive --exclude '/(tests|examples?)/' plugins",
+        env={"MYPYPATH": _plugin_mypypath()},
     )
 
 
@@ -208,7 +214,8 @@ def check():
     # Run mypy on plugins
     click.echo("\n=== 4. MyPy Plugin Type Checking ===")
     run(
-        "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
+        "uv run mypy --install-types --non-interactive --exclude '/(tests|examples?)/' plugins",
+        env={"MYPYPATH": _plugin_mypypath()},
     )
 
     # Run unit tests

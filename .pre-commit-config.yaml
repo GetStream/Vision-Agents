@@ -28,7 +28,7 @@ repos:
       types_or: [python]
     - id: mypy-plugins
       name: mypy (plugins)
-      entry: uv run --frozen mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
+      entry: bash -c 'MYPYPATH=$(echo plugins/*/ | tr " " ":") uv run --frozen mypy --install-types --non-interactive --exclude "/(tests|examples?)/" plugins'
       language: system
       pass_filenames: false
       types_or: [python]
