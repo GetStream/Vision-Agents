@@ -168,7 +168,7 @@ examples/09_cricket_umpire/
 
 ## 📝 Blog Post
 
-[Read the full writeup on Medium](YOUR_MEDIUM_LINK_HERE)
+[Read the full writeup on Medium](Yhttps://medium.com/@jayadubey6402/i-built-an-ai-drs-system-for-womens-cricket-in-3-days-challenges-and-learnings-2ed784718b41)
 
 ---
 
