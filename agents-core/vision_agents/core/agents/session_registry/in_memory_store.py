@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
 
 from vision_agents.core.utils.utils import cancel_and_wait
 
@@ -11,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class InMemorySessionKVStore(SessionKVStore):
-    """In-memory TTL key-value store with pub/sub. Single-node only.
+    """In-memory TTL key-value store. Single-node only.
 
     Useful for development, testing, and single-node deployments.
     For multi-node, swap to a Redis or other networked backend.
@@ -27,7 +26,6 @@ class InMemorySessionKVStore(SessionKVStore):
             cleanup_interval: Seconds between periodic expired-key sweeps.
         """
         self._data: dict[str, tuple[bytes, float]] = {}
-        self._subscribers: dict[str, list[asyncio.Queue[bytes]]] = {}
         self._cleanup_interval = cleanup_interval
         self._cleanup_task: asyncio.Task[None] | None = None
 
@@ -41,7 +39,6 @@ class InMemorySessionKVStore(SessionKVStore):
             await cancel_and_wait(self._cleanup_task)
             self._cleanup_task = None
         self._data.clear()
-        self._subscribers.clear()
 
     async def set(self, key: str, value: bytes, ttl: float) -> None:
         self._data[key] = (value, time.monotonic() + ttl)
@@ -105,23 +102,6 @@ class InMemorySessionKVStore(SessionKVStore):
     async def delete(self, keys: list[str]) -> None:
         for key in keys:
             self._data.pop(key, None)
-
-    async def publish(self, channel: str, message: bytes) -> None:
-        queues = self._subscribers.get(channel)
-        if queues:
-            for queue in queues:
-                queue.put_nowait(message)
-
-    async def subscribe(self, channel: str) -> AsyncIterator[bytes]:
-        queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._subscribers.setdefault(channel, []).append(queue)
-        try:
-            while True:
-                yield await queue.get()
-        finally:
-            self._subscribers[channel].remove(queue)
-            if not self._subscribers[channel]:
-                del self._subscribers[channel]
 
     async def _cleanup_loop(self) -> None:
         while True:

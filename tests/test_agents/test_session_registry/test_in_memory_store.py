@@ -93,20 +93,3 @@ class TestInMemorySessionKVStore:
 
     async def test_delete_empty(self, store: InMemorySessionKVStore) -> None:
         await store.delete([])
-
-    async def test_publish_subscribe(self, store: InMemorySessionKVStore) -> None:
-        received: list[bytes] = []
-
-        async def listener():
-            async for msg in store.subscribe("chan"):
-                received.append(msg)
-                break
-
-        task = asyncio.create_task(listener())
-        await asyncio.sleep(0.1)
-        await store.publish("chan", b"ping")
-        await asyncio.wait_for(task, timeout=2.0)
-        assert received == [b"ping"]
-
-    async def test_publish_no_subscriber(self, store: InMemorySessionKVStore) -> None:
-        await store.publish("nobody_listening", b"hello")

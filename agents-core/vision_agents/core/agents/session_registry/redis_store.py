@@ -1,6 +1,5 @@
 import inspect
 import logging
-from collections.abc import AsyncIterator
 
 import redis.asyncio as redis
 
@@ -10,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class RedisSessionKVStore(SessionKVStore):
-    """Redis-backed TTL key-value store with pub/sub.
+    """Redis-backed TTL key-value store.
 
     Suitable for multi-node deployments where session state must be
     shared across processes or machines.
@@ -114,19 +113,3 @@ class RedisSessionKVStore(SessionKVStore):
             return
         prefixed = [self._prefixed(k) for k in keys]
         await self._redis.delete(*prefixed)
-
-    async def publish(self, channel: str, message: bytes) -> None:
-        """Publish a message to a channel via PUBLISH."""
-        await self._redis.publish(self._prefixed(channel), message)
-
-    async def subscribe(self, channel: str) -> AsyncIterator[bytes]:
-        """Subscribe to a channel via PubSub. Yields messages as bytes."""
-        pubsub = self._redis.pubsub()
-        await pubsub.subscribe(self._prefixed(channel))
-        try:
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    yield message["data"]
-        finally:
-            await pubsub.unsubscribe(self._prefixed(channel))
-            await pubsub.aclose()

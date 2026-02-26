@@ -121,25 +121,6 @@ class TestRedisSessionKVStore:
     async def test_delete_empty(self, redis_store: RedisSessionKVStore) -> None:
         await redis_store.delete([])
 
-    async def test_publish_subscribe(self, redis_store: RedisSessionKVStore) -> None:
-        received: list[bytes] = []
-
-        async def listener():
-            async for msg in redis_store.subscribe("chan"):
-                received.append(msg)
-                break
-
-        task = asyncio.create_task(listener())
-        await asyncio.sleep(0.1)
-        await redis_store.publish("chan", b"ping")
-        await asyncio.wait_for(task, timeout=2.0)
-        assert received == [b"ping"]
-
-    async def test_publish_no_subscriber(
-        self, redis_store: RedisSessionKVStore
-    ) -> None:
-        await redis_store.publish("nobody_listening", b"hello")
-
 
 class TestSessionRegistryWithRedis:
     async def test_register_and_get(self, registry: SessionRegistry) -> None:
