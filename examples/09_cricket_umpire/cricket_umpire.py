@@ -4,7 +4,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import gemini, getstream
+from vision_agents.plugins import gemini, getstream, ultralytics
 
 logger = logging.getLogger(__name__)
 load_dotenv()
@@ -16,6 +16,12 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="Third Umpire DRS"),
         instructions="Read @cricket_umpire.md",
         llm=gemini.Realtime(fps=2),
+        processors=[
+            ultralytics.YOLOPoseProcessor(
+                model_path="yolo11n-pose.pt",
+                imgsz=256  # Very small — fast enough on CPU
+            )
+        ],
     )
     return agent
 
