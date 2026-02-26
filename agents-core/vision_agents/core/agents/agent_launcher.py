@@ -495,7 +495,7 @@ class AgentLauncher:
             sessions_map = {sid: s.call_id for sid, s in self._sessions.items()}
             await self._registry.refresh(sessions_map)
         except Exception:
-            logger.exception("Registry heartbeat failed")
+            logger.exception("Failed to refresh sessions at the registry")
 
     async def __aenter__(self) -> "AgentLauncher":
         """Enter the async context manager, starting the launcher."""
