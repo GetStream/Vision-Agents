@@ -14,9 +14,8 @@ class SessionKVStore(abc.ABC):
     garbage-collected by the backend.
 
     Key conventions (managed by SessionRegistry):
-        - ``sessions/{session_id}`` → JSON-serialized SessionInfo
-        - ``call_sessions/{call_id}/{session_id}`` → session_id (secondary index)
-        - ``close_requests/{session_id}`` → empty bytes (close flag)
+        - ``sessions/{call_id}/{session_id}`` → JSON-serialized SessionInfo
+        - ``close_requests/{call_id}/{session_id}`` → empty bytes (close flag)
     """
 
     async def start(self) -> None:

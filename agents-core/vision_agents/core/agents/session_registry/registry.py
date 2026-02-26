@@ -46,7 +46,7 @@ class SessionRegistry:
         """Close the storage backend."""
         await self._store.close()
 
-    async def register(self, session_id: str, call_id: str) -> None:
+    async def register(self, call_id: str, session_id: str) -> None:
         """Write a new session record to storage."""
         now = time.time()
         info = SessionInfo(
@@ -56,44 +56,33 @@ class SessionRegistry:
             started_at=now,
             metrics_updated_at=now,
         )
-        await self._store.mset(
+        await self._store.set(
+            self._session_key(call_id, session_id),
+            json.dumps(asdict(info)).encode(),
+            self._ttl,
+        )
+
+    async def remove(self, call_id: str, session_id: str) -> None:
+        """Delete all storage keys for a session."""
+        await self._store.delete(
             [
-                (
-                    f"sessions/{session_id}",
-                    json.dumps(asdict(info)).encode(),
-                    self._ttl,
-                ),
-                (
-                    f"call_sessions/{call_id}/{session_id}",
-                    session_id.encode(),
-                    self._ttl,
-                ),
+                self._session_key(call_id, session_id),
+                self._close_key(call_id, session_id),
             ]
         )
 
-    async def remove(self, session_id: str) -> None:
-        """Delete all storage keys for a session."""
-        raw = await self._store.get(f"sessions/{session_id}")
-        if raw is None:
-            return
-        call_id = json.loads(raw)["call_id"]
-        await self._delete_keys(session_id, call_id)
-
     async def update_metrics(
-        self, session_id: str, metrics: dict[str, int | float | None]
+        self, call_id: str, session_id: str, metrics: dict[str, int | float | None]
     ) -> None:
         """Push updated metrics for a session into storage."""
-        raw = await self._store.get(f"sessions/{session_id}")
+        key = self._session_key(call_id, session_id)
+        raw = await self._store.get(key)
         if raw is None:
             return
         data = json.loads(raw)
         data["metrics"] = metrics
         data["metrics_updated_at"] = time.time()
-        await self._store.set(
-            f"sessions/{session_id}",
-            json.dumps(data).encode(),
-            self._ttl,
-        )
+        await self._store.set(key, json.dumps(data).encode(), self._ttl)
 
     async def refresh(self, sessions: dict[str, str]) -> None:
         """Refresh TTLs for the given sessions.
@@ -103,49 +92,51 @@ class SessionRegistry:
         """
         if not sessions:
             return
-        keys: list[str] = []
-        for session_id, call_id in sessions.items():
-            keys.append(f"sessions/{session_id}")
-            keys.append(f"call_sessions/{call_id}/{session_id}")
+        keys = [
+            self._session_key(call_id, session_id)
+            for session_id, call_id in sessions.items()
+        ]
         await self._store.expire(*keys, ttl=self._ttl)
 
-    async def get_close_requests(self, session_ids: list[str]) -> list[str]:
-        """Return session IDs that have a pending close request."""
-        if not session_ids:
+    async def get_close_requests(self, sessions: dict[str, str]) -> list[str]:
+        """Return session IDs that have a pending close request.
+
+        Args:
+            sessions: mapping of session_id to call_id.
+        """
+        if not sessions:
             return []
-        keys = [f"close_requests/{sid}" for sid in session_ids]
+        session_ids = list(sessions.keys())
+        keys = [self._close_key(sessions[sid], sid) for sid in session_ids]
         values = await self._store.mget(keys)
         return [sid for sid, val in zip(session_ids, values) if val is not None]
 
-    async def request_close(self, session_id: str) -> None:
+    async def request_close(self, call_id: str, session_id: str) -> None:
         """Set a close flag for a session (async close from any node)."""
-        await self._store.set(f"close_requests/{session_id}", b"", self._ttl)
+        await self._store.set(self._close_key(call_id, session_id), b"", self._ttl)
 
-    async def get(self, session_id: str) -> SessionInfo | None:
+    async def get(self, call_id: str, session_id: str) -> SessionInfo | None:
         """Look up a session by ID from shared storage."""
-        raw = await self._store.get(f"sessions/{session_id}")
+        raw = await self._store.get(self._session_key(call_id, session_id))
         if raw is None:
             return None
         return SessionInfo(**json.loads(raw))
 
     async def get_for_call(self, call_id: str) -> list[SessionInfo]:
         """Return all sessions for a given call across all nodes."""
-        index_keys = await self._store.keys(f"call_sessions/{call_id}/")
-        if not index_keys:
+        keys = await self._store.keys(f"sessions/{call_id}/")
+        if not keys:
             return []
-        session_ids = [k.rsplit("/", 1)[-1] for k in index_keys]
-        session_keys = [f"sessions/{sid}" for sid in session_ids]
-        values = await self._store.mget(session_keys)
+        values = await self._store.mget(keys)
         return [SessionInfo(**json.loads(raw)) for raw in values if raw is not None]
 
-    async def _delete_keys(self, session_id: str, call_id: str) -> None:
-        await self._store.delete(
-            [
-                f"sessions/{session_id}",
-                f"call_sessions/{call_id}/{session_id}",
-                f"close_requests/{session_id}",
-            ]
-        )
+    @staticmethod
+    def _session_key(call_id: str, session_id: str) -> str:
+        return f"sessions/{call_id}/{session_id}"
+
+    @staticmethod
+    def _close_key(call_id: str, session_id: str) -> str:
+        return f"close_requests/{call_id}/{session_id}"
 
     async def __aenter__(self) -> Self:
         await self.start()

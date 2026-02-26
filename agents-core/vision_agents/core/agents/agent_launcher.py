@@ -76,11 +76,24 @@ class AgentSession:
 
 # TODO: Rename to `AgentManager`.
 class AgentLauncher:
-    """
-    Agent launcher that handles warmup and lifecycle management.
+    """Agent launcher that handles warmup and lifecycle management.
 
     The launcher ensures all components (LLM, TTS, STT, turn detection)
     are warmed up before the agent is launched.
+
+    Public methods fall into two categories:
+
+    **Local** — operate only on this node's in-memory session map
+    (``self._sessions``).  These accept a bare ``session_id``:
+    ``get_session``, ``close_session``, ``launch``.
+
+    **Registry** — read from / write to shared storage visible to all
+    nodes.  These require ``(call_id, session_id)`` so the registry can
+    scope every operation to the owning call:
+    ``get_session_info``, ``request_close_session``.
+
+    ``start_session`` touches both: it creates a local ``AgentSession``
+    *and* registers it in the shared registry.
     """
 
     def __init__(
@@ -148,7 +161,6 @@ class AgentLauncher:
         self._maintenance_task: Optional[asyncio.Task] = None
         self._warmed_up: bool = False
         self._sessions: dict[str, AgentSession] = {}
-        self._calls: dict[str, set[str]] = {}
 
     async def start(self) -> None:
         """
@@ -254,7 +266,7 @@ class AgentLauncher:
         video_track_override_path: Optional[str] = None,
     ) -> AgentSession:
         """
-        Start a new agent session for a call.
+        Start a new agent session for a call on this node.
 
         Creates a new agent, joins the specified call, and returns an AgentSession
         object to track the session.
@@ -283,14 +295,12 @@ class AgentLauncher:
                     f"Reached maximum concurrent sessions of {self._max_concurrent_sessions}"
                 )
 
-            call_sessions_total = len(self._calls.get(call_id, set()))
-            if (
-                self._max_sessions_per_call
-                and call_sessions_total >= self._max_sessions_per_call
-            ):
-                raise MaxSessionsPerCallExceeded(
-                    f"Reached maximum sessions per call of {self._max_sessions_per_call}"
-                )
+            if self._max_sessions_per_call:
+                call_sessions = await self._registry.get_for_call(call_id)
+                if len(call_sessions) >= self._max_sessions_per_call:
+                    raise MaxSessionsPerCallExceeded(
+                        f"Reached maximum sessions per call of {self._max_sessions_per_call}"
+                    )
 
             agent: "Agent" = await self.launch()
             if video_track_override_path:
@@ -306,12 +316,9 @@ class AgentLauncher:
             def _finalizer(session_id_: str, call_id_: str, *_):
                 session_ = self._sessions.pop(session_id_, None)
                 if session_ is not None:
-                    call_sessions = self._calls.get(call_id_, set())
-                    if call_sessions:
-                        call_sessions.discard(session_id_)
                     try:
                         asyncio.get_running_loop().create_task(
-                            self._registry.remove(session_id_)
+                            self._registry.remove(call_id_, session_id_)
                         )
                     except RuntimeError:
                         pass
@@ -324,15 +331,15 @@ class AgentLauncher:
                 call_id=call_id,
             )
             self._sessions[agent.id] = session
-            self._calls.setdefault(call_id, set()).add(agent.id)
-            await self._registry.register(session.id, call_id)
+            await self._registry.register(call_id, session.id)
             logger.info(f"Started agent session with id {session.id}")
         return session
 
     async def close_session(self, session_id: str, wait: bool = False) -> bool:
-        """
-        Close session with id `session_id`.
-        Returns `True` if session was found and closed, `False` otherwise.
+        """Close a session running on this node (local + registry cleanup).
+
+        Removes the session from the local map, cancels the agent task,
+        and deletes the corresponding registry entry.
 
         Args:
             session_id: session id
@@ -340,51 +347,48 @@ class AgentLauncher:
                 Otherwise, just cancel the task and return.
 
         Returns:
-            `True` if session was found and closed, `False` otherwise.
+            True if session was found and closed, False otherwise.
         """
         session = self._sessions.pop(session_id, None)
         if session is None:
-            # The session is either closed or doesn't exist, exit early
             return False
-        call_sessions = self._calls.get(session.call_id)
-        if call_sessions:
-            call_sessions.discard(session.id)
 
         logger.info(f"Closing agent session with id {session.id}")
         if wait:
             await cancel_and_wait(session.task)
         else:
             session.task.cancel()
-        await self._registry.remove(session_id)
+        await self._registry.remove(session.call_id, session_id)
         return True
 
     def get_session(self, session_id: str) -> Optional[AgentSession]:
-        """
-        Get a session by its ID.
+        """Get a session running on this node by its ID (local lookup only).
 
         Args:
             session_id: The session ID to look up.
 
         Returns:
-            The AgentSession if found, None otherwise.
+            The AgentSession if found on this node, None otherwise.
         """
         return self._sessions.get(session_id)
 
-    async def request_close_session(self, session_id: str) -> None:
-        """Request closure of a session via the registry.
+    async def request_close_session(self, call_id: str, session_id: str) -> None:
+        """Request closure of a session via the shared registry (any node).
 
         Sets a close flag so the owning node picks it up on its next
-        maintenance cycle. If this node owns the session, it will close
-        it during the next maintenance pass.
+        maintenance cycle.
 
         Args:
+            call_id: The call the session belongs to.
             session_id: The session to close.
         """
-        await self._registry.request_close(session_id)
+        await self._registry.request_close(call_id, session_id)
 
-    async def get_session_info(self, session_id: str) -> SessionInfo | None:
-        """Look up session info from the registry."""
-        return await self._registry.get(session_id)
+    async def get_session_info(
+        self, call_id: str, session_id: str
+    ) -> SessionInfo | None:
+        """Look up session info from the shared registry (any node)."""
+        return await self._registry.get(call_id, session_id)
 
     async def _warmup_agent(self, agent: "Agent") -> None:
         """
@@ -460,11 +464,10 @@ class AgentLauncher:
         # Get the sessions requested to be deleted excluding already deleted
         # or scheduled to be deleted
         try:
+            sessions_map = {sid: s.call_id for sid, s in self._sessions.items()}
             flagged = [
                 session_
-                for session_id in await self._registry.get_close_requests(
-                    list(self._sessions.keys())
-                )
+                for session_id in await self._registry.get_close_requests(sessions_map)
                 if (session_ := self._sessions.get(session_id)) is not None
                 and session_.agent not in to_close
             ]

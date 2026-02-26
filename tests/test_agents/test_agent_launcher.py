@@ -565,6 +565,8 @@ class TestAgentLauncher:
                 await launcher.start_session(call_id="same_call")
 
             await session1.wait()
+            # Yield so the finalizer's fire-and-forget registry.remove() completes
+            await asyncio.sleep(0)
             # Can create a new session when the previous one ends
             session3 = await launcher.start_session(call_id="same_call")
             assert session3 is not None
@@ -731,7 +733,7 @@ class TestAgentLauncherWithStorage:
             assert not session.finished
             assert launcher.get_session(session.id) is not None
 
-            info = await launcher.get_session_info(session.id)
+            info = await launcher.get_session_info("test", session.id)
             assert info is not None
             assert info.session_id == session.id
             assert info.call_id == "test"
@@ -756,7 +758,7 @@ class TestAgentLauncherWithStorage:
             assert await launcher.close_session(session.id, wait=True)
             assert session.finished
             assert launcher.get_session(session.id) is None
-            assert await launcher.get_session_info(session.id) is None
+            assert await launcher.get_session_info("test", session.id) is None
 
     async def test_request_close_session(self, stream_edge_mock, storage):
         async def create_agent(**kwargs) -> Agent:
@@ -778,7 +780,7 @@ class TestAgentLauncherWithStorage:
             session = await launcher.start_session(call_id="call")
             assert not session.finished
 
-            await launcher.request_close_session(session.id)
+            await launcher.request_close_session("call", session.id)
             # Let the maintenance task to run
             await asyncio.sleep(1.5)
 
@@ -801,4 +803,4 @@ class TestAgentLauncherWithStorage:
             registry=registry,
         )
         async with launcher:
-            assert await launcher.get_session_info("nonexistent") is None
+            assert await launcher.get_session_info("any-call", "nonexistent") is None

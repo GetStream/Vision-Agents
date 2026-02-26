@@ -307,7 +307,7 @@ class TestRunnerServe:
             session.agent.metrics.llm_output_tokens__total.inc(250)
 
             await agent_launcher.registry.update_metrics(
-                session_id, session.agent.metrics.to_dict()
+                "test", session_id, session.agent.metrics.to_dict()
             )
 
             resp = await client.get(f"/calls/test/sessions/{session_id}/metrics")
