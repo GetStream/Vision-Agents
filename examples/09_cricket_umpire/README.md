@@ -1,108 +1,177 @@
-# 🏏 Third Umpire AI — Women's Cricket Decision Agent
+# 🏏 Cricket DRS AI — Third Umpire Decision Review System
 
-An AI-powered Third Umpire built with [Vision Agents](https://visionagents.ai) that watches live cricket video and makes real-time decisions on disputed events — run outs, stumpings, boundary catches, and more.
+> AI-powered Decision Review System for Women's Cricket using Gemini Live vision, YOLO pose detection, and real-time voice verdicts.
 
-Built for the **Vision AI Hackathon** (Feb 23 – Mar 1, 2026).
+---
 
-## What It Does
+## 🎥 Demo Video
 
-- 🎥 Watches live or recorded women's cricket video in real-time
-- 🤖 Uses YOLO object detection to track players, ball, and stumps
-- 🧠 Uses Gemini Live to reason about the scene and make decisions
-- 📢 Announces verdicts in an official third umpire style (voice + text)
-- ⚡ Runs with sub-30ms latency via Stream's edge network
+[▶ Watch Demo](YOUR_DEMO_VIDEO_LINK_HERE)
 
-## Decisions Supported
+## 🌐 Deployment
 
-| Scenario | Decision |
+| | Link |
 |---|---|
-| Run Out | OUT / NOT OUT |
-| Stumping | OUT / NOT OUT |
-| Boundary Catch | OUT / SIX |
-| Clean Catch | OUT / NOT OUT |
-| LBW (basic) | Directional analysis |
+| Frontend | [YOUR_NETLIFY_LINK_HERE](YOUR_NETLIFY_LINK_HERE) |
+| Backend | Runs locally (see setup below) |
+| GitHub | [github.com/jaya6400/Vision-Agents](https://github.com/jaya6400/Vision-Agents) |
 
-## Tech Stack
+> Backend requires a persistent Gemini Live WebSocket connection and cannot be hosted on free-tier platforms. Full local setup takes under 2 minutes.
 
-- **Vision Agents SDK** — core framework
-- **YOLO (Ultralytics)** — real-time object detection
-- **Gemini Live** — real-time multimodal LLM
-- **Stream Edge Network** — ultra-low latency video (<30ms)
+---
 
-## Setup
+## ✨ Features
+
+- **Real-time video analysis** — Gemini Live watches your screen share and analyzes cricket footage frame by frame
+- **Voice verdicts** — Third Umpire AI speaks the decision aloud (DECISION / REVIEW TYPE / REASON / CONFIDENCE)
+- **YOLO pose detection** — Player body positions detected in real-time at 30 FPS
+- **Two review types** — LBW and Run Out (the two most contested DRS decisions)
+- **FastAPI trigger endpoint** — Button click sends review request directly to Gemini via REST API
+- **Custom DRS UI** — Built with Stream Video SDK, dark cricket stadium aesthetic
+
+---
+
+## 🛠 Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Vision AI | Gemini Live (google-genai) — real-time video + audio |
+| Pose Detection | YOLO11n-pose (Ultralytics) — player skeleton tracking |
+| Video Transport | Stream Video SDK (getstream) |
+| Agent Framework | Vision Agents SDK (GetStream) |
+| Backend API | FastAPI + Uvicorn |
+| Frontend | React + Vite + Stream Video React SDK |
+| Auth | JWT token server |
+
+---
+
+## 🚀 Setup
 
 ### Prerequisites
-- Python 3.12+
-- Stream account → [getstream.io/try-for-free](https://getstream.io/try-for-free)
-- Google Gemini API key → [aistudio.google.com](https://aistudio.google.com)
+- Python 3.10+
+- Node.js 18+
+- Google API Key (Gemini Live access)
+- Stream API Key + Secret
 
-### Installation
+### 1. Clone & Install
 
 ```bash
-# Clone the repo
 git clone https://github.com/jaya6400/Vision-Agents.git
 cd Vision-Agents
-
-# Create virtual environment
-python -m venv venv
-source venv/Scripts/activate  # Windows Git Bash
-# or: venv\Scripts\activate   # Windows CMD
-
-# Install SDK
 pip install -e agents-core
-
-# Install dependencies
-pip install vision-agents[gemini,ultralytics,getstream] python-dotenv opencv-python
+pip install -e plugins/getstream
+pip install -e plugins/ultralytics
+cd examples/09_cricket_umpire
+pip install -r requirements.txt
 ```
 
-### Configuration
+### 2. Environment Variables
 
-Create a `.env` file in the root of the project:
+Create `.env` in `examples/09_cricket_umpire/`:
 
 ```env
+GOOGLE_API_KEY=your_google_api_key
 STREAM_API_KEY=your_stream_api_key
 STREAM_API_SECRET=your_stream_api_secret
-GOOGLE_API_KEY=your_gemini_api_key
 ```
 
-### Run
+Create `.env` in `examples/09_cricket_umpire/frontend/`:
+
+```env
+VITE_STREAM_API_KEY=your_stream_api_key
+```
+
+### 3. Run
 
 ```bash
 cd examples/09_cricket_umpire
-python cricket_umpire.py
+bash run.sh
 ```
 
-The agent will:
-1. Create a video call session
-2. Open a browser UI
-3. Join and start watching the video feed
-4. Analyze cricket scenarios in real-time
-5. Announce decisions via voice and text
+This starts:
+- Token server on `http://localhost:8001`
+- DRS Agent (Gemini Live + YOLO)
+- Review API on `http://localhost:8002`
+- Frontend on `http://localhost:5173`
 
-## How It Works
+### 4. Usage
 
-```
-Live Cricket Video
-      ↓
-YOLO Object Detection
-(players, stumps, ball positions)
-      ↓
-Gemini Live Analysis
-(scene understanding + reasoning)
-      ↓
-Third Umpire Decision
-(OUT / NOT OUT + explanation)
-```
+1. Open `http://localhost:5173`
+2. Click **Start DRS Session**
+3. Click **Share Screen** → select your cricket video tab
+4. **Uncheck "Share tab audio"** in the Chrome dialog (important!)
+5. Click **LBW Review** or **Run Out Review**
+6. Hear the Third Umpire AI speak the verdict
 
-## Project Structure
+---
+
+## 🗂 Project Structure
 
 ```
-09_cricket_umpire/
-├── cricket_umpire.py     # Main agent code
-├── cricket_umpire.md     # Agent instructions (the "brain")
-├── pyproject.toml        # Dependencies
-└── README.md             # This file
+examples/09_cricket_umpire/
+├── cricket_umpire.py      # Main agent + FastAPI review endpoint
+├── cricket_umpire.md      # Gemini instructions (DRS rules)
+├── token_server.py        # JWT auth server
+├── run.sh                 # One-command startup
+├── requirements.txt       # Python dependencies
+└── frontend/
+    └── src/
+        ├── App.jsx        # React UI
+        └── App.css        # DRS styling
 ```
 
-## Built By
-Jaya — Vision AI Hackathon 2026
+---
+
+## 📸 Screenshots
+
+<!-- Add your screenshots here -->
+> _Add screenshots of the DRS UI, YOLO pose detection, and decision log_
+
+---
+
+## ⚠️ Known Issues & Fixes
+
+| Issue | Root Cause | Fix Applied |
+|---|---|---|
+| `AudioQueue buffer limit exceeded` | `SCREEN_SHARE_AUDIO` track overwhelming WebRTC pipeline | Uncheck "Share tab audio" in Chrome screen share dialog |
+| `Pose processing TIMEOUT 12s` | YOLO running at full 1920×1080 resolution on CPU | Reduced `imgsz=256`, dropped Gemini fps to 2 |
+| `Edge connection is not set` | Screen share arrived before agent WebRTC fully connected | Agent joins before user, race condition handled by SDK retry |
+| `Cannot handle offer in signaling state "closed"` | WebRTC renegotiation after audio track timeout | Resolved by disabling screen share audio |
+| Agent giving verdict before screen share | Gemini responding to text prompt alone without video | Added video grounding check in instructions |
+
+---
+
+## 🏗 Architecture
+
+```
+┌─────────────────┐     screen share      ┌──────────────────────┐
+│   Browser UI    │ ──────────────────────▶│  Stream Video SFU    │
+│  (React + Vite) │                        └──────────┬───────────┘
+│                 │                                   │ video frames
+│  Click Review   │     POST /review/lbw              ▼
+│  Button         │ ──────────────────────▶ ┌─────────────────────┐
+└─────────────────┘                         │  cricket_umpire.py  │
+                                            │                     │
+                                            │  YOLO Pose (256px)  │
+                                            │       ↓             │
+                                            │  Gemini Live        │
+                                            │  (fps=2, vision)    │
+                                            │       ↓             │
+                                            │  Speaks verdict     │
+                                            │  via Stream audio   │
+                                            └─────────────────────┘
+```
+
+---
+
+## 📝 Blog Post
+
+[Read the full writeup on Medium](YOUR_MEDIUM_LINK_HERE)
+
+---
+
+## 🏆 Built For
+
+Vision AI Hackathon 2026 — GetStream Vision Agents Challenge
+
+*Women's Cricket • Decision Review System • Real-time AI Umpire*
