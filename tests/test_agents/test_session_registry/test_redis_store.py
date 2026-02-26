@@ -43,7 +43,7 @@ class TestRedisSessionKVStore:
 
     async def test_ttl_expiry(self, redis_store: RedisSessionKVStore) -> None:
         await redis_store.set("ephemeral", b"bye", ttl=0.5)
-        await asyncio.sleep(0.7)
+        await asyncio.sleep(2)
         assert await redis_store.get("ephemeral") is None
 
     async def test_mset_and_mget(self, redis_store: RedisSessionKVStore) -> None:

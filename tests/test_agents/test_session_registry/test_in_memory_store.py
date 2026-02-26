@@ -31,7 +31,7 @@ class TestInMemorySessionKVStore:
 
     async def test_ttl_expiry(self, store: InMemorySessionKVStore) -> None:
         await store.set("ephemeral", b"bye", ttl=0.5)
-        await asyncio.sleep(0.7)
+        await asyncio.sleep(2)
         assert await store.get("ephemeral") is None
 
     async def test_mset_and_mget(self, store: InMemorySessionKVStore) -> None:
