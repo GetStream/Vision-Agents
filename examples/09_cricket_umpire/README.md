@@ -6,15 +6,14 @@
 
 ## 🎥 Demo Video
 
-[▶ Watch Demo](YOUR_DEMO_VIDEO_LINK_HERE)
+[▶ Watch Demo](https://youtu.be/j3rzsTp0sW0)
 
 ## 🌐 Deployment
 
 | | Link |
 |---|---|
-| Frontend | [YOUR_NETLIFY_LINK_HERE](YOUR_NETLIFY_LINK_HERE) |
+| Frontend | [Link](https://ai-drs-vision-agents-sdk-jd.vercel.app/) |
 | Backend | Runs locally (see setup below) |
-| GitHub | [github.com/jaya6400/Vision-Agents](https://github.com/jaya6400/Vision-Agents) |
 
 > Backend requires a persistent Gemini Live WebSocket connection and cannot be hosted on free-tier platforms. Full local setup takes under 2 minutes.
 
@@ -124,8 +123,11 @@ examples/09_cricket_umpire/
 
 ## 📸 Screenshots
 
-<!-- Add your screenshots here -->
-> _Add screenshots of the DRS UI, YOLO pose detection, and decision log_
+**Frontend:**
+![frontend](docs/screenshots/frontend.PNG)
+
+**Agent Transcript:**
+![realtime-ai-agent](docs/screenshots/realtime-voice-agent.PNG)
 
 ---
 
