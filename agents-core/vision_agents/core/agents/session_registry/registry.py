@@ -32,6 +32,9 @@ class SessionRegistry:
     ) -> None:
         self._store = store or InMemorySessionKVStore()
         self._node_id = node_id or str(uuid4())
+        if ttl <= 0:
+            raise ValueError("ttl must be >= 0")
+
         self._ttl = ttl
 
     @property
