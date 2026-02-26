@@ -485,9 +485,8 @@ class AgentLauncher:
             )
             for agent, r in zip(to_close, result):
                 if isinstance(r, Exception):
-                    logger.error(
+                    logger.exception(
                         f"Failed to close agent with user_id {agent.agent_user.id}",
-                        exc_info=r,
                     )
 
     async def _refresh_active_sessions(self) -> None:
