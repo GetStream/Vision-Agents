@@ -84,7 +84,7 @@ class RedisSessionKVStore(SessionKVStore):
             return
         async with self._redis.pipeline() as pipe:
             for key in keys:
-                await pipe.pexpire(self._prefixed(key), int(ttl * 1000))
+                pipe.pexpire(self._prefixed(key), int(ttl * 1000))
             await pipe.execute()
 
     async def get(self, key: str) -> bytes | None:
