@@ -323,7 +323,6 @@ class AgentLauncher:
                     except RuntimeError:
                         pass
 
-            task.add_done_callback(partial(_finalizer, agent.id, call_id))
             session = AgentSession(
                 agent=agent,
                 task=task,
@@ -331,7 +330,12 @@ class AgentLauncher:
                 call_id=call_id,
             )
             self._sessions[agent.id] = session
-            await self._registry.register(call_id, session.id)
+            try:
+                await self._registry.register(call_id, session.id)
+            except Exception:
+                await self.close_session(session.id)
+                raise
+            task.add_done_callback(partial(_finalizer, agent.id, call_id))
             logger.info(f"Started agent session with id {session.id}")
         return session
 
