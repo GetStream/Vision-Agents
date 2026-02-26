@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+from typing import Any, Self
 
 
 @dataclass
@@ -11,3 +12,9 @@ class SessionInfo:
     started_at: float
     metrics_updated_at: float
     metrics: dict[str, int | float | None] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Construct from a dict, silently ignoring unknown keys."""
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})

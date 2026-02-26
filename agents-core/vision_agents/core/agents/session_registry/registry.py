@@ -120,7 +120,7 @@ class SessionRegistry:
         raw = await self._store.get(self._session_key(call_id, session_id))
         if raw is None:
             return None
-        return SessionInfo(**json.loads(raw))
+        return SessionInfo.from_dict(json.loads(raw))
 
     async def get_for_call(self, call_id: str) -> list[SessionInfo]:
         """Return all sessions for a given call across all nodes."""
@@ -128,7 +128,9 @@ class SessionRegistry:
         if not keys:
             return []
         values = await self._store.mget(keys)
-        return [SessionInfo(**json.loads(raw)) for raw in values if raw is not None]
+        return [
+            SessionInfo.from_dict(json.loads(raw)) for raw in values if raw is not None
+        ]
 
     @staticmethod
     def _session_key(call_id: str, session_id: str) -> str:
