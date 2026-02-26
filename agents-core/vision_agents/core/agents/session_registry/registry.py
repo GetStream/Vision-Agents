@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from dataclasses import asdict
+from typing import Self
 from uuid import uuid4
 
 from .in_memory_store import InMemorySessionKVStore
@@ -145,3 +146,10 @@ class SessionRegistry:
                 f"close_requests/{session_id}",
             ]
         )
+
+    async def __aenter__(self) -> Self:
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.stop()
