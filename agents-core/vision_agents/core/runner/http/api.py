@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import Response
 from vision_agents.core import AgentLauncher
-from vision_agents.core.agents.exceptions import SessionLimitExceeded
+from vision_agents.core.agents.exceptions import InvalidCallId, SessionLimitExceeded
 
 from .dependencies import (
     can_close_session,
@@ -52,6 +52,16 @@ router = APIRouter()
             "description": "Session created successfully",
             "model": StartSessionResponse,
         },
+        400: {
+            "description": "Invalid call_id",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Invalid call_id 'bad!id': must contain only a-z, 0-9, _ and -",
+                    }
+                }
+            },
+        },
         429: {
             "description": "Session limits exceeded",
             "content": {
@@ -76,6 +86,11 @@ async def start_session(
         session = await launcher.start_session(
             call_id=call_id, call_type=request.call_type
         )
+    except InvalidCallId as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid call_id: must contain only a-z, 0-9, _ and -",
+        ) from e
     except SessionLimitExceeded as e:
         raise HTTPException(status_code=429, detail="Session limit exceeded") from e
     except Exception as e:

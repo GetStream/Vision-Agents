@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -14,13 +15,19 @@ from typing import (
 from vision_agents.core.utils.utils import await_or_run, cancel_and_wait
 from vision_agents.core.warmup import Warmable, WarmupCache
 
-from .exceptions import MaxConcurrentSessionsExceeded, MaxSessionsPerCallExceeded
+from .exceptions import (
+    InvalidCallId,
+    MaxConcurrentSessionsExceeded,
+    MaxSessionsPerCallExceeded,
+)
 from .session_registry import SessionInfo, SessionRegistry
 
 if TYPE_CHECKING:
     from .agents import Agent
 
 logger = logging.getLogger(__name__)
+
+_VALID_CALL_ID = re.compile(r"^[a-z0-9_-]+$")
 
 
 @dataclass
@@ -281,11 +288,17 @@ class AgentLauncher:
             An AgentSession object representing the new session.
 
         Raises:
+            InvalidCallId: If the call_id contains invalid characters.
             MaxConcurrentSessionsExceeded: If the maximum number of concurrent
                 sessions has been reached.
             MaxSessionsPerCallExceeded: If the maximum number of sessions for
                 this call_id has been reached.
         """
+        if not _VALID_CALL_ID.fullmatch(call_id):
+            raise InvalidCallId(
+                f"Invalid call_id {call_id!r}: must contain only a-z, 0-9, _ and -"
+            )
+
         async with self._start_lock:
             if (
                 self._max_concurrent_sessions

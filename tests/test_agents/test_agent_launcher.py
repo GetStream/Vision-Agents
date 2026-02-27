@@ -8,6 +8,7 @@ import redis.asyncio as redis
 from testcontainers.redis import RedisContainer
 from vision_agents.core import Agent, AgentLauncher, User
 from vision_agents.core.agents.exceptions import (
+    InvalidCallId,
     MaxConcurrentSessionsExceeded,
     MaxSessionsPerCallExceeded,
 )
@@ -448,6 +449,27 @@ class TestAgentLauncher:
                 join_call=join_call_noop,
                 max_sessions_per_call=-1,
             )
+
+    @pytest.mark.parametrize(
+        "call_id",
+        ["UPPER", "has space", "a/b", "", "café", "call@id", "a.b"],
+    )
+    async def test_invalid_call_id_rejected(self, stream_edge_mock, call_id):
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        launcher = AgentLauncher(
+            create_agent=create_agent,
+            join_call=join_call_noop,
+        )
+        async with launcher:
+            with pytest.raises(InvalidCallId):
+                await launcher.start_session(call_id=call_id)
 
     async def test_max_concurrent_agents_exceeded(self, stream_edge_mock):
         async def create_agent(**kwargs) -> Agent:
