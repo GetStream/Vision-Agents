@@ -514,6 +514,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         """
         if self._call is None:
             raise RuntimeError("Cannot send custom event: not connected to a call")
+        self._require_authenticated()
         await self._call.send_call_event(user_id=self._agent_user_id, custom=data)
 
     @tracer.start_as_current_span("stream_edge.open_demo")
@@ -537,6 +538,8 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         # Ensure that both agent and user get access the demo by adding the user as member and the agent the channel creator
         channel = client.chat.channel(self.channel_type, call.id)
+        # Ensure the agent user is authenticated before creating the channel
+        self._require_authenticated()
         response = await channel.get_or_create(
             data=ChannelInput(
                 created_by_id=self._agent_user_id,
