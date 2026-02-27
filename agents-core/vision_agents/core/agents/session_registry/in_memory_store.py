@@ -44,7 +44,16 @@ class InMemorySessionKVStore(SessionKVStore):
             self._cleanup_task = None
         self._data.clear()
 
-    async def set(self, key: str, value: bytes, ttl: float) -> None:
+    async def set(
+        self, key: str, value: bytes, ttl: float, *, only_if_exists: bool = False
+    ) -> None:
+        if only_if_exists:
+            entry = self._data.get(key)
+            if entry is None:
+                return
+            _, expires_at = entry
+            if time.monotonic() >= expires_at:
+                return
         self._data[key] = (value, time.monotonic() + ttl)
 
     async def mset(self, items: list[tuple[str, bytes, float]]) -> None:

@@ -101,6 +101,17 @@ class TestSessionRegistry:
         assert info is not None
         assert info.metrics["latency_ms"] == 42.0
 
+    async def test_update_metrics_skipped_for_expired_session(
+        self, registry: SessionRegistry
+    ) -> None:
+        short_registry = SessionRegistry(store=registry._store, ttl=1.0)
+        await short_registry.register("call-exp", "sess-exp")
+        await asyncio.sleep(1.5)
+        await short_registry.update_metrics(
+            "call-exp", "sess-exp", {"latency_ms": 99.0}
+        )
+        assert await short_registry.get("call-exp", "sess-exp") is None
+
     async def test_session_expires_without_refresh(
         self, registry: SessionRegistry
     ) -> None:
@@ -148,10 +159,10 @@ class TestSessionRegistry:
         assert sessions[0].session_id == "s-fc"
 
     def test_invalid_ttl(self) -> None:
-        with pytest.raises(ValueError, match="ttl must be >= 0"):
+        with pytest.raises(ValueError, match="ttl must be > 0"):
             SessionRegistry(ttl=0)
 
-        with pytest.raises(ValueError, match="ttl must be >= 0"):
+        with pytest.raises(ValueError, match="ttl must be > 0"):
             SessionRegistry(ttl=-5.0)
 
 

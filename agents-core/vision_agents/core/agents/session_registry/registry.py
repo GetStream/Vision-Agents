@@ -33,7 +33,7 @@ class SessionRegistry:
         self._store = store or InMemorySessionKVStore()
         self._node_id = node_id or str(uuid4())
         if ttl <= 0:
-            raise ValueError("ttl must be >= 0")
+            raise ValueError("ttl must be > 0")
 
         self._ttl = ttl
 
@@ -85,7 +85,9 @@ class SessionRegistry:
         data = json.loads(raw)
         data["metrics"] = metrics
         data["metrics_updated_at"] = time.time()
-        await self._store.set(key, json.dumps(data).encode(), self._ttl)
+        await self._store.set(
+            key, json.dumps(data).encode(), self._ttl, only_if_exists=True
+        )
 
     async def refresh(self, sessions: dict[str, str]) -> None:
         """Refresh TTLs for the given sessions.

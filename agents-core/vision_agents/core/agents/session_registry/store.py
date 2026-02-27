@@ -40,7 +40,9 @@ class SessionKVStore(abc.ABC):
         await self.close()
 
     @abc.abstractmethod
-    async def set(self, key: str, value: bytes, ttl: float) -> None:
+    async def set(
+        self, key: str, value: bytes, ttl: float, *, only_if_exists: bool = False
+    ) -> None:
         """
         Store a value with a TTL.
 
@@ -51,6 +53,8 @@ class SessionKVStore(abc.ABC):
             key: The key to store.
             value: The value as bytes.
             ttl: Time-to-live in seconds.
+            only_if_exists: When True, the write is silently skipped if the
+                key does not already exist.
         """
         ...
 

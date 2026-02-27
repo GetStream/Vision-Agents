@@ -96,6 +96,19 @@ class TestRedisSessionKVStore:
         matched = await redis_store.keys("sessions/")
         assert sorted(matched) == ["sessions/s1", "sessions/s2"]
 
+    async def test_set_only_if_exists_writes_existing_key(
+        self, redis_store: RedisSessionKVStore
+    ) -> None:
+        await redis_store.set("k1", b"original", ttl=10.0)
+        await redis_store.set("k1", b"updated", ttl=10.0, only_if_exists=True)
+        assert await redis_store.get("k1") == b"updated"
+
+    async def test_set_only_if_exists_skips_missing_key(
+        self, redis_store: RedisSessionKVStore
+    ) -> None:
+        await redis_store.set("ghost", b"value", ttl=10.0, only_if_exists=True)
+        assert await redis_store.get("ghost") is None
+
     async def test_delete(self, redis_store: RedisSessionKVStore) -> None:
         await redis_store.mset([("d1", b"a", 10.0), ("d2", b"b", 10.0)])
         await redis_store.delete(["d1"])

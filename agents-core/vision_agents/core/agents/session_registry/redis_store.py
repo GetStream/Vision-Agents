@@ -67,9 +67,13 @@ class RedisSessionKVStore(SessionKVStore):
         if self._owns_client:
             await self._redis.aclose()
 
-    async def set(self, key: str, value: bytes, ttl: float) -> None:
+    async def set(
+        self, key: str, value: bytes, ttl: float, *, only_if_exists: bool = False
+    ) -> None:
         """Store a value via SET with PX (millisecond TTL)."""
-        await self._redis.set(self._prefixed(key), value, px=int(ttl * 1000))
+        await self._redis.set(
+            self._prefixed(key), value, px=int(ttl * 1000), xx=only_if_exists
+        )
 
     async def mset(self, items: list[tuple[str, bytes, float]]) -> None:
         """Atomically store multiple values via a MULTI/EXEC pipeline."""

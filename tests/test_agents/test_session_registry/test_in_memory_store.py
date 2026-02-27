@@ -94,9 +94,22 @@ class TestInMemorySessionKVStore:
     async def test_delete_empty(self, store: InMemorySessionKVStore) -> None:
         await store.delete([])
 
+    async def test_set_only_if_exists_writes_existing_key(
+        self, store: InMemorySessionKVStore
+    ) -> None:
+        await store.set("k1", b"original", ttl=10.0)
+        await store.set("k1", b"updated", ttl=10.0, only_if_exists=True)
+        assert await store.get("k1") == b"updated"
+
+    async def test_set_only_if_exists_skips_missing_key(
+        self, store: InMemorySessionKVStore
+    ) -> None:
+        await store.set("ghost", b"value", ttl=10.0, only_if_exists=True)
+        assert await store.get("ghost") is None
+
     def test_invalid_cleanup_interval(self) -> None:
-        with pytest.raises(ValueError, match="cleanup_interval must be >= 0"):
+        with pytest.raises(ValueError, match="cleanup_interval must be > 0"):
             InMemorySessionKVStore(cleanup_interval=0)
 
-        with pytest.raises(ValueError, match="cleanup_interval must be >= 0"):
+        with pytest.raises(ValueError, match="cleanup_interval must be > 0"):
             InMemorySessionKVStore(cleanup_interval=-1)
