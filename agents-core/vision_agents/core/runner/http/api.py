@@ -92,6 +92,16 @@ async def start_session(
     )
 
 
+async def _close_session(launcher: AgentLauncher, call_id: str, session_id: str):
+    info = await launcher.get_session_info(call_id, session_id)
+    if info is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session with id '{session_id}' not found",
+        )
+    await launcher.request_close_session(call_id, session_id)
+
+
 @router.delete(
     "/calls/{call_id}/sessions/{session_id}",
     summary="Request closure of an agent session",
@@ -107,13 +117,7 @@ async def close_session(
     Sets a close flag in the registry. The owning node will close the
     session on its next maintenance cycle.
     """
-    info = await launcher.get_session_info(call_id, session_id)
-    if info is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session with id '{session_id}' not found",
-        )
-    await launcher.request_close_session(call_id, session_id)
+    await _close_session(launcher, call_id, session_id)
     return Response(status_code=202)
 
 
@@ -134,13 +138,7 @@ async def close_session_beacon(
     Sets a close flag in the registry. The owning node will close the
     session on its next maintenance cycle.
     """
-    info = await launcher.get_session_info(call_id, session_id)
-    if info is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session with id '{session_id}' not found",
-        )
-    await launcher.request_close_session(call_id, session_id)
+    await _close_session(launcher, call_id, session_id)
     return Response(status_code=202)
 
 
