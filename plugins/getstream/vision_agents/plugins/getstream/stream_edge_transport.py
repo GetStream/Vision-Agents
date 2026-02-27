@@ -393,21 +393,6 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self, agent: "Agent", call: StreamCall, **kwargs
     ) -> StreamConnection:
         """Join a GetStream call and establish a WebRTC connection.
-
-        This method:
-        - Configures WebRTC subscription for audio/video tracks
-        - Joins the call with the agent's user ID
-        - Sets up track and audio event handlers
-        - Re-emits participant and track events for the agent to consume
-        - Establishes the connection and republishes existing tracks
-
-        Args:
-            agent: The Agent instance joining the call.
-            call: StreamCall object representing the GetStream call to join.
-            **kwargs: Additional configuration options (unused).
-
-        Returns:
-            StreamConnection: A connection wrapper implementing the core Connection interface.
         """
 
         # Traditional mode - use WebRTC connection
@@ -478,7 +463,10 @@ class StreamEdge(EdgeTransport[StreamCall]):
         video_track: Optional[aiortc.MediaStreamTrack],
     ):
         """
-        Add the tracks to publish audio and video
+        Publish the agent's media tracks to participants.
+
+        Audio Direction: OUTPUT - After this call, audio written to the
+        audio_track will be sent to participants (played on their speakers).
         """
         await self._connection.add_tracks(audio=audio_track, video=video_track)
         if audio_track:
