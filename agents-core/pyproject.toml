@@ -71,6 +71,7 @@ decart = ["vision-agents-plugins-decart"]
 twilio = ["vision-agents-plugins-twilio"]
 turbopuffer = ["vision-agents-plugins-turbopuffer"]
 mistral = ["vision-agents-plugins-mistral"]
+redis = ["redis[hiredis]>=5.0.0"]
 
 all-plugins = [
     "vision-agents-plugins-anthropic",
