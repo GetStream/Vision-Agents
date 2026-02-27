@@ -104,8 +104,11 @@ def mypy():
 def mypy_plugins():
     """Run mypy type checks on all plugins."""
     click.echo("Running mypy on plugins...")
+    # Exclude tests/ and example(s)/ directories at the plugin root level
+    # (e.g. plugins/aws/tests/, plugins/aws/example/) but not deeper paths
+    # like plugins/sample_plugin/vision_agents/plugins/example/ which is actual code.
     run(
-        "uv run mypy --install-types --non-interactive --exclude '/(tests|examples?)/' plugins",
+        "uv run mypy --install-types --non-interactive --exclude 'plugins/[^/]+/(tests|examples?)/' plugins",
         env={"MYPYPATH": _plugin_mypypath()},
     )
 
