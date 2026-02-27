@@ -112,9 +112,8 @@ class MockEdge:
         self.add_track_subscriber_calls = []
         self.client = Mock()
 
-    async def create_user(self, user):
-        """Mock create user"""
-        pass
+    async def authenticate(self, user) -> None:
+        self._authenticated = True
 
     def add_track_subscriber(self, track_id):
         """Mock adding a track subscriber"""

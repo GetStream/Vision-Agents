@@ -329,14 +329,17 @@ class EventManager:
         """
         subscribed = False
         is_union = False
-        annotations = typing.get_type_hints(function)
+        #  Get the input params annotations ignoring the return types.
+        params_annotations = {
+            k: v for k, v in typing.get_type_hints(function).items() if k != "return"
+        }
 
         if not asyncio.iscoroutinefunction(function):
             raise RuntimeError(
                 "Handlers must be coroutines. Use async def handler(event: EventType):"
             )
 
-        for name, event_class in annotations.items():
+        for name, event_class in params_annotations.items():
             origin = get_origin(event_class)
             events: typing.List[type] = []
 

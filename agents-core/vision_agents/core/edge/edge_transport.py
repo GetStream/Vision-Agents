@@ -44,8 +44,8 @@ class EdgeTransport(abc.ABC, Generic[T_Call]):
         )
 
     @abc.abstractmethod
-    async def create_user(self, user: User):
-        """Create or update a user in the transport system.
+    async def authenticate(self, user: User) -> None:
+        """Authenticate an agent user with the transport and set the edge to authenticated state.
 
         Args:
             user: User object containing id, name, and optional image.
