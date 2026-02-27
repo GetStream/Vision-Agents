@@ -15,10 +15,10 @@ All commands use `uv`. Never use `python -m`. If you run into dependency issues,
 uv run dev.py check
 
 # Unit tests only
-uv run py.test -m "not integration" -n auto
+uv run pytest -m "not integration"
 
 # Integration tests (needs .env secrets)
-uv run py.test -m "integration"
+uv run pytest -m "integration"
 
 # Lint & format
 uv run ruff check .
@@ -34,6 +34,7 @@ uv run mypy
 - `@pytest.mark.asyncio` is not needed (asyncio_mode = auto).
 - Integration tests use `@pytest.mark.integration`.
 - Never adjust `sys.path`.
+- Keep unit-tests for the class under the same test class. Do not spread them around different test classes.For example, tests for `Agent` must be inside `TestAgent`, etc.
 
 ## Python rules
 
