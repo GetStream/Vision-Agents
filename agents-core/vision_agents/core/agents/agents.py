@@ -289,6 +289,7 @@ class Agent:
         self._joined_at: float = 0.0
 
         self._join_lock = asyncio.Lock()
+        self._authenticate_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._closed = False
         self._metrics = AgentMetrics()
@@ -941,12 +942,13 @@ class Agent:
 
         Idempotent — safe to call multiple times.
         """
-        if self._agent_user_initialized:
-            return None
+        async with self._authenticate_lock:
+            if self._agent_user_initialized:
+                return None
 
-        with self.span("edge.authenticate"):
-            await self.edge.authenticate(self.agent_user)
-            self._agent_user_initialized = True
+            with self.span("edge.authenticate"):
+                await self.edge.authenticate(self.agent_user)
+                self._agent_user_initialized = True
 
         return None
 
