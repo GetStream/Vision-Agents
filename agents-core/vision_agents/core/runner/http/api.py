@@ -5,7 +5,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import Response
 from vision_agents.core import AgentLauncher
-from vision_agents.core.agents.exceptions import InvalidCallId, SessionLimitExceeded
+from vision_agents.core.agents.exceptions import (
+    InvalidCallId,
+    MaxConcurrentSessionsExceeded,
+    MaxSessionsPerCallExceeded,
+)
 
 from .dependencies import (
     can_close_session,
@@ -66,8 +70,19 @@ router = APIRouter()
             "description": "Session limits exceeded",
             "content": {
                 "application/json": {
-                    "example": {
-                        "detail": "Reached maximum concurrent sessions of X",
+                    "examples": {
+                        "concurrent": {
+                            "summary": "Max concurrent sessions exceeded",
+                            "value": {
+                                "detail": "Reached maximum number of concurrent sessions",
+                            },
+                        },
+                        "per_call": {
+                            "summary": "Max sessions per call exceeded",
+                            "value": {
+                                "detail": "Reached maximum number of sessions for this call",
+                            },
+                        },
                     }
                 }
             },
@@ -91,8 +106,16 @@ async def start_session(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid call_id: must contain only a-z, 0-9, _ and -",
         ) from e
-    except SessionLimitExceeded as e:
-        raise HTTPException(status_code=429, detail="Session limit exceeded") from e
+    except MaxConcurrentSessionsExceeded as e:
+        raise HTTPException(
+            status_code=429,
+            detail="Reached maximum number of concurrent sessions",
+        ) from e
+    except MaxSessionsPerCallExceeded as e:
+        raise HTTPException(
+            status_code=429,
+            detail="Reached maximum number of sessions for this call",
+        ) from e
     except Exception as e:
         logger.exception("Failed to start agent")
         raise HTTPException(

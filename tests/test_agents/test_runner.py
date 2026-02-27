@@ -467,7 +467,9 @@ class TestRunnerServe:
                 "/calls/test-2/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 429
-            assert "Reached maximum concurrent sessions of" in resp.json()["detail"]
+            assert (
+                resp.json()["detail"] == "Reached maximum number of concurrent sessions"
+            )
 
     async def test_start_session_max_sessions_per_call_exceeded(
         self, agent_launcher_factory, test_client_factory
@@ -485,4 +487,7 @@ class TestRunnerServe:
                 "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 429
-            assert "Reached maximum sessions per call of" in resp.json()["detail"]
+            assert (
+                resp.json()["detail"]
+                == "Reached maximum number of sessions for this call"
+            )
