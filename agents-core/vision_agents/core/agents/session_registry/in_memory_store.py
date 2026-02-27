@@ -33,6 +33,8 @@ class InMemorySessionKVStore(SessionKVStore):
 
     async def start(self) -> None:
         """Start the background cleanup task."""
+        if self._cleanup_task is not None:
+            await cancel_and_wait(self._cleanup_task)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
     async def close(self) -> None:
