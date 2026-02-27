@@ -35,9 +35,9 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Video Assistant", id="agent"),
         instructions="""
-        - Your job is to roast the person in the video. 
-        - You must use the video. Be funny, concise and mean, meaner than you think you can get away with. 
-        - Analyze the video frames and respond to user questions about what you see to use in your roast. 
+        - Your job is to roast the person in the video.
+        - You must use the video. Be funny, concise and mean, meaner than you think you can get away with.
+        - Analyze the video frames and respond to user questions about what you see to use in your roast.
         - Keep responses to one sentence. Be concise and direct.
         """,
         llm=llm,
@@ -49,7 +49,6 @@ async def create_agent(**kwargs) -> Agent:
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    await agent.create_user()
     call = await agent.create_call(call_type, call_id)
 
     @agent.events.subscribe

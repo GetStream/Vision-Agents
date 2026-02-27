@@ -49,9 +49,11 @@ class DummyEdge(EdgeTransport):
         self.events = EventManager()
         self.exc_on_join = exc_on_join
         self.exc_on_publish_tracks = exc_on_publish_tracks
+        self.authenticate_call_count = 0
 
-    async def create_user(self, user: User):
-        return
+    async def authenticate(self, user: User) -> None:
+        self.authenticate_call_count += 1
+        self._authenticated = True
 
     async def create_call(
         self, call_id: str, agent_user_id: Optional[str] = None, **kwargs
@@ -368,3 +370,74 @@ class TestAgent:
         agent.events.send(RealtimeAudioOutputEvent(data=pcm))
         await agent.events.wait()
         assert publisher.track.writes == []
+
+    async def test_authenticate_calls_edge(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        await agent.authenticate()
+        assert edge.authenticate_call_count == 1
+
+    async def test_authenticate_is_idempotent(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        await agent.authenticate()
+        await agent.authenticate()
+        await agent.authenticate()
+        assert edge.authenticate_call_count == 1
+
+    async def test_create_call_authenticates_automatically(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        call = await agent.create_call("default", "call-1")
+        assert call.id == "call-1"
+        assert edge.authenticate_call_count == 1
+
+    async def test_create_call_does_not_double_authenticate(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        await agent.authenticate()
+        await agent.create_call("default", "call-1")
+        assert edge.authenticate_call_count == 1
+
+    async def test_join_authenticates_automatically(self, call: Call):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        async with agent.join(call):
+            assert edge.authenticate_call_count == 1
+
+    async def test_join_does_not_double_authenticate(self, call: Call):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        await agent.authenticate()
+        async with agent.join(call):
+            assert edge.authenticate_call_count == 1
