@@ -230,19 +230,19 @@ class TestLocalTransport(BaseTest):
         assert transport._output_channels == 2
         assert not transport._running
 
-    async def test_create_output_audio_track(self, mock_sounddevice):
+    async def test_create_audio_track(self, mock_sounddevice):
         """Test creating an output audio track via transport."""
         from vision_agents.core.edge.local_transport import LocalTransport
 
         transport = LocalTransport()
-        track = transport.create_output_audio_track(framerate=48000, stereo=True)
+        track = transport.create_audio_track(sample_rate=48000, stereo=True)
 
         assert track is not None
         assert track._sample_rate == 48000
         assert track._channels == 2
 
-    async def test_connect_starts_microphone(self, mock_sounddevice):
-        """Test that connect() starts microphone capture."""
+    async def test_join_starts_microphone(self, mock_sounddevice):
+        """Test that join() starts microphone capture."""
         from vision_agents.core.edge.local_transport import LocalTransport
 
         transport = LocalTransport()
@@ -251,7 +251,7 @@ class TestLocalTransport(BaseTest):
         mock_agent = MagicMock()
         mock_agent.agent_user = MagicMock()
 
-        connection = await transport.connect(mock_agent)
+        connection = await transport.join(mock_agent)
 
         assert transport._running
         assert connection is not None
@@ -259,18 +259,18 @@ class TestLocalTransport(BaseTest):
         mock_sounddevice.InputStream.return_value.start.assert_called_once()
 
         # Cleanup
-        await transport.disconnect()
+        await transport.close()
 
-    async def test_disconnect_stops_audio(self, mock_sounddevice):
-        """Test that disconnect() stops all audio."""
+    async def test_close_stops_audio(self, mock_sounddevice):
+        """Test that close() stops all audio."""
         from vision_agents.core.edge.local_transport import LocalTransport
 
         transport = LocalTransport()
 
         mock_agent = MagicMock()
-        await transport.connect(mock_agent)
+        await transport.join(mock_agent)
 
-        await transport.disconnect()
+        await transport.close()
 
         assert not transport._running
         mock_sounddevice.InputStream.return_value.stop.assert_called_once()
@@ -284,7 +284,7 @@ class TestLocalTransport(BaseTest):
         )
 
         transport = LocalTransport()
-        track = transport.create_output_audio_track()
+        track = transport.create_audio_track()
 
         await transport.publish_tracks(track, None)
 
@@ -294,8 +294,8 @@ class TestLocalTransport(BaseTest):
         # Clean up
         track.stop()
 
-    async def test_register_user_is_noop(self, mock_sounddevice):
-        """Test that register_user is a no-op."""
+    async def test_authenticate_is_noop(self, mock_sounddevice):
+        """Test that authenticate is a no-op."""
         from vision_agents.core.edge.local_transport import LocalTransport
         from vision_agents.core.edge.types import User
 
@@ -303,19 +303,19 @@ class TestLocalTransport(BaseTest):
         user = User(id="test", name="Test User")
 
         # Should not raise
-        await transport.register_user(user)
+        await transport.authenticate(user)
 
-    async def test_subscribe_to_track_returns_none_for_unknown(self, mock_sounddevice):
-        """Test that subscribe_to_track returns None for unknown track IDs."""
+    async def test_add_track_subscriber_returns_none_for_unknown(self, mock_sounddevice):
+        """Test that add_track_subscriber returns None for unknown track IDs."""
         from vision_agents.core.edge.local_transport import LocalTransport
 
         transport = LocalTransport()
-        result = transport.subscribe_to_track("some-track-id")
+        result = transport.add_track_subscriber("some-track-id")
 
         assert result is None
 
-    async def test_subscribe_to_track_returns_video_track(self, mock_sounddevice, mock_av):
-        """Test that subscribe_to_track returns video track for local-video."""
+    async def test_add_track_subscriber_returns_video_track(self, mock_sounddevice, mock_av):
+        """Test that add_track_subscriber returns video track for local-video."""
         with patch.dict("sys.modules", {"av": mock_av}):
             with patch(
                 "vision_agents.core.edge.local_transport.PYAV_AVAILABLE", True
@@ -328,20 +328,20 @@ class TestLocalTransport(BaseTest):
                     transport = LocalTransport(video_device="0")
                     transport.create_video_track()
 
-                    result = transport.subscribe_to_track("local-video")
+                    result = transport.add_track_subscriber("local-video")
 
                     assert result is not None
                     assert result._device == "0"
 
-    async def test_create_chat_channel_returns_none(self, mock_sounddevice):
-        """Test that create_chat_channel returns None."""
+    async def test_create_conversation_returns_none(self, mock_sounddevice):
+        """Test that create_conversation returns None."""
         from vision_agents.core.edge.local_transport import LocalTransport
         from vision_agents.core.edge.types import User
 
         transport = LocalTransport()
         user = User(id="test", name="Test")
 
-        result = await transport.create_chat_channel(None, user, "instructions")
+        result = await transport.create_conversation(None, user, "instructions")
 
         assert result is None
 
@@ -382,7 +382,7 @@ class TestLocalConnection(BaseTest):
 
         transport = LocalTransport()
         mock_agent = MagicMock()
-        connection = await transport.connect(mock_agent)
+        connection = await transport.join(mock_agent)
 
         await connection.close()
 

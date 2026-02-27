@@ -44,11 +44,10 @@ except ImportError:
     AIORTC_AVAILABLE = False
 
 from getstream.video.rtc.track_util import AudioFormat, PcmData
-from pyee.asyncio import AsyncIOEventEmitter
 
 from vision_agents.core.edge.edge_transport import EdgeTransport
 from vision_agents.core.edge.events import AudioReceivedEvent, TrackAddedEvent
-from vision_agents.core.edge.types import Connection, OutputAudioTrack, User
+from vision_agents.core.edge.types import Connection, User
 from vision_agents.core.events.manager import EventManager
 
 # Track type constants (matching getstream TrackType)
@@ -109,12 +108,7 @@ class LocalParticipant:
 
 
 class LocalOutputAudioTrack:
-    """
-    Audio track that plays PCM data to the speaker using sounddevice.
-
-    Uses a dedicated playback thread with blocking writes for reliable audio output.
-    Implements the OutputAudioTrack protocol for compatibility with the Agent.
-    """
+    """Audio track that plays PCM data to the speaker using sounddevice."""
 
     def __init__(
         self,
@@ -602,17 +596,10 @@ class LocalTransport(EdgeTransport):
 
     async def publish_tracks(
         self,
-        audio_track: Optional[OutputAudioTrack],
+        audio_track: Any,
         video_track: Any,
     ) -> None:
-        """
-        Publish the agent's media tracks to participants.
-
-        Audio Direction: OUTPUT - After this call, audio written to the
-        audio_track will be sent to participants (played on their speakers).
-
-        For LocalTransport, this starts the audio output stream and video capture.
-        """
+        """Publish the agent's media tracks locally."""
         if audio_track is not None and isinstance(audio_track, LocalOutputAudioTrack):
             audio_track.start()
             logger.info("Audio track published and started")
@@ -621,20 +608,13 @@ class LocalTransport(EdgeTransport):
             # Video track starts on first recv() call
             logger.info("Video track published")
 
-    def create_output_audio_track(
-        self, framerate: int = 48000, stereo: bool = True
-    ) -> OutputAudioTrack:
-        """
-        Create an audio track for the agent's outgoing audio.
-
-        Audio Direction: OUTPUT - The returned track is where the agent writes
-        TTS/speech audio. Call publish_tracks() to start sending to participants.
-
-        For LocalTransport, this creates a track that plays audio on the speaker.
-        """
+    def create_audio_track(
+        self, sample_rate: int = 48000, stereo: bool = True
+    ) -> "LocalOutputAudioTrack":
+        """Create an audio track that plays on the local speaker."""
         channels = 2 if stereo else 1
         self._audio_track = LocalOutputAudioTrack(
-            sample_rate=framerate,
+            sample_rate=sample_rate,
             channels=channels,
             blocksize=self._blocksize,
             device=self._output_device,
@@ -666,32 +646,14 @@ class LocalTransport(EdgeTransport):
         )
         return self._video_track
 
-    def subscribe_to_track(self, track_id: str) -> Optional[LocalVideoTrack]:
-        """
-        Subscribe to receive a video track.
-
-        For LocalTransport, returns the local camera video track if available.
-        """
+    def add_track_subscriber(self, track_id: str) -> Optional[LocalVideoTrack]:
+        """Return the local camera video track if available."""
         if track_id == "local-video" and self._video_track is not None:
             return self._video_track
         return None
 
-    async def connect(self, agent: "Agent", call: Any = None) -> LocalConnection:
-        """
-        Connect to a call or room.
-
-        Audio Direction: INPUT - After this call, audio from the microphone will
-        be delivered via AudioReceivedEvent on the transport's event manager.
-
-        For LocalTransport, this starts microphone capture and optionally camera.
-
-        Args:
-            agent: The agent joining
-            call: Ignored for local transport (no actual call to join)
-
-        Returns:
-            LocalConnection for managing the connection
-        """
+    async def join(self, agent: "Agent", call: Any = None, **kwargs) -> LocalConnection:
+        """Start microphone capture and optionally camera."""
         # Start microphone capture
         await self._start_audio()
 
@@ -713,21 +675,12 @@ class LocalTransport(EdgeTransport):
         self._connection = LocalConnection(self)
         return self._connection
 
-    async def disconnect(self) -> None:
-        """
-        Disconnect from the call and release all resources.
-
-        Audio Direction: Stops both INPUT and OUTPUT streams.
-        """
+    async def close(self):
+        """Stop audio/video and release all resources."""
         await self._stop_audio()
         self._connection = None
 
-    async def register_user(self, user: User) -> None:
-        """
-        Register the agent's user identity with the provider.
-
-        Audio Direction: N/A - No-op for local transport.
-        """
+    async def authenticate(self, user: User) -> None:
         pass
 
     def open_demo(self, *args: Any, **kwargs: Any) -> None:
@@ -741,16 +694,16 @@ class LocalTransport(EdgeTransport):
             "Audio is captured from your microphone and played on your speakers."
         )
 
-    async def create_chat_channel(
+    async def create_call(self, call_id: str, **kwargs) -> Any:
+        raise NotImplementedError("LocalTransport does not support create_call")
+
+    async def create_conversation(
         self, call: Any, user: User, instructions: str
     ) -> None:
-        """
-        Create a text chat channel associated with the call.
-
-        Audio Direction: N/A - Not supported for local transport.
-        """
-        # No chat support for local transport
         return None
+
+    async def send_custom_event(self, data: dict[str, Any]) -> None:
+        pass
 
 
 def list_audio_devices() -> None:
