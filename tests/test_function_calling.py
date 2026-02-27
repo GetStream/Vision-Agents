@@ -15,12 +15,12 @@ from vision_agents.plugins.openai import LLM as OpenAILLM
 class TestFunctionRegistry:
     """Test the FunctionRegistry class."""
 
-    def test_register_function(self):
+    async def test_register_function(self):
         """Test registering a function."""
         registry = FunctionRegistry()
 
         @registry.register(description="Test function")
-        def test_func(x: int, y: int = 5) -> int:
+        async def test_func(x: int, y: int = 5) -> int:
             """Test function with default parameter."""
             return x + y
 
@@ -28,60 +28,60 @@ class TestFunctionRegistry:
         assert registry._functions["test_func"].description == "Test function"
         assert len(registry._functions["test_func"].parameters) == 2
 
-    def test_call_function(self):
+    async def test_call_function(self):
         """Test calling a registered function."""
         registry = FunctionRegistry()
 
         @registry.register(description="Add two numbers")
-        def add_numbers(a: int, b: int) -> int:
+        async def add_numbers(a: int, b: int) -> int:
             """Add two numbers."""
             return a + b
 
-        result = registry.call_function("add_numbers", {"a": 5, "b": 3})
+        result = await registry.call_function("add_numbers", {"a": 5, "b": 3})
         assert result == 8
 
-    def test_call_function_with_defaults(self):
+    async def test_call_function_with_defaults(self):
         """Test calling a function with default parameters."""
         registry = FunctionRegistry()
 
         @registry.register(description="Test function with defaults")
-        def test_func(x: int, y: int = 10) -> int:
+        async def test_func(x: int, y: int = 10) -> int:
             """Test function with default parameter."""
             return x + y
 
         # Test with both parameters
-        result = registry.call_function("test_func", {"x": 5, "y": 3})
+        result = await registry.call_function("test_func", {"x": 5, "y": 3})
         assert result == 8
 
         # Test with default parameter
-        result = registry.call_function("test_func", {"x": 5})
+        result = await registry.call_function("test_func", {"x": 5})
         assert result == 15
 
-    def test_call_nonexistent_function(self):
+    async def test_call_nonexistent_function(self):
         """Test calling a non-existent function raises error."""
         registry = FunctionRegistry()
 
         with pytest.raises(KeyError):
-            registry.call_function("nonexistent", {})
+            await registry.call_function("nonexistent", {})
 
-    def test_call_function_missing_required_param(self):
+    async def test_call_function_missing_required_param(self):
         """Test calling a function with missing required parameter raises error."""
         registry = FunctionRegistry()
 
         @registry.register(description="Test function")
-        def test_func(x: int, y: int) -> int:
+        async def test_func(x: int, y: int) -> int:
             """Test function."""
             return x + y
 
         with pytest.raises(TypeError):
-            registry.call_function("test_func", {"x": 5})
+            await registry.call_function("test_func", {"x": 5})
 
-    def test_get_tool_schemas(self):
+    async def test_get_tool_schemas(self):
         """Test getting tool schemas."""
         registry = FunctionRegistry()
 
         @registry.register(description="Test function")
-        def test_func(x: int, y: int = 5) -> int:
+        async def test_func(x: int, y: int = 5) -> int:
             """Test function."""
             return x + y
 
@@ -91,37 +91,48 @@ class TestFunctionRegistry:
         assert schemas[0]["description"] == "Test function"
         assert "parameters_schema" in schemas[0]
 
-    def test_get_callable(self):
+    async def test_get_callable(self):
         """Test getting callable function."""
         registry = FunctionRegistry()
 
         @registry.register(description="Test function")
-        def test_func(x: int) -> int:
+        async def test_func(x: int) -> int:
             """Test function."""
             return x * 2
 
         callable_func = registry.get_callable("test_func")
-        assert callable_func(5) == 10
+        assert await callable_func(5) == 10
 
         with pytest.raises(KeyError):
             registry.get_callable("nonexistent")
+
+    async def test_register_sync_function_raises(self):
+        """Test that registering a sync function raises ValueError."""
+        registry = FunctionRegistry()
+
+        with pytest.raises(ValueError, match="Only async functions can be registered"):
+
+            @registry.register(description="Sync function")
+            def sync_func(x: int) -> int:
+                """Sync function."""
+                return x * 2
 
 
 class TestGlobalRegistry:
     """Test the global function registry."""
 
-    def test_global_registry(self):
+    async def test_global_registry(self):
         """Test that the global registry works."""
         # Clear any existing functions
         function_registry._functions.clear()
 
         @function_registry.register(description="Global test function")
-        def global_test_func(x: int) -> int:
+        async def global_test_func(x: int) -> int:
             """Global test function."""
             return x * 3
 
         assert "global_test_func" in function_registry._functions
-        result = function_registry.call_function("global_test_func", {"x": 4})
+        result = await function_registry.call_function("global_test_func", {"x": 4})
         assert result == 12
 
 
@@ -133,7 +144,7 @@ class TestLLMFunctionCalling:
         llm = LLM()
 
         @llm.register_function(description="Test function")
-        def test_func(x: int) -> int:
+        async def test_func(x: int) -> int:
             """Test function."""
             return x * 2
 
@@ -146,11 +157,11 @@ class TestLLMFunctionCalling:
         llm = LLM()
 
         @llm.register_function(description="Function 1")
-        def func1(x: int) -> int:
+        async def func1(x: int) -> int:
             return x + 1
 
         @llm.register_function(description="Function 2")
-        def func2(x: int) -> int:
+        async def func2(x: int) -> int:
             return x * 2
 
         functions = llm.get_available_functions()
@@ -185,7 +196,7 @@ class TestOpenAIFunctionCalling:
 
         # Register a test function
         @llm.register_function(description="Get weather for a location")
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             """Get weather information."""
             return f"Weather in {location}: Sunny, 72°F"
 
@@ -195,7 +206,7 @@ class TestOpenAIFunctionCalling:
         assert functions[0]["name"] == "get_weather"
 
         # Test function calling
-        result = llm.call_function("get_weather", {"location": "New York"})
+        result = await llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
 
     @patch("vision_agents.plugins.openai.openai_llm.AsyncOpenAI")
@@ -219,7 +230,7 @@ class TestOpenAIFunctionCalling:
 
         # Register a test function
         @llm.register_function(description="Get weather for a location")
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             """Get weather information."""
             return f"Weather in {location}: Sunny, 72°F"
 
@@ -255,7 +266,7 @@ class TestClaudeFunctionCalling:
 
         # Register a test function
         @llm.register_function(description="Get weather for a location")
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             """Get weather information."""
             return f"Weather in {location}: Sunny, 72°F"
 
@@ -265,7 +276,7 @@ class TestClaudeFunctionCalling:
         assert functions[0]["name"] == "get_weather"
 
         # Test function calling
-        result = llm.call_function("get_weather", {"location": "New York"})
+        result = await llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
 
     @patch("vision_agents.plugins.anthropic.anthropic_llm.AsyncAnthropic")
@@ -290,7 +301,7 @@ class TestClaudeFunctionCalling:
 
         # Register a test function
         @llm.register_function(description="Get weather for a location")
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             """Get weather information."""
             return f"Weather in {location}: Sunny, 72°F"
 
@@ -346,7 +357,7 @@ class TestGeminiFunctionCalling:
 
         # Register a test function
         @llm.register_function(description="Get weather for a location")
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             """Get weather information."""
             return f"Weather in {location}: Sunny, 72°F"
 
@@ -356,7 +367,7 @@ class TestGeminiFunctionCalling:
         assert functions[0]["name"] == "get_weather"
 
         # Test function calling
-        result = llm.call_function("get_weather", {"location": "New York"})
+        result = await llm.call_function("get_weather", {"location": "New York"})
         assert result == "Weather in New York: Sunny, 72°F"
 
     @patch("vision_agents.plugins.gemini.gemini_llm.Client")
@@ -402,7 +413,7 @@ class TestGeminiFunctionCalling:
 
         # Register a test function
         @llm.register_function(description="Get weather for a location")
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             """Get weather information."""
             return f"Weather in {location}: Sunny, 72°F"
 
@@ -420,11 +431,11 @@ class TestFunctionCallingIntegration:
         llm = LLM()
 
         @llm.register_function(description="Get weather")
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             return f"Weather in {location}: Sunny"
 
         @llm.register_function(description="Calculate sum")
-        def calculate_sum(a: int, b: int) -> int:
+        async def calculate_sum(a: int, b: int) -> int:
             return a + b
 
         # Test multiple function registrations
@@ -432,8 +443,8 @@ class TestFunctionCallingIntegration:
         assert len(functions) == 2
 
         # Test calling both functions
-        weather_result = llm.call_function("get_weather", {"location": "NYC"})
-        sum_result = llm.call_function("calculate_sum", {"a": 5, "b": 3})
+        weather_result = await llm.call_function("get_weather", {"location": "NYC"})
+        sum_result = await llm.call_function("calculate_sum", {"a": 5, "b": 3})
 
         assert weather_result == "Weather in NYC: Sunny"
         assert sum_result == 8
@@ -443,25 +454,25 @@ class TestFunctionCallingIntegration:
         llm = LLM()
 
         @llm.register_function(description="Test function that raises error")
-        def error_function(x: int) -> int:
+        async def error_function(x: int) -> int:
             if x < 0:
                 raise ValueError("Negative numbers not allowed")
             return x * 2
 
         # Test normal case
-        result = llm.call_function("error_function", {"x": 5})
+        result = await llm.call_function("error_function", {"x": 5})
         assert result == 10
 
         # Test error case
         with pytest.raises(ValueError):
-            llm.call_function("error_function", {"x": -5})
+            await llm.call_function("error_function", {"x": -5})
 
     async def test_function_schema_generation(self):
         """Test that function schemas are generated correctly."""
         llm = LLM()
 
         @llm.register_function(description="Complex function")
-        def complex_function(
+        async def complex_function(
             name: str, age: int, is_active: bool = True, tags: list = None
         ) -> dict:
             """Complex function with various parameter types."""
@@ -503,7 +514,7 @@ class TestConcurrentToolExecution:
         llm = LLM()
 
         @llm.register_function(description="Test function")
-        def test_func(x: int) -> int:
+        async def test_func(x: int) -> int:
             return x * 2
 
         # Test with duplicate tool calls
@@ -536,7 +547,7 @@ class TestConcurrentToolExecution:
         llm = LLM()
 
         @llm.register_function(description="Test function")
-        def test_func(x: int) -> int:
+        async def test_func(x: int) -> int:
             return x * 2
 
         # Track emitted events

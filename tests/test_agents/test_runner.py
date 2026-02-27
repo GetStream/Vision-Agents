@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from asgi_lifespan import LifespanManager
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response
 from httpx import ASGITransport, AsyncClient
 from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.events import EventManager
@@ -106,7 +106,7 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
             resp_json = resp.json()
@@ -116,36 +116,10 @@ class TestRunnerServe:
             assert resp_json["session_started_at"]
             assert agent_launcher.get_session(session_id)
 
-    async def test_start_session_current_user_stored(
-        self, agent_launcher, test_client_factory
-    ) -> None:
-        def get_current_user(user_id=Header()) -> User:
-            return User(id=user_id)
-
-        opts = ServeOptions(
-            get_current_user=get_current_user,
-        )
-        runner = Runner(launcher=agent_launcher, serve_options=opts)
-
-        async with test_client_factory(runner) as client:
-            resp = await client.post(
-                "/sessions",
-                json={"call_id": "test", "call_type": "default"},
-                headers={"User-Id": "123"},
-            )
-            assert resp.status_code == 201
-            resp_json = resp.json()
-            assert resp_json["call_id"] == "test"
-            session_id = resp_json["session_id"]
-            assert session_id
-            assert resp_json["session_started_at"]
-            session = agent_launcher.get_session(session_id)
-            assert session.created_by == User(id="123")
-
     async def test_start_session_no_permissions_fail(
         self, agent_launcher, test_client_factory
     ) -> None:
-        def can_start():
+        def can_start(call_id: str):
             raise HTTPException(status_code=403)
 
         opts = ServeOptions(can_start_session=can_start)
@@ -153,10 +127,29 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions",
-                json={"call_id": "test", "call_type": "default"},
+                "/calls/test/sessions",
+                json={"call_type": "default"},
             )
             assert resp.status_code == 403
+
+    async def test_start_session_permission_receives_call_id(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        received_call_ids: list[str] = []
+
+        def can_start(call_id: str):
+            received_call_ids.append(call_id)
+
+        opts = ServeOptions(can_start_session=can_start)
+        runner = Runner(launcher=agent_launcher, serve_options=opts)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post(
+                "/calls/my-call-123/sessions",
+                json={"call_type": "default"},
+            )
+            assert resp.status_code == 201
+            assert received_call_ids == ["my-call-123"]
 
     async def test_close_session_success(
         self, agent_launcher, test_client_factory
@@ -165,31 +158,27 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
-            resp_json = resp.json()
-            session_id = resp_json["session_id"]
+            session_id = resp.json()["session_id"]
 
-            assert agent_launcher.get_session(session_id)
+            resp = await client.delete(f"/calls/test/sessions/{session_id}")
+            assert resp.status_code == 202
 
-            resp = await client.delete(f"/sessions/{session_id}")
-            assert resp.status_code == 204
-            assert agent_launcher.get_session(session_id) is None
-
-    async def test_close_session_doesnt_exist_fails(
+    async def test_close_session_not_found(
         self, agent_launcher, test_client_factory
     ) -> None:
         runner = Runner(launcher=agent_launcher)
 
         async with test_client_factory(runner) as client:
-            resp = await client.delete("/sessions/some-id")
+            resp = await client.delete("/calls/test/sessions/some-id")
             assert resp.status_code == 404
 
     async def test_close_session_no_permissions_fail(
         self, agent_launcher, test_client_factory
     ) -> None:
-        def can_close():
+        def can_close(call_id: str):
             raise HTTPException(status_code=403)
 
         runner = Runner(
@@ -198,18 +187,8 @@ class TestRunnerServe:
         )
 
         async with test_client_factory(runner) as client:
-            resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
-            )
-            assert resp.status_code == 201
-            resp_json = resp.json()
-            session_id = resp_json["session_id"]
-
-            assert agent_launcher.get_session(session_id)
-
-            resp = await client.delete(f"/sessions/{session_id}")
+            resp = await client.delete("/calls/test/sessions/some-id")
             assert resp.status_code == 403
-            assert agent_launcher.get_session(session_id)
 
     async def test_close_session_beacon_success(
         self, agent_launcher, test_client_factory
@@ -218,31 +197,27 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
-            resp_json = resp.json()
-            session_id = resp_json["session_id"]
+            session_id = resp.json()["session_id"]
 
-            assert agent_launcher.get_session(session_id)
+            resp = await client.post(f"/calls/test/sessions/{session_id}/close")
+            assert resp.status_code == 202
 
-            resp = await client.post(f"/sessions/{session_id}/close")
-            assert resp.status_code == 200
-            assert agent_launcher.get_session(session_id) is None
-
-    async def test_close_session_beacon_doesnt_exist_fails(
+    async def test_close_session_beacon_not_found(
         self, agent_launcher, test_client_factory
     ) -> None:
         runner = Runner(launcher=agent_launcher)
 
         async with test_client_factory(runner) as client:
-            resp = await client.post("/sessions/some-id/close")
+            resp = await client.post("/calls/test/sessions/some-id/close")
             assert resp.status_code == 404
 
     async def test_close_session_beacon_no_permissions_fail(
         self, agent_launcher, test_client_factory
     ) -> None:
-        def can_close():
+        def can_close(call_id: str):
             raise HTTPException(status_code=403)
 
         runner = Runner(
@@ -251,18 +226,8 @@ class TestRunnerServe:
         )
 
         async with test_client_factory(runner) as client:
-            resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
-            )
-            assert resp.status_code == 201
-            resp_json = resp.json()
-            session_id = resp_json["session_id"]
-
-            assert agent_launcher.get_session(session_id)
-
-            resp = await client.post(f"/sessions/{session_id}/close")
+            resp = await client.post("/calls/test/sessions/some-id/close")
             assert resp.status_code == 403
-            assert agent_launcher.get_session(session_id)
 
     async def test_get_session_success(
         self, agent_launcher, test_client_factory
@@ -271,7 +236,7 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
             resp_json = resp.json()
@@ -279,7 +244,7 @@ class TestRunnerServe:
 
             assert agent_launcher.get_session(session_id)
 
-            resp = await client.get(f"/sessions/{session_id}")
+            resp = await client.get(f"/calls/test/sessions/{session_id}")
             assert resp.status_code == 200
             resp_json = resp.json()
             assert resp_json["session_id"] == session_id
@@ -289,7 +254,7 @@ class TestRunnerServe:
     async def test_get_session_no_permissions_fail(
         self, agent_launcher, test_client_factory
     ) -> None:
-        def can_view():
+        def can_view(call_id: str):
             raise HTTPException(status_code=403)
 
         runner = Runner(
@@ -299,7 +264,7 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
             resp_json = resp.json()
@@ -307,7 +272,7 @@ class TestRunnerServe:
 
             assert agent_launcher.get_session(session_id)
 
-            resp = await client.get(f"/sessions/{session_id}")
+            resp = await client.get(f"/calls/test/sessions/{session_id}")
             assert resp.status_code == 403
 
     async def test_get_session_doesnt_exist_404(
@@ -316,7 +281,7 @@ class TestRunnerServe:
         runner = Runner(launcher=agent_launcher)
 
         async with test_client_factory(runner) as client:
-            resp = await client.get("/sessions/123123")
+            resp = await client.get("/calls/test/sessions/123123")
             assert resp.status_code == 404
 
     async def test_get_session_metrics_success(
@@ -326,7 +291,7 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
             resp_json = resp.json()
@@ -341,7 +306,11 @@ class TestRunnerServe:
             session.agent.metrics.llm_input_tokens__total.inc(250)
             session.agent.metrics.llm_output_tokens__total.inc(250)
 
-            resp = await client.get(f"/sessions/{session_id}/metrics")
+            await agent_launcher.registry.update_metrics(
+                "test", session_id, session.agent.metrics.to_dict()
+            )
+
+            resp = await client.get(f"/calls/test/sessions/{session_id}/metrics")
             assert resp.status_code == 200
             resp_json = resp.json()
             assert resp_json["session_id"] == session_id
@@ -362,23 +331,23 @@ class TestRunnerServe:
         runner = Runner(launcher=agent_launcher)
 
         async with test_client_factory(runner) as client:
-            resp = await client.get("/sessions/123123/metrics")
+            resp = await client.get("/calls/test/sessions/123123/metrics")
             assert resp.status_code == 404
 
     async def test_get_session_metrics_no_permissions_fail(
         self, agent_launcher, test_client_factory
     ) -> None:
-        def can_view_metrics():
+        def deny_view_metrics(call_id: str):
             raise HTTPException(status_code=403)
 
         runner = Runner(
             launcher=agent_launcher,
-            serve_options=ServeOptions(can_view_metrics=can_view_metrics),
+            serve_options=ServeOptions(can_view_metrics=deny_view_metrics),
         )
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
             resp_json = resp.json()
@@ -393,7 +362,7 @@ class TestRunnerServe:
             session.agent.metrics.llm_input_tokens__total.inc(250)
             session.agent.metrics.llm_output_tokens__total.inc(250)
 
-            resp = await client.get(f"/sessions/{session_id}/metrics")
+            resp = await client.get(f"/calls/test/sessions/{session_id}/metrics")
             assert resp.status_code == 403
 
     async def test_fastapi_bypass(self, agent_launcher, test_client_factory) -> None:
@@ -413,6 +382,75 @@ class TestRunnerServe:
             assert resp.status_code == 200
             assert resp.content.decode() == "Hello world"
 
+    async def test_close_session_permission_receives_call_id(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        received_call_ids: list[str] = []
+
+        def can_close(call_id: str):
+            received_call_ids.append(call_id)
+
+        runner = Runner(
+            launcher=agent_launcher,
+            serve_options=ServeOptions(can_close_session=can_close),
+        )
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post(
+                "/calls/my-call-456/sessions", json={"call_type": "default"}
+            )
+            assert resp.status_code == 201
+            session_id = resp.json()["session_id"]
+
+            await client.delete(f"/calls/my-call-456/sessions/{session_id}")
+            assert received_call_ids == ["my-call-456"]
+
+    async def test_view_session_permission_receives_call_id(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        received_call_ids: list[str] = []
+
+        def can_view(call_id: str):
+            received_call_ids.append(call_id)
+
+        runner = Runner(
+            launcher=agent_launcher,
+            serve_options=ServeOptions(can_view_session=can_view),
+        )
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post(
+                "/calls/my-call-789/sessions", json={"call_type": "default"}
+            )
+            assert resp.status_code == 201
+            session_id = resp.json()["session_id"]
+
+            await client.get(f"/calls/my-call-789/sessions/{session_id}")
+            assert received_call_ids == ["my-call-789"]
+
+    async def test_view_metrics_permission_receives_call_id(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        received_call_ids: list[str] = []
+
+        def can_view_m(call_id: str):
+            received_call_ids.append(call_id)
+
+        runner = Runner(
+            launcher=agent_launcher,
+            serve_options=ServeOptions(can_view_metrics=can_view_m),
+        )
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post(
+                "/calls/my-call-abc/sessions", json={"call_type": "default"}
+            )
+            assert resp.status_code == 201
+            session_id = resp.json()["session_id"]
+
+            await client.get(f"/calls/my-call-abc/sessions/{session_id}/metrics")
+            assert received_call_ids == ["my-call-abc"]
+
     async def test_start_session_max_concurrent_sessions_exceeded(
         self, agent_launcher_factory, test_client_factory
     ) -> None:
@@ -421,15 +459,17 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test-1", "call_type": "default"}
+                "/calls/test-1/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
 
             resp = await client.post(
-                "/sessions", json={"call_id": "test-2", "call_type": "default"}
+                "/calls/test-2/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 429
-            assert "Reached maximum concurrent sessions of" in resp.json()["detail"]
+            assert (
+                resp.json()["detail"] == "Reached maximum number of concurrent sessions"
+            )
 
     async def test_start_session_max_sessions_per_call_exceeded(
         self, agent_launcher_factory, test_client_factory
@@ -439,12 +479,15 @@ class TestRunnerServe:
 
         async with test_client_factory(runner) as client:
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 201
 
             resp = await client.post(
-                "/sessions", json={"call_id": "test", "call_type": "default"}
+                "/calls/test/sessions", json={"call_type": "default"}
             )
             assert resp.status_code == 429
-            assert "Reached maximum sessions per call of" in resp.json()["detail"]
+            assert (
+                resp.json()["detail"]
+                == "Reached maximum number of sessions for this call"
+            )

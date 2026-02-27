@@ -15,7 +15,7 @@ class TestXAITools:
         llm = XAILLM(model="grok-4-latest", api_key=os.getenv("XAI_API_KEY"))
 
         @llm.register_function()
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             """Get the weather for a location."""
             return f"The weather in {location} is sunny."
 

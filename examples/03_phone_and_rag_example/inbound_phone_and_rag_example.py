@@ -80,7 +80,6 @@ async def twilio_voice_webhook(
 
     async def prepare_call():
         agent = await create_agent()
-        await agent.create_user()
 
         phone_number = data.from_number or "unknown"
         sanitized_number = (
@@ -92,7 +91,7 @@ async def twilio_voice_webhook(
         phone_user = User(
             name=f"Call from {phone_number}", id=f"phone-{sanitized_number}"
         )
-        await agent.edge.create_user(user=phone_user)
+        await agent.edge.create_users([phone_user])
 
         stream_call = await agent.create_call("default", call_id=call_id)
         return agent, phone_user, stream_call

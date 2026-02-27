@@ -179,7 +179,7 @@ class TestOpenRouterLLM:
         calls: list[str] = []
 
         @llm.register_function(description="Probe tool that records invocation")
-        def probe_tool(ping: str) -> str:
+        async def probe_tool(ping: str) -> str:
             calls.append(ping)
             return f"probe_ok:{ping}"
 
@@ -203,7 +203,7 @@ class TestOpenRouterLLM:
         calls: list[str] = []
 
         @llm.register_function(description="Probe tool that records invocation")
-        def probe_tool(ping: str) -> str:
+        async def probe_tool(ping: str) -> str:
             calls.append(ping)
             return f"probe_ok:{ping}"
 
