@@ -213,5 +213,5 @@ async def ready(launcher: AgentLauncher = Depends(get_launcher)) -> Response:
         return Response(status_code=200)
     else:
         raise HTTPException(
-            status_code=400, detail="Server is not ready to accept requests"
+            status_code=503, detail="Server is not ready to accept requests"
         )
