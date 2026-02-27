@@ -644,8 +644,6 @@ class Agent:
             # run start on all subclasses
             await self._apply("start")
 
-            await self.create_user()
-
             # Connect to MCP servers if manager is available
             if self.mcp_manager:
                 with self.span("mcp_manager.connect_all"):
@@ -656,6 +654,8 @@ class Agent:
             if _is_realtime_llm(self.llm):
                 await self.llm.connect()
 
+            # Authenticate an agent before calling edge.join()
+            await self.authenticate()
             with self.span("edge.join"):
                 self._connection = await self.edge.join(self, call)
             self.logger.info(f"🤖 Agent joined call: {call.id}")
@@ -936,20 +936,26 @@ class Agent:
             clear_call_context(self._call_context_token)
             self._call_context_token = None
 
-    async def create_user(self) -> None:
-        """Create the agent user in the edge provider, if required."""
+    async def authenticate(self) -> None:
+        """Authenticate the agent user with the edge provider.
 
+        Idempotent — safe to call multiple times.
+        """
         if self._agent_user_initialized:
             return None
 
-        with self.span("edge.create_user"):
-            await self.edge.create_user(self.agent_user)
+        with self.span("edge.authenticate"):
+            await self.edge.authenticate(self.agent_user)
             self._agent_user_initialized = True
 
         return None
 
     async def create_call(self, call_type: str, call_id: str) -> Call:
-        """Shortcut for creating a call/room etc."""
+        """Create a call in the edge provider.
+
+        Automatically authenticates if not already done.
+        """
+        await self.authenticate()
         call = await self.edge.create_call(
             call_id=call_id, agent_user_id=self.agent_user.id, call_type=call_type
         )

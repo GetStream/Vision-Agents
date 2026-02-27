@@ -164,7 +164,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self.events.register_events_from_module(getstream.models, "call.")
         self.conversation: Optional[StreamConversation] = None
         self.channel_type = "messaging"
-        self.agent_user_id: str | None = None
+        self._agent_user_id: str | None = None
         # Track mapping: (user_id, session_id, track_type_int) -> {"track_id": str, "published": bool}
         # track_type_int is from TrackType enum (e.g., TrackType.TRACK_TYPE_AUDIO)
         self._track_map: dict = {}
@@ -221,7 +221,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         webrtc_track_kind = self._get_webrtc_kind(track_type_int)
 
         # Skip processing the agent's own tracks - we don't subscribe to them
-        is_agent_track = user_id == self.agent_user_id
+        is_agent_track = user_id == self._agent_user_id
         if is_agent_track:
             logger.debug(
                 f'Skipping agent\'s own track: "{track_type.name}" from {user_id}'
@@ -364,11 +364,15 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self.conversation = StreamConversation(instructions, [], channel)
         return self.conversation
 
-    async def create_user(self, user: User):
-        self.agent_user_id = user.id
-        return await self.client.create_user(
-            name=user.name, id=user.id, image=user.image
-        )
+    def _require_authenticated(self) -> None:
+        if self._agent_user_id is None:
+            raise RuntimeError(
+                "StreamEdge is not authenticated. Call authenticate() first."
+            )
+
+    async def authenticate(self, user: User) -> None:
+        self._agent_user_id = user.id
+        await self.client.create_user(name=user.name, id=user.id, image=user.image)
 
     async def create_users(self, users: list[User]):
         """Create multiple users in a single API call."""
@@ -379,9 +383,10 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
     async def create_call(self, call_id: str, **kwargs) -> StreamCall:
         """Shortcut for creating a call/room etc."""
+        self._require_authenticated()
         call_type = kwargs.get("call_type", "default")
         call = self.client.video.call(call_type, call_id)
-        await call.get_or_create(data={"created_by_id": self.agent_user_id})
+        await call.get_or_create(data={"created_by_id": self._agent_user_id})
         return call
 
     async def join(
@@ -509,13 +514,12 @@ class StreamEdge(EdgeTransport[StreamCall]):
         """
         if self._call is None:
             raise RuntimeError("Cannot send custom event: not connected to a call")
-        await self._call.send_call_event(user_id=self.agent_user_id, custom=data)
+        await self._call.send_call_event(user_id=self._agent_user_id, custom=data)
 
     @tracer.start_as_current_span("stream_edge.open_demo")
     async def open_demo_for_agent(
         self, agent: "Agent", call_type: str, call_id: str
     ) -> str:
-        await agent.create_user()
         call = await agent.create_call(call_type, call_id)
 
         return await self.open_demo(call)
@@ -535,7 +539,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         channel = client.chat.channel(self.channel_type, call.id)
         response = await channel.get_or_create(
             data=ChannelInput(
-                created_by_id=self.agent_user_id,
+                created_by_id=self._agent_user_id,
                 members=[
                     ChannelMemberRequest(
                         user_id=human_id,
