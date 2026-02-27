@@ -168,6 +168,8 @@ class AgentLauncher:
         self._maintenance_task: Optional[asyncio.Task] = None
         self._warmed_up: bool = False
         self._sessions: dict[str, AgentSession] = {}
+        # A set to keep the references for AgentSession cleanup tasks
+        self._session_cleanup_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         """
@@ -206,6 +208,10 @@ class AgentLauncher:
                 await result
             except Exception as exc:
                 logger.error(f"Failed to cancel the agent task: {exc}")
+
+        if self._session_cleanup_tasks:
+            await asyncio.gather(*self._session_cleanup_tasks, return_exceptions=True)
+            self._session_cleanup_tasks.clear()
 
         await self._registry.stop()
         logger.debug("AgentLauncher stopped")
@@ -330,11 +336,16 @@ class AgentLauncher:
                 session_ = self._sessions.pop(session_id_, None)
                 if session_ is not None:
                     try:
-                        asyncio.get_running_loop().create_task(
-                            self._registry.remove(call_id_, session_id_)
+                        t = asyncio.create_task(
+                            self._remove_from_registry_safe(call_id_, session_id_)
                         )
+                        self._session_cleanup_tasks.add(t)
+                        t.add_done_callback(self._session_cleanup_tasks.discard)
                     except RuntimeError:
-                        pass
+                        logger.warning(
+                            "Event loop is shutting down; cannot remove session %s from registry",
+                            session_id_,
+                        )
 
             session = AgentSession(
                 agent=agent,
@@ -407,6 +418,15 @@ class AgentLauncher:
     ) -> SessionInfo | None:
         """Look up session info from the shared registry (any node)."""
         return await self._registry.get(call_id, session_id)
+
+    async def _remove_from_registry_safe(self, call_id: str, session_id: str) -> None:
+        """
+        Remove a session from the shared registry (any node) logging the exception.
+        """
+        try:
+            await self._registry.remove(call_id, session_id)
+        except Exception:
+            logger.exception("Failed to remove session %s from registry", session_id)
 
     async def _warmup_agent(self, agent: "Agent") -> None:
         """
