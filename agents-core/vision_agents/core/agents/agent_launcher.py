@@ -333,6 +333,7 @@ class AgentLauncher:
             try:
                 await self._registry.register(call_id, session.id)
             except Exception:
+                logger.exception(f"Failed to register session with id {session.id}")
                 await self.close_session(session.id)
                 raise
             task.add_done_callback(partial(_finalizer, agent.id, call_id))
