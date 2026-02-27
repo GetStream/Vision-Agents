@@ -7,7 +7,7 @@ from types import FunctionType
 from typing import Any, Optional
 
 from dataclasses_json import DataClassJsonMixin
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from vision_agents.core.edge.types import Participant
 
 
 class ConnectionState(Enum):

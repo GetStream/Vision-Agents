@@ -1,0 +1,18 @@
+[project]
+name = "huggingface-inference-api-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+  "python-dotenv>=1.0",
+  "vision-agents-plugins-huggingface",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-deepgram",
+  "vision-agents",
+]
+
+[tool.uv.sources]
+"vision-agents-plugins-huggingface" = {path = "../..", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../../getstream", editable=true}
+"vision-agents-plugins-deepgram" = {path = "../../../deepgram", editable=true}
+"vision-agents" = {path = "../../../../agents-core", editable=true}

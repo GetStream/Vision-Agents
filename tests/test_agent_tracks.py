@@ -13,9 +13,8 @@ from typing import Optional
 from unittest.mock import Mock
 
 import aiortc
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
 from vision_agents.core.agents.agents import Agent
-from vision_agents.core.edge.types import Participant, User
+from vision_agents.core.edge.types import Participant, TrackType, User
 from vision_agents.core.llm.llm import LLM, VideoLLM
 from vision_agents.core.processors.base_processor import (
     VideoProcessor,
@@ -113,16 +112,15 @@ class MockEdge:
         self.add_track_subscriber_calls = []
         self.client = Mock()
 
-    async def create_user(self, user):
-        """Mock create user"""
-        pass
+    async def authenticate(self, user) -> None:
+        self._authenticated = True
 
     def add_track_subscriber(self, track_id):
         """Mock adding a track subscriber"""
         self.add_track_subscriber_calls.append(track_id)
         return MockVideoTrack(track_id)
 
-    def create_audio_track(self, framerate=48000, stereo=True):
+    def create_audio_track(self, sample_rate=48000, stereo=True):
         """Mock creating audio track"""
         return Mock(id="audio_track_1")
 
@@ -178,11 +176,11 @@ class TestAgentTrackHandling:
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
 
         # Simulate adding a video track
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         await agent._on_track_added(
             track_id="video_track_1",
-            track_type=TrackType.TRACK_TYPE_VIDEO,
+            track_type=TrackType.VIDEO,
             participant=participant,
         )
 
@@ -192,7 +190,7 @@ class TestAgentTrackHandling:
         # Verify track was added
         assert "video_track_1" in agent._active_video_tracks
         track_info = agent._active_video_tracks["video_track_1"]
-        assert track_info.type == TrackType.TRACK_TYPE_VIDEO
+        assert track_info.type == TrackType.VIDEO
         assert track_info.priority == 0  # Regular video has priority 0
 
         # Verify processor received the track
@@ -213,12 +211,12 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         # Add regular video track first
         await agent._on_track_added(
             track_id="video_track_1",
-            track_type=TrackType.TRACK_TYPE_VIDEO,
+            track_type=TrackType.VIDEO,
             participant=participant,
         )
 
@@ -235,7 +233,7 @@ class TestAgentTrackHandling:
         # Now add screenshare track
         await agent._on_track_added(
             track_id="screenshare_track_1",
-            track_type=TrackType.TRACK_TYPE_SCREEN_SHARE,
+            track_type=TrackType.SCREEN_SHARE,
             participant=participant,
         )
 
@@ -269,18 +267,18 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         # Add two video tracks
         await agent._on_track_added(
             track_id="video_track_1",
-            track_type=TrackType.TRACK_TYPE_VIDEO,
+            track_type=TrackType.VIDEO,
             participant=participant,
         )
 
         await agent._on_track_added(
             track_id="screenshare_track_1",
-            track_type=TrackType.TRACK_TYPE_SCREEN_SHARE,
+            track_type=TrackType.SCREEN_SHARE,
             participant=participant,
         )
 
@@ -295,7 +293,7 @@ class TestAgentTrackHandling:
         # Remove screenshare track
         await agent._on_track_removed(
             track_id="screenshare_track_1",
-            track_type=TrackType.TRACK_TYPE_SCREEN_SHARE,
+            track_type=TrackType.SCREEN_SHARE,
             participant=participant,
         )
 
@@ -323,11 +321,11 @@ class TestAgentTrackHandling:
             llm=video_llm, processors=[processor1, processor2]
         )
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         await agent._on_track_added(
             track_id="video_track_1",
-            track_type=TrackType.TRACK_TYPE_VIDEO,
+            track_type=TrackType.VIDEO,
             participant=participant,
         )
 
@@ -347,12 +345,12 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=video_llm, processors=[video_processor])
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         # Add regular video track
         await agent._on_track_added(
             track_id="video_track_1",
-            track_type=TrackType.TRACK_TYPE_VIDEO,
+            track_type=TrackType.VIDEO,
             participant=participant,
         )
 
@@ -385,11 +383,11 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=video_llm, processors=[], tts=mock_tts)
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         await agent._on_track_added(
             track_id="video_track_1",
-            track_type=TrackType.TRACK_TYPE_VIDEO,
+            track_type=TrackType.VIDEO,
             participant=participant,
         )
 
@@ -408,11 +406,11 @@ class TestAgentTrackHandling:
 
         agent = self.create_mock_agent(llm=regular_llm, processors=[video_processor])
 
-        participant = Participant(original=None, user_id="user-1")
+        participant = Participant(original=None, user_id="user-1", id="user-1")
 
         await agent._on_track_added(
             track_id="video_track_1",
-            track_type=TrackType.TRACK_TYPE_VIDEO,
+            track_type=TrackType.VIDEO,
             participant=participant,
         )
 

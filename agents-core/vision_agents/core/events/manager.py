@@ -6,7 +6,7 @@ import typing
 import uuid
 from typing import Any, Deque, Dict, Optional, Union, get_args, get_origin
 
-from .base import ExceptionEvent
+from .base import BaseEvent, ExceptionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +128,12 @@ class EventManager:
         """
         self._queue: Deque[Any] = collections.deque([])
         self._events: Dict[str, type] = {}
-        self._handlers: Dict[type, typing.List[typing.Callable]] = {}
+        self._handlers: Dict[str, typing.List[typing.Callable]] = {}
         self._modules: Dict[str, typing.List[type]] = {}
         self._ignore_unknown_events = ignore_unknown_events
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
-        self._silent_events: set[type] = set()
+        self._silent_events: set[str] = set()
         self._handler_tasks: Dict[uuid.UUID, asyncio.Task[Any]] = {}
         self._received_event = asyncio.Event()
 
@@ -142,9 +142,13 @@ class EventManager:
         # Start background processing task
         self._start_processing_task()
 
-    def register(self, event_class, ignore_not_compatible=False):
+    def register(
+        self,
+        *event_classes: type[BaseEvent] | type[ExceptionEvent],
+        ignore_not_compatible: bool = False,
+    ):
         """
-        Register an event class for use with the event manager.
+        Register event classes for use with the event manager.
 
         Event classes must:
         - Have a name ending with 'Event'
@@ -156,31 +160,31 @@ class EventManager:
             from vision_agents.core.stt.events import STTTranscriptEvent
 
             manager = EventManager()
-            manager.register(VADSpeechStartEvent)
-            manager.register(STTTranscriptEvent)
+            manager.register(VADSpeechStartEvent, STTTranscriptEvent)
             ```
 
         Args:
-            event_class: The event class to register
+            event_classes: The event classes to register
             ignore_not_compatible (bool): If True, log warning instead of raising error
                 for incompatible classes. Defaults to False.
 
         Raises:
             ValueError: If event_class doesn't meet requirements and ignore_not_compatible is False
         """
-        if event_class.__name__.endswith("Event") and hasattr(event_class, "type"):
-            self._events[event_class.type] = event_class
-            logger.debug(f"Registered new event {event_class} - {event_class.type}")
-        elif event_class.__name__.endswith("BaseEvent"):
-            return
-        elif not ignore_not_compatible:
-            raise ValueError(
-                f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
-            )
-        else:
-            logger.warning(
-                f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
-            )
+        for event_class in event_classes:
+            if event_class.__name__.endswith("Event") and hasattr(event_class, "type"):
+                self._events[event_class.type] = event_class
+                logger.debug(f"Registered new event {event_class} - {event_class.type}")
+            elif event_class.__name__.endswith("BaseEvent"):
+                continue
+            elif not ignore_not_compatible:
+                raise ValueError(
+                    f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
+                )
+            else:
+                logger.warning(
+                    f"Provide valid class that ends on '*Event' and 'type' attribute: {event_class}"
+                )
 
     def merge(self, em: "EventManager"):
         # Stop the processing task in the merged manager
@@ -286,6 +290,12 @@ class EventManager:
             except ValueError:
                 pass
 
+    def has_subscribers(
+        self, event_class: type[BaseEvent] | type[ExceptionEvent]
+    ) -> bool:
+        """Check whether any handler is registered for the given event class."""
+        return bool(self._handlers.get(event_class.type))
+
     def subscribe(self, function):
         """
         Subscribe a function to handle specific event types.
@@ -319,14 +329,17 @@ class EventManager:
         """
         subscribed = False
         is_union = False
-        annotations = typing.get_type_hints(function)
+        #  Get the input params annotations ignoring the return types.
+        params_annotations = {
+            k: v for k, v in typing.get_type_hints(function).items() if k != "return"
+        }
 
         if not asyncio.iscoroutinefunction(function):
             raise RuntimeError(
                 "Handlers must be coroutines. Use async def handler(event: EventType):"
             )
 
-        for name, event_class in annotations.items():
+        for name, event_class in params_annotations.items():
             origin = get_origin(event_class)
             events: typing.List[type] = []
 
@@ -413,7 +426,7 @@ class EventManager:
         else:
             raise RuntimeError(f"Event not registered {event}")
 
-    def silent(self, event_class):
+    def silent(self, event_class: type[BaseEvent]):
         """
         Silence logging for an event class from being processed.
 

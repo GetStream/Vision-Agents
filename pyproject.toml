@@ -24,6 +24,7 @@ vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
 vision-agents-plugins-heygen = { workspace = true }
+vision-agents-plugins-lemonslice = { workspace = true }
 vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
@@ -33,6 +34,7 @@ vision-agents-plugins-decart = { workspace = true }
 vision-agents-plugins-twilio = { workspace = true }
 vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
+vision-agents-plugins-mistral = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -63,6 +65,7 @@ members = [
     "plugins/smart_turn",
     "plugins/wizper",
     "plugins/heygen",
+    "plugins/lemonslice",
     "plugins/inworld",
     "plugins/vogent",
     "plugins/moondream",
@@ -72,6 +75,7 @@ members = [
     "plugins/twilio",
     "plugins/turbopuffer",
     "plugins/nvidia",
+    "plugins/mistral",
 ]
 exclude = [
     "**/__pycache__",
@@ -107,6 +111,9 @@ dev = [
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
     "asgi-lifespan>=2.1.0",
+    "mistralai[realtime]>=1.12.0",
+    "testcontainers[redis]>=4.0.0",
+    "redis[hiredis]>=5.0.0",
 ]
 
 [tool.mypy]

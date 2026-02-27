@@ -133,7 +133,7 @@ from dotenv import load_dotenv
 from vision_agents.core import User, Agent, Runner
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, getstream, elevenlabs, moondream
-from vision_agents.core.events import CallSessionParticipantJoinedEvent
+from vision_agents.plugins.getstream import CallSessionParticipantJoinedEvent
 
 load_dotenv()
 
@@ -156,7 +156,6 @@ async def create_agent(**kwargs) -> Agent:
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    await agent.create_user()
     call = await agent.create_call(call_type, call_id)
 
     @agent.events.subscribe
@@ -335,5 +334,3 @@ locally on CUDA devices.
 - [Moondream Documentation](https://docs.moondream.ai/)
 - [Vision Agents Documentation](https://visionagents.ai/)
 - [GitHub Repository](https://github.com/GetStream/Vision-Agents)
-
-

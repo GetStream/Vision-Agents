@@ -1,22 +1,22 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import Response
 from vision_agents.core import AgentLauncher
-from vision_agents.core.agents.agent_launcher import AgentSession
-from vision_agents.core.agents.exceptions import SessionLimitExceeded
+from vision_agents.core.agents.exceptions import (
+    InvalidCallId,
+    MaxConcurrentSessionsExceeded,
+    MaxSessionsPerCallExceeded,
+)
 
 from .dependencies import (
     can_close_session,
     can_start_session,
     can_view_metrics,
     can_view_session,
-    get_current_user,
     get_launcher,
-    get_session,
 )
 from .models import (
     GetAgentSessionMetricsResponse,
@@ -46,7 +46,7 @@ router = APIRouter()
 
 
 @router.post(
-    "/sessions",
+    "/calls/{call_id}/sessions",
     response_model=StartSessionResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Join call with an agent",
@@ -56,12 +56,33 @@ router = APIRouter()
             "description": "Session created successfully",
             "model": StartSessionResponse,
         },
+        400: {
+            "description": "Invalid call_id",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Invalid call_id 'bad!id': must contain only a-z, 0-9, _ and -",
+                    }
+                }
+            },
+        },
         429: {
             "description": "Session limits exceeded",
             "content": {
                 "application/json": {
-                    "example": {
-                        "detail": "Reached maximum concurrent sessions of X",
+                    "examples": {
+                        "concurrent": {
+                            "summary": "Max concurrent sessions exceeded",
+                            "value": {
+                                "detail": "Reached maximum number of concurrent sessions",
+                            },
+                        },
+                        "per_call": {
+                            "summary": "Max sessions per call exceeded",
+                            "value": {
+                                "detail": "Reached maximum number of sessions for this call",
+                            },
+                        },
                     }
                 }
             },
@@ -70,23 +91,36 @@ router = APIRouter()
     dependencies=[Depends(can_start_session)],
 )
 async def start_session(
+    call_id: str,
     request: StartSessionRequest,
     launcher: AgentLauncher = Depends(get_launcher),
-    user: Any = Depends(get_current_user),
 ) -> StartSessionResponse:
     """Start an agent and join a call."""
 
     try:
         session = await launcher.start_session(
-            call_id=request.call_id, call_type=request.call_type, created_by=user
+            call_id=call_id, call_type=request.call_type
         )
-    except SessionLimitExceeded as e:
-        raise HTTPException(status_code=429, detail=str(e)) from e
+    except InvalidCallId as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid call_id: must contain only a-z, 0-9, _ and -",
+        ) from e
+    except MaxConcurrentSessionsExceeded as e:
+        raise HTTPException(
+            status_code=429,
+            detail="Reached maximum number of concurrent sessions",
+        ) from e
+    except MaxSessionsPerCallExceeded as e:
+        raise HTTPException(
+            status_code=429,
+            detail="Reached maximum number of sessions for this call",
+        ) from e
     except Exception as e:
         logger.exception("Failed to start agent")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start agent: {str(e)}",
+            detail="Failed to start agent",
         ) from e
 
     return StartSessionResponse(
@@ -96,140 +130,126 @@ async def start_session(
     )
 
 
+async def _close_session(launcher: AgentLauncher, call_id: str, session_id: str):
+    info = await launcher.get_session_info(call_id, session_id)
+    if info is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session with id '{session_id}' not found",
+        )
+    await launcher.request_close_session(call_id, session_id)
+
+
 @router.delete(
-    "/sessions/{session_id}",
-    summary="Close the agent session and remove it from call",
+    "/calls/{call_id}/sessions/{session_id}",
+    summary="Request closure of an agent session",
     dependencies=[Depends(can_close_session)],
 )
 async def close_session(
+    call_id: str,
     session_id: str,
     launcher: AgentLauncher = Depends(get_launcher),
 ) -> Response:
-    """
-    Stop an agent and remove it from a call.
-    """
+    """Request closure of an agent session.
 
-    closed = await launcher.close_session(session_id)
-    if not closed:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session with id '{session_id}' not found",
-        )
-
-    return Response(status_code=204)
+    Sets a close flag in the registry. The owning node will close the
+    session on its next maintenance cycle.
+    """
+    await _close_session(launcher, call_id, session_id)
+    return Response(status_code=202)
 
 
 @router.post(
-    "/sessions/{session_id}/close",
-    summary="Close the agent session via sendBeacon (POST alternative to DELETE).",
-    description="Alternative endpoint for agent leave via sendBeacon. "
-    "sendBeacon only supports POST requests.",
+    "/calls/{call_id}/sessions/{session_id}/close",
+    summary="Request closure of an agent session (sendBeacon alternative)",
+    description="Alternative endpoint for requesting session closure via the "
+    "browser sendBeacon API, which only supports POST requests.",
     dependencies=[Depends(can_close_session)],
 )
 async def close_session_beacon(
+    call_id: str,
     session_id: str,
     launcher: AgentLauncher = Depends(get_launcher),
 ) -> Response:
-    """
-    Stop an agent via sendBeacon (POST alternative to DELETE).
-    """
+    """Request closure of an agent session via sendBeacon.
 
-    closed = await launcher.close_session(session_id)
-    if not closed:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session with id '{session_id}' not found",
-        )
-
-    return Response(status_code=200)
+    Sets a close flag in the registry. The owning node will close the
+    session on its next maintenance cycle.
+    """
+    await _close_session(launcher, call_id, session_id)
+    return Response(status_code=202)
 
 
 @router.get(
-    "/sessions/{session_id}",
+    "/calls/{call_id}/sessions/{session_id}",
     response_model=GetAgentSessionResponse,
     summary="Get info about a running agent session",
     dependencies=[Depends(can_view_session)],
 )
 async def get_session_info(
+    call_id: str,
     session_id: str,
-    session: Optional[AgentSession] = Depends(get_session),
+    launcher: AgentLauncher = Depends(get_launcher),
 ) -> GetAgentSessionResponse:
-    """
-    Get info about a running agent session.
-    """
+    """Get info about a running agent session."""
 
-    if session is None:
+    info = await launcher.get_session_info(call_id, session_id)
+    if info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session with id '{session_id}' not found",
         )
 
-    response = GetAgentSessionResponse(
-        session_id=session.id,
-        call_id=session.call_id,
-        session_started_at=session.started_at,
+    return GetAgentSessionResponse(
+        session_id=info.session_id,
+        call_id=info.call_id,
+        session_started_at=datetime.fromtimestamp(info.started_at, tz=timezone.utc),
     )
-    return response
 
 
 @router.get(
-    "/sessions/{session_id}/metrics",
+    "/calls/{call_id}/sessions/{session_id}/metrics",
     response_model=GetAgentSessionMetricsResponse,
-    summary="Get info about a running agent session",
+    summary="Get metrics for a running agent session",
     dependencies=[Depends(can_view_metrics)],
 )
 async def get_session_metrics(
+    call_id: str,
     session_id: str,
-    session: Optional[AgentSession] = Depends(get_session),
+    launcher: AgentLauncher = Depends(get_launcher),
 ) -> GetAgentSessionMetricsResponse:
-    """
-    Get metrics for the running agent session.
-    """
+    """Get metrics for a running agent session from the registry."""
 
-    if session is None:
+    info = await launcher.get_session_info(call_id, session_id)
+    if info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session with id '{session_id}' not found",
         )
 
-    metrics_dict = session.agent.metrics.to_dict(
-        fields=[
-            "llm_latency_ms__avg",
-            "llm_time_to_first_token_ms__avg",
-            "llm_input_tokens__total",
-            "llm_output_tokens__total",
-            "stt_latency_ms__avg",
-            "tts_latency_ms__avg",
-            "realtime_audio_input_duration_ms__total",
-            "realtime_audio_output_duration_ms__total",
-        ]
+    return GetAgentSessionMetricsResponse(
+        session_id=info.session_id,
+        call_id=info.call_id,
+        session_started_at=datetime.fromtimestamp(info.started_at, tz=timezone.utc),
+        metrics_generated_at=datetime.fromtimestamp(
+            info.metrics_updated_at, tz=timezone.utc
+        ),
+        metrics=info.metrics,
     )
-    response = GetAgentSessionMetricsResponse(
-        session_id=session.id,
-        call_id=session.call_id,
-        session_started_at=session.started_at,
-        metrics_generated_at=datetime.now(timezone.utc),
-        metrics=metrics_dict,
-    )
-    return response
 
 
 @router.get("/health")
 async def health() -> Response:
-    """
-    Check if the server is alive.
-    """
+    """Check if the server is alive."""
     return Response(status_code=200)
 
 
 @router.get("/ready")
 async def ready(launcher: AgentLauncher = Depends(get_launcher)) -> Response:
-    """
-    Check if the server is ready to spawn new agents.
-    """
+    """Check if the server is ready to spawn new agents."""
     if launcher.ready:
         return Response(status_code=200)
     else:
         raise HTTPException(
-            status_code=400, detail="Server is not ready to accept requests"
+            status_code=503, detail="Server is not ready to accept requests"
         )

@@ -55,7 +55,7 @@ async def ensure_model(path: str, url: str) -> str:
         The path to the model file
     """
 
-    if not os.path.exists(path):
+    if not await asyncio.to_thread(os.path.exists, path):
         model_name = os.path.basename(path)
         logger.info(f"Downloading {model_name}...")
 
@@ -102,20 +102,15 @@ async def await_or_run(
     return result
 
 
-async def cancel_and_wait(fut: asyncio.Future) -> None:
-    """
-    Cancel an async task or future and wait for it to complete.
+async def cancel_and_wait(*futures: asyncio.Future) -> None:
+    """Cancel one or more async tasks/futures and wait for them to complete.
 
     Args:
-        fut: a Future or Task to cancel.
-
-    Returns:
-        None
+        *futures: Futures or Tasks to cancel.
     """
+    for fut in futures:
+        if not fut.done():
+            fut.cancel()
 
-    if fut.done():
-        return None
-    fut.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.shield(fut)
-    return None
+        await asyncio.shield(asyncio.gather(*futures, return_exceptions=True))

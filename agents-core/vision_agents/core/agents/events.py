@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
-from vision_agents.core.events import PluginBaseEvent, BaseEvent
-from typing import Optional, Any, Dict
+from typing import Any, Dict, Optional
+
+from vision_agents.core.events import BaseEvent, PluginBaseEvent
 
 
 @dataclass
@@ -23,7 +24,6 @@ class AgentSayEvent(PluginBaseEvent):
 
     type: str = field(default="agent.say", init=False)
     text: str = ""
-    user_id: Optional[str] = None  # type: ignore[assignment]
     metadata: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
@@ -37,7 +37,6 @@ class AgentSayStartedEvent(PluginBaseEvent):
 
     type: str = field(default="agent.say_started", init=False)
     text: str = ""
-    user_id: Optional[str] = None  # type: ignore[assignment]
     synthesis_id: Optional[str] = None
 
 
@@ -47,7 +46,6 @@ class AgentSayCompletedEvent(PluginBaseEvent):
 
     type: str = field(default="agent.say_completed", init=False)
     text: str = ""
-    user_id: Optional[str] = None  # type: ignore[assignment]
     synthesis_id: Optional[str] = None
     duration_ms: Optional[float] = None
 
@@ -58,7 +56,6 @@ class AgentSayErrorEvent(PluginBaseEvent):
 
     type: str = field(default="agent.say_error", init=False)
     text: str = ""
-    user_id: Optional[str] = None  # type: ignore[assignment]
     error: Optional[Exception] = None
 
     @property

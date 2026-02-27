@@ -35,16 +35,17 @@ from vision_agents.plugins.heygen import VideoQuality
 
 load_dotenv()
 
+
 async def start_avatar_agent():
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="AI Assistant with Avatar", id="agent"),
         instructions="You're a friendly AI assistant.",
-        
-        llm=gemini.LLM("gemini-2.0-flash"),
+
+        llm=gemini.LLM(),
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
-        
+
         # Add HeyGen avatar
         processors=[
             heygen.AvatarPublisher(
@@ -53,12 +54,13 @@ async def start_avatar_agent():
             )
         ]
     )
-    
+
     call = agent.edge.client.video.call("default", str(uuid4()))
-    
+
     async with agent.join(call):
         await agent.simple_response("Hello! I'm your AI assistant with an avatar.")
         await agent.finish()
+
 
 if __name__ == "__main__":
     asyncio.run(start_avatar_agent())
@@ -80,10 +82,10 @@ HEYGEN_API_KEY=your_heygen_api_key_here
 from vision_agents.plugins.heygen import VideoQuality
 
 heygen.AvatarPublisher(
-    avatar_id="default",           # HeyGen avatar ID
-    quality=VideoQuality.HIGH,    # Video quality: VideoQuality.LOW, VideoQuality.MEDIUM, or VideoQuality.HIGH
-    resolution=(1920, 1080),       # Output resolution (width, height)
-    api_key=None,                  # Optional: override env var
+    avatar_id="default",  # HeyGen avatar ID
+    quality=VideoQuality.HIGH,  # Video quality: VideoQuality.LOW, VideoQuality.MEDIUM, or VideoQuality.HIGH
+    resolution=(1920, 1080),  # Output resolution (width, height)
+    api_key=None,  # Optional: override env var
 )
 ```
 
@@ -98,9 +100,9 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Realtime Avatar AI"),
     instructions="Be conversational and responsive.",
-    
+
     llm=gemini.Realtime(fps=2),  # No separate TTS needed
-    
+
     processors=[
         heygen.AvatarPublisher(avatar_id="professional_presenter")
     ]
@@ -121,9 +123,9 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Fitness Coach"),
     instructions="Analyze user poses and provide feedback.",
-    
+
     llm=gemini.Realtime(fps=3),
-    
+
     processors=[
         # Process incoming user video
         ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt"),
@@ -172,6 +174,7 @@ To optimize video quality:
 Main class for publishing HeyGen avatar video.
 
 **Methods:**
+
 - `publish_video_track()`: Returns video track for streaming
 - `state()`: Returns current state information
 - `close()`: Clean up resources

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -14,12 +15,19 @@ from typing import (
 from vision_agents.core.utils.utils import await_or_run, cancel_and_wait
 from vision_agents.core.warmup import Warmable, WarmupCache
 
-from .exceptions import MaxConcurrentSessionsExceeded, MaxSessionsPerCallExceeded
+from .exceptions import (
+    InvalidCallId,
+    MaxConcurrentSessionsExceeded,
+    MaxSessionsPerCallExceeded,
+)
+from .session_registry import SessionInfo, SessionRegistry
 
 if TYPE_CHECKING:
     from .agents import Agent
 
 logger = logging.getLogger(__name__)
+
+_VALID_CALL_ID = re.compile(r"^[a-z0-9_-]+$")
 
 
 @dataclass
@@ -36,7 +44,6 @@ class AgentSession:
     call_id: str
     started_at: datetime
     task: asyncio.Task
-    created_by: Optional[Any] = None
 
     @property
     def finished(self) -> bool:
@@ -76,11 +83,24 @@ class AgentSession:
 
 # TODO: Rename to `AgentManager`.
 class AgentLauncher:
-    """
-    Agent launcher that handles warmup and lifecycle management.
+    """Agent launcher that handles warmup and lifecycle management.
 
     The launcher ensures all components (LLM, TTS, STT, turn detection)
     are warmed up before the agent is launched.
+
+    Public methods fall into two categories:
+
+    **Local** — operate only on this node's in-memory session map
+    (``self._sessions``).  These accept a bare ``session_id``:
+    ``get_session``, ``close_session``, ``launch``.
+
+    **Registry** — read from / write to shared storage visible to all
+    nodes.  These require ``(call_id, session_id)`` so the registry can
+    scope every operation to the owning call:
+    ``get_session_info``, ``request_close_session``.
+
+    ``start_session`` touches both: it creates a local ``AgentSession``
+    *and* registers it in the shared registry.
     """
 
     def __init__(
@@ -91,7 +111,8 @@ class AgentLauncher:
         max_concurrent_sessions: Optional[int] = None,
         max_sessions_per_call: Optional[int] = None,
         max_session_duration_seconds: Optional[float] = None,
-        cleanup_interval: float = 5.0,
+        maintenance_interval: float = 5.0,
+        registry: "SessionRegistry | None" = None,
     ):
         """
         Initialize the agent launcher.
@@ -108,8 +129,11 @@ class AgentLauncher:
                 Default is None (unlimited).
             max_session_duration_seconds: Maximum duration in seconds for a session
                 before it is automatically closed. Default is None (unlimited).
-            cleanup_interval: Interval in seconds between cleanup checks for idle
+            maintenance_interval: Interval in seconds between cleanup checks for idle
                 or expired sessions. Default is 5.0 seconds.
+            registry: Optional SessionRegistry for multi-node session management.
+                When provided, sessions are registered in shared storage and heartbeats
+                are sent on every cleanup interval.
         """
         self._create_agent = create_agent
         self._join_call = join_call
@@ -134,15 +158,18 @@ class AgentLauncher:
             raise ValueError("agent_idle_timeout must be >= 0")
         self._agent_idle_timeout = agent_idle_timeout
 
-        if cleanup_interval <= 0:
-            raise ValueError("cleanup_interval must be > 0")
-        self._cleanup_interval: float = cleanup_interval
+        if maintenance_interval <= 0:
+            raise ValueError("maintenance_interval must be > 0")
+        self._maintenance_interval: float = maintenance_interval
+
+        self._registry = registry or SessionRegistry()
 
         self._running = False
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._maintenance_task: Optional[asyncio.Task] = None
         self._warmed_up: bool = False
         self._sessions: dict[str, AgentSession] = {}
-        self._calls: dict[str, set[str]] = {}
+        # A set to keep the references for AgentSession cleanup tasks
+        self._session_cleanup_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         """
@@ -159,7 +186,8 @@ class AgentLauncher:
         logger.debug("Starting AgentLauncher")
         self._running = True
         await self.warmup()
-        self._cleanup_task = asyncio.create_task(self._cleanup_idle_sessions())
+        await self._registry.start()
+        self._maintenance_task = asyncio.create_task(self._maintenance_loop())
         logger.debug("AgentLauncher started")
 
     async def stop(self) -> None:
@@ -171,8 +199,8 @@ class AgentLauncher:
         """
         logger.debug("Stopping AgentLauncher")
         self._running = False
-        if self._cleanup_task:
-            await cancel_and_wait(self._cleanup_task)
+        if self._maintenance_task:
+            await cancel_and_wait(self._maintenance_task)
 
         coros = [cancel_and_wait(s.task) for s in self._sessions.values()]
         for result in asyncio.as_completed(coros):
@@ -181,6 +209,11 @@ class AgentLauncher:
             except Exception as exc:
                 logger.error(f"Failed to cancel the agent task: {exc}")
 
+        if self._session_cleanup_tasks:
+            await asyncio.gather(*self._session_cleanup_tasks, return_exceptions=True)
+            self._session_cleanup_tasks.clear()
+
+        await self._registry.stop()
         logger.debug("AgentLauncher stopped")
 
     async def warmup(self) -> None:
@@ -221,6 +254,10 @@ class AgentLauncher:
         """Return True if the launcher is warmed up and running."""
         return self.warmed_up and self.running
 
+    @property
+    def registry(self) -> SessionRegistry:
+        return self._registry
+
     async def launch(self, **kwargs) -> "Agent":
         """
         Launch the agent.
@@ -239,11 +276,10 @@ class AgentLauncher:
         self,
         call_id: str,
         call_type: str = "default",
-        created_by: Optional[Any] = None,
         video_track_override_path: Optional[str] = None,
     ) -> AgentSession:
         """
-        Start a new agent session for a call.
+        Start a new agent session for a call on this node.
 
         Creates a new agent, joins the specified call, and returns an AgentSession
         object to track the session.
@@ -251,7 +287,6 @@ class AgentLauncher:
         Args:
             call_id: Unique identifier for the call to join.
             call_type: Type of call. Default is "default".
-            created_by: Optional metadata about who/what created this session.
             video_track_override_path: Optional path to a video file to use
                 instead of a live video track.
 
@@ -259,11 +294,17 @@ class AgentLauncher:
             An AgentSession object representing the new session.
 
         Raises:
+            InvalidCallId: If the call_id contains invalid characters.
             MaxConcurrentSessionsExceeded: If the maximum number of concurrent
                 sessions has been reached.
             MaxSessionsPerCallExceeded: If the maximum number of sessions for
                 this call_id has been reached.
         """
+        if not _VALID_CALL_ID.fullmatch(call_id):
+            raise InvalidCallId(
+                f"Invalid call_id {call_id!r}: must contain only a-z, 0-9, _ and -"
+            )
+
         async with self._start_lock:
             if (
                 self._max_concurrent_sessions
@@ -273,14 +314,12 @@ class AgentLauncher:
                     f"Reached maximum concurrent sessions of {self._max_concurrent_sessions}"
                 )
 
-            call_sessions_total = len(self._calls.get(call_id, set()))
-            if (
-                self._max_sessions_per_call
-                and call_sessions_total >= self._max_sessions_per_call
-            ):
-                raise MaxSessionsPerCallExceeded(
-                    f"Reached maximum sessions per call of {self._max_sessions_per_call}"
-                )
+            if self._max_sessions_per_call:
+                call_sessions = await self._registry.get_for_call(call_id)
+                if len(call_sessions) >= self._max_sessions_per_call:
+                    raise MaxSessionsPerCallExceeded(
+                        f"Reached maximum sessions per call of {self._max_sessions_per_call}"
+                    )
 
             agent: "Agent" = await self.launch()
             if video_track_override_path:
@@ -296,27 +335,40 @@ class AgentLauncher:
             def _finalizer(session_id_: str, call_id_: str, *_):
                 session_ = self._sessions.pop(session_id_, None)
                 if session_ is not None:
-                    call_sessions = self._calls.get(call_id_, set())
-                    if call_sessions:
-                        call_sessions.discard(session_id_)
+                    try:
+                        t = asyncio.create_task(
+                            self._remove_from_registry_safe(call_id_, session_id_)
+                        )
+                        self._session_cleanup_tasks.add(t)
+                        t.add_done_callback(self._session_cleanup_tasks.discard)
+                    except RuntimeError:
+                        logger.warning(
+                            "Event loop is shutting down; cannot remove session %s from registry",
+                            session_id_,
+                        )
 
-            task.add_done_callback(partial(_finalizer, agent.id, call_id))
             session = AgentSession(
                 agent=agent,
                 task=task,
                 started_at=datetime.now(timezone.utc),
                 call_id=call_id,
-                created_by=created_by,
             )
             self._sessions[agent.id] = session
-            self._calls.setdefault(call_id, set()).add(agent.id)
+            try:
+                await self._registry.register(call_id, session.id)
+            except Exception:
+                logger.exception(f"Failed to register session with id {session.id}")
+                await self.close_session(session.id)
+                raise
+            task.add_done_callback(partial(_finalizer, agent.id, call_id))
             logger.info(f"Started agent session with id {session.id}")
         return session
 
     async def close_session(self, session_id: str, wait: bool = False) -> bool:
-        """
-        Close session with id `session_id`.
-        Returns `True` if session was found and closed, `False` otherwise.
+        """Close a session running on this node (local + registry cleanup).
+
+        Removes the session from the local map, cancels the agent task,
+        and deletes the corresponding registry entry.
 
         Args:
             session_id: session id
@@ -324,34 +376,57 @@ class AgentLauncher:
                 Otherwise, just cancel the task and return.
 
         Returns:
-            `True` if session was found and closed, `False` otherwise.
+            True if session was found and closed, False otherwise.
         """
         session = self._sessions.pop(session_id, None)
         if session is None:
-            # The session is either closed or doesn't exist, exit early
             return False
-        call_sessions = self._calls.get(session.call_id)
-        if call_sessions:
-            call_sessions.discard(session.id)
 
         logger.info(f"Closing agent session with id {session.id}")
         if wait:
             await cancel_and_wait(session.task)
         else:
             session.task.cancel()
+        await self._registry.remove(session.call_id, session_id)
         return True
 
     def get_session(self, session_id: str) -> Optional[AgentSession]:
-        """
-        Get a session by its ID.
+        """Get a session running on this node by its ID (local lookup only).
 
         Args:
             session_id: The session ID to look up.
 
         Returns:
-            The AgentSession if found, None otherwise.
+            The AgentSession if found on this node, None otherwise.
         """
         return self._sessions.get(session_id)
+
+    async def request_close_session(self, call_id: str, session_id: str) -> None:
+        """Request closure of a session via the shared registry (any node).
+
+        Sets a close flag so the owning node picks it up on its next
+        maintenance cycle.
+
+        Args:
+            call_id: The call the session belongs to.
+            session_id: The session to close.
+        """
+        await self._registry.request_close(call_id, session_id)
+
+    async def get_session_info(
+        self, call_id: str, session_id: str
+    ) -> SessionInfo | None:
+        """Look up session info from the shared registry (any node)."""
+        return await self._registry.get(call_id, session_id)
+
+    async def _remove_from_registry_safe(self, call_id: str, session_id: str) -> None:
+        """
+        Remove a session from the shared registry (any node) logging the exception.
+        """
+        try:
+            await self._registry.remove(call_id, session_id)
+        except Exception:
+            logger.exception("Failed to remove session %s from registry", session_id)
 
     async def _warmup_agent(self, agent: "Agent") -> None:
         """
@@ -384,6 +459,10 @@ class AgentLauncher:
         if agent.turn_detection and isinstance(agent.turn_detection, Warmable):
             warmup_tasks.append(agent.turn_detection.warmup(self._warmup_cache))
 
+        # Warmup audio filter
+        if isinstance(agent._multi_speaker_filter, Warmable):
+            warmup_tasks.append(agent._multi_speaker_filter.warmup(self._warmup_cache))
+
         # Warmup processors
         for processor in agent.processors:
             if isinstance(processor, Warmable):
@@ -392,52 +471,72 @@ class AgentLauncher:
         if warmup_tasks:
             await asyncio.gather(*warmup_tasks)
 
-    async def _cleanup_idle_sessions(self) -> None:
-        if not self._agent_idle_timeout and not self._max_session_duration_seconds:
-            return
-        max_session_duration_seconds = self._max_session_duration_seconds or float(
-            "inf"
-        )
-
+    async def _maintenance_loop(self) -> None:
         while self._running:
-            # Collect idle agents first to close them all at once
-            to_close = []
-            for session in self._sessions.values():
-                agent = session.agent
-                on_call_for = agent.on_call_for()
-                idle_for = agent.idle_for()
-                if 0 < self._agent_idle_timeout <= idle_for:
-                    logger.info(
-                        f'Closing session "{session.id}" with '
-                        f'user_id "{agent.agent_user.id}" after being '
-                        f"idle for {round(idle_for, 2)}s "
-                        f"(idle timeout is {self._agent_idle_timeout}s)"
-                    )
-                    to_close.append(agent)
-                elif on_call_for >= max_session_duration_seconds:
-                    logger.info(
-                        f'Closing session "{session.id}" with user_id "{agent.agent_user.id}" '
-                        f"after reaching the maximum session "
-                        f"duration of {max_session_duration_seconds}s"
-                    )
-                    to_close.append(agent)
+            await self._close_expired_sessions()
+            await self._refresh_active_sessions()
+            await asyncio.sleep(self._maintenance_interval)
 
-            if to_close:
-                coros = [
-                    asyncio.shield(self.close_session(s.id, wait=False))
-                    for s in to_close
-                ]
-                result = await asyncio.shield(
-                    asyncio.gather(*coros, return_exceptions=True)
+    async def _close_expired_sessions(self) -> None:
+        """Close sessions that are idle, expired, or flagged for closure."""
+        max_session_duration = self._max_session_duration_seconds or float("inf")
+        to_close: list["Agent"] = []
+
+        # Close the sessions that are either idle or exceeded max duration
+        for session in self._sessions.values():
+            agent = session.agent
+            on_call_for = agent.on_call_for()
+            idle_for = agent.idle_for()
+            if 0 < self._agent_idle_timeout <= idle_for:
+                logger.info(
+                    f'Closing session "{session.id}" with '
+                    f'user_id "{agent.agent_user.id}"; reason="exceeded idle timeout of {self._agent_idle_timeout}s"'
                 )
-                for agent, r in zip(to_close, result):
-                    if isinstance(r, Exception):
-                        logger.error(
-                            f"Failed to close agent with user_id {agent.agent_user.id}",
-                            exc_info=r,
-                        )
+                to_close.append(agent)
+            elif on_call_for >= max_session_duration:
+                logger.info(
+                    f'Closing session "{session.id}" with user_id "{agent.agent_user.id}"; reason="exceeded maximum session duration of {max_session_duration}s"'
+                )
+                to_close.append(agent)
 
-            await asyncio.sleep(self._cleanup_interval)
+        # Get the sessions requested to be deleted excluding already deleted
+        # or scheduled to be deleted
+        try:
+            sessions_map = {sid: s.call_id for sid, s in self._sessions.items()}
+            flagged = [
+                session_
+                for session_id in await self._registry.get_close_requests(sessions_map)
+                if (session_ := self._sessions.get(session_id)) is not None
+                and session_.agent not in to_close
+            ]
+            for session in flagged:
+                logger.info(
+                    "Closing session %s due to registry close request", session.id
+                )
+                to_close.append(session.agent)
+        except Exception:
+            logger.exception("Failed to check registry close requests")
+
+        if to_close:
+            coros = [
+                asyncio.shield(self.close_session(s.id, wait=False)) for s in to_close
+            ]
+            result = await asyncio.shield(
+                asyncio.gather(*coros, return_exceptions=True)
+            )
+            for agent, r in zip(to_close, result):
+                if isinstance(r, Exception):
+                    logger.exception(
+                        f"Failed to close agent with user_id {agent.agent_user.id}",
+                    )
+
+    async def _refresh_active_sessions(self) -> None:
+        """Send heartbeats for all active sessions to the registry."""
+        try:
+            sessions_map = {sid: s.call_id for sid, s in self._sessions.items()}
+            await self._registry.refresh(sessions_map)
+        except Exception:
+            logger.exception("Failed to refresh sessions at the registry")
 
     async def __aenter__(self) -> "AgentLauncher":
         """Enter the async context manager, starting the launcher."""

@@ -30,6 +30,7 @@ dependencies = [
     "fastapi>=0.128.0",
     "uvicorn>=0.38.0",
     "urllib3>=2.6.3",
+    "onnxruntime>=1.16.1",
 ]
 
 [project.urls]
@@ -47,6 +48,7 @@ elevenlabs = ["vision-agents-plugins-elevenlabs"]
 gemini = ["vision-agents-plugins-gemini"]
 getstream = ["vision-agents-plugins-getstream"]
 heygen = ["vision-agents-plugins-heygen"]
+lemonslice = ["vision-agents-plugins-lemonslice"]
 inworld = ["vision-agents-plugins-inworld"]
 kokoro = ["vision-agents-plugins-kokoro"]
 moonshine = ["vision-agents-plugins-moonshine"]
@@ -69,6 +71,8 @@ fast-whisper = ["vision-agents-plugins-fast-whisper"]
 decart = ["vision-agents-plugins-decart"]
 twilio = ["vision-agents-plugins-twilio"]
 turbopuffer = ["vision-agents-plugins-turbopuffer"]
+mistral = ["vision-agents-plugins-mistral"]
+redis = ["redis[hiredis]>=5.0.0"]
 
 all-plugins = [
     "vision-agents-plugins-anthropic",
@@ -78,6 +82,7 @@ all-plugins = [
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-heygen",
+    "vision-agents-plugins-lemonslice",
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
     "vision-agents-plugins-moonshine",
@@ -100,6 +105,7 @@ all-plugins = [
     "vision-agents-plugins-qwen",
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-turbopuffer",
+    "vision-agents-plugins-mistral",
 ]
 
 [tool.hatch.metadata]

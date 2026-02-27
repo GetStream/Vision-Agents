@@ -1,170 +1,145 @@
-"""
-EdgeTransport: Abstract base class for media transport implementations.
-"""
-
 import abc
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 import aiortc
-from pyee.asyncio import AsyncIOEventEmitter
+from getstream.video.rtc import AudioStreamTrack
+from vision_agents.core.events.manager import EventManager
 
-from vision_agents.core.edge.types import User, OutputAudioTrack
+from .call import Call
+from .events import (
+    AudioReceivedEvent,
+    CallEndedEvent,
+    TrackAddedEvent,
+    TrackRemovedEvent,
+)
+from .types import Connection, User
 
 if TYPE_CHECKING:
-    from vision_agents.core.agents.agents import Agent
+    from vision_agents.core import Agent
+
+T_Call = TypeVar("T_Call", bound=Call)
 
 
-class EdgeTransport(AsyncIOEventEmitter, abc.ABC):
+class EdgeTransport(abc.ABC, Generic[T_Call]):
+    """Abstract base class for edge transports.
+
+    Required Events (implementations must emit these):
+        - AudioReceivedEvent: When audio is received from a participant
+        - TrackAddedEvent: When a media track is added to the call
+        - TrackRemovedEvent: When a media track is removed from the call
+        - CallEndedEvent: When the call ends
     """
-    Abstract base class for media transport implementations.
 
-    EdgeTransport handles the connection between an AI agent and remote participants,
-    managing both incoming media (from participants) and outgoing media (from the agent).
+    events: EventManager
 
-    Audio Flow:
-        INPUT (Participants -> Agent):
-            - connect() starts receiving audio, delivered via AudioReceivedEvent
-            - subscribe_to_track() for video tracks (audio is automatic)
-
-        OUTPUT (Agent -> Participants):
-            - create_output_audio_track() creates the track
-            - publish_tracks() starts sending to participants
-
-    Lifecycle:
-        1. register_user() - Register the agent's identity with the provider
-        2. connect() - Establish connection, START RECEIVING audio/video
-        3. publish_tracks() - START SENDING agent's audio/video
-        4. ... agent runs ...
-        5. disconnect() - Clean up and leave
-    """
+    def __init__(self):
+        super().__init__()
+        self.events = EventManager()
+        # Register required events that all EdgeTransport implementations must emit
+        self.events.register(
+            AudioReceivedEvent,
+            TrackAddedEvent,
+            TrackRemovedEvent,
+            CallEndedEvent,
+        )
 
     @abc.abstractmethod
-    async def connect(self, agent: "Agent", call: Any):
-        """
-        Connect to a call or room.
-
-        Audio Direction: INPUT - After this call, audio from participants will
-        be delivered via AudioReceivedEvent on the transport's event manager.
-
-        This establishes the WebRTC/media connection and begins receiving
-        audio and video from remote participants.
+    async def authenticate(self, user: User) -> None:
+        """Authenticate an agent user with the transport and set the edge to authenticated state.
 
         Args:
-            agent: The Agent instance joining the call
-            call: Provider-specific call/room object (or None for local transport)
-
-        Returns:
-            Connection object for managing the session lifecycle
+            user: User object containing id, name, and optional image.
         """
+        pass
 
     @abc.abstractmethod
-    async def disconnect(self) -> None:
-        """
-        Disconnect from the call and release all resources.
+    async def create_call(self, call_id: str, **kwargs) -> T_Call:
+        """Create a new call or retrieve an existing one.
 
-        Audio Direction: Stops both INPUT and OUTPUT streams.
+        Args:
+            call_id: Unique identifier for the call.
+            **kwargs: Additional transport-specific call configuration.
 
-        Stops all media streams and closes the connection.
-        Safe to call multiple times.
+        Returns:
+            Call: A Call object representing the call session.
         """
+        pass
+
+    @abc.abstractmethod
+    def create_audio_track(self) -> AudioStreamTrack:
+        """Create an audio stream track for sending audio to the call.
+
+        Returns:
+            AudioStreamTrack: A track that can be used to stream audio data.
+        """
+        pass
+
+    @abc.abstractmethod
+    async def close(self):
+        """Close the transport and clean up all resources.
+
+        This should disconnect from any active calls, release network resources,
+        and perform any necessary cleanup.
+        """
+        pass
+
+    @abc.abstractmethod
+    def open_demo(self, *args, **kwargs):
+        """Open a demo/preview interface for the call.
+
+        Args:
+            *args: Transport-specific positional arguments.
+            **kwargs: Transport-specific keyword arguments.
+        """
+        pass
+
+    @abc.abstractmethod
+    async def join(self, agent: "Agent", call: T_Call, **kwargs) -> Connection:
+        """Join a call and establish a connection.
+
+        This method connects the agent to an active call session, setting up
+        the necessary infrastructure for real-time audio/video communication.
+        Implementations should configure media subscriptions, set up event handlers,
+        and establish the transport-specific connection.
+
+        Args:
+            agent: The Agent instance joining the call.
+            call: Call object representing the call session to join.
+            **kwargs: Additional transport-specific configuration options.
+
+        Returns:
+            Connection: An active connection implementing the Connection interface,
+                which provides methods for managing the connection lifecycle.
+        """
+        pass
 
     @abc.abstractmethod
     async def publish_tracks(
         self,
-        audio_track: Optional[OutputAudioTrack],
-        video_track: Optional[Any],
-    ) -> None:
-        """
-        Publish the agent's media tracks to participants.
-
-        Audio Direction: OUTPUT - After this call, audio written to the
-        audio_track will be sent to participants (played on their speakers).
+        audio_track: Optional[aiortc.MediaStreamTrack],
+        video_track: Optional[aiortc.MediaStreamTrack],
+    ):
+        """Publish audio and/or video tracks to the active call.
 
         Args:
-            audio_track: Track created by create_output_audio_track(), or None
-            video_track: Video track to publish, or None
+            audio_track: Optional audio track to publish.
+            video_track: Optional video track to publish.
         """
+        pass
 
     @abc.abstractmethod
-    def create_output_audio_track(
-        self,
-        framerate: int = 48000,
-        stereo: bool = True,
-    ) -> OutputAudioTrack:
-        """
-        Create an audio track for the agent's outgoing audio.
+    async def create_conversation(self, call: Call, user: User, instructions: str):
+        pass
 
-        Audio Direction: OUTPUT - The returned track is where the agent writes
-        TTS/speech audio. Call publish_tracks() to start sending to participants.
+    @abc.abstractmethod
+    def add_track_subscriber(self, track_id: str) -> Optional[aiortc.VideoStreamTrack]:
+        pass
+
+    @abc.abstractmethod
+    async def send_custom_event(self, data: dict[str, Any]) -> None:
+        """Send a custom event to all participants watching the call.
 
         Args:
-            framerate: Sample rate in Hz (default: 48000)
-            stereo: True for stereo, False for mono
-
-        Returns:
-            OutputAudioTrack that accepts write() calls with PCM data
+            data: Custom event payload (must be JSON-serializable, max 5KB).
         """
-
-    @abc.abstractmethod
-    def subscribe_to_track(
-        self, track_id: str
-    ) -> Optional[aiortc.mediastreams.MediaStreamTrack]:
-        """
-        Subscribe to receive a remote participant's video track.
-
-        Audio Direction: INPUT (video only) - Audio from participants is received
-        automatically via AudioReceivedEvent after connect(). This method is
-        specifically for subscribing to VIDEO tracks.
-
-        Args:
-            track_id: The track ID from TrackAddedEvent
-
-        Returns:
-            MediaStreamTrack for consuming the video, or None if unavailable
-        """
-
-    @abc.abstractmethod
-    async def register_user(self, user: User) -> None:
-        """
-        Register the agent's user identity with the provider.
-
-        Audio Direction: N/A - Setup only, no audio handling.
-
-        Some providers require user registration before joining calls.
-        For local transport, this is typically a no-op.
-
-        Args:
-            user: The agent's user information (id, name, image)
-        """
-
-    @abc.abstractmethod
-    def open_demo(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Open a demo UI for testing (provider-specific).
-
-        Audio Direction: N/A - UI helper only.
-
-        For cloud providers, this typically opens a browser to a test page.
-        For local transport, this may be a no-op.
-        """
-
-    @abc.abstractmethod
-    async def create_chat_channel(
-        self, call: Any, user: User, instructions: str
-    ) -> Optional[Any]:
-        """
-        Create a text chat channel associated with the call.
-
-        Audio Direction: N/A - Text chat only, no audio handling.
-
-        Used for text-based conversation history alongside voice.
-        Returns None if text chat is not supported.
-
-        Args:
-            call: The call/room object
-            user: The agent's user
-            instructions: System instructions for the conversation
-
-        Returns:
-            Conversation object for text chat, or None
-        """
+        pass

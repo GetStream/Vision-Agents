@@ -110,8 +110,8 @@ async def verify_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-# Custom permission check
-async def can_start(x_api_key: str = Header(...)):
+# Custom permission check — call_id comes from the URL path
+async def can_start(call_id: str, x_api_key: str = Header(...)):
     await verify_api_key(x_api_key)
 
 
@@ -129,7 +129,6 @@ runner = Runner(
         can_close_session=can_start,
         can_view_session=can_start,
         can_view_metrics=can_start,
-        get_current_user=verify_api_key,
     ),
 )
 ```
@@ -143,15 +142,14 @@ runner = Runner(
 | `cors_allow_methods`     | `("*",)`  | Allowed CORS methods                              |
 | `cors_allow_headers`     | `("*",)`  | Allowed CORS headers                              |
 | `cors_allow_credentials` | `True`    | Allow CORS credentials                            |
-| `can_start_session`      | allow all | Permission check for starting sessions            |
-| `can_close_session`      | allow all | Permission check for closing sessions             |
-| `can_view_session`       | allow all | Permission check for viewing sessions             |
-| `can_view_metrics`       | allow all | Permission check for viewing metrics              |
-| `get_current_user`       | no-op     | Callable to determine current user                |
+| `can_start_session`      | allow all | Permission check for starting sessions. Receives `call_id` from URL path. |
+| `can_close_session`      | allow all | Permission check for closing sessions. Receives `call_id` from URL path.  |
+| `can_view_session`       | allow all | Permission check for viewing sessions. Receives `call_id` from URL path.  |
+| `can_view_metrics`       | allow all | Permission check for viewing metrics. Receives `call_id` from URL path.   |
 
 ### Permission Callbacks & Authentication
 
-The `can_start_session`, `can_close_session`, `can_view_session`, `can_view_metrics`, and `get_current_user` callbacks
+The `can_start_session`, `can_close_session`, `can_view_session`, and `can_view_metrics` callbacks
 are **standard FastAPI dependencies**.
 
 This means they have access to the full power of FastAPI's dependency injection
@@ -163,75 +161,27 @@ system:
 - **Automatic validation**: Use Pydantic models for type-safe parameter extraction
 - **Raise HTTP exceptions**: Return `401`, `403`, or any status code to deny access
 
-**Example: JWT Authentication with Database Lookup**
+**Example: JWT Authentication**
 
 ```python
 from fastapi import Depends, Header, HTTPException
-from myapp.auth import decode_jwt, get_user_by_id
-from myapp.database import get_db
-from sqlalchemy.ext.asyncio import AsyncSession
+from myapp.auth import decode_jwt
 
 
-async def get_current_user(
-    authorization: str = Header(...),
-    db: AsyncSession = Depends(get_db),
-):
-    """Resolve the current user from JWT token."""
+async def verify_token(authorization: str = Header(...)):
+    """Verify a JWT token from the Authorization header."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
 
     token = authorization.split(" ")[1]
     payload = decode_jwt(token)  # Raises if invalid
-
-    user = await get_user_by_id(db, payload["user_id"])
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    return user
+    return payload
 
 
-async def can_start_session(
-    user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Check if user has permission to start agent sessions."""
-    if not user.has_permission("agents:start"):
+async def can_start_session(call_id: str, token_payload=Depends(verify_token)):
+    """Check if the caller has permission to start agent sessions."""
+    if "agents:start" not in token_payload.get("permissions", []):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
-
-    # Check rate limits, quotas, etc.
-    if await user.exceeded_session_quota(db):
-        raise HTTPException(status_code=429, detail="Session quota exceeded")
-
-```
-
-**How `get_current_user` Works**
-
-The value returned by `get_current_user` is stored in `AgentSession.created_by`. This allows you to:
-
-- Track which user started each session
-- Implement user-specific session limits
-- Audit session creation
-
-```python
-from typing import Optional
-
-from fastapi import Depends, HTTPException
-
-from vision_agents.core import AgentSession
-from vision_agents.core.runner.http.dependencies import get_session
-
-
-# In your permission callbacks, you can access the session creator
-async def can_close_session(
-    session_id: str,
-    current_user=Depends(get_current_user),
-    session: Optional[AgentSession] = Depends(get_session),
-):
-    """Only allow users to close their own sessions."""
-    if session and session.created_by != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Cannot close another user's session"
-        )
 ```
 
 ### API Reference
@@ -242,14 +192,14 @@ The underlying API is built with `FastAPI` which provides a Swagger UI on http:/
 
 #### Start a Session
 
-**POST** `/sessions`
+**POST** `/calls/{call_id}/sessions`
 
 Start a new agent and have it join a call.
 
 ```bash
-curl -X POST http://localhost:8000/sessions \
+curl -X POST http://localhost:8000/calls/my-call-123/sessions \
   -H "Content-Type: application/json" \
-  -d '{"call_id": "my-call-123", "call_type": "default"}'
+  -d '{"call_type": "default"}'
 ```
 
 **Response:**
@@ -258,45 +208,44 @@ curl -X POST http://localhost:8000/sessions \
 {
   "session_id": "agent-uuid",
   "call_id": "my-call-123",
-  "config": {},
   "session_started_at": "2024-01-15T10:30:00Z"
 }
 ```
 
 #### Close a Session
 
-**DELETE** `/sessions/{session_id}`
+**DELETE** `/calls/{call_id}/sessions/{session_id}`
 
 Stop an agent and remove it from a call.
 
 ```bash
-curl -X DELETE http://localhost:8000/sessions/agent-uuid
+curl -X DELETE http://localhost:8000/calls/my-call-123/sessions/agent-uuid
 ```
 
 #### Close via sendBeacon
 
-**POST** `/sessions/{session_id}/close`
+**POST** `/calls/{call_id}/sessions/{session_id}/close`
 
 Alternative endpoint for closing sessions via browser's `sendBeacon()` API.
 
 #### Get Session Info
 
-**GET** `/sessions/{session_id}`
+**GET** `/calls/{call_id}/sessions/{session_id}`
 
 Get information about a running agent session.
 
 ```bash
-curl http://localhost:8000/sessions/agent-uuid
+curl http://localhost:8000/calls/my-call-123/sessions/agent-uuid
 ```
 
 #### Get Session Metrics
 
-**GET** `/sessions/{session_id}/metrics`
+**GET** `/calls/{call_id}/sessions/{session_id}/metrics`
 
 Get real-time metrics for a running session.
 
 ```bash
-curl http://localhost:8000/sessions/agent-uuid/metrics
+curl http://localhost:8000/calls/my-call-123/sessions/agent-uuid/metrics
 ```
 
 **Response:**

@@ -5,8 +5,8 @@ import os
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.core.events import CallSessionParticipantJoinedEvent
 from vision_agents.plugins import deepgram, elevenlabs, getstream, moondream
+from vision_agents.plugins.getstream import CallSessionParticipantJoinedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,6 @@ async def create_agent(**kwargs) -> Agent:
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    # ensure the agent user is created
-    await agent.create_user()
     # Create a call
     call = await agent.create_call(call_type, call_id)
 

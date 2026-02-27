@@ -11,25 +11,17 @@ import os
 from pathlib import Path
 from typing import Iterator
 
-import pytest
 import av
+import pytest
 from dotenv import load_dotenv
 from PIL import Image
-
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
-from vision_agents.plugins.nvidia import VLM
-
-try:
-    from vision_agents.plugins.nvidia import events  # type: ignore[import]
-except ImportError:
-    from vision_agents.plugins.nvidia.vision_agents.plugins.nvidia import (  # type: ignore[import]
-        events,
-    )
+from vision_agents.plugins.nvidia import VLM, events
 
 load_dotenv()
 
@@ -63,13 +55,12 @@ async def vlm() -> VLM:
         await vlm_instance.close()
 
 
-class TestNvidiaVLM:
+@pytest.mark.integration
+@pytest.mark.skip('The "nvidia/cosmos-reason2-8b" model is not available')
+@pytest.mark.skipif(not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set")
+class TestNvidiaVLMIntegration:
     """Test suite for NvidiaVLM class."""
 
-    @pytest.mark.integration
-    @pytest.mark.skipif(
-        not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set"
-    )
     async def test_simple(self, vlm: VLM):
         """Test basic text-only response."""
         response = await vlm.simple_response(
@@ -79,10 +70,6 @@ class TestNvidiaVLM:
         assert response.text
         assert len(response.text) > 0
 
-    @pytest.mark.integration
-    @pytest.mark.skipif(
-        not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set"
-    )
     async def test_streaming(self, vlm: VLM):
         """Test streaming responses emit chunk and completion events."""
         streaming_works = False
@@ -101,10 +88,6 @@ class TestNvidiaVLM:
         assert response.text
         assert streaming_works
 
-    @pytest.mark.integration
-    @pytest.mark.skipif(
-        not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set"
-    )
     async def test_memory(self, vlm: VLM):
         """Test conversation memory across multiple messages."""
         await vlm.simple_response(
@@ -115,10 +98,6 @@ class TestNvidiaVLM:
         )
         assert "8" in response.text or "eight" in response.text
 
-    @pytest.mark.integration
-    @pytest.mark.skipif(
-        not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set"
-    )
     async def test_events(self, vlm: VLM):
         """Test that LLM events are properly emitted during streaming responses."""
         chunk_events = []
@@ -201,10 +180,6 @@ class TestNvidiaVLM:
             "Delta text should be substantial portion of final text"
         )
 
-    @pytest.mark.integration
-    @pytest.mark.skipif(
-        not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set"
-    )
     async def test_with_video_frames(self, vlm: VLM, cat_frame: av.VideoFrame):
         """Test VLM with buffered video frames."""
         vlm._frame_buffer.append(cat_frame)
@@ -217,10 +192,6 @@ class TestNvidiaVLM:
         assert len(response.text) > 0
         assert "cat" in response.text.lower() or len(response.text.strip()) > 0
 
-    @pytest.mark.integration
-    @pytest.mark.skipif(
-        not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set"
-    )
     async def test_instruction_following(self):
         """Test that system instructions are respected."""
         api_key = os.getenv("NVIDIA_API_KEY")
@@ -241,14 +212,22 @@ class TestNvidiaVLM:
         finally:
             await vlm_instance.close()
 
-    @pytest.mark.integration
-    @pytest.mark.skipif(
-        not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set"
-    )
     async def test_with_participant(self, vlm: VLM):
-        """Test that user message is added to conversation when participant is provided."""
-        test_participant = Participant(original=None, user_id="test_user_123")
+        """Test that LLM does not duplicate user messages when participant is provided.
+
+        When a participant is provided, the agent layer is responsible for
+        adding user messages to the conversation. The LLM should skip adding
+        the message to avoid duplicates.
+        """
+        test_participant = Participant(
+            original=None, user_id="test_user_123", id="test_user_123"
+        )
         user_question = "What is 2 + 2?"
+
+        # Simulate what the agent does: add user message before calling LLM
+        await vlm._conversation.send_message(
+            role="user", user_id="test_user_123", content=user_question
+        )
 
         response = await vlm.simple_response(
             text=user_question,
@@ -258,17 +237,12 @@ class TestNvidiaVLM:
         assert response.text
         assert len(response.text) > 0
 
-        assert len(vlm._conversation.messages) > 0
-        last_user_message = None
-        for msg in reversed(vlm._conversation.messages):
-            if msg.role == "user":
-                last_user_message = msg
-                break
-
-        assert last_user_message is not None, "User message should be in conversation"
-        assert last_user_message.content == user_question, (
-            "User message content should match the question"
-        )
-        assert last_user_message.user_id == "test_user_123", (
-            "User message should have participant's user_id"
+        # Verify no duplicate user message was added by the LLM
+        user_messages = [
+            msg
+            for msg in vlm._conversation.messages
+            if msg.role == "user" and msg.content == user_question
+        ]
+        assert len(user_messages) == 1, (
+            f"Expected 1 user message, got {len(user_messages)} (LLM should not duplicate)"
         )

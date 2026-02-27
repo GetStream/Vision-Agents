@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Conversation
 
 from getstream.video.rtc import PcmData
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.processors import Processor
 
@@ -201,7 +201,7 @@ class LLM(abc.ABC):
         """Get a list of available function schemas."""
         return self.function_registry.get_tool_schemas()
 
-    def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
         """
         Call a registered function with the given arguments.
 
@@ -212,7 +212,7 @@ class LLM(abc.ABC):
         Returns:
             Result of the function call.
         """
-        return self.function_registry.call_function(name, arguments)
+        return await self.function_registry.call_function(name, arguments)
 
     def _tc_key(self, tc: NormalizedToolCallItem) -> Tuple[Optional[str], str, str]:
         """Generate a unique key for tool call deduplication.
@@ -229,19 +229,6 @@ class LLM(abc.ABC):
             json.dumps(tc.get("arguments_json", {}), sort_keys=True),
         )
 
-    async def _maybe_await(self, x):
-        """Await if x is a coroutine, otherwise return x directly.
-
-        Args:
-            x: Value that might be a coroutine
-
-        Returns:
-            Awaited result if coroutine, otherwise x
-        """
-        if asyncio.iscoroutine(x):
-            return await x
-        return x
-
     async def _run_one_tool(self, tc: Dict[str, Any], timeout_s: float):
         """Run a single tool call with timeout.
 
@@ -252,25 +239,14 @@ class LLM(abc.ABC):
         Returns:
             Tuple of (tool_call, result, error)
         """
-        import inspect
         import time
 
         args = tc.get("arguments_json", tc.get("arguments", {})) or {}
         start_time = time.time()
 
         async def _invoke():
-            # Get the actual function to check if it's async
-            if hasattr(self.function_registry, "get_callable"):
-                fn = self.function_registry.get_callable(tc["name"])
-                if inspect.iscoroutinefunction(fn):
-                    return await fn(**args)
-                else:
-                    # Run sync function in a worker thread to avoid blocking
-                    return await asyncio.to_thread(fn, **args)
-            else:
-                # Fallback to existing call_function method
-                res = self.call_function(tc["name"], args)
-                return await self._maybe_await(res)
+            fn = self.function_registry.get_callable(tc["name"])
+            return await fn(**args)
 
         try:
             # Send tool start event

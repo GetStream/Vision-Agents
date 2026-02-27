@@ -2,15 +2,16 @@ import abc
 import logging
 import time
 import uuid
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, Optional, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Iterator, Optional, Union
 
 import av
+from getstream.video.rtc import PcmData
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import (
     AudioFormat,
 )
 from vision_agents.core.events.manager import EventManager
 
-from ..edge.types import PcmData
 from . import events
 from .events import (
     TTSAudioEvent,
@@ -114,20 +115,20 @@ class TTS(abc.ABC):
 
     def _emit_chunk(
         self,
-        pcm: PcmData,
+        pcm: Optional[PcmData],
         idx: int,
         is_final: bool,
         synthesis_id: str,
         text: str,
-        user: Optional[Dict[str, Any]],
+        participant: Optional[Participant],
     ) -> tuple[int, float]:
         """Emit TTSAudioEvent; return (bytes_len, duration_ms)."""
 
-        # Resample to desired format if needed
-        pcm = pcm.resample(
-            target_sample_rate=self._desired_sample_rate,
-            target_channels=self._desired_channels,
-        )
+        if pcm is not None:
+            pcm = pcm.resample(
+                target_sample_rate=self._desired_sample_rate,
+                target_channels=self._desired_channels,
+            )
 
         self.events.send(
             TTSAudioEvent(
@@ -136,12 +137,14 @@ class TTS(abc.ABC):
                 data=pcm,
                 synthesis_id=synthesis_id,
                 text_source=text,
-                participant=user,
+                participant=participant,
                 chunk_index=idx,
                 is_final_chunk=is_final,
             )
         )
-        return len(pcm.samples), pcm.duration_ms
+        if pcm is not None:
+            return len(pcm.samples), pcm.duration_ms
+        return 0, 0.0
 
     @abc.abstractmethod
     async def stream_audio(
@@ -184,16 +187,20 @@ class TTS(abc.ABC):
         pass
 
     async def send(
-        self, text: str, user: Optional[Dict[str, Any]] = None, *args, **kwargs
+        self,
+        text: str,
+        participant: Optional[Participant] = None,
+        *args,
+        **kwargs,
     ):
         """
         Convert text to speech and emit audio events with the desired format.
 
         Args:
             text: The text to convert to speech
-            user: Optional user metadata to include with the audio event
-            *args: Additional arguments
-            **kwargs: Additional keyword arguments
+            participant: Optional participant to associate with the audio event
+            *args: Additional arguments passed to stream_audio()
+            **kwargs: Additional keyword arguments passed to stream_audio()
         """
 
         start_time = time.perf_counter()
@@ -209,7 +216,7 @@ class TTS(abc.ABC):
                 plugin_name=self.provider_name,
                 text=text,
                 synthesis_id=synthesis_id,
-                participant=user,
+                participant=participant,
             )
         )
 
@@ -226,7 +233,7 @@ class TTS(abc.ABC):
             synthesis_time = time.perf_counter() - start_time
             if isinstance(response, (PcmData,)):
                 bytes_len, dur_ms = self._emit_chunk(
-                    response, 0, True, synthesis_id, text, user
+                    response, 0, True, synthesis_id, text, participant
                 )
                 total_audio_bytes += bytes_len
                 total_audio_ms += dur_ms
@@ -237,11 +244,19 @@ class TTS(abc.ABC):
                     if chunk_index == 0:
                         synthesis_time = time.perf_counter() - start_time
                     bytes_len, dur_ms = self._emit_chunk(
-                        pcm, chunk_index, False, synthesis_id, text, user
+                        pcm, chunk_index, False, synthesis_id, text, participant
                     )
                     total_audio_bytes += bytes_len
                     total_audio_ms += dur_ms
                     chunk_index += 1
+
+                # Emit an empty chunk with "final=True" after the iterator completes.
+                # The consumers of these events may use it as a signal
+                # to e.g. flush the buffer.
+                if chunk_index > 0:
+                    self._emit_chunk(
+                        None, chunk_index, True, synthesis_id, text, participant
+                    )
 
             # Use accumulated PcmData duration for total audio duration
             estimated_audio_duration_ms = total_audio_ms
@@ -257,7 +272,7 @@ class TTS(abc.ABC):
                     plugin_name=self.provider_name,
                     synthesis_id=synthesis_id,
                     text=text,
-                    participant=user,
+                    participant=participant,
                     total_audio_bytes=total_audio_bytes,
                     synthesis_time_ms=synthesis_time * 1000,
                     audio_duration_ms=estimated_audio_duration_ms,
@@ -274,7 +289,7 @@ class TTS(abc.ABC):
                     context="synthesis",
                     text_source=text,
                     synthesis_id=synthesis_id or None,
-                    participant=user,
+                    participant=participant,
                 )
             )
             raise

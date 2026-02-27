@@ -7,35 +7,30 @@ from collections import defaultdict
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Any,
     AsyncIterator,
-    Dict,
     Iterator,
-    List,
     Optional,
     TypeGuard,
 )
 from uuid import uuid4
 
-import getstream.models
 from aiortc import VideoStreamTrack
-from getstream.video.rtc import Call
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import TrackType
+from getstream.video.rtc import AudioStreamTrack, PcmData
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.context import Token
 from opentelemetry.trace import Tracer, set_span_in_context
 from opentelemetry.trace.propagation import Context, Span
 
-from ..edge import sfu_events
+from ..edge import Call, EdgeTransport
 from ..edge.events import (
     AudioReceivedEvent,
     CallEndedEvent,
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import OutputAudioTrack, Participant, PcmData, User
+from ..edge.types import Connection, Participant, TrackType, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -64,6 +59,7 @@ from ..stt.stt import STT
 from ..tts.events import TTSAudioEvent
 from ..tts.tts import TTS
 from ..turn_detection import TurnDetector, TurnEndedEvent, TurnStartedEvent
+from ..utils.audio_filter import AudioFilter, FirstSpeakerWinsFilter
 from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
@@ -77,12 +73,6 @@ from . import events
 from .agent_types import AgentOptions, LLMTurn, TrackInfo, default_agent_options
 from .conversation import Conversation
 from .transcript_buffer import TranscriptBuffer
-
-if TYPE_CHECKING:
-    from vision_agents.plugins.getstream.stream_edge_transport import (
-        StreamConnection,
-        StreamEdge,
-    )
 
 logger = logging.getLogger(__name__)
 
@@ -112,9 +102,6 @@ class Agent:
     * agent.close() // cleanup
 
     Note: Don't reuse the agent object. Create a new agent object each time.
-
-    Dev guidelines
-    - Small methods so its easy to subclass/change behaviour
     """
 
     options: AgentOptions
@@ -122,7 +109,7 @@ class Agent:
     def __init__(
         self,
         # edge network for video & audio
-        edge: "StreamEdge",
+        edge: EdgeTransport,
         # llm, optionally with sts/realtime capabilities
         llm: LLM | AudioLLM | VideoLLM,
         # the agent's user info
@@ -137,13 +124,51 @@ class Agent:
         # - roboflow/ yolo typically run continuously
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
-        processors: Optional[List[Processor]] = None,
+        processors: Optional[list[Processor]] = None,
         # MCP servers for external tool and resource access
-        mcp_servers: Optional[List[MCPBaseServer]] = None,
+        mcp_servers: Optional[list[MCPBaseServer]] = None,
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
+        # Send text to TTS as sentences stream from the LLM rather than
+        # waiting for the complete response. Reduces perceived latency for
+        # non-realtime LLMs that emit LLMResponseChunkEvent.
+        streaming_tts: bool = False,
+        # Metrics broadcasting to call participants
+        broadcast_metrics: bool = False,
+        broadcast_metrics_interval: float = 5.0,
+        # Audio filter to process audio from multiple speakers
+        multi_speaker_filter: Optional[AudioFilter] = None,
     ):
+        """Initialize the Agent.
+
+        Args:
+            edge: Edge transport for video and audio connectivity.
+            llm: LLM, optionally with audio/video/realtime capabilities.
+            agent_user: The agent's user identity.
+            instructions: System instructions for the LLM. Supports `@file.md` references.
+            stt: Speech-to-text service. Not needed when using a realtime LLM.
+            tts: Text-to-speech service. Not needed when using a realtime LLM.
+            turn_detection: Turn detector for managing conversational turns.
+                Not needed when using a realtime LLM.
+            processors: Processors that run alongside the agent (e.g. video analysis,
+                data fetching). Their state is passed to the LLM.
+            mcp_servers: MCP servers for external tool and resource access.
+            options: Agent configuration options. Merged with defaults when provided.
+            tracer: OpenTelemetry tracer for distributed tracing.
+            profiler: Optional profiler for performance monitoring.
+            broadcast_metrics: Whether to periodically broadcast agent metrics
+                to call participants as custom events.
+            broadcast_metrics_interval: Interval in seconds between metric broadcasts.
+            multi_speaker_filter: Audio filter for handling overlapping speech from
+                multiple participants.
+                Takes effect only more than one participant is present.
+                Defaults to `FirstSpeakerWinsFilter`, which uses VAD to lock onto
+                the first participant who starts speaking and drops audio from
+                everyone else until the active speaker's turn ends, or they go
+                silent.
+
+        """
         self._agent_user_initialized = False
         self.agent_user = agent_user
         if not self.agent_user.id:
@@ -161,8 +186,14 @@ class Agent:
             options = default_agent_options().update(options)
         self.options = options
 
-        # audio incoming is enqueued to self._incoming_audio_queue (eg. human audio)
-        self._incoming_audio_queue: AudioQueue = AudioQueue(buffer_limit_ms=8000)
+        # Per-participant audio queues keyed by participant.id
+        self._participant_queues: dict[str, tuple[Participant, AudioQueue]] = {}
+        self._audio_buffer_limit_ms = 8000
+
+        # Built-in first-speaker-wins filter for multi-participant calls
+        self._multi_speaker_filter: AudioFilter = (
+            multi_speaker_filter or FirstSpeakerWinsFilter()
+        )
 
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
@@ -175,14 +206,14 @@ class Agent:
         self.logger = _AgentLoggerAdapter(logger, {"agent_id": self.agent_user.id})
 
         self.events = EventManager()
-        self.events.register_events_from_module(getstream.models, "call.")
         self.events.register_events_from_module(events)
-        self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(llm_events)
 
         self.llm = llm
         self.stt = stt
         self.tts = tts
+        self.streaming_tts = streaming_tts
+        self._streaming_tts_buffer: str = ""
         self.turn_detection = turn_detection
         self.processors: list[Processor] = processors or []
         self.mcp_servers = mcp_servers or []
@@ -202,13 +233,13 @@ class Agent:
         self.conversation: Optional[Conversation] = None
 
         # Track pending transcripts for turn-based response triggering
-        self._pending_user_transcripts: Dict[str, TranscriptBuffer] = defaultdict(
+        self._pending_user_transcripts: dict[str, TranscriptBuffer] = defaultdict(
             TranscriptBuffer
         )
 
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, llm, edge, profiler]:
-            if plugin and hasattr(plugin, "events"):
+            if plugin is not None:
                 self.logger.debug(f"Register events from plugin {plugin}")
                 self.events.merge(plugin.events)
 
@@ -221,21 +252,26 @@ class Agent:
         self.events.subscribe(self._on_agent_say)
 
         # Track metadata: track_id -> TrackInfo
-        self._active_video_tracks: Dict[str, TrackInfo] = {}
-        self._video_forwarders: List[VideoForwarder] = []
-        self._connection: Optional[StreamConnection] = None
+        self._active_video_tracks: dict[str, TrackInfo] = {}
+        self._video_forwarders: list[VideoForwarder] = []
+        self._connection: Optional[Connection] = None
 
         # Optional local video track override for debugging.
         # This track will play instead of any incoming video track.
         self._video_track_override_path: Optional[str | Path] = None
 
         # the outgoing audio track
-        self._audio_track: Optional[OutputAudioTrack] = None
+        self._audio_track: Optional[AudioStreamTrack] = None
 
         # the outgoing video track
         self._video_track: Optional[VideoStreamTrack] = None
 
         self._audio_consumer_task: Optional[asyncio.Task] = None
+        self._metrics_broadcast_task: Optional[asyncio.Task] = None
+
+        # Metrics broadcasting settings
+        self._broadcast_metrics = broadcast_metrics
+        self._broadcast_metrics_interval = broadcast_metrics_interval
 
         # validation time
         self._validate_configuration()
@@ -253,6 +289,7 @@ class Agent:
         self._joined_at: float = 0.0
 
         self._join_lock = asyncio.Lock()
+        self._authenticate_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._closed = False
         self._metrics = AgentMetrics()
@@ -270,9 +307,18 @@ class Agent:
         turn = self._pending_turn
         self._pending_turn = None
         event = turn.response
-        if self.tts and event and event.text and event.text.strip():
+        if self.streaming_tts:
+            await self._flush_streaming_tts_buffer()
+        elif self.tts and event and event.text and event.text.strip():
             sanitized_text = self._sanitize_text(event.text)
             await self.tts.send(sanitized_text)
+
+    async def _flush_streaming_tts_buffer(self):
+        """Send any remaining text in the streaming TTS buffer."""
+        remaining = self._streaming_tts_buffer.strip()
+        self._streaming_tts_buffer = ""
+        if remaining and self.tts:
+            await self.tts.send(self._sanitize_text(remaining))
 
     def setup_event_handling(self):
         """
@@ -282,6 +328,11 @@ class Agent:
         - Eager: AudioReceivedEvent -> STTTranscriptEvent -> EagerTurnCompleted -> LLMResponseCompletedEvent
             - > if TurnCompleted -> TTSAudioEvent
         - Realtime: Transcriptions
+        - Streaming TTS (``streaming_tts=True``):
+            LLMResponseChunkEvent chunks are accumulated and sent to TTS at
+            sentence boundaries. The completed handler flushes any remaining
+            buffer instead of re-sending the full text. Barge-in clears the
+            buffer via ``_on_turn_event``.
 
         Other events
         - Tracks for video added/removed
@@ -295,7 +346,9 @@ class Agent:
         async def on_llm_response_send_to_tts(event: LLMResponseCompletedEvent):
             # turns started outside of the agent (instructions from code)
             if self._pending_turn is None:
-                if self.tts and event.text and event.text.strip():
+                if self.streaming_tts:
+                    await self._flush_streaming_tts_buffer()
+                elif self.tts and event.text and event.text.strip():
                     sanitized_text = self._sanitize_text(event.text)
                     await self.tts.send(sanitized_text)
             else:
@@ -306,36 +359,78 @@ class Agent:
                     # we are in eager turn completion mode. wait for confirmation
                     self._pending_turn.response = event
 
+        # Stream LLM text chunks to TTS as sentences complete
+        if self.streaming_tts:
+
+            @self.llm.events.subscribe
+            async def _stream_llm_chunks_to_tts(event: LLMResponseChunkEvent):
+                if not self.tts or not event.delta:
+                    return
+                if event.is_first_chunk:
+                    self._streaming_tts_buffer = ""
+                self._streaming_tts_buffer += event.delta
+                # Send complete sentences to TTS immediately
+                buf = self._streaming_tts_buffer
+                boundary = -1
+                for i in range(len(buf) - 1):
+                    if buf[i] in ".!?" and buf[i + 1] in " \n":
+                        boundary = i
+                if boundary >= 0:
+                    to_send = buf[: boundary + 1]
+                    self._streaming_tts_buffer = buf[boundary + 1 :].lstrip()
+                    if to_send.strip():
+                        await self.tts.send(self._sanitize_text(to_send))
+
         # write tts pcm to output track (this is the AI talking to us)
         @self.events.subscribe
         async def _on_tts_audio_write_to_output(event: TTSAudioEvent):
-            if self._audio_track is not None:
+            if (
+                self._audio_track is not None
+                and event.data is not None
+                and not self.audio_publishers
+            ):
                 await self._audio_track.write(event.data)
 
         # listen to video tracks added/removed
         @self.edge.events.subscribe
         async def on_video_track_added(event: TrackAddedEvent | TrackRemovedEvent):
-            if event.track_id is None or event.track_type is None or event.user is None:
+            if (
+                event.track_id is None
+                or event.track_type is None
+                or event.participant is None
+            ):
                 return
             if isinstance(event, TrackRemovedEvent):
                 asyncio.create_task(
-                    self._on_track_removed(event.track_id, event.track_type, event.user)
+                    self._on_track_removed(
+                        event.track_id, event.track_type, event.participant
+                    )
                 )
             else:
                 asyncio.create_task(
-                    self._on_track_added(event.track_id, event.track_type, event.user)
+                    self._on_track_added(
+                        event.track_id, event.track_type, event.participant
+                    )
                 )
 
         # audio event for the user talking to the AI
         @self.edge.events.subscribe
         async def on_audio_received(event: AudioReceivedEvent):
-            if event.pcm_data is None:
+            if event.pcm_data is None or event.participant is None:
                 return
-
-            await self._incoming_audio_queue.put(event.pcm_data)
+            pcm = event.pcm_data
+            participant = event.participant
+            existing = self._participant_queues.get(participant.id)
+            if existing is not None:
+                _, queue = existing
+                await queue.put(pcm)
+            else:
+                queue = AudioQueue(buffer_limit_ms=self._audio_buffer_limit_ms)
+                await queue.put(pcm)
+                self._participant_queues[participant.id] = (participant, queue)
 
         @self.edge.events.subscribe
-        async def on_call_ended(event: CallEndedEvent):
+        async def on_call_ended(_: CallEndedEvent):
             if self._call_ended_event is not None:
                 self._call_ended_event.set()
 
@@ -554,8 +649,6 @@ class Agent:
             # run start on all subclasses
             await self._apply("start")
 
-            await self.create_user()
-
             # Connect to MCP servers if manager is available
             if self.mcp_manager:
                 with self.span("mcp_manager.connect_all"):
@@ -566,8 +659,9 @@ class Agent:
             if _is_realtime_llm(self.llm):
                 await self.llm.connect()
 
-            with self.span("edge.connect"):
-                self._connection = await self.edge.connect(self, call)
+            await self.authenticate()
+            with self.span("edge.join"):
+                self._connection = await self.edge.join(self, call)
             self.logger.info(f"🤖 Agent joined call: {call_id}")
 
             # Set up audio and video tracks together to avoid SDP issues
@@ -579,7 +673,7 @@ class Agent:
                     await self.edge.publish_tracks(audio_track, video_track)
 
             # Setup chat and connect it to transcript events
-            self.conversation = await self.edge.create_chat_channel(
+            self.conversation = await self.edge.create_conversation(
                 call, self.agent_user, self.instructions.full_reference
             )
 
@@ -593,6 +687,13 @@ class Agent:
             self._audio_consumer_task = asyncio.create_task(
                 self._consume_incoming_audio()
             )
+
+            # Start metrics broadcast if enabled
+            if self._broadcast_metrics:
+                self._metrics_broadcast_task = asyncio.create_task(
+                    self._metrics_broadcast_loop()
+                )
+
             self._call_ended_event = asyncio.Event()
             self._joined_at = time.time()
             yield
@@ -701,8 +802,14 @@ class Agent:
         self._context_token = otel_context.attach(self._root_ctx)
 
     async def _apply(self, function_name: str, *args, **kwargs):
-        subclasses = [self.llm, self.stt, self.tts, self.turn_detection, self.edge]
-        subclasses.extend(self.processors)
+        subclasses = [
+            self.llm,
+            self.stt,
+            self.tts,
+            self.turn_detection,
+            self.edge,
+            *self.processors,
+        ]
         for subclass in subclasses:
             if (
                 subclass is not None
@@ -769,6 +876,11 @@ class Agent:
             await cancel_and_wait(self._audio_consumer_task)
             self._audio_consumer_task = None
 
+        # Stop metrics broadcast task
+        if self._metrics_broadcast_task:
+            await cancel_and_wait(self._metrics_broadcast_task)
+            self._metrics_broadcast_task = None
+
         # run stop on all subclasses
         await self._apply("stop")
         # run close on all subclasses
@@ -829,23 +941,30 @@ class Agent:
             clear_call_context(self._call_context_token)
             self._call_context_token = None
 
-    async def create_user(self) -> None:
-        """Create the agent user in the edge provider, if required."""
+    async def authenticate(self) -> None:
+        """Authenticate the agent user with the edge provider.
 
-        if self._agent_user_initialized:
-            return None
+        Idempotent — safe to call multiple times.
+        """
+        async with self._authenticate_lock:
+            if self._agent_user_initialized:
+                return None
 
-        with self.span("edge.register_user"):
-            await self.edge.register_user(self.agent_user)
-            self._agent_user_initialized = True
+            with self.span("edge.authenticate"):
+                await self.edge.authenticate(self.agent_user)
+                self._agent_user_initialized = True
 
         return None
 
     async def create_call(self, call_type: str, call_id: str) -> Call:
-        """Shortcut for creating a call/room etc."""
-        call = self.edge.client.video.call(call_type, call_id)
-        await call.get_or_create(data={"created_by_id": self.agent_user.id})
+        """Create a call in the edge provider.
 
+        Automatically authenticates if not already done.
+        """
+        await self.authenticate()
+        call = await self.edge.create_call(
+            call_id=call_id, agent_user_id=self.agent_user.id, call_type=call_type
+        )
         return call
 
     def _on_rtc_reconnect(self):
@@ -856,6 +975,9 @@ class Agent:
 
     async def _on_agent_say(self, event: events.AgentSayEvent):
         """Handle agent say events by calling TTS if available."""
+        if not event.participant:
+            return None
+
         try:
             # Emit say started event
             synthesis_id = str(uuid4())
@@ -863,21 +985,17 @@ class Agent:
                 events.AgentSayStartedEvent(
                     plugin_name="agent",
                     text=event.text,
-                    user_id=event.user_id,
                     synthesis_id=synthesis_id,
+                    participant=event.participant,
                 )
             )
 
             start_time = time.time()
 
             if self.tts is not None:
-                # Call TTS with user metadata
-                user_metadata = {"user_id": event.user_id}
-                if event.metadata:
-                    user_metadata.update(event.metadata)
-
+                # Create participant from event
                 sanitized_text = self._sanitize_text(event.text)
-                await self.tts.send(sanitized_text, user_metadata)
+                await self.tts.send(sanitized_text, event.participant)
 
                 # Calculate duration
                 duration_ms = (time.time() - start_time) * 1000
@@ -887,9 +1005,9 @@ class Agent:
                     events.AgentSayCompletedEvent(
                         plugin_name="agent",
                         text=event.text,
-                        user_id=event.user_id,
                         synthesis_id=synthesis_id,
                         duration_ms=duration_ms,
+                        participant=event.participant,
                     )
                 )
 
@@ -903,8 +1021,8 @@ class Agent:
                 events.AgentSayErrorEvent(
                     plugin_name="agent",
                     text=event.text,
-                    user_id=event.user_id,
                     error=e,
+                    participant=event.participant,
                 )
             )
             self.logger.error(f"Error in agent say: {e}")
@@ -913,7 +1031,7 @@ class Agent:
         self,
         text: str,
         user_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ):
         """
         Make the agent say something using TTS.
@@ -929,8 +1047,12 @@ class Agent:
             events.AgentSayEvent(
                 plugin_name="agent",
                 text=text,
-                user_id=user_id or self.agent_user.id,
                 metadata=metadata,
+                participant=Participant(
+                    id=self.id,
+                    user_id=user_id or self.agent_user.id or self.id,
+                    original=None,
+                ),
             )
         )
 
@@ -952,37 +1074,70 @@ class Agent:
         # Store the local video track.
         self._video_track_override_path = path
 
+    async def _poll_audio_queues(
+        self,
+        queues: dict[str, tuple[Participant, AudioQueue]],
+    ) -> AsyncIterator[tuple[Participant, PcmData]]:
+        """Poll all participant audio queues in parallel.
+
+        Yields (Participant, PcmData) tuples as each queue produces a chunk.
+        Queues that time out are silently skipped. On exit, any remaining
+        in-flight tasks are cancelled to avoid unhandled exceptions.
+        """
+
+        async def _poll(participant: Participant, queue: AudioQueue):
+            pcm = await asyncio.wait_for(
+                queue.get_duration(duration_ms=20), timeout=0.001
+            )
+            return participant, pcm
+
+        tasks = [asyncio.create_task(_poll(p, q)) for p, q in queues.values()]
+        try:
+            for fut in asyncio.as_completed(tasks):
+                try:
+                    yield await fut
+                except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                    continue
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
     async def _consume_incoming_audio(self) -> None:
-        """Consumer that continuously processes audio from the queue."""
+        """Consumer that continuously processes audio from per-participant queues."""
         interval_seconds = 0.02  # 20ms target interval
+
+        # Store audio processors in the variable to avoid calling
+        # the property all the time
+        audio_processors = self.audio_processors
+        is_audio_llm = _is_audio_llm(self.llm)
 
         try:
             while self._call_ended_event and not self._call_ended_event.is_set():
                 loop_start = time.perf_counter()
-                try:
-                    # Get audio data from queue with timeout to keep the loop running
-                    pcm = await asyncio.wait_for(
-                        self._incoming_audio_queue.get_duration(duration_ms=20),
-                        timeout=1.0,
-                    )
 
-                    participant = pcm.participant
-
-                    if (
-                        participant
-                        and getattr(participant, "user_id", None) != self.agent_user.id
-                    ):
-                        # first forward to processors
-                        for processor in self.audio_processors:
-                            if processor is None:
+                async for participant, pcm in self._poll_audio_queues(
+                    self._participant_queues
+                ):
+                    if participant.user_id != self.agent_user.id:
+                        # Pass audio through the filter
+                        # if multiple participants are on the call
+                        if len(self._participant_queues) > 1:
+                            pcm = await self._multi_speaker_filter.process_audio(
+                                pcm, participant
+                            )
+                            if pcm is None:
                                 continue
+
+                        # Pass PCM through audio processors
+                        for processor in audio_processors:
                             await processor.process_audio(pcm)
 
-                        # when in Realtime mode call the Realtime directly (non-blocking)
-                        if _is_audio_llm(self.llm):
+                        # Pass audio directly to LLM if it supports it
+                        if is_audio_llm:
                             await self.simple_audio_response(pcm, participant)
 
-                        # Process audio through STT
+                        # Otherwise, go through stt
                         elif self.stt:
                             await self.stt.process_audio(pcm, participant)
 
@@ -990,10 +1145,6 @@ class Agent:
                         await self.turn_detection.process_audio(
                             pcm, participant, conversation=self.conversation
                         )
-
-                except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                    # No audio data available, continue the loop
-                    pass
 
                 # Sleep for remaining time to maintain consistent interval
                 elapsed = time.perf_counter() - loop_start
@@ -1006,6 +1157,25 @@ class Agent:
             raise
         except Exception as e:
             self.logger.error(f"❌ Error in audio consumer: {e}", exc_info=True)
+
+    async def _metrics_broadcast_loop(self):
+        """Background task that periodically broadcasts metrics to call participants."""
+        try:
+            self.logger.info(
+                f"📊 Starting metrics broadcast (interval: {self._broadcast_metrics_interval}s)"
+            )
+            while True:
+                await asyncio.sleep(self._broadcast_metrics_interval)
+                try:
+                    await self.send_metrics_event()
+                except RuntimeError:
+                    # Not connected to a call, skip this iteration
+                    pass
+                except Exception as e:
+                    self.logger.warning(f"Failed to broadcast metrics: {e}")
+        except asyncio.CancelledError:
+            self.logger.info("📊 Metrics broadcast task cancelled")
+            raise
 
     async def _track_to_video_processors(self, track: TrackInfo):
         """
@@ -1024,21 +1194,22 @@ class Agent:
                 )
 
     async def _on_track_removed(
-        self, track_id: str, track_type: int, participant: Participant
+        self, track_id: str, track_type: TrackType, participant: Participant
     ):
+        if track_type == TrackType.AUDIO:
+            self._participant_queues.pop(participant.id, None)
+            self._multi_speaker_filter.clear(participant)
+            return
+
         # We only process video tracks (camera video or screenshare)
         if track_type not in (
-            TrackType.TRACK_TYPE_VIDEO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE,
+            TrackType.VIDEO,
+            TrackType.SCREEN_SHARE,
         ):
             return
-        track_type_name = (
-            "SCREEN_SHARE"
-            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
-            else "VIDEO"
-        )
+
         self.logger.info(
-            f"📺 Track removed: {track_type_name} from {participant.user_id}"
+            f"📺 Track removed: {track_type.name} from {participant.user_id}"
         )
 
         track = self._active_video_tracks.pop(track_id, None)
@@ -1047,7 +1218,7 @@ class Agent:
             track.track.stop()
             await self._on_track_change(track_id)
 
-    async def _on_track_change(self, track_id: str):
+    async def _on_track_change(self, _: str):
         # shared logic between track remove and added
         # Select a track. Prioritize screenshare over regular
         # This is the track without processing
@@ -1086,24 +1257,20 @@ class Agent:
             )
 
     async def _on_track_added(
-        self, track_id: str, track_type: int, participant: Participant
+        self, track_id: str, track_type: TrackType, participant: Participant
     ):
         # We only process video tracks (camera video or screenshare)
         if track_type not in (
-            TrackType.TRACK_TYPE_VIDEO,
-            TrackType.TRACK_TYPE_SCREEN_SHARE,
+            TrackType.VIDEO,
+            TrackType.SCREEN_SHARE,
         ):
             return
 
-        track_type_name = (
-            "SCREEN_SHARE"
-            if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE
-            else "VIDEO"
-        )
         self.logger.info(
-            f"📺 Track added: {track_type_name} from {participant.user_id}"
+            f"📺 Track added: {track_type.name} from {participant.user_id}"
         )
 
+        track: VideoStreamTrack | None
         if self._video_track_override_path is not None:
             # If local video track is set, we override all other video tracks with it.
             # We override tracks instead of simply playing one in order to keep the same lifecycle within the call.
@@ -1111,7 +1278,7 @@ class Agent:
             track = await self._get_video_track_override()
         else:
             # Subscribe to the video track, we watch all tracks by default
-            track = self.edge.subscribe_to_track(track_id)
+            track = self.edge.add_track_subscriber(track_id)
             if not track:
                 self.logger.error(f"Failed to subscribe to {track_id}")
                 return
@@ -1129,7 +1296,7 @@ class Agent:
             processor="",
             track=track,
             participant=participant,
-            priority=1 if track_type == TrackType.TRACK_TYPE_SCREEN_SHARE else 0,
+            priority=1 if track_type == TrackType.SCREEN_SHARE else 0,
             forwarder=forwarder,
         )
 
@@ -1149,6 +1316,7 @@ class Agent:
                         f"👉 Turn started - interrupting TTS for participant {event.participant.user_id}"
                     )
                     await self.tts.stop_audio()
+                    self._streaming_tts_buffer = ""
                 else:
                     participant_id = (
                         event.participant.user_id if event.participant else "unknown"
@@ -1167,6 +1335,7 @@ class Agent:
                 )
                 self.logger.debug(f"👉 Turn started - agent speaking {participant_id}")
         elif isinstance(event, TurnEndedEvent):
+            self._multi_speaker_filter.clear()
             participant_id = (
                 event.participant.user_id if event.participant else "unknown"
             )
@@ -1247,6 +1416,11 @@ class Agent:
         return self.turn_detection is not None or (
             self.stt is not None and self.stt.turn_detection
         )
+
+    @property
+    def audio_track(self) -> Optional[AudioStreamTrack]:
+        """The outgoing audio track published to the call."""
+        return self._audio_track
 
     @property
     def publish_audio(self) -> bool:
@@ -1364,25 +1538,25 @@ class Agent:
                 )
 
     def _prepare_rtc(self):
-        # Variables are now initialized in __init__
-
         if self.publish_audio:
-            framerate = 48000
-            stereo = True
-            self._audio_track = self.edge.create_output_audio_track(
-                framerate=framerate, stereo=stereo
-            )
+            if self.audio_publishers:
+                self._audio_track = self.audio_publishers[0].publish_audio_track()
+            else:
+                self._audio_track = self.edge.create_audio_track()
 
             @self.events.subscribe
             async def forward_audio(event: RealtimeAudioOutputEvent):
-                if self._audio_track is not None:
+                if (
+                    self._audio_track is not None
+                    and event.data is not None
+                    and not self.audio_publishers
+                ):
                     await self._audio_track.write(event.data)
 
         # Set up video track if video publishers are available
         if self.publish_video:
             # Get the first video publisher to create the track
             video_publisher = self.video_publishers[0]
-            # TODO: some lLms like moondream publish video
             self._video_track = video_publisher.publish_video_track()
             forwarder = VideoForwarder(
                 self._video_track,  # type: ignore[arg-type]
@@ -1392,7 +1566,7 @@ class Agent:
             )
             self._active_video_tracks[self._video_track.id] = TrackInfo(
                 id=self._video_track.id,
-                type=TrackType.TRACK_TYPE_VIDEO,
+                type=TrackType.VIDEO.value,
                 processor=video_publisher.name,
                 track=self._video_track,
                 participant=None,
@@ -1421,6 +1595,60 @@ class Agent:
     @property
     def metrics(self) -> AgentMetrics:
         return self._metrics
+
+    async def send_custom_event(self, data: dict) -> None:
+        """Send a custom event to all participants watching the call.
+
+        Custom events are delivered to clients via `call.on("custom", callback)`.
+        Use this to send real-time data to your app's UI, such as metrics,
+        status updates, or any custom application data.
+
+        Args:
+            data: Custom event payload (must be JSON-serializable, max 5KB).
+
+        Raises:
+            RuntimeError: If the agent is not connected to a call.
+
+        Example:
+            await agent.send_custom_event({
+                "type": "status_update",
+                "status": "processing",
+                "progress": 0.5
+            })
+        """
+        await self.edge.send_custom_event(data)
+
+    async def send_metrics_event(
+        self, event_type: str = "agent_metrics", fields: list[str] | None = None
+    ) -> None:
+        """Send current agent metrics as a custom event.
+
+        This is a convenience method that packages the agent's metrics
+        and sends them as a custom event to all participants.
+
+        Args:
+            event_type: The type identifier for the event (default: "agent_metrics").
+            fields: Optional list of specific metric fields to include.
+                   If None, includes all metrics.
+
+        Example:
+            # Send all metrics
+            await agent.send_metrics_event()
+
+            # Send only LLM-related metrics
+            await agent.send_metrics_event(fields=[
+                "llm_latency_ms__avg",
+                "llm_input_tokens__total",
+                "llm_output_tokens__total"
+            ])
+        """
+        metrics_data = self._metrics.to_dict(fields or ())
+        await self.send_custom_event(
+            {
+                "type": event_type,
+                "metrics": metrics_data,
+            }
+        )
 
 
 def _is_audio_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[AudioLLM]:
