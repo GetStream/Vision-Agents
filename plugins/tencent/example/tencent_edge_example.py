@@ -20,15 +20,15 @@ async def create_agent(**kwargs) -> Agent:
         edge=tencent.Edge(sdk_app_id=sdk_app_id, key=secret_key),
         agent_user=User(name="Tencent Voice Agent", id="tencent-voice-agent"),
         instructions="You are a helpful voice assistant. Respond concisely.",
-        llm=gemini.LLM(),
-        tts=elevenlabs.TTS(),
-        stt=deepgram.STT(),
+        llm=gemini.Realtime(),
+        # tts=elevenlabs.TTS(),
+        # stt=deepgram.STT(),
     )
     return agent
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    await agent.create_user()
+    await agent.authenticate()
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):

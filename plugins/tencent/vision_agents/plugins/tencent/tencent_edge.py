@@ -10,7 +10,6 @@ import logging
 import os
 import threading
 import time
-from collections import deque
 from typing import TYPE_CHECKING, Any, Optional
 
 import TLSSigAPIv2
@@ -35,7 +34,6 @@ try:
         AUDIO_OBTAIN_METHOD_CALLBACK,
         AudioEncodeParams,
         AudioFrame,
-        AudioFrame_getdata,
         CreateTRTCCloud,
         DestroyTRTCCloud,
         EnterRoomParams,
@@ -43,6 +41,7 @@ try:
         TRTCCloudDelegate,
         TRTC_ROLE_ANCHOR,
         TRTC_SCENE_RECORD,
+        cdata,
     )
 except ImportError as e:
     _LITEAV_IMPORT_ERROR = e
@@ -66,17 +65,26 @@ FRAME_MS = 20
 SAMPLE_RATE = 16000
 CHANNELS = 1
 BYTES_PER_20MS = 640
+_WARMUP_FRAMES = 5
 
 
 def _extract_pcm(frame: Any) -> bytes:
-    """Extract PCM bytes from a SWIG AudioFrame.
+    """Extract PCM bytes from a SWIG AudioFrame using the GIL-safe cdata path.
 
-    Guards against null internal buffers that cause segfaults in the C
-    extension by checking size() before touching the data pointer.
+    AudioFrame_getdata / PcmData call PyBytes_FromStringAndSize inside
+    a SWIG_PYTHON_THREAD_BEGIN_ALLOW block (without the GIL).  Under
+    multi-threading this corrupts CPython's allocator and segfaults.
+
+    cdata() avoids the issue: it copies the raw pointer into a C struct
+    without the GIL, then creates the Python bytes object *with* the GIL.
     """
-    if frame.size() <= 0:
+    sz = frame.size()
+    if sz <= 0:
         return b""
-    return AudioFrame_getdata(frame)
+    raw = cdata(frame.data(), sz)
+    if isinstance(raw, bytes):
+        return raw
+    return raw.encode("utf-8", "surrogateescape")
 
 
 class TencentCall(Call):
@@ -138,16 +146,24 @@ class TencentConnection(Connection):
 
 
 class TencentAudioTrack:
-    """Duck-typed audio track that sends PCM via Tencent SendAudioFrame."""
+    """Duck-typed audio track that sends PCM via Tencent SendAudioFrame.
+
+    Frames are paced at 20 ms intervals using wall-clock time to match the
+    real-time playback rate expected by the TRTC SDK.
+    """
+
+    _FRAME_INTERVAL_S = FRAME_MS / 1000.0
+    _TAIL_FLUSH_S = _FRAME_INTERVAL_S * 2
 
     def __init__(self, edge: "TencentEdge"):
         self._edge = edge
-        self._queue: deque[bytes] = deque()
+        self._buffer = bytearray()
         self._lock = threading.Lock()
         self._cloud = None
         self._running = True
         self._sender_thread: Optional[threading.Thread] = None
         self._pts = 10
+        self._last_write_at = 0.0
 
     def set_cloud(self, cloud: Any) -> None:
         self._cloud = cloud
@@ -155,50 +171,70 @@ class TencentAudioTrack:
             self._sender_thread = threading.Thread(target=self._send_loop, daemon=True)
             self._sender_thread.start()
 
-    def write(self, pcm: PcmData) -> None:
+    async def write(self, pcm: PcmData) -> None:
         if not self._running or pcm is None:
             return
+        if pcm.sample_rate != SAMPLE_RATE or pcm.channels != CHANNELS:
+            pcm = pcm.resample(
+                target_sample_rate=SAMPLE_RATE, target_channels=CHANNELS
+            )
         if pcm.samples is not None and pcm.samples.size > 0:
             data = pcm.samples.tobytes()
         else:
             data = pcm.to_bytes()
         if data:
             with self._lock:
-                self._queue.append(data)
+                self._buffer.extend(data)
+                self._last_write_at = time.monotonic()
 
     def stop(self) -> None:
         self._running = False
 
     async def flush(self) -> None:
         with self._lock:
-            self._queue.clear()
+            self._buffer.clear()
+
+    def _pop_frame(self) -> bytes | None:
+        with self._lock:
+            buf_len = len(self._buffer)
+            if buf_len >= BYTES_PER_20MS:
+                frame_data = bytes(self._buffer[:BYTES_PER_20MS])
+                del self._buffer[:BYTES_PER_20MS]
+                return frame_data
+            if buf_len > 0 and (time.monotonic() - self._last_write_at) > self._TAIL_FLUSH_S:
+                frame_data = bytes(self._buffer) + b"\x00" * (BYTES_PER_20MS - buf_len)
+                self._buffer.clear()
+                return frame_data
+            return None
 
     def _send_loop(self) -> None:
+        next_frame_at = time.monotonic()
+
         while self._running and self._cloud is not None:
-            chunk = None
-            with self._lock:
-                if self._queue:
-                    chunk = self._queue.popleft()
-            if chunk:
-                offset = 0
-                while offset < len(chunk) and self._running:
-                    frame_bytes = chunk[offset : offset + BYTES_PER_20MS]
-                    offset += len(frame_bytes)
-                    if len(frame_bytes) < BYTES_PER_20MS and len(frame_bytes) > 0:
-                        frame_bytes = frame_bytes + b"\x00" * (
-                            BYTES_PER_20MS - len(frame_bytes)
-                        )
-                    if len(frame_bytes) == BYTES_PER_20MS:
-                        frame = AudioFrame()
-                        frame.sample_rate = SAMPLE_RATE
-                        frame.channels = CHANNELS
-                        frame.bits_per_sample = 16
-                        frame.codec = AUDIO_CODEC_TYPE_PCM
-                        frame.pts = self._pts
-                        self._pts += FRAME_MS
-                        frame.SetData(frame_bytes)
-                        self._cloud.SendAudioFrame(frame)
-            time.sleep(0.01)
+            now = time.monotonic()
+
+            if now < next_frame_at:
+                time.sleep(min(next_frame_at - now, 0.005))
+                continue
+
+            frame_bytes = self._pop_frame()
+            if frame_bytes is None:
+                time.sleep(0.005)
+                continue
+
+            frame = AudioFrame()
+            frame.sample_rate = SAMPLE_RATE
+            frame.channels = CHANNELS
+            frame.bits_per_sample = 16
+            frame.codec = AUDIO_CODEC_TYPE_PCM
+            frame.pts = self._pts
+            self._pts += FRAME_MS
+            frame.SetData(frame_bytes)
+            self._cloud.SendAudioFrame(frame)
+
+            next_frame_at += self._FRAME_INTERVAL_S
+            if next_frame_at < now:
+                next_frame_at = now + self._FRAME_INTERVAL_S
 
 
 class TencentEdge(EdgeTransport[TencentCall]):
@@ -235,7 +271,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         self._audio_track: Optional[TencentAudioTrack] = None
         self._delegate = None
 
-    async def create_user(self, user: User) -> None:
+    async def authenticate(self, user: User) -> None:
         self._agent_user_id = user.id
 
     async def create_call(
@@ -353,10 +389,12 @@ class TencentEdge(EdgeTransport[TencentCall]):
     ) -> None:
         if not self._loop or not pcm_bytes:
             return
+        sr = sample_rate if sample_rate and sample_rate > 0 else SAMPLE_RATE
+        ch = channels if channels and channels > 0 else CHANNELS
         pcm = PcmData.from_bytes(
             pcm_bytes,
-            sample_rate=sample_rate,
-            channels=channels,
+            sample_rate=sr,
+            channels=ch,
             format=AudioFormat.S16,
         )
         participant = Participant(original=None, user_id=user_id, id=user_id)
@@ -416,7 +454,7 @@ if TRTCCloudDelegate is not None:
             self._edge = edge
             self._connection = connection
             self._agent_user_id = edge._agent_user_id or ""
-            self._remote_audio_seen: set[str] = set()
+            self._remote_audio_frame_count: dict[str, int] = {}
 
         def OnError(self, error: int) -> None:
             try:
@@ -442,9 +480,6 @@ if TRTCCloudDelegate is not None:
         def OnExitRoom(self) -> None:
             try:
                 logger.info("Tencent TRTC OnExitRoom")
-                cloud = self._edge._cloud
-                if cloud is not None:
-                    cloud.DestroyLocalAudioChannel()
                 self._edge._emit_call_ended()
             except BaseException:
                 logger.exception("OnExitRoom callback failed")
@@ -527,13 +562,29 @@ if TRTCCloudDelegate is not None:
 
         def OnRemoteAudioReceived(self, user_id: str, frame: Any) -> None:
             try:
-                if user_id not in self._remote_audio_seen:
-                    self._remote_audio_seen.add(user_id)
-                    logger.info("Skipping first remote audio frame from %s (SDK buffer unsafe)", user_id)
+                if not user_id or user_id == self._agent_user_id:
                     return
+                count = self._remote_audio_frame_count.get(user_id, 0)
+                self._remote_audio_frame_count[user_id] = count + 1
+                if count < _WARMUP_FRAMES:
+                    if count == 0:
+                        logger.info(
+                            "Skipping first %d audio frames from %s (SDK buffer warmup)",
+                            _WARMUP_FRAMES,
+                            user_id,
+                        )
+                    return
+                sr = (
+                    frame.sample_rate
+                    if frame.sample_rate and frame.sample_rate > 0
+                    else SAMPLE_RATE
+                )
+                ch = (
+                    frame.channels
+                    if frame.channels and frame.channels > 0
+                    else CHANNELS
+                )
                 data = _extract_pcm(frame)
-                sr = frame.sample_rate or SAMPLE_RATE
-                ch = frame.channels or CHANNELS
                 if data:
                     self._edge._emit_audio_received(user_id, data, sr, ch)
             except BaseException:
@@ -541,12 +592,20 @@ if TRTCCloudDelegate is not None:
 
         def OnRemoteMixedAudioReceived(self, frame: Any) -> None:
             try:
+                sr = (
+                    frame.sample_rate
+                    if frame.sample_rate and frame.sample_rate > 0
+                    else SAMPLE_RATE
+                )
+                ch = (
+                    frame.channels
+                    if frame.channels and frame.channels > 0
+                    else CHANNELS
+                )
                 data = _extract_pcm(frame)
-                sr = frame.sample_rate or SAMPLE_RATE
-                ch = frame.channels or CHANNELS
                 if data:
                     self._edge._emit_audio_received("mixed", data, sr, ch)
             except BaseException:
-                pass
+                logger.exception("OnRemoteMixedAudioReceived failed")
 
     _TencentDelegate = _TencentDelegateCls
