@@ -34,7 +34,7 @@ uv run mypy
 - `@pytest.mark.asyncio` is not needed (asyncio_mode = auto).
 - Integration tests use `@pytest.mark.integration`.
 - Never adjust `sys.path`.
-- Keep unit-tests for the class under the same test class. Do not spread them around different test classes.For example, tests for `Agent` must be inside `TestAgent`, etc.
+- Keep unit-tests for the class under the same test class. Do not spread them around different test classes. For example, tests for `Agent` must be inside `TestAgent`, etc.
 
 ## Python rules
 
@@ -51,7 +51,8 @@ uv run mypy
 **Imports**:
 
 - ordered as: stdlib, third-party, local package, relative. Use `TYPE_CHECKING` guard for imports only needed by type annotations.
-- Never import from private modules (`_foo`) outside of the package's own `__init__.py`. Use the public re-export (e.g. `from vision_agents.testing import TestResponse`, not `from vision_agents.testing._run_result import TestResponse`).
+- Never import from private modules (`_foo`) outside of the package's own `__init__.py`. Use the public re-export (e.g. `from vision_agents.testing import TestResponse`, not
+  `from vision_agents.testing._run_result import TestResponse`).
 
 **Naming**:
 
