@@ -77,12 +77,12 @@ async def start_session(
             call_id=call_id, call_type=request.call_type
         )
     except SessionLimitExceeded as e:
-        raise HTTPException(status_code=429, detail=str(e)) from e
+        raise HTTPException(status_code=429, detail="Session limit exceeded") from e
     except Exception as e:
         logger.exception("Failed to start agent")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start agent: {str(e)}",
+            detail="Failed to start agent",
         ) from e
 
     return StartSessionResponse(
