@@ -27,7 +27,7 @@ class InMemorySessionKVStore(SessionKVStore):
         """
         self._data: dict[str, tuple[bytes, float]] = {}
         if cleanup_interval <= 0:
-            raise ValueError("cleanup_interval must be >= 0")
+            raise ValueError("cleanup_interval must be > 0")
         self._cleanup_interval = cleanup_interval
         self._cleanup_task: asyncio.Task[None] | None = None
 
