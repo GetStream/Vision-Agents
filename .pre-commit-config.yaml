@@ -22,13 +22,13 @@ repos:
   hooks:
     - id: mypy-main
       name: mypy (vision_agents)
-      entry: uv run --frozen mypy --install-types --non-interactive agents-core/vision_agents
+      entry: uv run --frozen dev.py mypy
       language: system
       pass_filenames: false
       types_or: [python]
     - id: mypy-plugins
       name: mypy (plugins)
-      entry: uv run --frozen mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
+      entry: uv run --frozen dev.py mypy-plugins
       language: system
       pass_filenames: false
       types_or: [python]

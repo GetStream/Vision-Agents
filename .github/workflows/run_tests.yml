@@ -55,9 +55,9 @@ jobs:
           path: .mypy_cache
           key: mypy-cache-${{ hashFiles('pyproject.toml') }}
       - name: Run mypy for core
-        run: uv run mypy --install-types --non-interactive agents-core/vision_agents
+        run: uv run dev.py mypy
       - name: Run mypy for plugins
-        run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
+        run: uv run dev.py mypy-plugins
       # Save the updated mypy cache
       - name: Save mypy cache
         uses: actions/cache/save@v5
