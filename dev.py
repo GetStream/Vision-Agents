@@ -90,7 +90,9 @@ def lint():
 
 def _plugin_mypypath() -> str:
     """Build MYPYPATH with all plugin root directories."""
-    return os.pathsep.join(str(p) for p in sorted(Path(PLUGINS_DIR).iterdir()) if p.is_dir())
+    return os.pathsep.join(
+        str(p) for p in sorted(Path(PLUGINS_DIR).iterdir()) if p.is_dir()
+    )
 
 
 @cli.command()
