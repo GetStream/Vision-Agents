@@ -9,6 +9,7 @@ import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
+from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
@@ -53,7 +54,8 @@ class HuggingFaceVLM(VideoLLM):
         self,
         model: str,
         api_key: Optional[str] = None,
-        provider: Optional[str] = None,
+        provider: Optional[PROVIDER_OR_POLICY_T] = None,
+        base_url: Optional[str] = None,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
         client: Optional[AsyncInferenceClient] = None,
@@ -65,6 +67,8 @@ class HuggingFaceVLM(VideoLLM):
             model: The HuggingFace model ID to use.
             api_key: HuggingFace API token. Defaults to HF_TOKEN environment variable.
             provider: Inference provider (e.g., "hf-inference"). Auto-selects if omitted.
+            base_url: Custom API base URL for OpenAI-compatible endpoints (e.g., Baseten).
+                Mutually exclusive with provider.
             fps: Number of video frames per second to handle.
             frame_buffer_seconds: Number of seconds to buffer for the model's input.
             client: Optional AsyncInferenceClient instance for dependency injection.
@@ -76,10 +80,16 @@ class HuggingFaceVLM(VideoLLM):
 
         if client is not None:
             self._client = client
+        elif base_url is not None:
+            self._client = AsyncInferenceClient(
+                base_url=base_url,
+                api_key=api_key,
+            )
         else:
             self._client = AsyncInferenceClient(
                 token=api_key,
                 model=model,
+                provider=provider,
             )
 
         self._fps = fps
