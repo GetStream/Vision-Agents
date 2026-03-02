@@ -187,15 +187,21 @@ class TencentOutgoingVideoTrack:
         self._task: asyncio.Task[None] | None = None
         self._running = True
         self._pts = 10
+        self._pts_start_time: float | None = None
 
     def set_cloud(self, cloud: Any, loop: asyncio.AbstractEventLoop) -> None:
         self._cloud = cloud
         self._loop = loop
+        self._running = True
+        self._pts = 10
+        self._pts_start_time = time.monotonic()
         if self._task is None:
             self._task = loop.create_task(self._send_loop())
 
     async def _send_loop(self) -> None:
         next_send = asyncio.get_event_loop().time()
+        if self._pts_start_time is None:
+            self._pts_start_time = time.monotonic()
         while self._running and self._cloud is not None:
             try:
                 frame = await self._source.recv()
@@ -210,8 +216,11 @@ class TencentOutgoingVideoTrack:
             pf.height = height
             pf.format = VIDEO_PIXEL_FORMAT_YUV420p
             pf.rotation = VIDEO_ROTATION_0
-            pf.pts = self._pts
-            self._pts += int(1000 / self._fps)
+            elapsed_ms = int((time.monotonic() - self._pts_start_time) * 1000)
+            wall_clock_pts = 10 + elapsed_ms
+            pts = max(self._pts + 1, wall_clock_pts)
+            pf.pts = pts
+            self._pts = pts
             pf.SetData(yuv_bytes)
             self._cloud.SendPixelFrame(STREAM_TYPE_VIDEO_HIGH, pf)
 
@@ -225,6 +234,7 @@ class TencentOutgoingVideoTrack:
 
     def stop(self) -> None:
         self._running = False
+        self._pts_start_time = None
         if self._task is not None:
             self._task.cancel()
             self._task = None
