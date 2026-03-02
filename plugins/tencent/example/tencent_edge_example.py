@@ -20,9 +20,9 @@ async def create_agent(**kwargs) -> Agent:
         edge=tencent.Edge(sdk_app_id=sdk_app_id, key=secret_key),
         agent_user=User(name="Tencent Voice Agent", id="tencent-voice-agent"),
         instructions="You are a helpful voice assistant. Respond concisely.",
-        llm=gemini.Realtime(),
-        # tts=elevenlabs.TTS(),
-        # stt=deepgram.STT(),
+        llm=gemini.LLM(),
+        tts=elevenlabs.TTS(),
+        stt=deepgram.STT(),
     )
     return agent
 
