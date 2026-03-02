@@ -31,10 +31,22 @@ await agent.join(call)
 await agent.finish()
 ```
 
+## Running locally on macOS
+
+The Tencent LiteAV SDK ships as a Linux shared library (`.so`). It cannot be loaded natively on macOS, so the example must run inside a Linux Docker container.
+
+From the `plugins/tencent/` directory:
+
+```bash
+docker compose build --no-cache
+docker compose run --rm tencent-agent
+```
+
+This will start the agent in a docker container and connect to a call, the Call ID will be logged allowing you to join from your preferred client interface.
+
 ## Configuration
 
 - **sdk_app_id** (int): Tencent TRTC SDK App ID.
 - **user_sig** (str): User signature for the agent user (recommended).
 - **key** (str): Optional. If set and `user_sig` is not, the plugin will try to generate user_sig via TLSSigAPIv2 (requires `TLSSigAPIv2` package).
 
-No changes are made to the Vision Agents core; this is a plugin-only implementation.

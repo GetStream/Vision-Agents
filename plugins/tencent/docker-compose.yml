@@ -1,0 +1,14 @@
+services:
+  tencent-agent:
+    build:
+      context: ../../..
+      dockerfile: vision-agents-stream/plugins/tencent/Dockerfile
+    volumes:
+      - ../..:/app
+      - ../../../tencent_rtc_sdk:/tencent_rtc_sdk
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["uv", "run", "python", "plugins/tencent/example/tencent_edge_example.py", "run"]
