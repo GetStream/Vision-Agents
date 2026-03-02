@@ -184,6 +184,47 @@ async def can_start_session(call_id: str, token_payload=Depends(verify_token)):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
 ```
 
+## Scaling to Multiple Nodes with Redis
+
+By default, `AgentLauncher` uses an in-memory session store which works for single-node deployments. For running across multiple nodes behind a load balancer, you can use a Redis-backed session store so that every node shares the same session state.
+
+```python
+from vision_agents.core import AgentLauncher, Runner, SessionRegistry, RedisSessionKVStore
+
+registry = SessionRegistry(
+    store=RedisSessionKVStore(url="redis://localhost:6379/0"),
+    node_id="node-1",  # optional, unique identifier for this node
+    ttl=30.0,           # heartbeat TTL in seconds (default: 30)
+)
+
+runner = Runner(
+    AgentLauncher(
+        create_agent=create_agent,
+        join_call=join_call,
+        registry=registry,
+    ),
+)
+```
+
+With Redis, any node can look up or close sessions started on other nodes. Close requests are asynchronous — the owning node picks them up on its next maintenance cycle.
+
+If you already have a `redis.asyncio.Redis` client, pass it directly instead of a URL:
+
+```python
+import redis.asyncio as redis
+
+client = redis.from_url("redis://localhost:6379/0")
+store = RedisSessionKVStore(client=client, key_prefix="my_app:")
+```
+
+| Parameter    | Default             | Description                                      |
+|--------------|---------------------|--------------------------------------------------|
+| `url`        | —                   | Redis connection URL (store owns the client)     |
+| `client`     | —                   | Existing `redis.asyncio.Redis` (caller owns it)  |
+| `key_prefix` | `"vision_agents:"`  | Namespace prefix for all Redis keys              |
+| `node_id`    | random UUID         | Unique identifier for this deployment node       |
+| `ttl`        | `30.0`              | Heartbeat TTL in seconds                         |
+
 ### API Reference
 
 #### OpenAPI & Swagger support
