@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Optional
 
 import TLSSigAPIv2
@@ -18,6 +19,16 @@ from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.edge import Call, EdgeTransport, events
 from vision_agents.core.edge.types import Connection, Participant, TrackType, User
+from vision_agents.plugins.tencent.tracks import (
+    CHANNELS,
+    FRAME_MS,
+    SAMPLE_RATE,
+    TencentAudioTrack,
+    TencentIncomingVideoTrack,
+    TencentOutgoingVideoTrack,
+    _DEFAULT_VIDEO_FPS,
+)
+from vision_agents.plugins.tencent.video_utils import yuv420p_to_av_frame
 
 if TYPE_CHECKING:
     from vision_agents.core import Agent
@@ -32,8 +43,8 @@ try:
     from liteav import (
         AUDIO_CODEC_TYPE_PCM,
         AUDIO_OBTAIN_METHOD_CALLBACK,
+        STREAM_TYPE_VIDEO_HIGH,
         AudioEncodeParams,
-        AudioFrame,
         CreateTRTCCloud,
         DestroyTRTCCloud,
         EnterRoomParams,
@@ -41,6 +52,7 @@ try:
         TRTCCloudDelegate,
         TRTC_ROLE_ANCHOR,
         TRTC_SCENE_RECORD,
+        VideoEncodeParams,
         cdata,
     )
 except ImportError as e:
@@ -61,10 +73,6 @@ def _require_liteav() -> None:
         ) from _LITEAV_IMPORT_ERROR
 
 
-FRAME_MS = 20
-SAMPLE_RATE = 16000
-CHANNELS = 1
-BYTES_PER_20MS = 640
 _WARMUP_FRAMES = 5
 
 
@@ -145,98 +153,6 @@ class TencentConnection(Connection):
                 self._idle_since = time.time()
 
 
-class TencentAudioTrack:
-    """Duck-typed audio track that sends PCM via Tencent SendAudioFrame.
-
-    Frames are paced at 20 ms intervals using wall-clock time to match the
-    real-time playback rate expected by the TRTC SDK.
-    """
-
-    _FRAME_INTERVAL_S = FRAME_MS / 1000.0
-    _TAIL_FLUSH_S = _FRAME_INTERVAL_S * 2
-
-    def __init__(self, edge: "TencentEdge"):
-        self._edge = edge
-        self._buffer = bytearray()
-        self._lock = threading.Lock()
-        self._cloud = None
-        self._running = True
-        self._sender_thread: Optional[threading.Thread] = None
-        self._pts = 10
-        self._last_write_at = 0.0
-
-    def set_cloud(self, cloud: Any) -> None:
-        self._cloud = cloud
-        if self._sender_thread is None:
-            self._sender_thread = threading.Thread(target=self._send_loop, daemon=True)
-            self._sender_thread.start()
-
-    async def write(self, pcm: PcmData) -> None:
-        if not self._running or pcm is None:
-            return
-        if pcm.sample_rate != SAMPLE_RATE or pcm.channels != CHANNELS:
-            pcm = pcm.resample(
-                target_sample_rate=SAMPLE_RATE, target_channels=CHANNELS
-            )
-        if pcm.samples is not None and pcm.samples.size > 0:
-            data = pcm.samples.tobytes()
-        else:
-            data = pcm.to_bytes()
-        if data:
-            with self._lock:
-                self._buffer.extend(data)
-                self._last_write_at = time.monotonic()
-
-    def stop(self) -> None:
-        self._running = False
-
-    async def flush(self) -> None:
-        with self._lock:
-            self._buffer.clear()
-
-    def _pop_frame(self) -> bytes | None:
-        with self._lock:
-            buf_len = len(self._buffer)
-            if buf_len >= BYTES_PER_20MS:
-                frame_data = bytes(self._buffer[:BYTES_PER_20MS])
-                del self._buffer[:BYTES_PER_20MS]
-                return frame_data
-            if buf_len > 0 and (time.monotonic() - self._last_write_at) > self._TAIL_FLUSH_S:
-                frame_data = bytes(self._buffer) + b"\x00" * (BYTES_PER_20MS - buf_len)
-                self._buffer.clear()
-                return frame_data
-            return None
-
-    def _send_loop(self) -> None:
-        next_frame_at = time.monotonic()
-
-        while self._running and self._cloud is not None:
-            now = time.monotonic()
-
-            if now < next_frame_at:
-                time.sleep(min(next_frame_at - now, 0.005))
-                continue
-
-            frame_bytes = self._pop_frame()
-            if frame_bytes is None:
-                time.sleep(0.005)
-                continue
-
-            frame = AudioFrame()
-            frame.sample_rate = SAMPLE_RATE
-            frame.channels = CHANNELS
-            frame.bits_per_sample = 16
-            frame.codec = AUDIO_CODEC_TYPE_PCM
-            frame.pts = self._pts
-            self._pts += FRAME_MS
-            frame.SetData(frame_bytes)
-            self._cloud.SendAudioFrame(frame)
-
-            next_frame_at += self._FRAME_INTERVAL_S
-            if next_frame_at < now:
-                next_frame_at = now + self._FRAME_INTERVAL_S
-
-
 class TencentEdge(EdgeTransport[TencentCall]):
     """Edge transport using Tencent TRTC."""
 
@@ -245,6 +161,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         sdk_app_id: int | None = None,
         user_sig: str | None = None,
         key: str | None = None,
+        video_fps: int = _DEFAULT_VIDEO_FPS,
     ):
         _require_liteav()
         super().__init__()
@@ -263,12 +180,15 @@ class TencentEdge(EdgeTransport[TencentCall]):
         self._sdk_app_id = sdk_app_id
         self._user_sig = user_sig
         self._key = key
+        self._video_fps = video_fps
         self._cloud = None
         self._connection: Optional[TencentConnection] = None
         self._call: Optional[TencentCall] = None
         self._agent_user_id: Optional[str] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._audio_track: Optional[TencentAudioTrack] = None
+        self._outgoing_video_track: Optional[TencentOutgoingVideoTrack] = None
+        self._incoming_video_tracks: dict[str, TencentIncomingVideoTrack] = {}
         self._delegate = None
 
     async def authenticate(self, user: User) -> None:
@@ -285,7 +205,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
             return TencentCall(call_id=call_id, str_room_id=call_id)
 
     def create_audio_track(self) -> AudioStreamTrack:
-        track = TencentAudioTrack(edge=self)
+        track = TencentAudioTrack()
         self._audio_track = track
         return track  # type: ignore[return-value]
 
@@ -294,14 +214,19 @@ class TencentEdge(EdgeTransport[TencentCall]):
             self._cloud.ExitRoom()
         if self._audio_track is not None:
             self._audio_track.stop()
+        if self._outgoing_video_track is not None:
+            self._outgoing_video_track.stop()
+        for track in self._incoming_video_tracks.values():
+            track.stop()
 
     async def close(self) -> None:
         self._exit_room()
         if self._cloud is not None:
             DestroyTRTCCloud(self._cloud)
             self._cloud = None
-        if self._audio_track is not None:
-            self._audio_track = None
+        self._audio_track = None
+        self._outgoing_video_track = None
+        self._incoming_video_tracks.clear()
         if self._delegate is not None:
             self._delegate.__disown__()
             self._delegate = None
@@ -353,6 +278,8 @@ class TencentEdge(EdgeTransport[TencentCall]):
         room_param.room.user_sig = TrtcString(user_sig)
         room_param.role = TRTC_ROLE_ANCHOR
         room_param.scene = TRTC_SCENE_RECORD
+        room_param.use_pixel_frame_input = True
+        room_param.use_pixel_frame_output = True
         room_param.audio_obtain_params.audio_obtain_method = AUDIO_OBTAIN_METHOD_CALLBACK
         room_param.audio_obtain_params.output_sample_rate = SAMPLE_RATE
         room_param.audio_obtain_params.output_channles = CHANNELS
@@ -368,7 +295,12 @@ class TencentEdge(EdgeTransport[TencentCall]):
         audio_track: Optional[Any] = None,
         video_track: Optional[Any] = None,
     ) -> None:
-        pass
+        if video_track is not None:
+            self._outgoing_video_track = TencentOutgoingVideoTrack(
+                source=video_track, fps=self._video_fps
+            )
+            if self._cloud is not None and self._loop is not None:
+                self._cloud.CreateLocalVideoChannel(STREAM_TYPE_VIDEO_HIGH)
 
     async def create_conversation(
         self, call: Call, user: User, instructions: str
@@ -376,7 +308,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         pass
 
     def add_track_subscriber(self, track_id: str) -> Optional[Any]:
-        return None
+        return self._incoming_video_tracks.get(track_id)
 
     async def send_custom_event(self, data: dict[str, Any]) -> None:
         if self._cloud is None:
@@ -432,6 +364,47 @@ class TencentEdge(EdgeTransport[TencentCall]):
                 events.CallEndedEvent(plugin_name="tencent"),
             )
 
+    def _emit_video_track_added(self, user_id: str) -> None:
+        if not self._loop:
+            return
+        track_id = f"{user_id}-video"
+        track = TencentIncomingVideoTrack(loop=self._loop)
+        self._incoming_video_tracks[track_id] = track
+        event = events.TrackAddedEvent(
+            plugin_name="tencent",
+            track_id=track_id,
+            track_type=TrackType.VIDEO,
+            participant=Participant(original=None, user_id=user_id, id=user_id),
+        )
+        self._loop.call_soon_threadsafe(self.events.send, event)
+
+    def _emit_video_track_removed(self, user_id: str) -> None:
+        if not self._loop:
+            return
+        track_id = f"{user_id}-video"
+        track = self._incoming_video_tracks.pop(track_id, None)
+        if track is not None:
+            track.stop()
+        event = events.TrackRemovedEvent(
+            plugin_name="tencent",
+            track_id=track_id,
+            track_type=TrackType.VIDEO,
+            participant=Participant(original=None, user_id=user_id, id=user_id),
+        )
+        self._loop.call_soon_threadsafe(self.events.send, event)
+
+    def _push_video_frame(
+        self, user_id: str, yuv_bytes: bytes, width: int, height: int, pts: int
+    ) -> None:
+        track_id = f"{user_id}-video"
+        track = self._incoming_video_tracks.get(track_id)
+        if track is None:
+            return
+        frame = yuv420p_to_av_frame(yuv_bytes, width, height)
+        frame.pts = pts
+        frame.time_base = Fraction(1, 1000)
+        track.push_frame(frame)
+
 
 _TencentDelegate: Any = None
 if TRTCCloudDelegate is not None:
@@ -474,6 +447,9 @@ if TRTCCloudDelegate is not None:
                 param.channels = CHANNELS
                 param.bitrate_bps = 54000
                 cloud.CreateLocalAudioChannel(param)
+
+                if self._edge._outgoing_video_track is not None:
+                    cloud.CreateLocalVideoChannel(STREAM_TYPE_VIDEO_HIGH)
             except BaseException:
                 logger.exception("OnEnterRoom callback failed")
 
@@ -498,7 +474,18 @@ if TRTCCloudDelegate is not None:
             pass
 
         def OnLocalVideoChannelCreated(self, stream_type: int) -> None:
-            pass
+            try:
+                logger.info("Tencent TRTC OnLocalVideoChannelCreated: stream_type=%s", stream_type)
+                edge = self._edge
+                if edge._outgoing_video_track and edge._cloud and edge._loop:
+                    vp = VideoEncodeParams()
+                    vp.frame_rate = edge._video_fps
+                    vp.bitrate_bps = 1_000_000
+                    vp.gop_in_seconds = 3
+                    edge._cloud.SetVideoEncodeParam(STREAM_TYPE_VIDEO_HIGH, vp)
+                    edge._outgoing_video_track.set_cloud(edge._cloud, edge._loop)
+            except BaseException:
+                logger.exception("OnLocalVideoChannelCreated callback failed")
 
         def OnLocalVideoChannelDestroyed(self, stream_type: int) -> None:
             pass
@@ -507,7 +494,7 @@ if TRTCCloudDelegate is not None:
             pass
 
         def OnRequestKeyFrame(self, stream_type: int) -> None:
-            pass
+            logger.debug("Tencent TRTC OnRequestKeyFrame: stream_type=%s", stream_type)
 
         def OnRemoteAudioAvailable(self, user_id: str, available: bool) -> None:
             try:
@@ -520,13 +507,40 @@ if TRTCCloudDelegate is not None:
                 logger.exception("OnRemoteAudioAvailable callback failed")
 
         def OnRemoteVideoAvailable(self, user_id: str, available: bool, stream_type: int) -> None:
-            pass
+            try:
+                if not user_id or user_id == self._agent_user_id:
+                    return
+                if available:
+                    logger.info("Tencent TRTC video available from %s (stream_type=%s)", user_id, stream_type)
+                    self._edge._emit_video_track_added(user_id)
+                else:
+                    logger.info("Tencent TRTC video unavailable from %s", user_id)
+                    self._edge._emit_video_track_removed(user_id)
+            except BaseException:
+                logger.exception("OnRemoteVideoAvailable callback failed")
 
         def OnRemoteVideoFrameReceived(self, user_id: str, stream_type: int, frame: Any) -> None:
             pass
 
         def OnRemotePixelFrameReceived(self, user_id: str, stream_type: int, frame: Any) -> None:
-            pass
+            try:
+                if not user_id or user_id == self._agent_user_id:
+                    return
+                width = frame.width
+                height = frame.height
+                if width <= 0 or height <= 0:
+                    return
+                sz = frame.size()
+                if sz <= 0:
+                    return
+                raw = cdata(frame.data(), sz)
+                if isinstance(raw, bytes):
+                    yuv_bytes = raw
+                else:
+                    yuv_bytes = raw.encode("utf-8", "surrogateescape")
+                self._edge._push_video_frame(user_id, yuv_bytes, width, height, frame.pts)
+            except BaseException:
+                logger.exception("OnRemotePixelFrameReceived callback failed")
 
         def OnSeiMessageReceived(self, user_id: str, stream_type: int, message_type: int, message: Any) -> None:
             pass
