@@ -237,6 +237,11 @@ class Agent:
             TranscriptBuffer
         )
 
+        # Stable message IDs for accumulating realtime transcripts into single messages.
+        # Keyed by user_id for user transcripts; single ID for agent transcripts.
+        self._rt_user_msg_ids: dict[str, str] = {}
+        self._rt_agent_msg_id: str | None = None
+
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, llm, edge, profiler]:
             if plugin is not None:
@@ -503,10 +508,34 @@ class Agent:
             if self.conversation is None or not event.text:
                 return
 
-            if user_id := event.user_id():
-                with self.span("agent.on_realtime_user_speech_transcription"):
+            user_id = event.user_id()
+            if not user_id:
+                self.logger.info(
+                    "RealtimeUserSpeechTranscriptionEvent event does not contain a user, skip sync to chat"
+                )
+                return
+
+            with self.span("agent.on_realtime_user_speech_transcription"):
+                if event.is_partial:
+                    if user_id not in self._rt_user_msg_ids:
+                        self._rt_user_msg_ids[user_id] = str(uuid.uuid4())
+                        await self._finalize_rt_agent_transcript()
                     await self.conversation.upsert_message(
-                        message_id=str(uuid.uuid4()),
+                        message_id=self._rt_user_msg_ids[user_id],
+                        role="user",
+                        user_id=user_id,
+                        content=event.text,
+                        completed=False,
+                        replace=True,
+                        original=event,
+                    )
+                else:
+                    msg_id = self._rt_user_msg_ids.pop(user_id, None) or str(
+                        uuid.uuid4()
+                    )
+                    await self._finalize_rt_agent_transcript()
+                    await self.conversation.upsert_message(
+                        message_id=msg_id,
                         role="user",
                         user_id=user_id,
                         content=event.text,
@@ -514,10 +543,6 @@ class Agent:
                         replace=True,
                         original=event,
                     )
-            else:
-                self.logger.info(
-                    "RealtimeUserSpeechTranscriptionEvent event does not contain a user, skip sync to chat"
-                )
 
         @self.events.subscribe
         async def on_realtime_agent_speech_transcription(
@@ -529,15 +554,32 @@ class Agent:
                 return
 
             with self.span("agent.on_realtime_agent_speech_transcription"):
-                await self.conversation.upsert_message(
-                    message_id=str(uuid.uuid4()),
-                    role="assistant",
-                    user_id=self.agent_user.id or "",
-                    content=event.text,
-                    completed=True,
-                    replace=True,
-                    original=event,
-                )
+                if event.is_partial:
+                    if self._rt_agent_msg_id is None:
+                        self._rt_agent_msg_id = str(uuid.uuid4())
+                        await self._finalize_rt_user_transcripts()
+                    await self.conversation.upsert_message(
+                        message_id=self._rt_agent_msg_id,
+                        role="assistant",
+                        user_id=self.agent_user.id or "",
+                        content=event.text,
+                        completed=False,
+                        replace=True,
+                        original=event,
+                    )
+                else:
+                    msg_id = self._rt_agent_msg_id or str(uuid.uuid4())
+                    self._rt_agent_msg_id = None
+                    await self._finalize_rt_user_transcripts()
+                    await self.conversation.upsert_message(
+                        message_id=msg_id,
+                        role="assistant",
+                        user_id=self.agent_user.id or "",
+                        content=event.text,
+                        completed=True,
+                        replace=True,
+                        original=event,
+                    )
 
         @self.llm.events.subscribe
         async def on_llm_response_sync_conversation(event: LLMResponseCompletedEvent):
@@ -1297,6 +1339,31 @@ class Agent:
         )
 
         await self._on_track_change(track_id)
+
+    async def _finalize_rt_user_transcripts(self) -> None:
+        """Finalize any pending partial user transcripts (mark as completed)."""
+        if not self._rt_user_msg_ids or self.conversation is None:
+            return
+        for user_id, msg_id in self._rt_user_msg_ids.items():
+            await self.conversation.upsert_message(
+                message_id=msg_id,
+                role="user",
+                user_id=user_id,
+                completed=True,
+            )
+        self._rt_user_msg_ids.clear()
+
+    async def _finalize_rt_agent_transcript(self) -> None:
+        """Finalize any pending partial agent transcript (mark as completed)."""
+        if self._rt_agent_msg_id is None or self.conversation is None:
+            return
+        await self.conversation.upsert_message(
+            message_id=self._rt_agent_msg_id,
+            role="assistant",
+            user_id=self.agent_user.id or "",
+            completed=True,
+        )
+        self._rt_agent_msg_id = None
 
     async def _on_turn_event(self, event: TurnStartedEvent | TurnEndedEvent) -> None:
         """Handle turn detection events."""

@@ -155,6 +155,7 @@ class XAIRealtime(realtime.Realtime):
         self._processing_task: Optional[asyncio.Task] = None
         self._exit_stack = contextlib.AsyncExitStack()
         self._ephemeral_token: Optional[str] = None
+        self._agent_transcript_acc: str = ""
 
     async def get_ephemeral_token(self, expires_seconds: int = 300) -> str:
         """
@@ -478,13 +479,22 @@ class XAIRealtime(realtime.Realtime):
                 logger.debug("Response output item added")
 
             elif event_type == "response.output_audio_transcript.delta":
-                # Agent speech transcript delta
                 delta = data.get("delta", "")
                 if delta:
-                    self._emit_agent_speech_transcription(text=delta, original=data)
+                    self._agent_transcript_acc += delta
+                    self._emit_agent_speech_transcription(
+                        text=self._agent_transcript_acc,
+                        is_partial=True,
+                        original=data,
+                    )
 
             elif event_type == "response.output_audio_transcript.done":
-                logger.debug("Agent transcript complete")
+                self._emit_agent_speech_transcription(
+                    text=self._agent_transcript_acc,
+                    is_partial=False,
+                    original=data,
+                )
+                self._agent_transcript_acc = ""
 
             elif event_type == "response.output_audio.delta":
                 # Audio output from the model

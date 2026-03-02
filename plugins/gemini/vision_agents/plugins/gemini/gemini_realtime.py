@@ -165,6 +165,8 @@ class GeminiRealtime(realtime.Realtime):
         self._processing_task: Optional[asyncio.Task] = None
         self._exit_stack = contextlib.AsyncExitStack()
         self._executor = ThreadPoolExecutor(max_workers=1)
+        self._user_transcript_acc: str = ""
+        self._agent_transcript_acc: str = ""
 
     @property
     def _session(self):
@@ -402,8 +404,13 @@ class GeminiRealtime(realtime.Realtime):
                 ):
                     text = server_message.server_content.input_transcription.text
                     if text:
+                        if not self._user_transcript_acc:
+                            self._agent_transcript_acc = ""
+                        self._user_transcript_acc += text
                         self._emit_user_speech_transcription(
-                            text=text, original=server_message
+                            text=self._user_transcript_acc,
+                            is_partial=True,
+                            original=server_message,
                         )
             elif is_output_transcript:
                 if (
@@ -412,8 +419,13 @@ class GeminiRealtime(realtime.Realtime):
                 ):
                     text = server_message.server_content.output_transcription.text
                     if text:
+                        if not self._agent_transcript_acc:
+                            self._user_transcript_acc = ""
+                        self._agent_transcript_acc += text
                         self._emit_agent_speech_transcription(
-                            text=text, original=server_message
+                            text=self._agent_transcript_acc,
+                            is_partial=True,
+                            original=server_message,
                         )
             elif is_response:
                 # Store the resumption id so we can resume a broken connection

@@ -186,19 +186,35 @@ class ToolEndEvent(PluginBaseEvent):
 
 @dataclass
 class RealtimeUserSpeechTranscriptionEvent(PluginBaseEvent):
-    """Event emitted when user speech transcription is available from realtime session."""
+    """Event emitted when user speech transcription is available from realtime session.
+
+    Args:
+        text: The transcript text. Always the full text so far (replacement semantics).
+        is_partial: True for intermediate transcripts, False for the final transcript
+            of a speech turn. LLM plugins set this based on provider semantics.
+        original: The raw provider event, if available.
+    """
 
     type: str = field(default="plugin.realtime_user_speech_transcription", init=False)
     text: str = ""
+    is_partial: bool = False
     original: Optional[Any] = None
 
 
 @dataclass
 class RealtimeAgentSpeechTranscriptionEvent(PluginBaseEvent):
-    """Event emitted when agent speech transcription is available from realtime session."""
+    """Event emitted when agent speech transcription is available from realtime session.
+
+    Args:
+        text: The transcript text. Always the full text so far (replacement semantics).
+        is_partial: True for intermediate transcripts, False for the final transcript
+            of a speech turn. LLM plugins set this based on provider semantics.
+        original: The raw provider event, if available.
+    """
 
     type: str = field(default="plugin.realtime_agent_speech_transcription", init=False)
     text: str = ""
+    is_partial: bool = False
     original: Optional[Any] = None
 
 
