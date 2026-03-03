@@ -120,6 +120,7 @@ class TestTransformersDetectionProcessor:
                 future.set_result(event)
 
         original_frame = await cat_video_track.recv()
+        assert isinstance(original_frame, VideoFrame)
 
         output_track = processor.publish_video_track()
         await processor.process_video(cat_video_track, "user_id")
@@ -139,6 +140,7 @@ class TestTransformersDetectionProcessor:
             assert 0 < obj["confidence"] <= 1.0
 
         output_frame = await output_track.recv()
+        assert isinstance(output_frame, VideoFrame)
         assert (original_frame.width, original_frame.height) == (
             output_frame.width,
             output_frame.height,
@@ -170,6 +172,7 @@ class TestTransformersDetectionProcessor:
                 future.set_result(event)
 
         original_frame = await cat_video_track.recv()
+        assert isinstance(original_frame, VideoFrame)
 
         output_track = processor.publish_video_track()
         await processor.process_video(cat_video_track, "user_id")
@@ -179,6 +182,7 @@ class TestTransformersDetectionProcessor:
 
         # Frame should pass through unmodified
         output_frame = await output_track.recv()
+        assert isinstance(output_frame, VideoFrame)
         assert (original_frame.width, original_frame.height) == (
             output_frame.width,
             output_frame.height,
@@ -204,6 +208,7 @@ class TestTransformersDetectionProcessor:
         # Use empty track — returns blue screen on each recv()
         input_track = QueuedVideoTrack()
         original_frame = await input_track.recv()
+        assert isinstance(original_frame, VideoFrame)
 
         output_track = processor.publish_video_track()
         await processor.process_video(input_track, "user_id")
@@ -212,6 +217,7 @@ class TestTransformersDetectionProcessor:
             await asyncio.wait_for(future, 5)
 
         output_frame = await output_track.recv()
+        assert isinstance(output_frame, VideoFrame)
         assert (original_frame.width, original_frame.height) == (
             output_frame.width,
             output_frame.height,
