@@ -1,9 +1,10 @@
 import json
 import logging
 import time
-from dataclasses import asdict
 from typing import Self
 from uuid import uuid4
+
+from vision_agents.core.observability.agent import AgentMetrics
 
 from .in_memory_store import InMemorySessionKVStore
 from .store import SessionKVStore
@@ -62,7 +63,7 @@ class SessionRegistry:
         )
         await self._store.set(
             self._session_key(call_id, session_id),
-            json.dumps(asdict(info)).encode(),
+            json.dumps(info.to_dict()).encode(),
             self._ttl,
         )
 
@@ -76,7 +77,7 @@ class SessionRegistry:
         )
 
     async def update_metrics(
-        self, call_id: str, session_id: str, metrics: dict[str, int | float | None]
+        self, call_id: str, session_id: str, metrics: AgentMetrics
     ) -> None:
         """Push updated metrics for a session into storage."""
         key = self._session_key(call_id, session_id)
@@ -87,7 +88,7 @@ class SessionRegistry:
         info.metrics = metrics
         info.metrics_updated_at = time.time()
         await self._store.set(
-            key, json.dumps(asdict(info)).encode(), self._ttl, only_if_exists=True
+            key, json.dumps(info.to_dict()).encode(), self._ttl, only_if_exists=True
         )
 
     async def get_close_requests(self, sessions: dict[str, str]) -> list[str]:

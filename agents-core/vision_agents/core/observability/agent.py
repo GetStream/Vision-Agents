@@ -146,6 +146,25 @@ class AgentMetrics:
         default_factory=lambda: Average("Average video frame processing latency")
     )
 
+    @classmethod
+    def from_dict(cls, data: dict[str, int | float | None]) -> "AgentMetrics":
+        """Reconstruct metrics from a flat dictionary of values.
+
+        Args:
+            data: mapping of metric name to its scalar value.
+        """
+        metrics = cls()
+        for f in dataclasses.fields(metrics):
+            value = data.get(f.name)
+            if value is None:
+                continue
+            metric = getattr(metrics, f.name)
+            if isinstance(metric, Counter):
+                metric.inc(int(value))
+            elif isinstance(metric, Average):
+                metric.update(value)
+        return metrics
+
     def to_dict(self, fields: Iterable[str] = ()) -> dict[str, int | float | None]:
         """
         Convert metrics into a dictionary {<metric>: <value>}.

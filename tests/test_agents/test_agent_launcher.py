@@ -834,7 +834,7 @@ class TestAgentLauncherWithStorage:
 
             info = await registry.get("test", session.id)
             assert info is not None
-            assert info.metrics["llm_input_tokens__total"] == 100
+            assert info.metrics.llm_input_tokens__total.value() == 100
 
     async def test_get_session_info_not_found(self, stream_edge_mock, storage):
         async def create_agent(**kwargs) -> Agent:

@@ -234,7 +234,7 @@ async def get_session_metrics(
         metrics_generated_at=datetime.fromtimestamp(
             info.metrics_updated_at, tz=timezone.utc
         ),
-        metrics=info.metrics,
+        metrics=info.metrics.to_dict(),
     )
 
 

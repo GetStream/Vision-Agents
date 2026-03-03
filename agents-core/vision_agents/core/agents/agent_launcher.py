@@ -534,9 +534,8 @@ class AgentLauncher:
         """Push current agent metrics for all active sessions to the registry."""
         for session_id, session in self._sessions.items():
             try:
-                metrics = session.agent.metrics.to_dict()
                 await self._registry.update_metrics(
-                    session.call_id, session_id, metrics
+                    session.call_id, session_id, session.agent.metrics
                 )
             except Exception:
                 logger.exception("Failed to flush metrics for session %s", session_id)
