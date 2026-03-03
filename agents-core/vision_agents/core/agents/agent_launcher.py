@@ -532,7 +532,7 @@ class AgentLauncher:
 
     async def _flush_metrics_to_registry(self) -> None:
         """Push current agent metrics for all active sessions to the registry."""
-        for session_id, session in self._sessions.items():
+        for session_id, session in list(self._sessions.items()):
             try:
                 await self._registry.update_metrics(
                     session.call_id, session_id, session.agent.metrics
