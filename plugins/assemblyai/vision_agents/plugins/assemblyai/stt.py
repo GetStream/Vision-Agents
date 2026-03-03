@@ -127,21 +127,23 @@ class STT(stt.STT):
 
     async def _disconnect(self) -> None:
         """Cancel tasks and close WebSocket + session."""
-        if self._send_task is not None:
+        current = asyncio.current_task()
+
+        if self._send_task is not None and self._send_task is not current:
             self._send_task.cancel()
             try:
                 await self._send_task
             except asyncio.CancelledError:
                 pass
-            self._send_task = None
+        self._send_task = None
 
-        if self._receive_task is not None:
+        if self._receive_task is not None and self._receive_task is not current:
             self._receive_task.cancel()
             try:
                 await self._receive_task
             except asyncio.CancelledError:
                 pass
-            self._receive_task = None
+        self._receive_task = None
 
         if self._ws is not None and not self._ws.closed:
             await self._ws.close()
@@ -327,10 +329,11 @@ class STT(stt.STT):
             await self._audio_queue.put(bytes(self._audio_buffer))
             self._audio_buffer.clear()
 
-        # Signal send loop to exit
         await self._audio_queue.put(None)
+        if self._send_task is not None:
+            await self._send_task
+            self._send_task = None
 
-        # Best-effort terminate message
         if self._ws is not None and not self._ws.closed:
             try:
                 await self._ws.send_str(json.dumps({"type": "Terminate"}))
