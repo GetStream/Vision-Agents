@@ -12,6 +12,7 @@ Requirements:
 - ASSEMBLYAI_API_KEY environment variable
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
 - GOOGLE_API_KEY environment variable (for Gemini)
+- CARTESIA_API_KEY environment variable (for Cartesia TTS)
 """
 
 import asyncio
@@ -20,7 +21,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import assemblyai, gemini, getstream
+from vision_agents.plugins import assemblyai, cartesia, gemini, getstream
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="AssemblyAI Agent", id="agent"),
         instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
         stt=assemblyai.STT(),
+        tts=cartesia.TTS(),
         llm=gemini.LLM(),
     )
     return agent
