@@ -10,6 +10,7 @@ from vision_agents.core.agents.session_registry.in_memory_store import (
 )
 from vision_agents.core.agents.session_registry.redis_store import RedisSessionKVStore
 from vision_agents.core.agents.session_registry.types import SessionInfo
+from vision_agents.core.observability.agent import AgentMetrics
 
 
 @pytest.fixture(scope="module")
@@ -76,14 +77,6 @@ class TestSessionRegistry:
         await registry.remove("call-r", "to-remove")
         assert await registry.get("call-r", "to-remove") is None
 
-    async def test_refresh_extends_ttl(self, registry: SessionRegistry) -> None:
-        await registry.register("call-r", "sess-r")
-        await asyncio.sleep(3.0)
-        await registry.refresh({"sess-r": "call-r"})
-        await asyncio.sleep(3.0)
-        info = await registry.get("call-r", "sess-r")
-        assert info is not None
-
     async def test_request_close_and_get_close_requests(
         self, registry: SessionRegistry
     ) -> None:
@@ -96,10 +89,12 @@ class TestSessionRegistry:
 
     async def test_update_metrics(self, registry: SessionRegistry) -> None:
         await registry.register("call-m", "sess-m")
-        await registry.update_metrics("call-m", "sess-m", {"latency_ms": 42.0})
+        metrics = AgentMetrics()
+        metrics.llm_latency_ms__avg.update(42.0)
+        await registry.update_metrics("call-m", "sess-m", metrics)
         info = await registry.get("call-m", "sess-m")
         assert info is not None
-        assert info.metrics["latency_ms"] == 42.0
+        assert info.metrics.llm_latency_ms__avg.value() == 42.0
 
     async def test_update_metrics_skipped_for_expired_session(
         self, registry: SessionRegistry
@@ -107,14 +102,12 @@ class TestSessionRegistry:
         short_registry = SessionRegistry(store=registry._store, ttl=1.0)
         await short_registry.register("call-exp", "sess-exp")
         await asyncio.sleep(1.5)
-        await short_registry.update_metrics(
-            "call-exp", "sess-exp", {"latency_ms": 99.0}
-        )
+        metrics = AgentMetrics()
+        metrics.llm_latency_ms__avg.update(99.0)
+        await short_registry.update_metrics("call-exp", "sess-exp", metrics)
         assert await short_registry.get("call-exp", "sess-exp") is None
 
-    async def test_session_expires_without_refresh(
-        self, registry: SessionRegistry
-    ) -> None:
+    async def test_session_expires_after_ttl(self, registry: SessionRegistry) -> None:
         short_registry = SessionRegistry(store=registry._store, ttl=1.0)
         await short_registry.register("call-e", "sess-expire")
         await asyncio.sleep(1.5)
@@ -174,11 +167,12 @@ class TestSessionInfo:
             "node_id": "n1",
             "started_at": 1.0,
             "metrics_updated_at": 2.0,
-            "metrics": {"latency": 10},
+            "metrics": {"llm_input_tokens__total": 10},
         }
         info = SessionInfo.from_dict(data)
         assert info.session_id == "s1"
-        assert info.metrics == {"latency": 10}
+        assert isinstance(info.metrics, AgentMetrics)
+        assert info.metrics.llm_input_tokens__total.value() == 10
 
     def test_from_dict_extra_keys_ignored(self) -> None:
         data = {

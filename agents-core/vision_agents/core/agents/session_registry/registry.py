@@ -1,9 +1,10 @@
 import json
 import logging
 import time
-from dataclasses import asdict
 from typing import Self
 from uuid import uuid4
+
+from vision_agents.core.observability.agent import AgentMetrics
 
 from .in_memory_store import InMemorySessionKVStore
 from .store import SessionKVStore
@@ -17,7 +18,8 @@ class SessionRegistry:
 
     The registry handles serialization, key naming, and TTL management.
     It holds no session state — the caller (AgentLauncher) owns all session
-    tracking and drives refreshes.
+    tracking.  Session TTLs are kept alive by periodic ``update_metrics``
+    calls which re-write each key with a fresh TTL.
 
     When no storage backend is provided, an :class:`InMemorySessionKVStore`
     is used by default (suitable for single-node / development).
@@ -61,7 +63,7 @@ class SessionRegistry:
         )
         await self._store.set(
             self._session_key(call_id, session_id),
-            json.dumps(asdict(info)).encode(),
+            json.dumps(info.to_dict()).encode(),
             self._ttl,
         )
 
@@ -75,33 +77,19 @@ class SessionRegistry:
         )
 
     async def update_metrics(
-        self, call_id: str, session_id: str, metrics: dict[str, int | float | None]
+        self, call_id: str, session_id: str, metrics: AgentMetrics
     ) -> None:
         """Push updated metrics for a session into storage."""
         key = self._session_key(call_id, session_id)
         raw = await self._store.get(key)
         if raw is None:
             return
-        data = json.loads(raw)
-        data["metrics"] = metrics
-        data["metrics_updated_at"] = time.time()
+        info = SessionInfo.from_dict(json.loads(raw))
+        info.metrics = metrics
+        info.metrics_updated_at = time.time()
         await self._store.set(
-            key, json.dumps(data).encode(), self._ttl, only_if_exists=True
+            key, json.dumps(info.to_dict()).encode(), self._ttl, only_if_exists=True
         )
-
-    async def refresh(self, sessions: dict[str, str]) -> None:
-        """Refresh TTLs for the given sessions.
-
-        Args:
-            sessions: mapping of session_id to call_id.
-        """
-        if not sessions:
-            return
-        keys = [
-            self._session_key(call_id, session_id)
-            for session_id, call_id in sessions.items()
-        ]
-        await self._store.expire(*keys, ttl=self._ttl)
 
     async def get_close_requests(self, sessions: dict[str, str]) -> list[str]:
         """Return session IDs that have a pending close request.
