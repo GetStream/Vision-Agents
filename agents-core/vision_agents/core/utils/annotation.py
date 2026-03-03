@@ -47,7 +47,7 @@ def annotate_image(
 
     annotated = image.copy()
 
-    if dim_factor is not None:
+    if dim_factor:
         mask = np.zeros(annotated.shape[:2], dtype=np.uint8)
         for xyxy in detections.xyxy:
             x1, y1, x2, y2 = xyxy.astype(int)
