@@ -4,13 +4,17 @@ Requires ``supervision`` and ``opencv-python`` at runtime. These are not
 core dependencies — plugins that use annotation must declare them.
 """
 
-from __future__ import annotations
+from typing import Iterable, Optional
 
-from typing import TYPE_CHECKING, Iterable, Optional
-
-if TYPE_CHECKING:
+try:
+    import cv2
     import numpy as np
     import supervision as sv
+except ImportError as _exc:
+    raise ImportError(
+        "annotation utilities require 'supervision', 'opencv-python', and 'numpy'. "
+        "Install the relevant plugin extras to enable annotation."
+    ) from _exc
 
 
 def annotate_image(
@@ -38,21 +42,17 @@ def annotate_image(
         box_thickness: Bounding box line thickness.
         text_position: Label position relative to box.
     """
-    import cv2
-    import numpy as np
-    import supervision as sv
-
     if text_position is None:
         text_position = sv.Position.TOP_CENTER
 
-    if dim_factor:
-        mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    annotated = image.copy()
+
+    if dim_factor is not None:
+        mask = np.zeros(annotated.shape[:2], dtype=np.uint8)
         for xyxy in detections.xyxy:
             x1, y1, x2, y2 = xyxy.astype(int)
             cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
-        image[mask == 0] = (image[mask == 0] * dim_factor).astype(np.uint8)
-
-    annotated = image.copy()
+        annotated[mask == 0] = (annotated[mask == 0] * dim_factor).astype(np.uint8)
 
     if mask_opacity is not None and detections.mask is not None:
         annotated = sv.MaskAnnotator(opacity=mask_opacity).annotate(
@@ -63,7 +63,10 @@ def annotate_image(
     detected_class_ids: Iterable[int] = (
         detections.class_id if detections.class_id is not None else []
     )
-    labels = [classes[class_id] for class_id in detected_class_ids]
+    labels = [
+        classes.get(int(class_id), str(int(class_id)))
+        for class_id in detected_class_ids
+    ]
     annotated = sv.LabelAnnotator(
         text_position=text_position,
         text_scale=text_scale,

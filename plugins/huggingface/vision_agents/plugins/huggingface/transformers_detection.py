@@ -18,8 +18,6 @@ Example:
             print(f"Detected {obj['label']}")
 """
 
-from __future__ import annotations
-
 import asyncio
 import gc
 import logging
@@ -29,12 +27,14 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import av
 import numpy as np
+import supervision as sv
 import torch
 from PIL import Image
 
 from vision_agents.core import Agent
 from vision_agents.core.events import DetectedObject, EventManager
 from vision_agents.core.processors.base_processor import VideoProcessorPublisher
+from vision_agents.core.utils.annotation import annotate_image
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
@@ -220,7 +220,7 @@ class TransformersDetectionProcessor(
 
         try:
             detected_objects = await self._run_inference(image)
-        except Exception:
+        except (RuntimeError, ValueError, OSError):
             logger.exception("Frame detection failed")
             await self._video_track.add_frame(frame)
             return
@@ -325,10 +325,6 @@ class TransformersDetectionProcessor(
         objects: list[DetectedObject],
     ) -> np.ndarray:
         """Annotate image with bounding boxes and labels."""
-        import supervision as sv
-
-        from vision_agents.core.utils.annotation import annotate_image
-
         xyxy = np.array([[o["x1"], o["y1"], o["x2"], o["y2"]] for o in objects])
         classes = {i: o["label"] for i, o in enumerate(objects)}
         class_ids = np.arange(len(objects))

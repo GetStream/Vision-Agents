@@ -116,7 +116,8 @@ class TestTransformersDetectionProcessor:
 
         @events_manager.subscribe
         async def on_event(event: DetectionCompletedEvent):
-            future.set_result(event)
+            if not future.done():
+                future.set_result(event)
 
         original_frame = await cat_video_track.recv()
 
@@ -165,7 +166,8 @@ class TestTransformersDetectionProcessor:
 
         @events_manager.subscribe
         async def on_event(event: DetectionCompletedEvent):
-            future.set_result(event)
+            if not future.done():
+                future.set_result(event)
 
         original_frame = await cat_video_track.recv()
 
@@ -196,7 +198,8 @@ class TestTransformersDetectionProcessor:
 
         @events_manager.subscribe
         async def on_event(event: DetectionCompletedEvent):
-            future.set_result(event)
+            if not future.done():
+                future.set_result(event)
 
         # Use empty track — returns blue screen on each recv()
         input_track = QueuedVideoTrack()

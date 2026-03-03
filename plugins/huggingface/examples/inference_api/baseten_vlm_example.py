@@ -12,6 +12,7 @@ Creates an agent that uses:
 
 Requirements:
 - BASETEN_API_KEY environment variable
+- BASETEN_BASE_URL environment variable
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
 - DEEPGRAM_API_KEY environment variable
 """

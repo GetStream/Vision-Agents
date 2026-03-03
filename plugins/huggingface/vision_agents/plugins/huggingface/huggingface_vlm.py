@@ -9,7 +9,6 @@ import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
-from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
@@ -54,7 +53,7 @@ class HuggingFaceVLM(VideoLLM):
         self,
         model: str,
         api_key: Optional[str] = None,
-        provider: Optional[PROVIDER_OR_POLICY_T] = None,
+        provider: Optional[str] = None,
         base_url: Optional[str] = None,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
@@ -77,6 +76,9 @@ class HuggingFaceVLM(VideoLLM):
         self.model = model
         self.provider = provider
         self.events.register_events_from_module(events)
+
+        if base_url is not None and provider is not None:
+            raise ValueError("`base_url` and `provider` are mutually exclusive.")
 
         if client is not None:
             self._client = client

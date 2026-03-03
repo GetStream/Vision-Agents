@@ -27,7 +27,7 @@ from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
 
 from .events import DetectedObject, DetectionCompletedEvent
-from .utils import annotate_image
+from vision_agents.core.utils.annotation import annotate_image
 
 logger = logging.getLogger(__name__)
 
