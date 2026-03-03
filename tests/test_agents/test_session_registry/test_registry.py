@@ -76,14 +76,6 @@ class TestSessionRegistry:
         await registry.remove("call-r", "to-remove")
         assert await registry.get("call-r", "to-remove") is None
 
-    async def test_refresh_extends_ttl(self, registry: SessionRegistry) -> None:
-        await registry.register("call-r", "sess-r")
-        await asyncio.sleep(3.0)
-        await registry.refresh({"sess-r": "call-r"})
-        await asyncio.sleep(3.0)
-        info = await registry.get("call-r", "sess-r")
-        assert info is not None
-
     async def test_request_close_and_get_close_requests(
         self, registry: SessionRegistry
     ) -> None:
@@ -112,9 +104,7 @@ class TestSessionRegistry:
         )
         assert await short_registry.get("call-exp", "sess-exp") is None
 
-    async def test_session_expires_without_refresh(
-        self, registry: SessionRegistry
-    ) -> None:
+    async def test_session_expires_after_ttl(self, registry: SessionRegistry) -> None:
         short_registry = SessionRegistry(store=registry._store, ttl=1.0)
         await short_registry.register("call-e", "sess-expire")
         await asyncio.sleep(1.5)

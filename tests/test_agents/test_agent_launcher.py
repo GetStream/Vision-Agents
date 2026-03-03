@@ -809,6 +809,33 @@ class TestAgentLauncherWithStorage:
             assert session.finished
             assert launcher.get_session(session.id) is None
 
+    async def test_metrics_flushed_to_registry(self, stream_edge_mock, storage):
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        registry = SessionRegistry(store=storage)
+        launcher = AgentLauncher(
+            create_agent=create_agent,
+            join_call=join_call_noop,
+            registry=registry,
+            maintenance_interval=0.5,
+        )
+        async with launcher:
+            session = await launcher.start_session(call_id="test")
+            session.agent.metrics.llm_input_tokens__total.inc(100)
+
+            # Wait for at least one maintenance cycle to flush metrics
+            await asyncio.sleep(1.5)
+
+            info = await registry.get("test", session.id)
+            assert info is not None
+            assert info.metrics["llm_input_tokens__total"] == 100
+
     async def test_get_session_info_not_found(self, stream_edge_mock, storage):
         async def create_agent(**kwargs) -> Agent:
             return Agent(
