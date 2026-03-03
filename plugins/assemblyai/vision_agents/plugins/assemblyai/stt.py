@@ -23,8 +23,7 @@ class STT(stt.STT):
     """AssemblyAI Universal-3 Pro streaming Speech-to-Text.
 
     Uses aiohttp for a fully async WebSocket connection to AssemblyAI's v3
-    streaming endpoint with built-in reconnection and native SpeechStarted
-    event support.
+    streaming endpoint with built-in reconnection and native Turn Detection.
 
     Docs: https://www.assemblyai.com/docs/streaming/universal-3-pro
     """
