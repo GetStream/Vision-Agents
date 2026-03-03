@@ -79,3 +79,11 @@ module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, 
 **Method order**:
 
 - `__init__`, public lifecycle methods, properties, public feature methods, private helpers, dunder methods.
+
+## Changelog
+
+- Lives in `CHANGELOG.md` at the repo root.
+- Organised by version heading (`# v0.4.0`), then sections: **Breaking Changes**, **New Features**, **Bug Fixes**.
+- Only include user-facing changes (public API breaks, features, fixes). Skip docs-only and CI-only commits.
+- Reference PR numbers inline, e.g. `(#374)`.
+- To generate: `git log <last-tag>..HEAD --oneline --no-merges`, then classify each commit.
