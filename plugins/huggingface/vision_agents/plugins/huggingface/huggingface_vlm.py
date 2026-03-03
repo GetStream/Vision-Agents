@@ -3,7 +3,7 @@ import logging
 import time
 import uuid
 from collections import deque
-from typing import Iterator, Optional, cast
+from typing import Any, Iterator, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
@@ -91,7 +91,7 @@ class HuggingFaceVLM(VideoLLM):
             self._client = AsyncInferenceClient(
                 token=api_key,
                 model=model,
-                provider=provider,
+                provider=provider,  # type: ignore[arg-type]
             )
 
         self._fps = fps
@@ -107,7 +107,7 @@ class HuggingFaceVLM(VideoLLM):
         text: str,
         processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent:
+    ) -> LLMResponseEvent[Any]:
         """
         Create an LLM response from text input with video context.
 

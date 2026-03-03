@@ -54,7 +54,7 @@ class DetectionResources:
 
     def __init__(
         self,
-        model: PreTrainedModel,
+        model: "PreTrainedModel",
         image_processor: Any,
         device: torch.device,
         dtype: torch.dtype,
@@ -159,7 +159,7 @@ class TransformersDetectionProcessor(
 
     async def process_video(
         self,
-        track: aiortc.VideoStreamTrack,
+        track: "aiortc.VideoStreamTrack",
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:

@@ -81,7 +81,7 @@ class HuggingFaceLLM(LLM):
             self._client = AsyncInferenceClient(
                 token=api_key,
                 model=model,
-                provider=provider,
+                provider=provider,  # type: ignore[arg-type]
             )
 
     async def simple_response(
@@ -89,7 +89,7 @@ class HuggingFaceLLM(LLM):
         text: str,
         processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent:
+    ) -> LLMResponseEvent[Any]:
         """
         Create an LLM response from text input.
 
