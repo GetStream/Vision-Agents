@@ -40,6 +40,7 @@ Source = "https://github.com/GetStream/Vision-Agents"
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff", "click"]
+local = ["sounddevice>=0.5.0"]
 anthropic = ["vision-agents-plugins-anthropic"]
 cartesia = ["vision-agents-plugins-cartesia"]
 deepgram = ["vision-agents-plugins-deepgram"]
