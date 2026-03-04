@@ -18,9 +18,17 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
+from vision_agents.core.stt.events import STTTranscriptEvent
+from vision_agents.core.stt.stt import STT
 from vision_agents.core.tts import TTS
 from vision_agents.core.tts.events import TTSAudioEvent
+from vision_agents.core.turn_detection import TurnEndedEvent
 from vision_agents.core.warmup import Warmable
+
+
+class DummySTT(STT):
+    async def process_audio(self, pcm_data, participant):
+        pass
 
 
 class DummyTTS(TTS):
@@ -43,6 +51,21 @@ class DummyLLM(LLM, Warmable[bool]):
 
     async def on_warmed_up(self, *_) -> None:
         self.warmed_up = True
+
+
+class RecordingLLM(DummyLLM):
+    """LLM that records conversation state at call time."""
+
+    def __init__(self):
+        super().__init__()
+        self.messages_at_call_time: list[tuple[str | None, str]] | None = None
+
+    async def simple_response(self, text=None, processors=None, participant=None):
+        if self.agent and self.agent.conversation:
+            self.messages_at_call_time = [
+                (m.role, m.content) for m in self.agent.conversation.messages
+            ]
+        return LLMResponseEvent(text="Agent response", original=None)
 
 
 class DummyEdge(EdgeTransport):
@@ -447,6 +470,57 @@ class TestAgent:
         await agent.authenticate()
         async with agent.join(call):
             assert edge.authenticate_call_count == 1
+
+    async def test_user_message_synced_before_llm_call(self):
+        """User message must be in the conversation before the LLM is called."""
+        llm = RecordingLLM()
+        agent = Agent(
+            llm=llm,
+            stt=DummySTT(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="agent"),
+        )
+        agent.conversation = InMemoryConversation(instructions="test", messages=[])
+
+        participant = Participant(original=None, user_id="user-1", id="session-1")
+        agent._pending_user_transcripts[participant.user_id].update(
+            "What is the weather?"
+        )
+
+        agent.events.send(TurnEndedEvent(participant=participant, confidence=1.0))
+        await agent.events.wait()
+
+        assert llm.messages_at_call_time == [
+            ("user", "What is the weather?"),
+        ]
+
+    async def test_stt_transcript_does_not_sync_to_conversation(self):
+        """STTTranscriptEvent should not add messages directly to the conversation.
+
+        Message sync now happens in _on_turn_event to guarantee ordering.
+        """
+        agent = Agent(
+            llm=DummyLLM(),
+            stt=DummySTT(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="agent"),
+        )
+        agent.conversation = InMemoryConversation(instructions="test", messages=[])
+
+        participant = Participant(original=None, user_id="user-1", id="session-1")
+        agent.events.send(
+            STTTranscriptEvent(
+                plugin_name="test",
+                text="Hello there",
+                participant=participant,
+            )
+        )
+        await agent.events.wait()
+
+        user_messages = [m for m in agent.conversation.messages if m.role == "user"]
+        assert user_messages == []
 
 
 @pytest.fixture
