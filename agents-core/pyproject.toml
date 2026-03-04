@@ -71,6 +71,7 @@ decart = ["vision-agents-plugins-decart"]
 twilio = ["vision-agents-plugins-twilio"]
 turbopuffer = ["vision-agents-plugins-turbopuffer"]
 mistral = ["vision-agents-plugins-mistral"]
+assemblyai = ["vision-agents-plugins-assemblyai"]
 redis = ["redis[hiredis]>=5.0.0"]
 tencent = ["vision-agents-plugins-tencent"]
 
@@ -106,6 +107,7 @@ all-plugins = [
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-turbopuffer",
     "vision-agents-plugins-mistral",
+    "vision-agents-plugins-assemblyai",
     "vision-agents-plugins-tencent",
 ]
 

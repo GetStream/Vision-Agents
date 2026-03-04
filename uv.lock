@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -14,6 +14,7 @@ resolution-markers = [
 members = [
     "vision-agents",
     "vision-agents-plugins-anthropic",
+    "vision-agents-plugins-assemblyai",
     "vision-agents-plugins-aws",
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-decart",
@@ -6942,6 +6943,7 @@ dependencies = [
 [package.optional-dependencies]
 all-plugins = [
     { name = "vision-agents-plugins-anthropic" },
+    { name = "vision-agents-plugins-assemblyai" },
     { name = "vision-agents-plugins-aws" },
     { name = "vision-agents-plugins-cartesia" },
     { name = "vision-agents-plugins-decart" },
@@ -6976,6 +6978,9 @@ all-plugins = [
 ]
 anthropic = [
     { name = "vision-agents-plugins-anthropic" },
+]
+assemblyai = [
+    { name = "vision-agents-plugins-assemblyai" },
 ]
 aws = [
     { name = "vision-agents-plugins-aws" },
@@ -7099,6 +7104,8 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'all-plugins'", editable = "plugins/anthropic" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "plugins/anthropic" },
+    { name = "vision-agents-plugins-assemblyai", marker = "extra == 'all-plugins'", editable = "plugins/assemblyai" },
+    { name = "vision-agents-plugins-assemblyai", marker = "extra == 'assemblyai'", editable = "plugins/assemblyai" },
     { name = "vision-agents-plugins-aws", marker = "extra == 'all-plugins'", editable = "plugins/aws" },
     { name = "vision-agents-plugins-aws", marker = "extra == 'aws'", editable = "plugins/aws" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'all-plugins'", editable = "plugins/cartesia" },
@@ -7162,7 +7169,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "smart-turn", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "smart-turn", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
@@ -7188,6 +7195,38 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-assemblyai"
+source = { editable = "plugins/assemblyai" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "scipy" },
+    { name = "soundfile" },
+    { name = "torchvision" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "scipy", specifier = ">=1.15.3,<1.16" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "torchvision", specifier = ">=0.20.0" },
 ]
 
 [[package]]

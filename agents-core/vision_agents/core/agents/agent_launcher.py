@@ -129,11 +129,11 @@ class AgentLauncher:
                 Default is None (unlimited).
             max_session_duration_seconds: Maximum duration in seconds for a session
                 before it is automatically closed. Default is None (unlimited).
-            maintenance_interval: Interval in seconds between cleanup checks for idle
-                or expired sessions. Default is 5.0 seconds.
+            maintenance_interval: Interval in seconds between maintenance cycles
+                (session cleanup and metrics flush). Default is 5.0 seconds.
             registry: Optional SessionRegistry for multi-node session management.
-                When provided, sessions are registered in shared storage and heartbeats
-                are sent on every cleanup interval.
+                When provided, sessions are registered in shared storage and
+                metrics are flushed on every maintenance cycle.
         """
         self._create_agent = create_agent
         self._join_call = join_call
@@ -474,7 +474,7 @@ class AgentLauncher:
     async def _maintenance_loop(self) -> None:
         while self._running:
             await self._close_expired_sessions()
-            await self._refresh_active_sessions()
+            await self._flush_metrics_to_registry()
             await asyncio.sleep(self._maintenance_interval)
 
     async def _close_expired_sessions(self) -> None:
@@ -530,13 +530,15 @@ class AgentLauncher:
                         f"Failed to close agent with user_id {agent.agent_user.id}",
                     )
 
-    async def _refresh_active_sessions(self) -> None:
-        """Send heartbeats for all active sessions to the registry."""
-        try:
-            sessions_map = {sid: s.call_id for sid, s in self._sessions.items()}
-            await self._registry.refresh(sessions_map)
-        except Exception:
-            logger.exception("Failed to refresh sessions at the registry")
+    async def _flush_metrics_to_registry(self) -> None:
+        """Push current agent metrics for all active sessions to the registry."""
+        for session_id, session in list(self._sessions.items()):
+            try:
+                await self._registry.update_metrics(
+                    session.call_id, session_id, session.agent.metrics
+                )
+            except Exception:
+                logger.exception("Failed to flush metrics for session %s", session_id)
 
     async def __aenter__(self) -> "AgentLauncher":
         """Enter the async context manager, starting the launcher."""

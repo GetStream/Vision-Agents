@@ -35,6 +35,7 @@ vision-agents-plugins-twilio = { workspace = true }
 vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
 vision-agents-plugins-mistral = { workspace = true }
+vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
 liteav = { path = "../tencent_rtc_sdk/python/python_x86_64", editable = true }
 
@@ -78,6 +79,7 @@ members = [
     "plugins/turbopuffer",
     "plugins/nvidia",
     "plugins/mistral",
+    "plugins/assemblyai",
     "plugins/tencent",
 ]
 exclude = [
