@@ -23,7 +23,12 @@ from vision_agents.core.llm.events import (
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
-from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
+from vision_agents.core.utils.video_utils import (
+    TEMPORAL_ENCODING_HINTS,
+    TemporalEncoding,
+    frame_to_jpeg_bytes,
+    temporal_composite_to_jpeg_bytes,
+)
 
 from .. import events
 
@@ -65,12 +70,13 @@ class ChatCompletionsVLM(VideoLLM):
         frame_height: int = 600,
         max_workers: int = 4,
         client: Optional[AsyncOpenAI] = None,
+        temporal_encoding: Optional[TemporalEncoding] = None,
     ):
         """
         Initialize the ChatCompletionsVLM class.
 
         Args:
-            model (str): The model id to use.
+            model: The model id to use.
             api_key: optional API key. By default, loads from OPENAI_API_KEY environment variable.
             base_url: optional base API url. By default, loads from OPENAI_BASE_URL environment variable.
             fps: the number of video frames per second to handle.
@@ -81,6 +87,10 @@ class ChatCompletionsVLM(VideoLLM):
             max_workers: the maximum number of worker threads to use for frame-to-image conversion.
                 Default - `4`.
             client: optional `AsyncOpenAI` client. By default, creates a new client object.
+            temporal_encoding: optional temporal encoding mode. When set, buffered frames
+                are composited into a single image that encodes motion information instead
+                of being sent as individual frames. Modes: "rgb" (time→color channels),
+                "heatmap" (motion overlay on latest frame), "grid" (sampled frame grid).
         """
         super().__init__()
         self.model = model
@@ -92,10 +102,9 @@ class ChatCompletionsVLM(VideoLLM):
             self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
         self._fps = fps
+        self._temporal_encoding = temporal_encoding
         self._video_forwarder: Optional[VideoForwarder] = None
 
-        # Buffer latest 10s of the video track to forward it to the model
-        # together with the user transcripts
         self._frame_buffer: deque[av.VideoFrame] = deque(
             maxlen=fps * frame_buffer_seconds
         )
@@ -322,13 +331,32 @@ class ChatCompletionsVLM(VideoLLM):
             )
 
     async def _get_frames_bytes(self) -> AsyncIterator[bytes]:
+        """Convert the buffered video frames to JPEG bytes.
+
+        When temporal encoding is configured, yields a single composite
+        image instead of individual per-frame images.
         """
-        Convert the buffered video frames to bytes and yield them.
-        The conversion happens asynchronously in the background threads.
-        """
+        frames = list(self._frame_buffer)
+        if not frames:
+            return
+
         loop = asyncio.get_running_loop()
 
-        # Convert frames to bytes in parallel in background threads
+        if self._temporal_encoding is not None:
+            min_frames = 3 if self._temporal_encoding == "rgb" else 2
+            if len(frames) >= min_frames:
+                composite = await loop.run_in_executor(
+                    self._executor,
+                    temporal_composite_to_jpeg_bytes,
+                    frames,
+                    self._frame_width,
+                    self._frame_height,
+                    self._temporal_encoding,
+                    85,
+                )
+                yield composite
+                return
+
         coroutines = [
             loop.run_in_executor(
                 self._executor,
@@ -338,23 +366,24 @@ class ChatCompletionsVLM(VideoLLM):
                 self._frame_height,
                 85,
             )
-            for frame in self._frame_buffer
+            for frame in frames
         ]
         for frame_bytes in await asyncio.gather(*coroutines):
             yield frame_bytes
 
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
-        # Add Agent's instructions as system prompt.
         if self._instructions:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": self._instructions,
-                }
-            )
+            system_content = self._instructions
+            if self._temporal_encoding is not None:
+                system_content += "\n\n" + TEMPORAL_ENCODING_HINTS[self._temporal_encoding]
+            messages.append({"role": "system", "content": system_content})
+        elif self._temporal_encoding is not None:
+            messages.append({
+                "role": "system",
+                "content": TEMPORAL_ENCODING_HINTS[self._temporal_encoding],
+            })
 
-        # Add all messages from the conversation to the prompt
         if self._conversation is not None:
             for message in self._conversation.messages:
                 messages.append(
@@ -364,23 +393,17 @@ class ChatCompletionsVLM(VideoLLM):
                     }
                 )
 
-        # Attach the latest buffered frames to the request
-        frames_data = []
+        frames_data: list[dict] = []
         async for frame_bytes in self._get_frames_bytes():
             frame_b64 = base64.b64encode(frame_bytes).decode("utf-8")
-            frame_msg = {
+            frames_data.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:image/jpeg;base64,{frame_b64}"},
-            }
-            frames_data.append(frame_msg)
+            })
         if frames_data:
-            logger.debug(f'Forwarding {len(frames_data)} to the LLM "{self.model}"')
-            messages.append(
-                {
-                    "role": "user",
-                    "content": frames_data,
-                }
-            )
+            logger.debug(f'Forwarding {len(frames_data)} image(s) to the LLM "{self.model}"')
+            messages.append({"role": "user", "content": frames_data})
+
         return messages
 
     async def close(self) -> None:

@@ -30,7 +30,12 @@ from vision_agents.core.llm.events import (
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
 from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
-from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
+from vision_agents.core.utils.video_utils import (
+    TEMPORAL_ENCODING_HINTS,
+    TemporalEncoding,
+    frame_to_jpeg_bytes,
+    temporal_composite_to_jpeg_bytes,
+)
 
 from . import events
 
@@ -67,6 +72,7 @@ class GeminiVLM(VideoLLM):
         frame_width: int = 800,
         frame_height: int = 600,
         max_workers: int = 4,
+        temporal_encoding: Optional[TemporalEncoding] = None,
         **kwargs: Any,
     ):
         """
@@ -84,6 +90,10 @@ class GeminiVLM(VideoLLM):
             frame_width: Width of video frames sent to the model.
             frame_height: Height of video frames sent to the model.
             max_workers: Max worker threads for frame conversion.
+            temporal_encoding: Optional temporal encoding mode. When set, buffered frames
+                are composited into a single image that encodes motion information instead
+                of being sent as individual frames. Modes: "rgb" (time→color channels),
+                "heatmap" (motion overlay on latest frame), "grid" (sampled frame grid).
             **kwargs: Additional args for GenerateContentConfig if config is not provided.
         """
         super().__init__()
@@ -100,6 +110,7 @@ class GeminiVLM(VideoLLM):
             self._base_config = None
 
         self.chat: Optional[Any] = None
+        self._temporal_encoding = temporal_encoding
         self._config = self._build_config()
 
         if client is not None:
@@ -124,8 +135,13 @@ class GeminiVLM(VideoLLM):
             else GenerateContentConfig()
         )
 
+        system_parts: list[str] = []
         if self._instructions:
-            config.system_instruction = self._instructions
+            system_parts.append(self._instructions)
+        if self._temporal_encoding is not None:
+            system_parts.append(TEMPORAL_ENCODING_HINTS[self._temporal_encoding])
+        if system_parts:
+            config.system_instruction = "\n\n".join(system_parts)
 
         if self.thinking_level:
             config.thinking_config = ThinkingConfig(thinking_level=self.thinking_level)
@@ -314,12 +330,31 @@ class GeminiVLM(VideoLLM):
             )
 
     async def _get_frames_bytes(self) -> list[bytes]:
-        """Convert buffered video frames to JPEG bytes."""
+        """Convert buffered video frames to JPEG bytes.
+
+        When temporal encoding is configured, returns a single composite
+        image instead of individual per-frame images.
+        """
         frames = list(self._frame_buffer)
         if not frames:
             return []
 
         loop = asyncio.get_running_loop()
+
+        if self._temporal_encoding is not None:
+            min_frames = 3 if self._temporal_encoding == "rgb" else 2
+            if len(frames) >= min_frames:
+                composite = await loop.run_in_executor(
+                    self._executor,
+                    temporal_composite_to_jpeg_bytes,
+                    frames,
+                    self._frame_width,
+                    self._frame_height,
+                    self._temporal_encoding,
+                    85,
+                )
+                return [composite]
+
         coroutines = [
             loop.run_in_executor(
                 self._executor,
@@ -331,7 +366,7 @@ class GeminiVLM(VideoLLM):
             )
             for frame in frames
         ]
-        return await asyncio.gather(*coroutines)
+        return list(await asyncio.gather(*coroutines))
 
     async def _build_message_parts(self, text: str) -> list[Any]:
         """Build message parts with text and image frames."""
