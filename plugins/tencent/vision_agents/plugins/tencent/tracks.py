@@ -64,9 +64,7 @@ class TencentAudioTrack:
         if not self._running or pcm is None:
             return
         if pcm.sample_rate != SAMPLE_RATE or pcm.channels != CHANNELS:
-            pcm = pcm.resample(
-                target_sample_rate=SAMPLE_RATE, target_channels=CHANNELS
-            )
+            pcm = pcm.resample(target_sample_rate=SAMPLE_RATE, target_channels=CHANNELS)
         if pcm.samples is not None and pcm.samples.size > 0:
             data = pcm.samples.tobytes()
         else:
@@ -90,7 +88,10 @@ class TencentAudioTrack:
                 frame_data = bytes(self._buffer[:BYTES_PER_20MS])
                 del self._buffer[:BYTES_PER_20MS]
                 return frame_data
-            if buf_len > 0 and (time.monotonic() - self._last_write_at) > self._TAIL_FLUSH_S:
+            if (
+                buf_len > 0
+                and (time.monotonic() - self._last_write_at) > self._TAIL_FLUSH_S
+            ):
                 frame_data = bytes(self._buffer) + b"\x00" * (BYTES_PER_20MS - buf_len)
                 self._buffer.clear()
                 return frame_data
@@ -178,7 +179,9 @@ class TencentOutgoingVideoTrack:
     track and converts each frame to YUV420p before handing it to the C SDK.
     """
 
-    def __init__(self, source: "aiortc.MediaStreamTrack", fps: int = _DEFAULT_VIDEO_FPS):
+    def __init__(
+        self, source: "aiortc.MediaStreamTrack", fps: int = _DEFAULT_VIDEO_FPS
+    ):
         self._source = source
         self._fps = fps
         self._frame_interval = 1.0 / fps
