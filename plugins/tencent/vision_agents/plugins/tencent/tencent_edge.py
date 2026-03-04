@@ -280,7 +280,9 @@ class TencentEdge(EdgeTransport[TencentCall]):
         room_param.scene = TRTC_SCENE_RECORD
         room_param.use_pixel_frame_input = True
         room_param.use_pixel_frame_output = True
-        room_param.audio_obtain_params.audio_obtain_method = AUDIO_OBTAIN_METHOD_CALLBACK
+        room_param.audio_obtain_params.audio_obtain_method = (
+            AUDIO_OBTAIN_METHOD_CALLBACK
+        )
         room_param.audio_obtain_params.output_sample_rate = SAMPLE_RATE
         room_param.audio_obtain_params.output_channles = CHANNELS
         room_param.audio_obtain_params.output_frame_length_ms = FRAME_MS
@@ -468,14 +470,19 @@ if TRTCCloudDelegate is not None:
                 logger.exception("OnLocalAudioChannelCreated callback failed")
 
         def OnConnectionStateChanged(self, old_state: int, new_state: int) -> None:
-            logger.debug("Tencent TRTC connection state: %s -> %s", old_state, new_state)
+            logger.debug(
+                "Tencent TRTC connection state: %s -> %s", old_state, new_state
+            )
 
         def OnLocalAudioChannelDestroyed(self) -> None:
             pass
 
         def OnLocalVideoChannelCreated(self, stream_type: int) -> None:
             try:
-                logger.info("Tencent TRTC OnLocalVideoChannelCreated: stream_type=%s", stream_type)
+                logger.info(
+                    "Tencent TRTC OnLocalVideoChannelCreated: stream_type=%s",
+                    stream_type,
+                )
                 edge = self._edge
                 if edge._outgoing_video_track and edge._cloud and edge._loop:
                     vp = VideoEncodeParams()
@@ -490,7 +497,9 @@ if TRTCCloudDelegate is not None:
         def OnLocalVideoChannelDestroyed(self, stream_type: int) -> None:
             pass
 
-        def OnRequestChangeVideoEncodeBitrate(self, stream_type: int, bitrate_bps: int) -> None:
+        def OnRequestChangeVideoEncodeBitrate(
+            self, stream_type: int, bitrate_bps: int
+        ) -> None:
             pass
 
         def OnRequestKeyFrame(self, stream_type: int) -> None:
@@ -506,12 +515,18 @@ if TRTCCloudDelegate is not None:
             except BaseException:
                 logger.exception("OnRemoteAudioAvailable callback failed")
 
-        def OnRemoteVideoAvailable(self, user_id: str, available: bool, stream_type: int) -> None:
+        def OnRemoteVideoAvailable(
+            self, user_id: str, available: bool, stream_type: int
+        ) -> None:
             try:
                 if not user_id or user_id == self._agent_user_id:
                     return
                 if available:
-                    logger.info("Tencent TRTC video available from %s (stream_type=%s)", user_id, stream_type)
+                    logger.info(
+                        "Tencent TRTC video available from %s (stream_type=%s)",
+                        user_id,
+                        stream_type,
+                    )
                     self._edge._emit_video_track_added(user_id)
                 else:
                     logger.info("Tencent TRTC video unavailable from %s", user_id)
@@ -519,10 +534,14 @@ if TRTCCloudDelegate is not None:
             except BaseException:
                 logger.exception("OnRemoteVideoAvailable callback failed")
 
-        def OnRemoteVideoFrameReceived(self, user_id: str, stream_type: int, frame: Any) -> None:
+        def OnRemoteVideoFrameReceived(
+            self, user_id: str, stream_type: int, frame: Any
+        ) -> None:
             pass
 
-        def OnRemotePixelFrameReceived(self, user_id: str, stream_type: int, frame: Any) -> None:
+        def OnRemotePixelFrameReceived(
+            self, user_id: str, stream_type: int, frame: Any
+        ) -> None:
             try:
                 if not user_id or user_id == self._agent_user_id:
                     return
@@ -538,17 +557,25 @@ if TRTCCloudDelegate is not None:
                     yuv_bytes = raw
                 else:
                     yuv_bytes = raw.encode("utf-8", "surrogateescape")
-                self._edge._push_video_frame(user_id, yuv_bytes, width, height, frame.pts)
+                self._edge._push_video_frame(
+                    user_id, yuv_bytes, width, height, frame.pts
+                )
             except BaseException:
                 logger.exception("OnRemotePixelFrameReceived callback failed")
 
-        def OnSeiMessageReceived(self, user_id: str, stream_type: int, message_type: int, message: Any) -> None:
+        def OnSeiMessageReceived(
+            self, user_id: str, stream_type: int, message_type: int, message: Any
+        ) -> None:
             pass
 
-        def OnReceiveCustomCmdMsg(self, user_id: str, cmd_id: int, seq: int, message: Any) -> None:
+        def OnReceiveCustomCmdMsg(
+            self, user_id: str, cmd_id: int, seq: int, message: Any
+        ) -> None:
             pass
 
-        def OnMissCustomCmdMsg(self, user_id: str, cmd_id: int, error_code: int, missed: int) -> None:
+        def OnMissCustomCmdMsg(
+            self, user_id: str, cmd_id: int, error_code: int, missed: int
+        ) -> None:
             pass
 
         def OnNetworkQuality(self, local_quality: Any, remote_qualities: Any) -> None:
