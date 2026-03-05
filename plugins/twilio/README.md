@@ -12,7 +12,9 @@ Twilio plugin for Vision Agents enabling voice call integration with real-time a
 ## Installation
 
 ```bash
-uv add vision-agents[twilio]
+uv add "vision-agents[twilio]"
+# or directly
+uv add vision-agents-plugins-twilio
 ```
 
 ## Usage
@@ -52,7 +54,7 @@ class TwilioCall:
     stream_call: Optional[Any]  # Stream video call
     started_at: datetime
     ended_at: Optional[datetime]
-    
+
     # Convenience properties
     from_number: str  # Caller's phone number
     to_number: str    # Called phone number
@@ -103,8 +105,8 @@ mulaw = pcm_to_mulaw(pcm_data)
 
 ## Configuration
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
+| Parameter            | Description              | Default       |
+|----------------------|--------------------------|---------------|
 | `TWILIO_SAMPLE_RATE` | Twilio audio sample rate | `8000` (8kHz) |
 
 ## Environment Variables
@@ -117,5 +119,3 @@ mulaw = pcm_to_mulaw(pcm_data)
 - vision-agents
 - twilio
 - numpy
-
-

@@ -13,7 +13,9 @@ Hybrid search RAG (Retrieval Augmented Generation) implementation using TurboPuf
 ## Installation
 
 ```bash
-uv add vision-agents[turbopuffer]
+uv add "vision-agents[turbopuffer]"
+# or directly
+uv add vision-agents-plugins-turbopuffer
 ```
 
 ## Usage
@@ -31,7 +33,7 @@ results = await rag.search("How does the chat API work?")
 # Vector-only search
 results = await rag.search("How does the chat API work?", mode="vector")
 
-# BM25-only search  
+# BM25-only search
 results = await rag.search("chat API pricing", mode="bm25")
 
 # Or use convenience function
@@ -43,13 +45,13 @@ rag = await turbopuffer.create_rag(
 
 ## Configuration
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `namespace` | TurboPuffer namespace for storing vectors | Required |
-| `embedding_model` | Gemini embedding model | `models/gemini-embedding-001` |
-| `chunk_size` | Size of text chunks for splitting documents | `10000` |
-| `chunk_overlap` | Overlap between chunks for context continuity | `200` |
-| `region` | TurboPuffer region | `gcp-us-central1` |
+| Parameter         | Description                                   | Default                       |
+|-------------------|-----------------------------------------------|-------------------------------|
+| `namespace`       | TurboPuffer namespace for storing vectors     | Required                      |
+| `embedding_model` | Gemini embedding model                        | `models/gemini-embedding-001` |
+| `chunk_size`      | Size of text chunks for splitting documents   | `10000`                       |
+| `chunk_overlap`   | Overlap between chunks for context continuity | `200`                         |
+| `region`          | TurboPuffer region                            | `gcp-us-central1`             |
 
 ## Environment Variables
 

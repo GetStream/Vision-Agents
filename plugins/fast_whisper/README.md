@@ -14,4 +14,6 @@ Fast Whisper STT plugin for Vision Agents, providing real-time audio transcripti
 
 ```bash
 uv add vision-agents[fast-whisper]
+# or directly
+uv add vision-agents-plugins-fast-whisper
 ```

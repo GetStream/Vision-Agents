@@ -14,7 +14,9 @@ Qwen3 Realtime LLM integration for Vision Agents framework with native audio out
 ## Installation
 
 ```bash
-uv add vision-agents[qwen]
+uv add "vision-agents[qwen]"
+# or directly
+uv add vision-agents-plugins-qwen
 ```
 
 ## Usage
@@ -38,16 +40,16 @@ agent = Agent(
 
 ## Configuration
 
-| Parameter | Description | Default | Accepted Values |
-|-----------|-------------|---------|----------------|
-| `model` | Qwen Realtime model identifier | `"qwen3-omni-flash-realtime"` | Model name string |
-| `api_key` | DashScope API key | `None` (from env) | String or `None` |
-| `base_url` | WebSocket API base URL | `"wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"` | URL string |
-| `voice` | Voice for audio output | `"Cherry"` | Voice name string |
-| `fps` | Video frames per second | `1` | Integer |
-| `include_video` | Include video frames in requests | `False` | Boolean |
-| `video_width` | Video frame width | `1280` | Integer |
-| `video_height` | Video frame height | `720` | Integer |
+| Parameter       | Description                      | Default                                                  | Accepted Values   |
+|-----------------|----------------------------------|----------------------------------------------------------|-------------------|
+| `model`         | Qwen Realtime model identifier   | `"qwen3-omni-flash-realtime"`                            | Model name string |
+| `api_key`       | DashScope API key                | `None` (from env)                                        | String or `None`  |
+| `base_url`      | WebSocket API base URL           | `"wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"` | URL string        |
+| `voice`         | Voice for audio output           | `"Cherry"`                                               | Voice name string |
+| `fps`           | Video frames per second          | `1`                                                      | Integer           |
+| `include_video` | Include video frames in requests | `False`                                                  | Boolean           |
+| `video_width`   | Video frame width                | `1280`                                                   | Integer           |
+| `video_height`  | Video frame height               | `720`                                                    | Integer           |
 
 ## Environment Variables
 

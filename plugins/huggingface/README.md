@@ -5,7 +5,9 @@ HuggingFace Inference integration for Vision Agents. Supports both text-only LLM
 ## Installation
 
 ```bash
-uv add vision-agents[huggingface]
+uv add "vision-agents[huggingface]"
+# or directly
+uv add vision-agents-plugins-huggingface
 ```
 
 ## Configuration
@@ -55,10 +57,12 @@ from vision_agents.plugins import huggingface
 
 llm = huggingface.LLM(model="meta-llama/Meta-Llama-3-8B-Instruct")
 
+
 @llm.register_function()
-def get_weather(city: str) -> str:
+async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny."
+
 
 response = await llm.simple_response("What's the weather in Paris?")
 ```
@@ -90,6 +94,7 @@ llm = huggingface.LLM(
 Text-only language model integration.
 
 **Parameters:**
+
 - `model` (str): HuggingFace model ID
 - `api_key` (str, optional): HuggingFace API token (defaults to `HF_TOKEN` env var)
 - `provider` (str, optional): Inference provider name
@@ -99,6 +104,7 @@ Text-only language model integration.
 Vision language model integration with video frame buffering.
 
 **Parameters:**
+
 - `model` (str): HuggingFace model ID
 - `api_key` (str, optional): HuggingFace API token (defaults to `HF_TOKEN` env var)
 - `provider` (str, optional): Inference provider name

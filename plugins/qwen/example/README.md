@@ -11,7 +11,7 @@ This example demonstrates how to use Qwen Realtime with Vision Agents for real-t
 ## Installation
 
 ```bash
-uv add vision-agents[qwen]
+uv add "vision-agents[qwen]"
 ```
 
 ## Quick Start

@@ -12,13 +12,9 @@ Add real-time interactive avatar video to your AI agents using LemonSlice's self
 ## Installation
 
 ```bash
-pip install vision-agents[lemonslice]
-```
-
-Or with uv:
-
-```bash
-uv pip install vision-agents[lemonslice]
+uv add "vision-agents[lemonslice]"
+# or directly
+uv add vision-agents-plugins-lemonslice
 ```
 
 ## Quick Start
