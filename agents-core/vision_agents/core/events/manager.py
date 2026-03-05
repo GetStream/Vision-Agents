@@ -492,7 +492,7 @@ class EventManager:
         """
         start_time = asyncio.get_event_loop().time()
         while (asyncio.get_event_loop().time() - start_time) < timeout:
-            if not self._queue and not self._handler_tasks:
+            if not self._queue and all(t.done() for t in self._handler_tasks.values()):
                 break
             await asyncio.sleep(0.01)
 
