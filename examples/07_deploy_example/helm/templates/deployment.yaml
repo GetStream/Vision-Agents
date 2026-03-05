@@ -22,9 +22,32 @@ spec:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
           envFrom:
             - secretRef:
                 name: {{ include "vision-agent.secretName" . }}
+          {{- if or .Values.redis.url .Values.redis.deploy.enabled }}
+          env:
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | default (printf "redis://%s-redis-master:6379/0" .Release.Name) | quote }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
           {{- if .Values.gpu.enabled }}
           resources:
             {{- toYaml .Values.gpuResources | nindent 12 }}
@@ -43,27 +66,15 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "vision-agent.fullname" . }}-uv-cache
       {{- end }}
-      {{- if or .Values.nodeSelector .Values.gpu.enabled }}
+      {{- with .Values.nodeSelector }}
       nodeSelector:
-        {{- if .Values.gpu.enabled }}
-        nebius.com/gpu: "true"
-        {{- end }}
-        {{- with .Values.nodeSelector }}
         {{- toYaml . | nindent 8 }}
-        {{- end }}
       {{- end }}
       {{- with .Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or .Values.tolerations .Values.gpu.enabled }}
+      {{- with .Values.tolerations }}
       tolerations:
-        {{- if .Values.gpu.enabled }}
-        - key: "nvidia.com/gpu"
-          operator: "Exists"
-          effect: "NoSchedule"
-        {{- end }}
-        {{- with .Values.tolerations }}
         {{- toYaml . | nindent 8 }}
-        {{- end }}
       {{- end }}
