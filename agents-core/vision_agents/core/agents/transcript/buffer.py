@@ -45,6 +45,9 @@ class TranscriptBuffer:
             text: The transcript text.
             mode: How to apply the text.
         """
+        if mode not in ("delta", "replacement", "final"):
+            raise ValueError(f"Invalid transcript mode: {mode!r}")
+
         if mode == "delta":
             if not text:
                 return

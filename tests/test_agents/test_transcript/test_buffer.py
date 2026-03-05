@@ -204,6 +204,10 @@ class TestTranscriptBuffer:
         assert len(buffer) == 0
         assert not buffer.has_pending
 
+    def test_invalid_mode_raises(self, buffer):
+        with pytest.raises(ValueError, match="Invalid transcript mode"):
+            buffer.update("text", mode="invalid")
+
     def test_mixed_delta_and_replacement(self, buffer):
         """Delta and replacement can be used in separate segments."""
         buffer.update("delta ", mode="delta")
