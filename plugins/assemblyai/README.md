@@ -14,7 +14,7 @@ Streaming Speech-to-Text (STT) plugin for Vision Agents using AssemblyAI's Unive
 ## Installation
 
 ```bash
-uv add vision-agents[assemblyai]
+uv add "vision-agents[assemblyai]"
 # or directly
 uv add vision-agents-plugins-assemblyai
 ```
@@ -49,18 +49,18 @@ stt = assemblyai.STT(
 
 ## Configuration
 
-| Parameter | Description | Default |
-|---|---|---|
-| `api_key` | AssemblyAI API key (falls back to `ASSEMBLYAI_API_KEY` env var) | `None` |
-| `speech_model` | Model identifier | `"u3-rt-pro"` |
-| `sample_rate` | Audio sample rate in Hz | `16000` |
-| `min_turn_silence` | Silence (ms) before speculative end-of-turn check | API default |
-| `max_turn_silence` | Maximum silence (ms) before forcing turn end | API default |
-| `prompt` | Custom transcription prompt (cannot be combined with `keyterms_prompt`) | `None` |
-| `keyterms_prompt` | List of terms to boost recognition for (cannot be combined with `prompt`) | `None` |
-| `max_reconnect_attempts` | Maximum reconnect attempts on transient failures | `3` |
-| `reconnect_backoff_initial_s` | Initial backoff delay in seconds | `0.5` |
-| `reconnect_backoff_max_s` | Maximum backoff delay in seconds | `4.0` |
+| Parameter                     | Description                                                               | Default       |
+|-------------------------------|---------------------------------------------------------------------------|---------------|
+| `api_key`                     | AssemblyAI API key (falls back to `ASSEMBLYAI_API_KEY` env var)           | `None`        |
+| `speech_model`                | Model identifier                                                          | `"u3-rt-pro"` |
+| `sample_rate`                 | Audio sample rate in Hz                                                   | `16000`       |
+| `min_turn_silence`            | Silence (ms) before speculative end-of-turn check                         | API default   |
+| `max_turn_silence`            | Maximum silence (ms) before forcing turn end                              | API default   |
+| `prompt`                      | Custom transcription prompt (cannot be combined with `keyterms_prompt`)   | `None`        |
+| `keyterms_prompt`             | List of terms to boost recognition for (cannot be combined with `prompt`) | `None`        |
+| `max_reconnect_attempts`      | Maximum reconnect attempts on transient failures                          | `3`           |
+| `reconnect_backoff_initial_s` | Initial backoff delay in seconds                                          | `0.5`         |
+| `reconnect_backoff_max_s`     | Maximum backoff delay in seconds                                          | `4.0`         |
 
 ## Environment Variables
 

@@ -11,7 +11,7 @@ It enables features such as:
 ## Installation
 
 ```bash
-uv add vision-agents[openai]
+uv add "vision-agents[openai]"
 # or directly
 uv add vision-agents-plugins-openai
 ```

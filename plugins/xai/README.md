@@ -14,7 +14,7 @@ This package provides xAI (Grok) integration for the Stream Agents ecosystem, en
 ## Installation
 
 ```bash
-uv add vision-agents[xai]
+uv add "vision-agents[xai]"
 # or directly
 uv add vision-agents-plugins-xai
 ```

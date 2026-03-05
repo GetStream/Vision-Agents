@@ -20,7 +20,7 @@ await tts.send("Hello from Kokoro!")
 ## Installation
 
 ```bash
-uv add vision-agents[kokoro]
+uv add "vision-agents[kokoro]"
 # or directly
 uv add vision-agents-plugins-kokoro
 ```

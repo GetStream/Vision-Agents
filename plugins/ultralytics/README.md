@@ -13,7 +13,7 @@ This plugin provides YOLO-based pose detection capabilities for vision-agents us
 ## Installation
 
 ```bash
-uv add vision-agents[ultralytics]
+uv add "vision-agents[ultralytics]"
 # or directly
 uv add vision-agents-plugins-ultralytics
 ```

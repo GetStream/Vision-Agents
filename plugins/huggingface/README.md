@@ -5,7 +5,7 @@ HuggingFace Inference integration for Vision Agents. Supports both text-only LLM
 ## Installation
 
 ```bash
-uv add vision-agents[huggingface]
+uv add "vision-agents[huggingface]"
 # or directly
 uv add vision-agents-plugins-huggingface
 ```
@@ -92,6 +92,7 @@ llm = huggingface.LLM(
 Text-only language model integration.
 
 **Parameters:**
+
 - `model` (str): HuggingFace model ID
 - `api_key` (str, optional): HuggingFace API token (defaults to `HF_TOKEN` env var)
 - `provider` (str, optional): Inference provider name
@@ -101,6 +102,7 @@ Text-only language model integration.
 Vision language model integration with video frame buffering.
 
 **Parameters:**
+
 - `model` (str): HuggingFace model ID
 - `api_key` (str, optional): HuggingFace API token (defaults to `HF_TOKEN` env var)
 - `provider` (str, optional): Inference provider name

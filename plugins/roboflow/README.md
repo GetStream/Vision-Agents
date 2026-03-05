@@ -5,7 +5,7 @@ Object detection using Roboflow's hosted inference API for vision-agents.
 ## Installation
 
 ```bash
-uv add vision-agents[roboflow]
+uv add "vision-agents[roboflow]"
 # or directly
 uv add vision-agents-plugins-roboflow
 ```

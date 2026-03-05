@@ -12,7 +12,7 @@ Twilio plugin for Vision Agents enabling voice call integration with real-time a
 ## Installation
 
 ```bash
-uv add vision-agents[twilio]
+uv add "vision-agents[twilio]"
 # or directly
 uv add vision-agents-plugins-twilio
 ```
@@ -105,8 +105,8 @@ mulaw = pcm_to_mulaw(pcm_data)
 
 ## Configuration
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
+| Parameter            | Description              | Default       |
+|----------------------|--------------------------|---------------|
 | `TWILIO_SAMPLE_RATE` | Twilio audio sample rate | `8000` (8kHz) |
 
 ## Environment Variables

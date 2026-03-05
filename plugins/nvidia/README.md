@@ -12,7 +12,7 @@ NVIDIA VLM integration for Vision Agents. Supports vision language models throug
 ## Installation
 
 ```bash
-uv add vision-agents[nvidia]
+uv add "vision-agents[nvidia]"
 # or directly
 uv add vision-agents-plugins-nvidia
 ```
@@ -63,18 +63,18 @@ vlm = nvidia.VLM(
 
 ## Configuration
 
-| Parameter | Description | Default | Type |
-|-----------|-------------|---------|------|
-| `model` | NVIDIA model ID | `"nvidia/cosmos-reason2-8b"` | str |
-| `api_key` | NVIDIA API token (or use `NVIDIA_API_KEY` env var) | `None` | Optional[str] |
-| `fps` | Frames per second to buffer | `1` | int |
-| `frame_buffer_seconds` | Number of seconds to buffer | `10` | int |
-| `frame_width` | Width of video frames to send | `800` | int |
-| `frame_height` | Height of video frames to send | `600` | int |
-| `max_tokens` | Maximum response tokens | `1024` | int |
-| `temperature` | Temperature for sampling | `0.2` | float |
-| `top_p` | Top-p sampling parameter | `0.7` | float |
-| `frames_per_second` | Frames per second for video models | `8` | int |
+| Parameter              | Description                                        | Default                      | Type          |
+|------------------------|----------------------------------------------------|------------------------------|---------------|
+| `model`                | NVIDIA model ID                                    | `"nvidia/cosmos-reason2-8b"` | str           |
+| `api_key`              | NVIDIA API token (or use `NVIDIA_API_KEY` env var) | `None`                       | Optional[str] |
+| `fps`                  | Frames per second to buffer                        | `1`                          | int           |
+| `frame_buffer_seconds` | Number of seconds to buffer                        | `10`                         | int           |
+| `frame_width`          | Width of video frames to send                      | `800`                        | int           |
+| `frame_height`         | Height of video frames to send                     | `600`                        | int           |
+| `max_tokens`           | Maximum response tokens                            | `1024`                       | int           |
+| `temperature`          | Temperature for sampling                           | `0.2`                        | float         |
+| `top_p`                | Top-p sampling parameter                           | `0.7`                        | float         |
+| `frames_per_second`    | Frames per second for video models                 | `8`                          | int           |
 
 ## Dependencies
 

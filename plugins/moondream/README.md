@@ -12,7 +12,7 @@ CUDA enabled devices.
 ## Installation
 
 ```bash
-uv add vision-agents[moondream]
+uv add "vision-agents[moondream]"
 # or directly
 uv add vision-agents-plugins-moondream
 ```

@@ -11,7 +11,7 @@ It enables features such as:
 ## Installation
 
 ```bash
-uv add vision-agents[anthropic]
+uv add "vision-agents[anthropic]"
 # or directly
 uv add vision-agents-plugins-anthropic
 ```

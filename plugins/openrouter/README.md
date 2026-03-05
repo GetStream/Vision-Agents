@@ -13,7 +13,7 @@ This plugin provides LLM capabilities using OpenRouter's API, which offers acces
 ## Installation
 
 ```bash
-uv add vision-agents[openrouter]
+uv add "vision-agents[openrouter]"
 # or directly
 uv add vision-agents-plugins-openrouter
 ```
@@ -39,12 +39,12 @@ agent = Agent(
 
 ## Configuration
 
-| Parameter | Description | Accepted Values |
-|-----------|-------------|----------------|
-| `api_key` | OpenRouter API key | `str \| None`. If not provided, uses `OPENROUTER_API_KEY` environment variable |
-| `base_url` | OpenRouter API base URL | `str`. Default: `"https://openrouter.ai/api/v1"` |
-| `model` | Model identifier to use | `str`. Default: `"openrouter/andromeda-alpha"`. Examples: `"anthropic/claude-haiku-4.5"`, `"google/gemini-2.5-flash"`, `"openai/gpt-4o"` |
-| `**kwargs` | Additional arguments passed to OpenAI LLM | Any additional parameters supported by the underlying OpenAI LLM implementation |
+| Parameter  | Description                               | Accepted Values                                                                                                                          |
+|------------|-------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| `api_key`  | OpenRouter API key                        | `str \| None`. If not provided, uses `OPENROUTER_API_KEY` environment variable                                                           |
+| `base_url` | OpenRouter API base URL                   | `str`. Default: `"https://openrouter.ai/api/v1"`                                                                                         |
+| `model`    | Model identifier to use                   | `str`. Default: `"openrouter/andromeda-alpha"`. Examples: `"anthropic/claude-haiku-4.5"`, `"google/gemini-2.5-flash"`, `"openai/gpt-4o"` |
+| `**kwargs` | Additional arguments passed to OpenAI LLM | Any additional parameters supported by the underlying OpenAI LLM implementation                                                          |
 
 ## Dependencies
 

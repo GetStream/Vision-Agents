@@ -5,7 +5,7 @@ AWS (Bedrock) integration for Vision Agents framework with support for standard 
 ## Installation
 
 ```bash
-uv add vision-agents[aws]
+uv add "vision-agents[aws]"
 # or directly
 uv add vision-agents-plugins-aws
 ```
@@ -115,6 +115,7 @@ llm = aws.LLM(
     region_name="us-east-1"
 )
 
+
 @llm.register_function(
     name="get_weather",
     description="Get the current weather for a given city"
@@ -140,6 +141,7 @@ llm = aws.Realtime(
     region_name="us-east-1",
     voice_id="matthew"
 )
+
 
 @llm.register_function(
     name="get_weather",

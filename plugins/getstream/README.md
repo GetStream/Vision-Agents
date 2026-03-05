@@ -5,7 +5,7 @@ A plugin for Stream Agents that provides GetStream integration.
 ## Installation
 
 ```bash
-uv add vision-agents[getstream]
+uv add "vision-agents[getstream]"
 # or directly
 uv add vision-agents-plugins-getstream
 ```

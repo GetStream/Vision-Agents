@@ -5,7 +5,7 @@ A high-quality Text-to-Speech (TTS) and Speech-to-Text (STT) plugin for Vision A
 ## Installation
 
 ```bash
-uv add vision-agents[fish]
+uv add "vision-agents[fish]"
 # or directly
 uv add vision-agents-plugins-fish
 ```

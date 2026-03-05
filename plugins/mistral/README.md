@@ -13,7 +13,7 @@ Mistral Voxtral realtime speech-to-text integration for Vision Agents.
 ## Installation
 
 ```bash
-uv add vision-agents[mistral]
+uv add "vision-agents[mistral]"
 # or directly
 uv add vision-agents-plugins-mistral
 ```

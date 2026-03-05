@@ -13,7 +13,7 @@ Add realistic avatar video to your AI agents using HeyGen's streaming avatar API
 ## Installation
 
 ```bash
-uv add vision-agents[heygen]
+uv add "vision-agents[heygen]"
 # or directly
 uv add vision-agents-plugins-heygen
 ```
