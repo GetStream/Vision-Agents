@@ -57,10 +57,12 @@ from vision_agents.plugins import huggingface
 
 llm = huggingface.LLM(model="meta-llama/Meta-Llama-3-8B-Instruct")
 
+
 @llm.register_function()
-def get_weather(city: str) -> str:
+async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny."
+
 
 response = await llm.simple_response("What's the weather in Paris?")
 ```

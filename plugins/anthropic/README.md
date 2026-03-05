@@ -61,7 +61,7 @@ llm = anthropic.LLM("claude-sonnet-4-6")
     name="get_weather",
     description="Get the current weather for a given city"
 )
-def get_weather(city: str) -> dict:
+async def get_weather(city: str) -> dict:
     """Get weather information for a city."""
     return {
         "city": city,
