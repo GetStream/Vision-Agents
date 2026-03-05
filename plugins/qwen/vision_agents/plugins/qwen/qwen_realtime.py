@@ -68,7 +68,6 @@ class Qwen3Realtime(Realtime):
         self._current_response_id = None
         self._current_item_id = None
         self._current_participant: Optional[Participant] = None
-        self._agent_transcript_acc: str = ""
         # The model requires us not to send any video frames until the audio is sent
         self._audio_emitted_once = False
         self._audio_transcription_model = audio_transcription_model
@@ -242,15 +241,10 @@ class Qwen3Realtime(Realtime):
             elif event_type == "response.created":
                 self._current_response_id = event.get("response", {}).get("id")
                 self._is_responding = True
-                self._agent_transcript_acc = ""
             elif event_type == "response.output_item.added":
                 self._current_item_id = event.get("item", {}).get("id")
             elif event_type == "response.done":
-                if self._agent_transcript_acc:
-                    self._emit_agent_speech_transcription(
-                        text=self._agent_transcript_acc, is_partial=False
-                    )
-                    self._agent_transcript_acc = ""
+                self._emit_agent_speech_transcription(text="", mode="final")
                 self._is_responding = False
                 self._current_response_id = None
                 self._current_item_id = None
@@ -270,14 +264,11 @@ class Qwen3Realtime(Realtime):
             elif event_type == "conversation.item.input_audio_transcription.completed":
                 transcript = event.get("transcript", "")
                 if transcript:
-                    self._emit_user_speech_transcription(text=transcript)
+                    self._emit_user_speech_transcription(text=transcript, mode="final")
             elif event_type == "response.audio_transcript.delta":
                 delta = event.get("delta", "")
                 if delta:
-                    self._agent_transcript_acc += delta
-                    self._emit_agent_speech_transcription(
-                        text=self._agent_transcript_acc, is_partial=True
-                    )
+                    self._emit_agent_speech_transcription(text=delta, mode="delta")
 
     async def _on_interruption(self):
         """Handle user interruption of the current response."""
