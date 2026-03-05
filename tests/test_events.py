@@ -288,6 +288,23 @@ class TestEventManager:
         assert not any("Called handler valid_handler" in msg for msg in log_messages)
         assert not any("Called handler another_handler" in msg for msg in log_messages)
 
+    async def test_wait_completes_when_handler_tasks_finish(self):
+        """wait() should return promptly once all handler tasks are done."""
+        manager = EventManager()
+        manager.register(ValidEvent)
+
+        called = False
+
+        @manager.subscribe
+        async def on_event(event: ValidEvent):
+            nonlocal called
+            called = True
+
+        manager.send(ValidEvent(field=1))
+        await manager.wait(timeout=2.0)
+
+        assert called
+
     async def test_has_subscribers(self):
         manager = EventManager()
         assert not manager.has_subscribers(ValidEvent)
