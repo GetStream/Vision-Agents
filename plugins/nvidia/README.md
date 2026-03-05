@@ -13,6 +13,8 @@ NVIDIA VLM integration for Vision Agents. Supports vision language models throug
 
 ```bash
 uv add vision-agents[nvidia]
+# or directly
+uv add vision-agents-plugins-nvidia
 ```
 
 ## Configuration

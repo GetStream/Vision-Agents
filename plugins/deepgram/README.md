@@ -5,6 +5,8 @@ Speech-to-Text (STT) and Text-to-Speech (TTS) plugins for Vision Agents using th
 ## Installation
 
 ```bash
+uv add vision-agents[deepgram]
+# or directly
 uv add vision-agents-plugins-deepgram
 ```
 

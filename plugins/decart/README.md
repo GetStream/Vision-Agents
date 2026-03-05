@@ -11,6 +11,8 @@ It enables features such as:
 
 ```bash
 uv add vision-agents[decart]
+# or directly
+uv add vision-agents-plugins-decart
 ```
 
 ## Usage

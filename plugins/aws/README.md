@@ -6,6 +6,8 @@ AWS (Bedrock) integration for Vision Agents framework with support for standard 
 
 ```bash
 uv add vision-agents[aws]
+# or directly
+uv add vision-agents-plugins-aws
 ```
 
 ## Usage

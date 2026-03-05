@@ -5,7 +5,9 @@ A high-quality Text-to-Speech (TTS) plugin for GetStream that uses the ElevenLab
 ## Installation
 
 ```bash
-pip install getstream-plugins-elevenlabs
+uv add vision-agents[elevenlabs]
+# or directly
+uv add vision-agents-plugins-elevenlabs
 ```
 
 ## Usage

@@ -2,10 +2,12 @@
 
 Google Gemini Live Speech-to-Speech (STS) plugin for GetStream. It connects a realtime Gemini Live session to a Stream video call so your assistant can speak and listen in the same call.
 
-### Installation
+## Installation
 
 ```bash
 uv add vision-agents[gemini]
+# or directly
+uv add vision-agents-plugins-gemini
 ```
 
 ### Requirements

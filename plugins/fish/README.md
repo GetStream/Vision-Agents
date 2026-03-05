@@ -5,7 +5,9 @@ A high-quality Text-to-Speech (TTS) and Speech-to-Text (STT) plugin for Vision A
 ## Installation
 
 ```bash
-pip install vision-agents-plugins-fish
+uv add vision-agents[fish]
+# or directly
+uv add vision-agents-plugins-fish
 ```
 
 ## Usage
@@ -92,6 +94,7 @@ tts = TTS(reference_id="your_reference_voice_id")
 ## Supported Languages (STT)
 
 Fish Audio STT supports multiple languages with automatic detection. Common language codes include:
+
 - `en` - English
 - `zh` - Chinese
 - `es` - Spanish
@@ -106,6 +109,7 @@ For automatic language detection, set `language=None` (default).
 ## Supported Audio Formats (STT)
 
 The STT implementation accepts PCM audio data and converts it to WAV format internally. Supported configurations:
+
 - Maximum audio size: 100MB
 - Maximum duration: 60 minutes
 - Sample rate: 16kHz or higher recommended
@@ -122,4 +126,3 @@ The STT implementation accepts PCM audio data and converts it to WAV format inte
 2. Navigate to the API Keys section in your dashboard
 3. Create a new API key
 4. Set the `FISH_API_KEY` environment variable or pass it directly to the plugin
-

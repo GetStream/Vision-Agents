@@ -14,6 +14,8 @@ A lightweight Text-to-Speech (TTS) plugin for [Vision Agents](https://github.com
 
 ```bash
 uv add vision-agents[pocket]
+# or directly
+uv add vision-agents-plugins-pocket
 ```
 
 ## Usage

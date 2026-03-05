@@ -14,6 +14,8 @@ Hybrid search RAG (Retrieval Augmented Generation) implementation using TurboPuf
 
 ```bash
 uv add vision-agents[turbopuffer]
+# or directly
+uv add vision-agents-plugins-turbopuffer
 ```
 
 ## Usage
@@ -31,7 +33,7 @@ results = await rag.search("How does the chat API work?")
 # Vector-only search
 results = await rag.search("How does the chat API work?", mode="vector")
 
-# BM25-only search  
+# BM25-only search
 results = await rag.search("chat API pricing", mode="bm25")
 
 # Or use convenience function

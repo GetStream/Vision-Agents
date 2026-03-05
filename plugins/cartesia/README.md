@@ -8,8 +8,10 @@ The Cartesia plugin for the Stream Python AI SDK allows you to add TTS functiona
 
 Install the Stream Cartesia plugin with
 
-```sh  theme={null}
+```bash
 uv add vision-agents[cartesia]
+# or directly
+uv add vision-agents-plugins-cartesia
 ```
 
 ## Examples

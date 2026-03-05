@@ -15,6 +15,8 @@ Qwen3 Realtime LLM integration for Vision Agents framework with native audio out
 
 ```bash
 uv add vision-agents[qwen]
+# or directly
+uv add vision-agents-plugins-qwen
 ```
 
 ## Usage

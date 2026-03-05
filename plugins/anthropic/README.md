@@ -3,6 +3,7 @@
 Anthropic Claude LLM integration for Vision Agents framework with support for streaming, function calling, and conversation memory.
 
 It enables features such as:
+
 - Streaming responses with Claude models
 - Function calling capabilities for dynamic interactions
 - Automatic conversation history management
@@ -10,7 +11,9 @@ It enables features such as:
 ## Installation
 
 ```bash
-pip install vision-agents[anthropic]
+uv add vision-agents[anthropic]
+# or directly
+uv add vision-agents-plugins-anthropic
 ```
 
 ## Usage
@@ -69,13 +72,16 @@ def get_weather(city: str) -> dict:
 ```
 
 ## Requirements
+
 - Python 3.10+
 - GetStream account for video calls
 - Anthropic API key
 
 ## Links
+
 - [Documentation](https://visionagents.ai/)
 - [GitHub](https://github.com/GetStream/Vision-Agents)
 
 ## License
+
 MIT

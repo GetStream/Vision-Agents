@@ -13,6 +13,8 @@ CUDA enabled devices.
 
 ```bash
 uv add vision-agents[moondream]
+# or directly
+uv add vision-agents-plugins-moondream
 ```
 
 ## Choosing the Right Component

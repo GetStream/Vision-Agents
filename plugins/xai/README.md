@@ -14,7 +14,9 @@ This package provides xAI (Grok) integration for the Stream Agents ecosystem, en
 ## Installation
 
 ```bash
-pip install vision-agents-plugins-xai
+uv add vision-agents[xai]
+# or directly
+uv add vision-agents-plugins-xai
 ```
 
 ## Quick Start
@@ -29,10 +31,10 @@ async def main():
         model="grok-4",
         api_key="your_xai_api_key"  # or set XAI_API_KEY environment variable
     )
-    
+
     # Simple response
     response = await llm.simple_response("Explain quantum computing in simple terms")
-    
+
     print(f"\n\nComplete response: {response.text}")
 
 if __name__ == "__main__":
@@ -60,7 +62,7 @@ print(response.text)  # Will mention the 2 cats
 
 ```python
 llm = LLM(
-    model="grok-4", 
+    model="grok-4",
     api_key="your_api_key"
 )
 
@@ -90,7 +92,6 @@ messages = LLM._normalize_message(advanced_message)
 # Use with your conversation system
 ```
 
-
 ## API Reference
 
 ### XAILLM Class
@@ -106,6 +107,7 @@ LLM(
 ```
 
 **Parameters:**
+
 - `model`: xAI model to use (default: "grok-4")
 - `api_key`: Your xAI API key (default: reads from `XAI_API_KEY` environment variable)
 - `client`: Optional pre-configured xAI AsyncClient
@@ -117,6 +119,7 @@ LLM(
 Generate a simple response to text input.
 
 **Parameters:**
+
 - `text`: Input text to respond to
 - `processors`: Optional list of processors for video/voice AI context
 - `participant`: Optional participant object
@@ -128,6 +131,7 @@ Generate a simple response to text input.
 Create a response with full control over parameters.
 
 **Parameters:**
+
 - `input`: Input text
 - `instructions`: System instructions for the model
 - `model`: Override the default model
@@ -135,13 +139,11 @@ Create a response with full control over parameters.
 
 **Returns:** `LLMResponseEvent[Response]` with the generated text
 
-
 ## Configuration
 
 ### Environment Variables
 
 - `XAI_API_KEY`: Your xAI API key (required if not provided in constructor)
-
 
 ## Requirements
 

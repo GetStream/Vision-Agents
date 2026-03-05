@@ -19,7 +19,9 @@ await tts.send("Hello from Kokoro!")
 ## Installation
 
 ```bash
-pip install getstream-plugins-kokoro
+uv add vision-agents[kokoro]
+# or directly
+uv add vision-agents-plugins-kokoro
 ```
 
 This will pull in the required `kokoro`, `numpy` and `getstream[webrtc"]` dependencies.  You also need `espeak-ng` **at runtime** for pronunciation fallback.  On macOS you can install it with Homebrew:

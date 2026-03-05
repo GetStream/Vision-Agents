@@ -14,6 +14,8 @@ This plugin provides LLM capabilities using OpenRouter's API, which offers acces
 
 ```bash
 uv add vision-agents[openrouter]
+# or directly
+uv add vision-agents-plugins-openrouter
 ```
 
 ## Usage

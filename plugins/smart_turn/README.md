@@ -11,7 +11,9 @@ For more information about the Smart Turn model, visit the [official repository]
 ## Installation
 
 ```bash
-pip install vision-agents-plugins-smart-turn
+uv add vision-agents[smart_turn]
+# or directly
+uv add vision-agents-plugins-smart-turn
 ```
 
 ## Usage

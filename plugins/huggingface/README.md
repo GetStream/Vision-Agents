@@ -6,6 +6,8 @@ HuggingFace Inference integration for Vision Agents. Supports both text-only LLM
 
 ```bash
 uv add vision-agents[huggingface]
+# or directly
+uv add vision-agents-plugins-huggingface
 ```
 
 ## Configuration

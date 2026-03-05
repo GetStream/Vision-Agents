@@ -6,6 +6,8 @@ A high-quality Text-to-Speech (TTS) plugin for Vision Agents that uses the Inwor
 
 ```bash
 uv add vision-agents[inworld]
+# or directly
+uv add vision-agents-plugins-inworld
 ```
 
 ## Usage
