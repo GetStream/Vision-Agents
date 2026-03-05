@@ -37,7 +37,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="Sales Assistant", id="sales-assistant-agent"),
         instructions="Read @instructions.md",
         llm=gemini.LLM("gemini-3.1-flash-lite-preview"),
-        stt=assemblyai.STT(),
+        stt=assemblyai.STT(speaker_labels=True),
     )
 
     return agent

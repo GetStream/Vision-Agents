@@ -39,6 +39,8 @@ class STT(stt.STT):
         max_turn_silence: Optional[int] = None,
         prompt: Optional[str] = None,
         keyterms_prompt: Optional[list[str]] = None,
+        speaker_labels: bool = False,
+        max_speakers: Optional[int] = None,
         max_reconnect_attempts: int = 3,
         reconnect_backoff_initial_s: float = 0.5,
         reconnect_backoff_max_s: float = 4.0,
@@ -53,6 +55,10 @@ class STT(stt.STT):
             max_turn_silence: Maximum silence (ms) before forcing turn end.
             prompt: Custom transcription prompt. Cannot be used with keyterms_prompt.
             keyterms_prompt: Terms to boost recognition for. Cannot be used with prompt.
+            speaker_labels: Enable streaming diarization. Each Turn event will
+                include a speaker_label identifying the speaker.
+            max_speakers: Hint for expected number of speakers (1-10). Requires
+                speaker_labels=True.
             max_reconnect_attempts: Max reconnect attempts on transient failures.
             reconnect_backoff_initial_s: Initial backoff delay in seconds.
             reconnect_backoff_max_s: Maximum backoff delay in seconds.
@@ -62,6 +68,9 @@ class STT(stt.STT):
         if prompt is not None and keyterms_prompt is not None:
             raise ValueError("prompt and keyterms_prompt cannot be used together")
 
+        if max_speakers is not None and not speaker_labels:
+            raise ValueError("max_speakers requires speaker_labels=True")
+
         self._api_key = api_key or os.environ.get("ASSEMBLYAI_API_KEY")
         self._speech_model = speech_model
         self._sample_rate = sample_rate
@@ -69,6 +78,8 @@ class STT(stt.STT):
         self._max_turn_silence = max_turn_silence
         self._prompt = prompt
         self._keyterms_prompt = keyterms_prompt
+        self._speaker_labels_enabled = speaker_labels
+        self._max_speakers = max_speakers
 
         self._max_reconnect_attempts = max_reconnect_attempts
         self._reconnect_backoff_initial_s = reconnect_backoff_initial_s
@@ -82,6 +93,7 @@ class STT(stt.STT):
         self._connection_ready = asyncio.Event()
         self._current_participant: Optional[Participant] = None
         self._audio_start_time: Optional[float] = None
+        self._speaker_participants: dict[str, Participant] = {}
         # AssemblyAI requires 50-1000ms per message; buffer to 100ms before sending
         self._chunk_size = self._sample_rate * 2 // 10  # 100ms of int16
         self._audio_buffer = bytearray()
@@ -99,6 +111,10 @@ class STT(stt.STT):
             params["prompt"] = self._prompt
         if self._keyterms_prompt is not None:
             params["keyterms_prompt"] = json.dumps(self._keyterms_prompt)
+        if self._speaker_labels_enabled:
+            params["speaker_labels"] = "true"
+            if self._max_speakers is not None:
+                params["max_speakers"] = self._max_speakers
         return f"{WS_BASE_URL}?{urlencode(params)}"
 
     async def start(self):
@@ -160,6 +176,7 @@ class STT(stt.STT):
         """
         await self._disconnect()
         self._connection_ready.clear()
+        self._speaker_participants.clear()
 
         delay = self._reconnect_backoff_initial_s
         for attempt in range(1, self._max_reconnect_attempts + 1):
@@ -263,23 +280,45 @@ class STT(stt.STT):
         else:
             logger.debug("Unhandled AssemblyAI event: %s", msg_type)
 
+    def _resolve_participant(self, speaker_label: Optional[str]) -> Optional[Participant]:
+        """Map a speaker label to a Participant, creating a synthetic one if needed."""
+        if not self._speaker_labels_enabled or speaker_label is None:
+            return self._current_participant
+
+        cached = self._speaker_participants.get(speaker_label)
+        if cached is not None:
+            return cached
+
+        participant = Participant(
+            original=None,
+            user_id=f"speaker_{speaker_label}",
+            id=f"speaker_{speaker_label}_{self.session_id[:8]}",
+        )
+        self._speaker_participants[speaker_label] = participant
+        return participant
+
     def _handle_turn(self, data: dict) -> None:
         transcript = data.get("transcript", "")
         if not transcript:
             return
 
-        participant = self._current_participant
+        participant = self._resolve_participant(data.get("speaker_label"))
         if participant is None:
-            logger.warning("Received transcript but no participant set")
+            logger.warning("Received transcript but no participant available")
             return
 
         processing_time_ms: Optional[float] = None
         if self._audio_start_time is not None:
             processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
 
+        other: Optional[dict] = None
+        if self._speaker_labels_enabled:
+            other = {"speaker_label": data.get("speaker_label")}
+
         response = TranscriptResponse(
             model_name=self._speech_model,
             processing_time_ms=processing_time_ms,
+            other=other,
         )
 
         if data.get("end_of_turn"):
@@ -342,3 +381,4 @@ class STT(stt.STT):
         await self._disconnect()
         self._connection_ready.clear()
         self._audio_start_time = None
+        self._speaker_participants.clear()
