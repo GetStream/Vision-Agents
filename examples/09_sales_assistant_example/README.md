@@ -11,7 +11,7 @@ The project has two components:
 
 | Component | Location | Description |
 |-----------|----------|-------------|
-| **Python Agent** | This directory | Vision Agents backend that joins a Stream Video call, transcribes audio with Deepgram, analyzes transcripts with Gemini, and sends coaching text back |
+| **Python Agent** | This directory | Vision Agents backend that joins a Stream Video call, transcribes audio with AssemblyAI, analyzes transcripts with Gemini, and sends coaching text back |
 | **Flutter App** | [vision-agents-sales-assistant-demo](https://github.com/GetStream/vision-agents-sales-assistant-demo) | Translucent macOS overlay that captures mic+system audio via a Stream Video call and displays the agent's suggestions |
 
 **Flow:**
@@ -19,7 +19,7 @@ The project has two components:
 1. User opens the Flutter overlay and clicks **Start**
 2. The Flutter app creates a Stream Video call with screen sharing (including system audio capture)
 3. The Flutter app tells the Python agent server to join the call
-4. The agent transcribes audio (Deepgram STT) and generates coaching suggestions from transcripts (Gemini LLM)
+4. The agent transcribes audio (AssemblyAI STT) and generates coaching suggestions from transcripts (Gemini LLM)
 5. Coaching suggestions appear as text on the translucent overlay via Stream Chat
 
 ## Prerequisites
@@ -29,7 +29,7 @@ The project has two components:
 - API keys for:
   - [Stream](https://getstream.io/try-for-free/) (Video API key + secret)
   - [Google AI Studio](https://aistudio.google.com) (Gemini API key)
-  - [Deepgram](https://console.deepgram.com) (STT API key)
+  - [AssemblyAI](https://www.assemblyai.com/) (STT API key)
 
 ## Setup
 
@@ -90,7 +90,7 @@ sales_assistant/
 ### AI Pipeline
 
 The agent uses a non-realtime STT + LLM pipeline:
-- **Deepgram STT** transcribes meeting audio into text with built-in turn detection
+- **AssemblyAI STT** transcribes meeting audio into text with speaker diarisation
 - **Gemini LLM** analyzes transcripts and generates short coaching suggestions
 - Responses are synced to a **Stream Chat** channel (`messaging:{callId}`) that the Flutter app listens to
 - No TTS is needed since suggestions are displayed as text
