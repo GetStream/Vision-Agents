@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from getstream import Stream
 
 from vision_agents.core import Agent, AgentLauncher, Runner, User
-from vision_agents.plugins import assemblyai, xai, getstream as getstream_edge
+from vision_agents.plugins import assemblyai, gemini, getstream as getstream_edge
 
 logger = logging.getLogger(__name__)
 load_dotenv()
@@ -36,7 +36,7 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream_edge.Edge(),
         agent_user=User(name="Sales Assistant", id="sales-assistant-agent"),
         instructions="Read @instructions.md",
-        llm=xai.LLM(),
+        llm=gemini.LLM("gemini-3.1-flash-lite-preview"),
         stt=assemblyai.STT(),
     )
 
