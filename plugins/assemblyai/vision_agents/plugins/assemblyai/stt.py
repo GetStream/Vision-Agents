@@ -280,7 +280,9 @@ class STT(stt.STT):
         else:
             logger.debug("Unhandled AssemblyAI event: %s", msg_type)
 
-    def _resolve_participant(self, speaker_label: Optional[str]) -> Optional[Participant]:
+    def _resolve_participant(
+        self, speaker_label: Optional[str]
+    ) -> Optional[Participant]:
         """Map a speaker label to a Participant, creating a synthetic one if needed."""
         if not self._speaker_labels_enabled or speaker_label is None:
             return self._current_participant

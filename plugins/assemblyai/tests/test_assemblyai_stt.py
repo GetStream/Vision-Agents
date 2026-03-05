@@ -90,7 +90,9 @@ class TestAssemblyAISTT:
         assert stt._max_speakers == 3
 
     async def test_max_speakers_without_speaker_labels_raises(self):
-        with pytest.raises(ValueError, match="max_speakers requires speaker_labels=True"):
+        with pytest.raises(
+            ValueError, match="max_speakers requires speaker_labels=True"
+        ):
             assemblyai.STT(api_key="test-key", max_speakers=2)
 
     async def test_build_ws_url_without_speaker_labels(self):
@@ -162,11 +164,13 @@ class TestAssemblyAISTT:
         async def on_transcript(event: STTTranscriptEvent):
             events.append(event)
 
-        stt._handle_turn({
-            "transcript": "Hello world",
-            "end_of_turn": True,
-            "speaker_label": "A",
-        })
+        stt._handle_turn(
+            {
+                "transcript": "Hello world",
+                "end_of_turn": True,
+                "speaker_label": "A",
+            }
+        )
         await stt.events.wait()
 
         assert len(events) == 1
@@ -183,11 +187,13 @@ class TestAssemblyAISTT:
         async def on_partial(event: STTPartialTranscriptEvent):
             events.append(event)
 
-        stt._handle_turn({
-            "transcript": "Hello",
-            "end_of_turn": False,
-            "speaker_label": "B",
-        })
+        stt._handle_turn(
+            {
+                "transcript": "Hello",
+                "end_of_turn": False,
+                "speaker_label": "B",
+            }
+        )
         await stt.events.wait()
 
         assert len(events) == 1
@@ -206,10 +212,12 @@ class TestAssemblyAISTT:
         async def on_transcript(event: STTTranscriptEvent):
             events.append(event)
 
-        stt._handle_turn({
-            "transcript": "Hello world",
-            "end_of_turn": True,
-        })
+        stt._handle_turn(
+            {
+                "transcript": "Hello world",
+                "end_of_turn": True,
+            }
+        )
         await stt.events.wait()
 
         assert len(events) == 1
@@ -227,11 +235,13 @@ class TestAssemblyAISTT:
         async def on_transcript(event: STTTranscriptEvent):
             events.append(event)
 
-        stt._handle_turn({
-            "transcript": "Short",
-            "end_of_turn": True,
-            "speaker_label": None,
-        })
+        stt._handle_turn(
+            {
+                "transcript": "Short",
+                "end_of_turn": True,
+                "speaker_label": None,
+            }
+        )
         await stt.events.wait()
 
         assert len(events) == 1
@@ -247,21 +257,27 @@ class TestAssemblyAISTT:
         async def on_transcript(event: STTTranscriptEvent):
             events.append(event)
 
-        stt._handle_turn({
-            "transcript": "Good morning",
-            "end_of_turn": True,
-            "speaker_label": "A",
-        })
-        stt._handle_turn({
-            "transcript": "Good morning, how are you?",
-            "end_of_turn": True,
-            "speaker_label": "B",
-        })
-        stt._handle_turn({
-            "transcript": "I'm doing well, thanks",
-            "end_of_turn": True,
-            "speaker_label": "A",
-        })
+        stt._handle_turn(
+            {
+                "transcript": "Good morning",
+                "end_of_turn": True,
+                "speaker_label": "A",
+            }
+        )
+        stt._handle_turn(
+            {
+                "transcript": "Good morning, how are you?",
+                "end_of_turn": True,
+                "speaker_label": "B",
+            }
+        )
+        stt._handle_turn(
+            {
+                "transcript": "I'm doing well, thanks",
+                "end_of_turn": True,
+                "speaker_label": "A",
+            }
+        )
         await stt.events.wait()
 
         assert len(events) == 3

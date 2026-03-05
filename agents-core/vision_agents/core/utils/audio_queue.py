@@ -88,7 +88,9 @@ class AudioQueue:
                 )
 
             new_samples = len(item.samples)
-            new_duration_ms = ((self._total_samples + new_samples) / item.sample_rate) * 1000
+            new_duration_ms = (
+                (self._total_samples + new_samples) / item.sample_rate
+            ) * 1000
 
             if new_duration_ms > self.buffer_limit_ms:
                 self._drop_oldest_to_fit(new_samples, item.sample_rate)
@@ -110,7 +112,9 @@ class AudioQueue:
             )
 
         new_samples = len(item.samples)
-        new_duration_ms = ((self._total_samples + new_samples) / item.sample_rate) * 1000
+        new_duration_ms = (
+            (self._total_samples + new_samples) / item.sample_rate
+        ) * 1000
 
         if new_duration_ms > self.buffer_limit_ms:
             self._drop_oldest_to_fit(new_samples, item.sample_rate)
