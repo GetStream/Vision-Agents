@@ -45,13 +45,15 @@ class TranscriptBuffer:
             text: The transcript text.
             mode: How to apply the text.
         """
-        if mode != "delta":
+        if mode == "delta":
+            if not text:
+                return
+        else:
             text = text.strip()
-
-        if not text or not text.strip():
-            if mode == "final":
-                self._has_pending_partial = False
-            return
+            if not text:
+                if mode == "final":
+                    self._has_pending_partial = False
+                return
 
         if mode == "delta":
             if self._has_pending_partial and self._segments:

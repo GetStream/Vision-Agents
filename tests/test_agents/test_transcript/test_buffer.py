@@ -132,8 +132,13 @@ class TestTranscriptBuffer:
         buffer.update("", mode="final")
         buffer.update("   ", mode="replacement")
         buffer.update("", mode="delta")
-        buffer.update("  ", mode="delta")
         assert len(buffer) == 0
+
+    def test_whitespace_only_delta_preserved(self, buffer):
+        buffer.update("Hello", mode="delta")
+        buffer.update(" ", mode="delta")
+        buffer.update("world", mode="delta")
+        assert buffer.text == "Hello world"
 
     def test_bool_false_when_empty(self, buffer):
         assert not buffer

@@ -233,7 +233,7 @@ class Agent:
 
         # Track pending transcripts for turn-based response triggering
         # and chat integration
-        self.transcripts = TranscriptStore(agent_user_id=self.agent_user.id or "")
+        self.transcripts = TranscriptStore(agent_user_id=self.agent_user.id)
 
         # Merge plugin events BEFORE subscribing to any events
         for plugin in [stt, tts, turn_detection, llm, edge, profiler]:

@@ -1,9 +1,15 @@
 """Tests for TranscriptStore."""
 
+import pytest
+
 from vision_agents.core.agents.transcript import TranscriptStore
 
 
 class TestTranscriptStore:
+    def test_empty_agent_user_id_raises(self):
+        with pytest.raises(ValueError, match="agent_user_id"):
+            TranscriptStore(agent_user_id="")
+
     def test_update_user_transcript_replacement_flow(self):
         store = TranscriptStore(agent_user_id="agent-1")
 

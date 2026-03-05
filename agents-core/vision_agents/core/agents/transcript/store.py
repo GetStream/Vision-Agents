@@ -26,6 +26,8 @@ class TranscriptStore:
     """
 
     def __init__(self, agent_user_id: str):
+        if not agent_user_id:
+            raise ValueError("agent_user_id must be a non-empty string")
         self._agent_user_id = agent_user_id
         self._users: dict[str, tuple[str, str, TranscriptBuffer]] = {}
         self._agent: tuple[str, TranscriptBuffer] | None = None
