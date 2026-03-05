@@ -48,20 +48,38 @@ class AudioQueue:
             return 0.0
         return (self._total_samples / self._sample_rate) * 1000
 
+    def _drop_oldest_to_fit(self, new_samples: int, sample_rate: int) -> None:
+        """Drop oldest items so that the new item plus remaining buffer fits within the limit.
+
+        Must be called while holding self._lock (or from a synchronous-only path).
+        """
+        target_samples = int((self.buffer_limit_ms / 1000) * sample_rate) - new_samples
+        if target_samples < 0:
+            target_samples = 0
+
+        dropped_chunks = 0
+        dropped_samples = 0
+        while self._total_samples > target_samples and self._buffer:
+            oldest = self._buffer.popleft()
+            dropped_chunks += 1
+            dropped_samples += len(oldest.samples)
+            self._total_samples -= len(oldest.samples)
+
+        dropped_ms = (dropped_samples / sample_rate) * 1000
+        logger.warning(
+            f"AudioQueue buffer limit exceeded: dropped {dropped_chunks} chunks "
+            f"({dropped_ms:.1f}ms) to stay within {self.buffer_limit_ms}ms limit"
+        )
+
+        if not self._buffer:
+            self._not_empty.clear()
+
     async def put(self, item: PcmData) -> None:
-        """
-        Add PcmData to the queue.
-
-        Args:
-            item: PcmData to add to the queue
-
-        Logs a warning if adding the item would exceed the buffer limit.
-        """
+        """Add PcmData to the queue, dropping oldest audio if the buffer limit would be exceeded."""
         if not isinstance(item, PcmData):
             raise TypeError(f"AudioQueue only accepts PcmData, got {type(item)}")
 
         async with self._lock:
-            # Track sample rate from first item
             if self._sample_rate is None:
                 self._sample_rate = item.sample_rate
             elif self._sample_rate != item.sample_rate:
@@ -69,33 +87,21 @@ class AudioQueue:
                     f"Sample rate mismatch: expected {self._sample_rate}, got {item.sample_rate}"
                 )
 
-            # Check if adding this would exceed the buffer limit
             new_samples = len(item.samples)
-            new_total_samples = self._total_samples + new_samples
-            new_duration_ms = (new_total_samples / item.sample_rate) * 1000
+            new_duration_ms = ((self._total_samples + new_samples) / item.sample_rate) * 1000
 
             if new_duration_ms > self.buffer_limit_ms:
-                logger.warning(
-                    f"AudioQueue buffer limit exceeded: {new_duration_ms:.1f}ms > {self.buffer_limit_ms}ms"
-                )
+                self._drop_oldest_to_fit(new_samples, item.sample_rate)
 
             self._buffer.append(item)
             self._total_samples += new_samples
             self._not_empty.set()
 
     def put_nowait(self, item: PcmData) -> None:
-        """
-        Add PcmData to the queue without waiting.
-
-        Args:
-            item: PcmData to add to the queue
-
-        Logs a warning if adding the item would exceed the buffer limit.
-        """
+        """Add PcmData to the queue without waiting, dropping oldest audio if the buffer limit would be exceeded."""
         if not isinstance(item, PcmData):
             raise TypeError(f"AudioQueue only accepts PcmData, got {type(item)}")
 
-        # Track sample rate from first item
         if self._sample_rate is None:
             self._sample_rate = item.sample_rate
         elif self._sample_rate != item.sample_rate:
@@ -103,15 +109,11 @@ class AudioQueue:
                 f"Sample rate mismatch: expected {self._sample_rate}, got {item.sample_rate}"
             )
 
-        # Check if adding this would exceed the buffer limit
         new_samples = len(item.samples)
-        new_total_samples = self._total_samples + new_samples
-        new_duration_ms = (new_total_samples / item.sample_rate) * 1000
+        new_duration_ms = ((self._total_samples + new_samples) / item.sample_rate) * 1000
 
         if new_duration_ms > self.buffer_limit_ms:
-            logger.warning(
-                f"AudioQueue buffer limit exceeded: {new_duration_ms:.1f}ms > {self.buffer_limit_ms}ms"
-            )
+            self._drop_oldest_to_fit(new_samples, item.sample_rate)
 
         self._buffer.append(item)
         self._total_samples += new_samples
