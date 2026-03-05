@@ -449,197 +449,186 @@ class TestAgent:
             assert edge.authenticate_call_count == 1
 
 
-def _make_participant(user_id: str = "user-1") -> Participant:
-    return Participant(id=f"participant-{user_id}", user_id=user_id, original=None)
+@pytest.fixture
+def participant() -> Participant:
+    return Participant(id="participant-user-1", user_id="user-1", original=None)
 
 
-def _make_agent_with_conversation(agent_user_id: str = "agent-1") -> Agent:
+@pytest.fixture
+async def transcript_agent() -> Agent:
     agent = Agent(
         llm=DummyLLM(),
         tts=DummyTTS(),
         edge=DummyEdge(),
-        agent_user=User(id=agent_user_id, name="bot"),
+        agent_user=User(id="agent-1", name="bot"),
     )
     agent.conversation = InMemoryConversation(instructions="", messages=[])
     return agent
 
 
+async def _send(agent: Agent, event) -> None:
+    agent.events.send(event)
+    await agent.events.wait(1.0)
+
+
 class TestAgentTranscriptHandling:
-    """Tests for accumulating transcript events into single messages."""
+    """Tests for accumulating realtime transcript events into conversation messages."""
 
-    @staticmethod
-    async def _send_and_wait(agent: Agent, event) -> None:
-        agent.events.send(event)
-        await asyncio.sleep(0.1)
-
-    async def test_final_user_transcript_creates_single_message(self):
-        agent = _make_agent_with_conversation()
-        await self._send_and_wait(
-            agent,
+    async def test_final_user_transcript_creates_single_message(
+        self, transcript_agent, participant
+    ):
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
-                text="Hello world",
-                mode="final",
-                participant=_make_participant(),
+                text="Hello world", mode="final", participant=participant
             ),
         )
 
-        assert len(agent.conversation.messages) == 1
-        assert agent.conversation.messages[0].content == "Hello world"
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "Hello world"
 
-    async def test_replacement_user_transcripts_reuse_message_id(self):
-        agent = _make_agent_with_conversation()
-        participant = _make_participant()
-
+    async def test_replacement_user_transcripts_reuse_message_id(
+        self, transcript_agent, participant
+    ):
         for text in ["Hello", "Hello world", "Hello world how"]:
-            await self._send_and_wait(
-                agent,
+            await _send(
+                transcript_agent,
                 RealtimeUserSpeechTranscriptionEvent(
                     text=text, mode="replacement", participant=participant
                 ),
             )
 
-        assert len(agent.conversation.messages) == 1
-        assert agent.conversation.messages[0].content == "Hello world how"
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "Hello world how"
 
-    async def test_final_after_replacements_reuses_same_message(self):
-        agent = _make_agent_with_conversation()
-        participant = _make_participant()
-
-        await self._send_and_wait(
-            agent,
+    async def test_final_after_replacements_reuses_same_message(
+        self, transcript_agent, participant
+    ):
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="Hi", mode="replacement", participant=participant
             ),
         )
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="Hi there", mode="final", participant=participant
             ),
         )
 
-        assert len(agent.conversation.messages) == 1
-        assert agent.conversation.messages[0].content == "Hi there"
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "Hi there"
 
-    async def test_agent_delta_transcripts_reuse_message_id(self):
-        agent = _make_agent_with_conversation()
-
+    async def test_agent_delta_transcripts_reuse_message_id(self, transcript_agent):
         for text in ["I'm ", "doing ", "well"]:
-            await self._send_and_wait(
-                agent,
+            await _send(
+                transcript_agent,
                 RealtimeAgentSpeechTranscriptionEvent(text=text, mode="delta"),
             )
 
-        assert len(agent.conversation.messages) == 1
-        assert agent.conversation.messages[0].content == "I'm doing well"
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "I'm doing well"
 
-    async def test_agent_final_transcript_reuses_delta_message(self):
-        agent = _make_agent_with_conversation()
-
-        await self._send_and_wait(
-            agent,
+    async def test_agent_final_transcript_reuses_delta_message(self, transcript_agent):
+        await _send(
+            transcript_agent,
             RealtimeAgentSpeechTranscriptionEvent(text="Thinking", mode="delta"),
         )
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeAgentSpeechTranscriptionEvent(text="", mode="final"),
         )
 
-        assert len(agent.conversation.messages) == 1
-        assert agent.conversation.messages[0].content == "Thinking"
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "Thinking"
 
-    async def test_user_transcript_finalizes_pending_agent(self):
+    async def test_user_transcript_finalizes_pending_agent(
+        self, transcript_agent, participant
+    ):
         """When user starts speaking, any pending agent transcript is finalized."""
-        agent = _make_agent_with_conversation()
-        participant = _make_participant()
-
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeAgentSpeechTranscriptionEvent(text="Agent response", mode="delta"),
         )
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="User reply", mode="delta", participant=participant
             ),
         )
 
-        assert len(agent.conversation.messages) == 2
-        assert agent.conversation.messages[0].role == "assistant"
-        assert agent.conversation.messages[1].role == "user"
-        assert agent.transcripts.flush_agent_transcript() is None
+        assert len(transcript_agent.conversation.messages) == 2
+        assert transcript_agent.conversation.messages[0].role == "assistant"
+        assert transcript_agent.conversation.messages[1].role == "user"
+        assert transcript_agent.transcripts.flush_agent_transcript() is None
 
-    async def test_agent_transcript_finalizes_pending_user(self):
+    async def test_agent_transcript_finalizes_pending_user(
+        self, transcript_agent, participant
+    ):
         """When agent starts speaking, any pending user transcript is finalized."""
-        agent = _make_agent_with_conversation()
-        participant = _make_participant()
-
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="User speaking", mode="delta", participant=participant
             ),
         )
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeAgentSpeechTranscriptionEvent(text="Agent reply", mode="delta"),
         )
 
-        assert len(agent.conversation.messages) == 2
-        assert agent.conversation.messages[0].role == "user"
-        assert agent.conversation.messages[1].role == "assistant"
-        assert not agent.transcripts.flush_users_transcripts()
+        assert len(transcript_agent.conversation.messages) == 2
+        assert transcript_agent.conversation.messages[0].role == "user"
+        assert transcript_agent.conversation.messages[1].role == "assistant"
+        assert not transcript_agent.transcripts.flush_users_transcripts()
 
-    async def test_multiple_turns_create_separate_messages(self):
+    async def test_multiple_turns_create_separate_messages(
+        self, transcript_agent, participant
+    ):
         """Full conversation flow: user -> agent -> user."""
-        agent = _make_agent_with_conversation()
-        participant = _make_participant()
-
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="Hi", mode="final", participant=participant
             ),
         )
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeAgentSpeechTranscriptionEvent(text="Hello!", mode="final"),
         )
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="How are you?", mode="final", participant=participant
             ),
         )
 
-        assert len(agent.conversation.messages) == 3
-        assert agent.conversation.messages[0].content == "Hi"
-        assert agent.conversation.messages[1].content == "Hello!"
-        assert agent.conversation.messages[2].content == "How are you?"
+        assert len(transcript_agent.conversation.messages) == 3
+        assert transcript_agent.conversation.messages[0].content == "Hi"
+        assert transcript_agent.conversation.messages[1].content == "Hello!"
+        assert transcript_agent.conversation.messages[2].content == "How are you?"
 
-    async def test_gemini_style_delta_transcripts(self):
+    async def test_gemini_style_delta_transcripts(self, transcript_agent, participant):
         """Gemini sends incremental delta chunks."""
-        agent = _make_agent_with_conversation()
-        participant = _make_participant()
-
         for text in ["I ", "am ", "walking ", "to ", "the store"]:
-            await self._send_and_wait(
-                agent,
+            await _send(
+                transcript_agent,
                 RealtimeUserSpeechTranscriptionEvent(
                     text=text, mode="delta", participant=participant
                 ),
             )
 
-        assert len(agent.conversation.messages) == 1
-        assert agent.conversation.messages[0].content == "I am walking to the store"
+        assert len(transcript_agent.conversation.messages) == 1
+        assert (
+            transcript_agent.conversation.messages[0].content
+            == "I am walking to the store"
+        )
 
-    async def test_openai_style_final_transcripts(self):
+    async def test_openai_style_final_transcripts(self, transcript_agent, participant):
         """OpenAI sends a single final transcript (no deltas)."""
-        agent = _make_agent_with_conversation()
-        participant = _make_participant()
-
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="OK, everybody. Do.",
                 mode="final",
@@ -647,32 +636,27 @@ class TestAgentTranscriptHandling:
             ),
         )
 
-        assert len(agent.conversation.messages) == 1
-        assert agent.conversation.messages[0].content == "OK, everybody. Do."
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "OK, everybody. Do."
 
-    async def test_no_participant_skips_sync(self):
+    async def test_no_participant_skips_sync(self, transcript_agent):
         """Events without a participant should not create messages."""
-        agent = _make_agent_with_conversation()
-
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="orphan transcript", mode="final"
             ),
         )
 
-        assert len(agent.conversation.messages) == 0
+        assert len(transcript_agent.conversation.messages) == 0
 
-    async def test_empty_text_skips_sync(self):
+    async def test_empty_text_skips_sync(self, transcript_agent, participant):
         """Events with empty text should not create messages."""
-        agent = _make_agent_with_conversation()
-        participant = _make_participant()
-
-        await self._send_and_wait(
-            agent,
+        await _send(
+            transcript_agent,
             RealtimeUserSpeechTranscriptionEvent(
                 text="", mode="final", participant=participant
             ),
         )
 
-        assert len(agent.conversation.messages) == 0
+        assert len(transcript_agent.conversation.messages) == 0
