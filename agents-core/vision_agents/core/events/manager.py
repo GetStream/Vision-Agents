@@ -6,7 +6,7 @@ import typing
 import uuid
 from typing import Any, Deque, Dict, Optional, Union, get_args, get_origin
 
-from .base import ExceptionEvent
+from .base import BaseEvent, ExceptionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +128,12 @@ class EventManager:
         """
         self._queue: Deque[Any] = collections.deque([])
         self._events: Dict[str, type] = {}
-        self._handlers: Dict[type, typing.List[typing.Callable]] = {}
+        self._handlers: Dict[str, typing.List[typing.Callable]] = {}
         self._modules: Dict[str, typing.List[type]] = {}
         self._ignore_unknown_events = ignore_unknown_events
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
-        self._silent_events: set[type] = set()
+        self._silent_events: set[str] = set()
         self._handler_tasks: Dict[uuid.UUID, asyncio.Task[Any]] = {}
         self._received_event = asyncio.Event()
 
@@ -144,8 +144,8 @@ class EventManager:
 
     def register(
         self,
-        *event_classes: type,
-        ignore_not_compatible=False,
+        *event_classes: type[BaseEvent] | type[ExceptionEvent],
+        ignore_not_compatible: bool = False,
     ):
         """
         Register event classes for use with the event manager.
@@ -290,6 +290,12 @@ class EventManager:
             except ValueError:
                 pass
 
+    def has_subscribers(
+        self, event_class: type[BaseEvent] | type[ExceptionEvent]
+    ) -> bool:
+        """Check whether any handler is registered for the given event class."""
+        return bool(self._handlers.get(event_class.type))
+
     def subscribe(self, function):
         """
         Subscribe a function to handle specific event types.
@@ -323,14 +329,17 @@ class EventManager:
         """
         subscribed = False
         is_union = False
-        annotations = typing.get_type_hints(function)
+        #  Get the input params annotations ignoring the return types.
+        params_annotations = {
+            k: v for k, v in typing.get_type_hints(function).items() if k != "return"
+        }
 
         if not asyncio.iscoroutinefunction(function):
             raise RuntimeError(
                 "Handlers must be coroutines. Use async def handler(event: EventType):"
             )
 
-        for name, event_class in annotations.items():
+        for name, event_class in params_annotations.items():
             origin = get_origin(event_class)
             events: typing.List[type] = []
 
@@ -417,7 +426,7 @@ class EventManager:
         else:
             raise RuntimeError(f"Event not registered {event}")
 
-    def silent(self, event_class):
+    def silent(self, event_class: type[BaseEvent]):
         """
         Silence logging for an event class from being processed.
 
@@ -483,7 +492,7 @@ class EventManager:
         """
         start_time = asyncio.get_event_loop().time()
         while (asyncio.get_event_loop().time() - start_time) < timeout:
-            if not self._queue and not self._handler_tasks:
+            if not self._queue and all(t.done() for t in self._handler_tasks.values()):
                 break
             await asyncio.sleep(0.01)
 

@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 class StartSessionRequest(BaseModel):
     """Request body for joining a call."""
 
-    call_id: str = Field(..., description="Unique identifier of the call to join")
     call_type: str = Field(default="default", description="Type of the call to join")
 
 

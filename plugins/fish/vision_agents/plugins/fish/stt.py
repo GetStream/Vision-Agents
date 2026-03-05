@@ -5,13 +5,11 @@ import time
 from typing import Optional
 
 import numpy as np
-from fish_audio_sdk import Session, ASRRequest
+from fish_audio_sdk import ASRRequest, Session
 from getstream.video.rtc.track_util import PcmData
-
 from vision_agents.core import stt
-from vision_agents.core.stt import TranscriptResponse
-
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.stt import TranscriptResponse
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +52,7 @@ class STT(stt.STT):
     async def process_audio(
         self,
         pcm_data: PcmData,
-        participant: Optional[Participant] = None,
+        participant: Participant,
     ):
         """
         Process audio data through Fish Audio for transcription.
@@ -129,10 +127,6 @@ class STT(stt.STT):
                     "duration_ms": response.duration,
                 },
             )
-
-            # Create a default participant if none provided
-            if participant is None:
-                participant = Participant(original=None, user_id="test-user")
 
             self._emit_transcript_event(transcript_text, participant, response_metadata)
 

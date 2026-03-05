@@ -2,13 +2,14 @@ import abc
 import logging
 import uuid
 from typing import Optional
+
 from getstream.video.rtc.track_util import PcmData
+from vision_agents.core.events.manager import EventManager
 
 from ..edge.types import Participant
-from vision_agents.core.events.manager import EventManager
+from ..turn_detection import TurnEndedEvent, TurnStartedEvent
 from . import events
 from .events import TranscriptResponse
-from ..turn_detection import TurnEndedEvent, TurnStartedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +126,8 @@ class STT(abc.ABC):
     def _emit_error_event(
         self,
         error: Exception,
-        context: str = "",
         participant: Optional[Participant] = None,
+        context: str = "",
     ):
         """
         Emit an error event. Note this should only be emitted for temporary errors.
@@ -148,7 +149,7 @@ class STT(abc.ABC):
     async def process_audio(
         self,
         pcm_data: PcmData,
-        participant: Optional[Participant] = None,
+        participant: Participant,
     ):
         pass
 

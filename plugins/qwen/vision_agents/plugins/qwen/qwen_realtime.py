@@ -244,6 +244,7 @@ class Qwen3Realtime(Realtime):
             elif event_type == "response.output_item.added":
                 self._current_item_id = event.get("item", {}).get("id")
             elif event_type == "response.done":
+                self._emit_agent_speech_transcription(text="", mode="final")
                 self._is_responding = False
                 self._current_response_id = None
                 self._current_item_id = None
@@ -263,11 +264,11 @@ class Qwen3Realtime(Realtime):
             elif event_type == "conversation.item.input_audio_transcription.completed":
                 transcript = event.get("transcript", "")
                 if transcript:
-                    self._emit_user_speech_transcription(text=transcript)
+                    self._emit_user_speech_transcription(text=transcript, mode="final")
             elif event_type == "response.audio_transcript.delta":
                 delta = event.get("delta", "")
                 if delta:
-                    self._emit_agent_speech_transcription(text=delta)
+                    self._emit_agent_speech_transcription(text=delta, mode="delta")
 
     async def _on_interruption(self):
         """Handle user interruption of the current response."""

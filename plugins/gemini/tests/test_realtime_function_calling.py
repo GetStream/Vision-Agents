@@ -108,7 +108,7 @@ class TestGeminiRealtimeFunctionCalling:
 
         # Register a weather function
         @realtime.register_function(description="Get current weather for a location")
-        def get_weather(location: str) -> Dict[str, str]:
+        async def get_weather(location: str) -> Dict[str, str]:
             """Get weather information for a location."""
             function_calls.append({"name": "get_weather", "location": location})
             return {
@@ -158,7 +158,7 @@ class TestGeminiRealtimeFunctionCalling:
 
         # Register a function that will raise an error
         @realtime.register_function(description="A function that sometimes fails")
-        def unreliable_function(input_data: str) -> Dict[str, Any]:
+        async def unreliable_function(input_data: str) -> Dict[str, Any]:
             """A function that raises an error for testing."""
             function_calls.append({"name": "unreliable_function", "input": input_data})
             if "error" in input_data.lower():
@@ -205,13 +205,13 @@ class TestGeminiRealtimeFunctionCalling:
 
         # Register multiple functions
         @realtime.register_function(description="Get current time")
-        def get_time() -> Dict[str, str]:
+        async def get_time() -> Dict[str, str]:
             """Get current time."""
             function_calls.append({"name": "get_time"})
             return {"time": "2024-01-15 14:30:00", "timezone": "UTC"}
 
         @realtime.register_function(description="Get system status")
-        def get_status() -> Dict[str, str]:
+        async def get_status() -> Dict[str, str]:
             """Get system status."""
             function_calls.append({"name": "get_status"})
             return {"status": "healthy", "uptime": "24h"}
@@ -257,7 +257,7 @@ class TestGeminiRealtimeFunctionCalling:
 
         # Register a test function
         @realtime.register_function(description="Test function")
-        def test_func(param: str) -> str:
+        async def test_func(param: str) -> str:
             return f"test: {param}"
 
         config = realtime.get_config()

@@ -21,7 +21,6 @@ from .http.dependencies import (
     can_start_session,
     can_view_metrics,
     can_view_session,
-    get_current_user,
 )
 from .http.options import ServeOptions
 
@@ -224,7 +223,6 @@ class Runner:
         app.dependency_overrides[can_close_session] = options.can_close_session
         app.dependency_overrides[can_view_session] = options.can_view_session
         app.dependency_overrides[can_view_metrics] = options.can_view_metrics
-        app.dependency_overrides[get_current_user] = options.get_current_user
         app.include_router(router)
         app.add_middleware(
             CORSMiddleware,

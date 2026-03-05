@@ -1,19 +1,15 @@
-from __future__ import annotations
-
+import abc
+import logging
+import uuid
 from typing import (
+    Any,
     Optional,
 )
 
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.edge.types import Participant
 
-
-import abc
-import logging
-import uuid
-
-from . import events, OmniLLM
-
+from . import OmniLLM, events
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +111,18 @@ class Realtime(OmniLLM):
         )
         self.events.send(event)
 
+    def _emit_audio_output_done_event(
+        self, response_id: str | None = None, user_metadata=None
+    ):
+        """Emit an event signaling audio output is complete."""
+        event = events.RealtimeAudioOutputDoneEvent(
+            session_id=self.session_id,
+            plugin_name=self.provider_name,
+            response_id=response_id,
+            participant=user_metadata,
+        )
+        self.events.send(event)
+
     def _emit_response_event(
         self,
         text,
@@ -166,23 +174,37 @@ class Realtime(OmniLLM):
     async def close(self):
         raise NotImplementedError("llm.close isn't implemented")
 
-    def _emit_user_speech_transcription(self, text: str, original=None):
+    def _emit_user_speech_transcription(
+        self,
+        text: str,
+        *,
+        mode: events.TranscriptMode,
+        original: Any = None,
+    ):
         """Emit a user speech transcription event with participant info."""
         event = events.RealtimeUserSpeechTranscriptionEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
+            mode=mode,
             original=original,
             participant=self._current_participant,
         )
         self.events.send(event)
 
-    def _emit_agent_speech_transcription(self, text: str, original=None):
+    def _emit_agent_speech_transcription(
+        self,
+        text: str,
+        *,
+        mode: events.TranscriptMode,
+        original: Any = None,
+    ):
         """Emit an agent speech transcription event."""
         event = events.RealtimeAgentSpeechTranscriptionEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
+            mode=mode,
             original=original,
         )
         self.events.send(event)

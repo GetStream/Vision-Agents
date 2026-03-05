@@ -28,7 +28,7 @@ async def test_openai_function_calling_live_roundtrip():
     @llm.register_function(
         description="Probe tool that records invocation and returns a marker string"
     )
-    def probe_tool(ping: str) -> str:
+    async def probe_tool(ping: str) -> str:
         calls.append(ping)
         return f"probe_ok:{ping}"
 

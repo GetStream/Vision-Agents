@@ -1,31 +1,33 @@
-from typing import Optional, List, TYPE_CHECKING, Any, Dict
 import json
+import logging
 import time
+from typing import Any, Dict, List, Optional
+
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
 from anthropic.types import (
-    RawMessageStreamEvent,
     Message as ClaudeMessage,
+)
+from anthropic.types import (
     RawContentBlockDeltaEvent,
     RawMessageStopEvent,
+    RawMessageStreamEvent,
     TextDelta,
 )
-
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-
+from vision_agents.core.agents.conversation import Message
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.processors import Processor
+
 from . import events
 
-if TYPE_CHECKING:
-    from vision_agents.core.agents.conversation import Message
+logger = logging.getLogger(__name__)
 
 
 class ClaudeLLM(LLM):
@@ -68,17 +70,13 @@ class ClaudeLLM(LLM):
         self._pending_tool_uses_by_index: Dict[
             int, Dict[str, Any]
         ] = {}  # index -> {id, name, parts: []}
-
-        if client is not None:
-            self.client = client
-        else:
-            self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        self.client = client or anthropic.AsyncAnthropic(api_key=api_key)
 
     async def simple_response(
         self,
         text: str,
         processors: Optional[List[Processor]] = None,
-        participant: Participant = None,
+        participant: Optional[Participant] = None,
     ):
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
@@ -107,21 +105,46 @@ class ClaudeLLM(LLM):
         if "stream" not in kwargs:
             kwargs["stream"] = True
 
+        if self._instructions and "system" not in kwargs:
+            kwargs["system"] = self._instructions
+
         # Add tools if available - use Anthropic format
         tools = self.get_available_functions()
         if tools:
             kwargs["tools"] = self._convert_tools_to_provider_format(tools)
             kwargs.setdefault("tool_choice", {"type": "auto"})
 
+        if "messages" not in kwargs:
+            raise ValueError("messages are required")
         # ensure the AI remembers the past conversation
         new_messages = kwargs["messages"]
-        if hasattr(self, "_conversation") and self._conversation:
-            old_messages = [m.original for m in self._conversation.messages]
-            kwargs["messages"] = old_messages + new_messages
-            # Add messages to conversation
-            normalized_messages = self._normalize_message(new_messages)
-            for msg in normalized_messages:
-                self._conversation.messages.append(msg)
+        if self._conversation:
+            old_messages = [
+                m.original
+                if isinstance(m.original, dict)
+                else {"role": m.role or "user", "content": m.content or ""}
+                for m in self._conversation.messages
+            ]
+            combined = old_messages + new_messages
+            # Anthropic requires alternating user/assistant roles. The agent's
+            # STT handler may have already added the user message, so dedupe
+            # consecutive same-role messages (keep the later one).
+            kwargs["messages"] = self._merge_messages(combined)
+
+            # Track new messages in conversation if not already present
+            # (the agent's STT handler adds user messages, but programmatic
+            # simple_response calls don't go through STT).
+            last = (
+                self._conversation.messages[-1] if self._conversation.messages else None
+            )
+            first_new = new_messages[0] if new_messages else None
+            if first_new and (
+                not last
+                or last.role != first_new.get("role")
+                or last.content != first_new.get("content")
+            ):
+                for msg in self._normalize_message(new_messages):
+                    self._conversation.messages.append(msg)
 
         # Note: Message history is tracked in _conversation, no need to emit as event here
 
@@ -550,6 +573,12 @@ class ClaudeLLM(LLM):
         for m in claude_messages:
             if isinstance(m, dict):
                 content = m.get("content", "")
+                if isinstance(content, list):
+                    content = " ".join(
+                        item.get("text", "")
+                        for item in content
+                        if isinstance(item, dict)
+                    )
                 role = m.get("role", "user")
             else:
                 content = str(m)
@@ -558,6 +587,36 @@ class ClaudeLLM(LLM):
             messages.append(message)
 
         return messages
+
+    def _merge_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Merge consecutive same-role messages.
+
+        Anthropic requires alternating user/assistant roles. The STT handler
+        may add the user message before simple_response does, producing
+        consecutive same-role entries. This merges them so no content is lost.
+        """
+        merged: list[dict[str, Any]] = []
+        for msg in messages:
+            if merged and msg.get("role") == merged[-1].get("role"):
+                prev = merged[-1].get("content", "")
+                curr = msg.get("content", "")
+                if prev == curr:
+                    merged[-1] = msg
+                else:
+                    prev_blocks = (
+                        prev
+                        if isinstance(prev, list)
+                        else [{"type": "text", "text": str(prev)}]
+                    )
+                    curr_blocks = (
+                        curr
+                        if isinstance(curr, list)
+                        else [{"type": "text", "text": str(curr)}]
+                    )
+                    merged[-1] = {**msg, "content": prev_blocks + curr_blocks}
+            else:
+                merged.append(msg)
+        return merged
 
     def _convert_tools_to_provider_format(
         self, tools: List[ToolSchema]

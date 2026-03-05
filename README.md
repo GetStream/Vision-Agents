@@ -142,15 +142,16 @@ plus extra credits via the Maker Program.
 |-----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
 | AWS Bedrock     | Realtime speech-to-speech plugin using Amazon Nova models with automatic reconnection                                                                                                                                                   | [AWS](https://visionagents.ai/integrations/aws-bedrock)                                          |
 | AWS Polly       | TTS plugin using Amazon's cloud-based service with natural-sounding voices and neural engine support                                                                                                                                    | [AWS Polly](https://visionagents.ai/integrations/aws-polly)                                      |
+| AssemblyAI      | Streaming STT plugin using Universal-3 Pro with async WebSocket, built-in turn detection, and keyterms boosting                                                                                                                         | [AssemblyAI](https://www.assemblyai.com/docs/streaming/universal-3-pro)                           |
 | Cartesia        | TTS plugin for realistic voice synthesis in real-time voice applications                                                                                                                                                                | [Cartesia](https://visionagents.ai/integrations/cartesia)                                        |
 | Decart          | Real-time AI video transformation service for applying artistic styles and effects to video streams                                                                                                                                     | [Decart](https://visionagents.ai/integrations/decart)                                            |
 | Deepgram        | STT plugin for fast, accurate real-time transcription with speaker diarization                                                                                                                                                          | [Deepgram](https://visionagents.ai/integrations/deepgram)                                        |
 | ElevenLabs      | TTS plugin with highly realistic and expressive voices for conversational agents                                                                                                                                                        | [ElevenLabs](https://visionagents.ai/integrations/elevenlabs)                                    |
 | Fast-Whisper    | High-performance STT plugin using OpenAI's Whisper model with CTranslate2 for fast inference                                                                                                                                            | [Fast-Whisper](https://visionagents.ai/integrations/fast-whisper)                                |
 | Fish Audio      | STT and TTS plugin with automatic language detection and voice cloning capabilities                                                                                                                                                     | [Fish Audio](https://visionagents.ai/integrations/fish)                                          |
-| Gemini          | Realtime API for building conversational agents with support for both voice and video                                                                                                                                                   | [Gemini](https://visionagents.ai/integrations/gemini)                                            |
+| Gemini          | Realtime API for building conversational agents with support for both voice and video. Plugin supports LLMs, Gemini Live, and a VLM interface for Gemini 3 Flash.                                                                       | [Gemini](https://visionagents.ai/integrations/gemini)                                            |
 | HeyGen          | Realtime interactive avatars powered by [HeyGen](https://heygen.com/)                                                                                                                                                                   | [HeyGen](https://visionagents.ai/integrations/heygen)                                            |
-| Hugging Face | LLM plugin providing access to many open-source language models hosted on the Hugging Face Hub and powered by external providers (Cerebras, Together, Groq, etc.)                                                                          | [Hugging Face](https://visionagents.ai/integrations/huggingface)                                 |
+| Hugging Face | LLM plugin providing access to many open-source language models hosted on the Hugging Face Hub and powered by external providers (Cerebras, Together, Groq, etc.)                                                                       | [Hugging Face](https://visionagents.ai/integrations/huggingface)                                 |
 | Inworld         | TTS plugin with high-quality streaming voices for real-time conversational AI agents                                                                                                                                                    | [Inworld](https://visionagents.ai/integrations/inworld)                                          |
 | Kokoro          | Local TTS engine for offline voice synthesis with low latency                                                                                                                                                                           | [Kokoro](https://visionagents.ai/integrations/kokoro)                                            |
 | Mistral Voxtral | Mistral Voxtral is a real-time transcription tool with speaker diarization. | [Mistral Voxtral](https://visionagents.ai/integrations/mistral)                                      |
@@ -193,7 +194,7 @@ Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai
 
 | 🔮 Demo Applications                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |                                                                                         |
 |:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
-| <br><h3>Cartesia</h3>Using Cartesia's Sonic 3 model to visually look at what's in the frame and tell a story with emotion.<br><br>• Real-time visual understanding<br>• Emotional storytelling<br>• Frame-by-frame analysis<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example)                                                                                                                                                    | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Cartesia Demo">               |
+| <br><h3>Cartesia</h3>Using Cartesia's Sonic 3 model alongside a vision model to tell a story with emotion based on what's in the frame.<br><br>• Real-time visual understanding<br>• Emotional storytelling<br>• Frame-by-frame analysis<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example)                                                                                                                                                    | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Cartesia Demo">               |
 | <br><h3>Realtime Stable Diffusion</h3>Realtime stable diffusion using Vision Agents and Decart's Mirage 2 model to create interactive scenes and stories.<br><br>• Real-time video restyling<br>• Interactive scene generation<br>• Stable diffusion integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/decart/example)                                                                                                                 | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Mirage Demo">                   |
 | <br><h3>Golf Coach</h3>Using Gemini Live together with Vision Agents and Ultralytics YOLO, we're able to track the user's pose and provide realtime actionable feedback on their golf game.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• YOLO pose detection<br>• Gemini Live integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)                                                     | <img src="assets/demo_gifs/golf.gif" width="320" alt="Golf Coach Demo">                 |
 | <br><h3>GeoGuesser</h3>Together with OpenAI Realtime and Vision Agents, we can take GeoGuesser to the next level by asking it to identify places in our real world surroundings.<br><br>• Real-world location identification<br>• OpenAI Realtime integration<br>• Visual scene understanding<br><br> [>Source Code and tutorial](https://visionagents.ai/integrations/openai#openai-realtime)                                                                                                    | <img src="assets/demo_gifs/geoguesser.gif" width="320" alt="GeoGuesser Demo">           |
@@ -240,16 +241,19 @@ Our favorite people & projects to follow for vision AI
 
 ## Roadmap
 
-### 0.1 – First Release - Oct
+### 0.5 Documentation/polish - Planned 
+- Excellence on documentation
+- Segmentation examples with HuggingFace and Roboflow 
+- Automated workflows for maintenance
+- Local camera/audio support AND/OR WebRTC connection
+- Embedded/robotics examples
 
-- Working TTS, Gemini & OpenAI
-
-### 0.2 - Simplification - Nov
-
-- Simplified the library & improved code quality
-- Deepgram Nova 3, Elevenlabs Scribe 2, Fish, Moondream, QWen3, Smart turn, Vogent, Inworld, Heygen, AWS and more
-- Improved openAI & Gemini realtime performance
-- Audio & Video utilities
+### 0.4 - Production Polish & Scalability - Feb
+- Horizontal scaling support via Redis-based session store for multi-node deployments
+- New model/provider expansions: [XAI realtime](https://visionagents.ai/integrations/xai), [Mistral/Voxtral](https://visionagents.ai/integrations), [Gemini 3 Vision](https://visionagents.ai/integrations/gemini), [Hugging Face Transformers plugin](https://visionagents.ai/integrations), Qwen, [OpenRouter VLM](https://visionagents.ai/integrations/openrouter) + upgraded defaults (e.g., GPT-Realtime 1.5)
+- Enforced async-only APIs, agent testing framework, authentication flow updates, limits in AgentLauncher, and reduced GetStream dependency coupling for standalone use
+- Multi-speaker call support, LemonSlice Avatar plugin, TTS/audio fixes, VLM message deduplication (Gemini/NVIDIA/Anthropic), and improved video/screen-sharing handling
+- Lot of polish: full [CHANGELOG.md](https://github.com/GetStream/Vision-Agents/blob/main/CHANGELOG.md), [Grafana/Prometheus examples](https://visionagents.ai/core/telemetry), and numerous stability/bug fixes
 
 ### 0.3 - Examples and Deploys - Jan
 
@@ -262,13 +266,16 @@ Our favorite people & projects to follow for vision AI
   examples ([security camera](examples/05_security_camera_example), [phone integration](examples/03_phone_and_rag_example), [football commentator](examples/04_football_commentator_example), [Docker deployment with GPU support](examples/07_deploy_example), [agent server](examples/08_agent_server_example))
 - Stability: Fixes for participant sync, video frame handling, agent lifecycle, and screen sharing
 
-### 0.4 Documentation/polish
+### 0.2 - Simplification - Nov
 
-- Excellence on documentation/polish
-- Better Roboflow annotation docs
-- Automated workflows for maintenance
-- Local camera/audio support AND/OR WebRTC connection
-- Embedded/robotics examples
+- Simplified the library & improved code quality
+- Deepgram Nova 3, Elevenlabs Scribe 2, Fish, Moondream, QWen3, Smart turn, Vogent, Inworld, Heygen, AWS and more
+- Improved openAI & Gemini realtime performance
+- Audio & Video utilities
+
+### 0.1 – First Release - Oct
+
+- Working TTS, Gemini & OpenAI
 
 ## Vision AI limitations
 
@@ -283,13 +290,6 @@ While building the integrations, here are the limitations we've noticed (Dec 202
   more context and larger models like gemini/openAI
 * Image size & FPS need to stay relatively low due to performance constraints
 * Video doesn’t trigger responses in realtime models. You always need to send audio/text to trigger a response.
-
-## We are hiring
-
-Join the team behind this project - we’re hiring a Staff Python Engineer to architect, build, and maintain a powerful
-toolkit for developers integrating voice and video AI into their products.
-
-[Apply here](https://jobs.ashbyhq.com/stream/3bea7dba-54e1-4c71-aa02-712a075842df?utm_source=Jmv9QOkznl)
 
 ## Star History
 

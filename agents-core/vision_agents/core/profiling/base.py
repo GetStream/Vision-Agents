@@ -1,7 +1,7 @@
 import logging
 
-from vision_agents.core.events import EventManager
 from vision_agents.core.agents import events
+from vision_agents.core.events import EventManager
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class Profiler:
         agent = Agent(
             edge=getstream.Edge(),
             agent_user=User(name="Agent", id="agent"),
-            llm=gemini.LLM("gemini-2.0-flash"),
+            llm=gemini.LLM(),
             profiler=Profiler(output_path='./profile.html'),
         )
     """

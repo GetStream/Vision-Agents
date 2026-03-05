@@ -13,8 +13,9 @@ class User:
 
 @dataclass
 class Participant:
-    original: Any
-    user_id: str
+    original: Any  # Original participant object received from the connectivty provider
+    user_id: str  # A user id (doesn't have to be unique)
+    id: str  # A unique id of the participant during the call
 
 
 class TrackType(enum.IntEnum):

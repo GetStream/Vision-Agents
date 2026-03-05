@@ -31,7 +31,7 @@ from vision_agents.plugins import getstream, gemini, smart_turn
 agent = Agent(
     edge=getstream.Edge(),
     tts=inworld.TTS(),
-    llm=gemini.LLM("gemini-2.0-flash"),
+    llm=gemini.LLM(),
     turn_detection=smart_turn.TurnDetection(),
 )
 ```

@@ -20,6 +20,15 @@ class GeminiErrorEvent(PluginBaseEvent):
 
 
 @dataclass
+class LLMErrorEvent(PluginBaseEvent):
+    """Event emitted when an LLM encounters an error."""
+
+    type: str = field(default="plugin.llm.error", init=False)
+    error_message: Optional[str] = None
+    event_data: Optional[Any] = None
+
+
+@dataclass
 class GeminiAudioEvent(PluginBaseEvent):
     """Event emitted when Gemini provides audio output."""
 

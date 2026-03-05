@@ -6,23 +6,20 @@ This plugin integrates with Stream's audio processing pipeline to provide high-q
 speech-to-text capabilities.
 """
 
-import aiofiles
 import asyncio
 import logging
 import os
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
+import aiofiles
 import fal_client
 from getstream.video.rtc.track_util import PcmData
-
 from vision_agents.core import stt
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import TranscriptResponse
-
-if TYPE_CHECKING:
-    from vision_agents.core.edge.types import Participant
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +60,7 @@ class STT(stt.STT):
     async def process_audio(
         self,
         pcm_data: PcmData,
-        participant: Optional["Participant"] = None,
+        participant: Participant,
     ):
         """
         Process audio through fal-ai/wizper for transcription.
@@ -117,21 +114,15 @@ class STT(stt.STT):
                 if "text" in result:
                     text = result["text"].strip()
                     if text:
-                        # Create a default participant if none provided
-                        if participant is None:
-                            from vision_agents.core.edge.types import Participant
-
-                            participant = Participant(
-                                original=None, user_id="test-user"
-                            )
-
                         processing_time_ms = (time.perf_counter() - start_time) * 1000
                         response_metadata = TranscriptResponse(
                             processing_time_ms=processing_time_ms,
                             model_name="wizper-v3",
                         )
                         self._emit_transcript_event(
-                            text, participant, response_metadata
+                            text=text,
+                            participant=participant,
+                            response=response_metadata,
                         )
             finally:
                 # Clean up temporary file (async to avoid blocking)
@@ -142,7 +133,9 @@ class STT(stt.STT):
 
         except Exception as e:
             logger.error(f"Wizper processing error: {str(e)}")
-            self._emit_error_event(e, "Wizper processing")
+            self._emit_error_event(
+                e, context="Wizper processing", participant=participant
+            )
 
     async def close(self):
         """Close the Wizper STT service and release any resources."""

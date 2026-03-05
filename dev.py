@@ -100,7 +100,7 @@ def mypy_plugins():
     """Run mypy type checks on all plugins."""
     click.echo("Running mypy on plugins...")
     run(
-        "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
+        "uv run mypy --install-types --non-interactive --exclude 'plugins/[^/]+/tests/' plugins",
     )
 
 
@@ -203,16 +203,14 @@ def check():
 
     # Run mypy on main package
     click.echo("\n=== 3. MyPy Type Checking ===")
-    run("uv run mypy --install-types --non-interactive -p vision_agents")
+    mypy.callback()
 
     # Run mypy on plugins
     click.echo("\n=== 4. MyPy Plugin Type Checking ===")
-    run(
-        "uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins"
-    )
+    mypy_plugins.callback()
 
     # Run unit tests
-    click.echo("\n=== 4. Unit Tests ===")
+    click.echo("\n=== 5. Unit Tests ===")
     run("uv run py.test -m 'not integration' -n auto")
 
     click.echo("\n✅ All checks passed!")

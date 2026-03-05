@@ -31,12 +31,11 @@ async def create_agent(**kwargs) -> Agent:
         instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
         stt=mistral.STT(),
         tts=deepgram.TTS(),
-        llm=gemini.LLM("gemini-2.0-flash"),
+        llm=gemini.LLM(),
     )
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    await agent.create_user()
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
@@ -59,12 +58,12 @@ Mistral Voxtral STT does not include built-in turn detection (`turn_detection=Fa
 
 ## Configuration
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `api_key` | Mistral API key | `MISTRAL_API_KEY` env var |
-| `model` | Model identifier | `voxtral-mini-transcribe-realtime-2602` |
-| `sample_rate` | Audio sample rate (Hz): 8000, 16000, 22050, 44100, 48000 | `16000` |
-| `client` | Pre-configured Mistral client | `None` |
+| Parameter     | Description                                              | Default                                 |
+|---------------|----------------------------------------------------------|-----------------------------------------|
+| `api_key`     | Mistral API key                                          | `MISTRAL_API_KEY` env var               |
+| `model`       | Model identifier                                         | `voxtral-mini-transcribe-realtime-2602` |
+| `sample_rate` | Audio sample rate (Hz): 8000, 16000, 22050, 44100, 48000 | `16000`                                 |
+| `client`      | Pre-configured Mistral client                            | `None`                                  |
 
 ## Events
 

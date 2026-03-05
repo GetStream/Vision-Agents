@@ -193,7 +193,7 @@ def assets_dir():
 @pytest.fixture
 def participant():
     """Create a test participant for STT testing."""
-    return Participant({}, user_id="test-user")
+    return Participant({}, user_id="test-user", id="test_user")
 
 
 @pytest.fixture
@@ -202,6 +202,23 @@ def mia_audio_16khz():
     audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
     pcm = _mp3_to_pcm(audio_file_path, 16000)
     return pcm
+
+
+@pytest.fixture
+def mia_audio_16khz_chunked():
+    """Load mia.mp3 and yield 16kHz PCM data in 20ms chunks."""
+    audio_file_path = os.path.join(get_assets_dir(), "mia.mp3")
+    pcm = _mp3_to_pcm(audio_file_path, 16000)
+    chunk_size = int(16000 * 0.020)  # 320 samples per 20ms
+    chunks = []
+    for i in range(0, len(pcm.samples), chunk_size):
+        chunk = PcmData(
+            samples=pcm.samples[i : i + chunk_size],
+            sample_rate=16000,
+            format=AudioFormat.S16,
+        )
+        chunks.append(chunk)
+    return chunks
 
 
 @pytest.fixture

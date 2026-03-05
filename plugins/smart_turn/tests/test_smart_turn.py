@@ -19,7 +19,6 @@ async def smart_turn():
     await td.stop()
 
 
-@pytest.mark.skip_blockbuster
 class TestSmartTurn:
     async def test_silero_predict(self, mia_audio_16khz, tmp_path):
         vad_pool = await SileroVADSessionPool.load(tmp_path.as_posix())
@@ -32,7 +31,7 @@ class TestSmartTurn:
             assert 1.0 > result > 0.0
 
     async def test_turn_detection_chunks(self, smart_turn, mia_audio_16khz):
-        participant = Participant(user_id="mia", original={})
+        participant = Participant(user_id="mia", id="mia", original={})
         conversation = InMemoryConversation(instructions="be nice", messages=[])
 
         event_order = []
@@ -62,7 +61,7 @@ class TestSmartTurn:
         ]
 
     async def test_turn_detection(self, smart_turn, mia_audio_16khz):
-        participant = Participant(user_id="mia", original={})
+        participant = Participant(user_id="mia", id="mia", original={})
         conversation = InMemoryConversation(instructions="be nice", messages=[])
         event_order = []
 

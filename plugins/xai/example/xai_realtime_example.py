@@ -49,7 +49,6 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join the call and start the voice conversation."""
-    await agent.create_user()
     call = await agent.create_call(call_type, call_id)
 
     logger.info("Starting xAI Realtime Agent...")

@@ -1,13 +1,16 @@
 import asyncio
+
+import numpy as np
 import pytest
 from dotenv import load_dotenv
-
-from vision_agents.plugins.openai import Realtime
+from getstream.video.rtc.track_util import AudioFormat, PcmData
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
+    RealtimeAgentSpeechTranscriptionEvent,
     RealtimeAudioOutputEvent,
     RealtimeUserSpeechTranscriptionEvent,
-    RealtimeAgentSpeechTranscriptionEvent,
 )
+from vision_agents.plugins.openai import Realtime
 
 # Load environment variables
 load_dotenv()
@@ -65,8 +68,8 @@ class TestOpenAIRealtime:
         # Convert 16kHz audio to 48kHz for OpenAI realtime
         # OpenAI expects 48kHz PCM audio
         import numpy as np
+        from getstream.video.rtc.track_util import AudioFormat, PcmData
         from scipy import signal
-        from getstream.video.rtc.track_util import PcmData, AudioFormat
 
         # Resample from 16kHz to 48kHz
         samples_16k = mia_audio_16khz.samples
@@ -234,14 +237,9 @@ class TestOpenAIRealtime:
         async def on_user_transcript(event: RealtimeUserSpeechTranscriptionEvent):
             user_transcripts.append(event)
 
-        # Create a mock participant with a specific user_id
-        from vision_agents.core.edge.types import Participant
-
-        test_participant = Participant(original=None, user_id="test_user_123")
-
-        # Simulate sending audio with participant info
-        from getstream.video.rtc.track_util import PcmData, AudioFormat
-        import numpy as np
+        test_participant = Participant(
+            original=None, user_id="test_user_123", id="test_user_123"
+        )
 
         pcm = PcmData(
             samples=np.zeros(100, dtype=np.int16),

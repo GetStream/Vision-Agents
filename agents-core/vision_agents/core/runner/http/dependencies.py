@@ -1,39 +1,25 @@
-from typing import Any, Optional
-
-from fastapi import Depends, Request
-from vision_agents.core import AgentLauncher, AgentSession
+from fastapi import Request
+from vision_agents.core import AgentLauncher
 
 from .options import ServeOptions
 
 
-def get_current_user() -> Any:
-    return None
+def can_start_session(call_id: str): ...
 
 
-def can_start_session(): ...
+def can_close_session(call_id: str): ...
 
 
-def can_close_session(): ...
+def can_view_session(call_id: str): ...
 
 
-def can_view_session(): ...
-
-
-def can_view_metrics(): ...
+def can_view_metrics(call_id: str): ...
 
 
 def get_launcher(request: Request) -> AgentLauncher:
-    """
-    Get an agent launcher from the FastAPI app
-    """
+    """Get an agent launcher from the FastAPI app."""
     return request.app.state.launcher
 
 
 def get_options(request: Request) -> ServeOptions:
     return request.app.state.options
-
-
-def get_session(
-    session_id: str, launcher: AgentLauncher = Depends(get_launcher)
-) -> Optional[AgentSession]:
-    return launcher.get_session(session_id=session_id)

@@ -21,12 +21,12 @@ class TestFishSTT:
             await stt.close()
 
     @pytest.mark.integration
-    async def test_transcribe_mia_audio(self, stt, mia_audio_16khz):
+    async def test_transcribe_mia_audio(self, stt, mia_audio_16khz, participant):
         # Create session to collect transcripts and errors
         session = STTSession(stt)
 
         # Process the audio
-        await stt.process_audio(mia_audio_16khz)
+        await stt.process_audio(mia_audio_16khz, participant=participant)
 
         # Wait for result
         await session.wait_for_result(timeout=30.0)
@@ -37,12 +37,12 @@ class TestFishSTT:
         assert "forgotten treasures" in full_transcript.lower()
 
     @pytest.mark.integration
-    async def test_transcribe_mia_audio_48khz(self, stt, mia_audio_48khz):
+    async def test_transcribe_mia_audio_48khz(self, stt, mia_audio_48khz, participant):
         # Create session to collect transcripts and errors
         session = STTSession(stt)
 
         # Process the audio
-        await stt.process_audio(mia_audio_48khz)
+        await stt.process_audio(mia_audio_48khz, participant=participant)
 
         # Wait for result
         await session.wait_for_result(timeout=30.0)

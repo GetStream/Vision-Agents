@@ -403,7 +403,9 @@ class GeminiRealtime(realtime.Realtime):
                     text = server_message.server_content.input_transcription.text
                     if text:
                         self._emit_user_speech_transcription(
-                            text=text, original=server_message
+                            text=text,
+                            mode="delta",
+                            original=server_message,
                         )
             elif is_output_transcript:
                 if (
@@ -413,7 +415,9 @@ class GeminiRealtime(realtime.Realtime):
                     text = server_message.server_content.output_transcription.text
                     if text:
                         self._emit_agent_speech_transcription(
-                            text=text, original=server_message
+                            text=text,
+                            mode="delta",
+                            original=server_message,
                         )
             elif is_response:
                 # Store the resumption id so we can resume a broken connection
@@ -439,6 +443,12 @@ class GeminiRealtime(realtime.Realtime):
                         elif part.function_call:
                             # Handle function calls from Gemini Live
                             await self._handle_function_call(part.function_call)
+
+            elif (
+                server_message.server_content
+                and server_message.server_content.turn_complete
+            ):
+                self._emit_audio_output_done_event()
 
             elif server_message.tool_call:
                 # Handle tool calls from Gemini Live

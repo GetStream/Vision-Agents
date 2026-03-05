@@ -1,11 +1,11 @@
 import asyncio
+
 import pytest
 from dotenv import load_dotenv
-
+from getstream.video.rtc import AudioFormat, PcmData
+from vision_agents.core.llm.events import RealtimeAudioOutputEvent
 from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
 from vision_agents.plugins.gemini import Realtime
-from vision_agents.core.llm.events import RealtimeAudioOutputEvent
-from getstream.video.rtc import PcmData, AudioFormat
 
 # Load environment variables
 load_dotenv()
@@ -14,9 +14,7 @@ load_dotenv()
 @pytest.fixture
 async def realtime():
     """Create and manage Realtime connection lifecycle"""
-    realtime = Realtime(
-        model="gemini-2.0-flash-exp",
-    )
+    realtime = Realtime()
     try:
         yield realtime
     finally:

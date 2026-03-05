@@ -3,6 +3,7 @@ import logging
 import types
 
 import pytest
+from vision_agents.core.events import BaseEvent
 from vision_agents.core.events.manager import EventManager, ExceptionEvent
 
 
@@ -13,14 +14,14 @@ class InvalidEvent:
 
 
 @dataclasses.dataclass
-class ValidEvent:
-    field: int
+class ValidEvent(BaseEvent):
+    field: int = 0
     type: str = "custom.validevent"
 
 
 @dataclasses.dataclass
-class AnotherEvent:
-    value: str
+class AnotherEvent(BaseEvent):
+    value: str = ""
     type: str = "custom.anotherevent"
 
 
@@ -62,6 +63,24 @@ class TestEventManager:
         manager.send(ValidEvent(field=2))
         await manager.wait()
         assert my_handler.value == 2
+
+    async def test_subscribe_success(self):
+        manager = EventManager()
+        manager.register(ValidEvent)
+        manager.register(AnotherEvent)
+
+        # Subscribe with a callback without return type
+        @manager.subscribe
+        async def on_valid_event(event1: ValidEvent):
+            pass
+
+        # The return types of the callbacks are ignored
+        @manager.subscribe
+        async def on_another_event(event1: AnotherEvent) -> None:
+            pass
+
+        assert manager.has_subscribers(ValidEvent)
+        assert manager.has_subscribers(AnotherEvent)
 
     async def test_subscribe_with_multiple_events_different(self):
         manager = EventManager()
@@ -268,3 +287,30 @@ class TestEventManager:
         # Should NOT see "Called handler" for either event (both are silent)
         assert not any("Called handler valid_handler" in msg for msg in log_messages)
         assert not any("Called handler another_handler" in msg for msg in log_messages)
+
+    async def test_wait_completes_when_handler_tasks_finish(self):
+        """wait() should return promptly once all handler tasks are done."""
+        manager = EventManager()
+        manager.register(ValidEvent)
+
+        called = False
+
+        @manager.subscribe
+        async def on_event(event: ValidEvent):
+            nonlocal called
+            called = True
+
+        manager.send(ValidEvent(field=1))
+        await manager.wait(timeout=2.0)
+
+        assert called
+
+    async def test_has_subscribers(self):
+        manager = EventManager()
+        assert not manager.has_subscribers(ValidEvent)
+        manager.register(ValidEvent)
+
+        @manager.subscribe
+        async def on_event(event: ValidEvent): ...
+
+        assert manager.has_subscribers(ValidEvent)

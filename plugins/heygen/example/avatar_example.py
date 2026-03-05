@@ -33,7 +33,7 @@ async def create_agent(**kwargs) -> Agent:
             "Don't use special characters or formatting."
         ),
         # Use regular streaming LLM (not Realtime) for lower latency
-        llm=gemini.LLM("gemini-2.0-flash-exp"),
+        llm=gemini.LLM(),
         # Add STT for speech input
         stt=deepgram.STT(),
         # Add HeyGen avatar as a video publisher
@@ -52,8 +52,6 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join the call and start the avatar agent."""
-    # Ensure the agent user is created
-    await agent.create_user()
     # Create a call
     call = await agent.create_call(call_type, call_id)
 

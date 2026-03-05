@@ -1,15 +1,12 @@
 import pytest
 from dotenv import load_dotenv
-
-
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
-
-from vision_agents.plugins.gemini.gemini_llm import GeminiLLM
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
 from vision_agents.plugins.gemini import events
+from vision_agents.plugins.gemini.gemini_llm import GeminiLLM
 
 load_dotenv()
 
@@ -29,7 +26,7 @@ class TestGeminiLLM:
 
     @pytest.fixture
     async def llm(self) -> GeminiLLM:
-        llm = GeminiLLM(model="gemini-2.0-flash-exp")
+        llm = GeminiLLM()
         llm.set_conversation(InMemoryConversation("be friendly", []))
         return llm
 
@@ -81,7 +78,7 @@ class TestGeminiLLM:
 
     @pytest.mark.integration
     async def test_instruction_following(self):
-        llm = GeminiLLM(model="gemini-2.0-flash-exp")
+        llm = GeminiLLM()
         llm.set_conversation(InMemoryConversation("be friendly", []))
 
         llm.set_instructions("only reply in 2 letter country shortcuts")

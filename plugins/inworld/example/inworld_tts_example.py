@@ -36,7 +36,7 @@ async def create_agent(**kwargs) -> Agent:
         instructions="Read @inworld-audio-guide.md",
         tts=inworld.TTS(voice_id="Ashley"),
         stt=deepgram.STT(),
-        llm=gemini.LLM("gemini-2.0-flash"),
+        llm=gemini.LLM(),
         turn_detection=smart_turn.TurnDetection(),
     )
     return agent
@@ -44,8 +44,6 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join the call and start the agent."""
-    # Ensure the agent user is created
-    await agent.create_user()
     # Create a call
     call = await agent.create_call(call_type, call_id)
 

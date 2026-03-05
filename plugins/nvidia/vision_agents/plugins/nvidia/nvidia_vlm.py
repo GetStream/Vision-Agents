@@ -208,10 +208,10 @@ class NvidiaVLM(VideoLLM):
             )
             return LLMResponseEvent(original=None, text="")
 
-        user_id = participant.user_id if participant else "user"
-        await self._conversation.send_message(
-            role="user", user_id=user_id, content=text
-        )
+        if participant is None:
+            await self._conversation.send_message(
+                role="user", user_id="user", content=text
+            )
 
         asset_ids: list[str] = []
         try:

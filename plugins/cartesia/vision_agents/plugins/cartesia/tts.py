@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional, cast, AsyncIterator, Iterator
+from typing import AsyncIterator, Iterator, Literal, Optional
 
 from cartesia import AsyncCartesia
-from cartesia.tts import (
-    OutputFormat_RawParams,
-    TtsRequestIdSpecifierParams,
-    TtsRequestEmbeddingSpecifierParams,
-)
-
+from cartesia.types import VoiceSpecifierParam
+from cartesia.types.tts_generate_params import OutputFormatRawOutputFormat
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import tts
-from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +21,7 @@ class TTS(tts.TTS):
         api_key: Optional[str] = None,
         model_id: str = "sonic-3",
         voice_id: str | None = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
-        sample_rate: int = 16000,
+        sample_rate: Literal[8000, 16000, 22050, 24000, 44100, 48000] = 16000,
         client: Optional[AsyncCartesia] = None,
     ) -> None:
         """Create a new Cartesia TTS instance.
@@ -58,7 +54,7 @@ class TTS(tts.TTS):
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:  # noqa: D401
         """Generate speech and return a stream of PcmData."""
 
-        output_format: OutputFormat_RawParams = {
+        output_format: OutputFormatRawOutputFormat = {
             "container": "raw",
             "encoding": "pcm_s16le",
             "sample_rate": self.sample_rate,
@@ -68,11 +64,12 @@ class TTS(tts.TTS):
         # iterator when used with ``AsyncCartesia``. Each item yielded is
         # a raw ``bytes`` / ``bytearray`` containing PCM samples (new Cartesia SDK)
 
-        voice_param: (
-            TtsRequestIdSpecifierParams | TtsRequestEmbeddingSpecifierParams
-        ) = cast(TtsRequestIdSpecifierParams, {"id": self.voice_id})
+        voice_param: VoiceSpecifierParam = {
+            "id": self.voice_id,
+            "mode": "id",
+        }
 
-        response = self.client.tts.bytes(
+        response = await self.client.tts.generate(
             model_id=self.model_id,
             transcript=text,
             output_format=output_format,
@@ -80,7 +77,10 @@ class TTS(tts.TTS):
         )
 
         return PcmData.from_response(
-            response, sample_rate=self.sample_rate, channels=1, format=AudioFormat.S16
+            response.iter_bytes(),
+            sample_rate=self.sample_rate,
+            channels=1,
+            format=AudioFormat.S16,
         )
 
     async def stop_audio(self) -> None:

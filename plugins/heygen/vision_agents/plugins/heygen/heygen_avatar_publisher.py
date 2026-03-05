@@ -26,7 +26,7 @@ class AvatarPublisher(AudioPublisher, VideoPublisher):
             edge=getstream.Edge(),
             agent_user=User(name="Avatar AI"),
             instructions="Be helpful and friendly",
-            llm=gemini.LLM("gemini-2.0-flash"),
+            llm=gemini.LLM(),
             stt=deepgram.STT(),
             processors=[
                 heygen.AvatarPublisher(

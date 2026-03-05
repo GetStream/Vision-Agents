@@ -1,0 +1,65 @@
+"""
+Transformers Local VLM Example
+
+Demonstrates running a local vision-language model with Vision Agents.
+The model runs directly on your hardware for image + text understanding.
+
+Creates an agent that uses:
+- TransformersVLM for local vision-language inference
+- Deepgram for speech-to-text (STT)
+- Deepgram for text-to-speech (TTS)
+- GetStream for edge/real-time communication
+
+Requirements:
+- STREAM_API_KEY and STREAM_API_SECRET environment variables
+- DEEPGRAM_API_KEY environment variable
+
+First run will download the model (~4GB for Qwen2-VL-2B).
+"""
+
+import logging
+
+from dotenv import load_dotenv
+from vision_agents.core import Agent, Runner, User
+from vision_agents.core.agents import AgentLauncher
+from vision_agents.plugins import deepgram, getstream, huggingface
+
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+
+async def create_agent(**kwargs) -> Agent:
+    """Create the agent with a local Transformers VLM."""
+    agent = Agent(
+        edge=getstream.Edge(),
+        agent_user=User(name="Local VLM Agent", id="agent"),
+        instructions=(
+            "You are a vision assistant that can see the user's video feed. "
+            "Describe what you see concisely. Respond in one or two sentences. "
+            "Never use lists, markdown or special formatting."
+        ),
+        llm=huggingface.TransformersVLM(
+            model="HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+            max_new_tokens=150,
+        ),
+        tts=deepgram.TTS(),
+        stt=deepgram.STT(),
+    )
+    return agent
+
+
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    """Join the call and start the agent."""
+    call = await agent.create_call(call_type, call_id)
+
+    logger.info("Starting Local VLM Agent...")
+
+    async with agent.join(call):
+        logger.info("Joining call")
+
+        await agent.finish()
+
+
+if __name__ == "__main__":
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()

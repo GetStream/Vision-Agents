@@ -8,13 +8,8 @@ def allow_all() -> Any:
     return None
 
 
-def get_user_noop() -> Any:
-    return None
-
-
 class ServeOptions(pydantic_settings.BaseSettings):
-    """
-    A collection of configuration options for the "serve" mode.
+    """A collection of configuration options for the "serve" mode.
 
     Args:
         fast_api: an optional instance of FastAPI.
@@ -28,19 +23,17 @@ class ServeOptions(pydantic_settings.BaseSettings):
         cors_allow_credentials: CORS allow credentials.
 
         can_start_session: a callable to verify if the user can start a new session.
-            It can request FastAPI dependencies via Depends().
+            Receives ``call_id`` from the URL path. Can request additional
+            FastAPI dependencies via Depends().
         can_close_session: a callable to verify if the user can close a given session.
-            It can request FastAPI dependencies via Depends().
+            Receives ``call_id`` from the URL path. Can request additional
+            FastAPI dependencies via Depends().
         can_view_session: a callable to verify if the user can view a session.
-            It can request FastAPI dependencies via Depends().
+            Receives ``call_id`` from the URL path. Can request additional
+            FastAPI dependencies via Depends().
         can_view_metrics: a callable to verify if the user can view metrics for the session.
-            It can request FastAPI dependencies via Depends().
-        get_current_user: a callable to configure how the current user is determined during requests.
-            The current user will be stored in `AgentSession.created_by` field for the new sessions,
-            and it can be used to verify who created the session.
-            The implementation of callable itself is completely arbitrary and depends on the use case.
-            The callable can request FastAPI dependencies via Depends(), too.
-
+            Receives ``call_id`` from the URL path. Can request additional
+            FastAPI dependencies via Depends().
     """
 
     fast_api: Optional[FastAPI] = None
@@ -52,4 +45,3 @@ class ServeOptions(pydantic_settings.BaseSettings):
     can_close_session: Callable = allow_all
     can_view_session: Callable = allow_all
     can_view_metrics: Callable = allow_all
-    get_current_user: Callable = get_user_noop

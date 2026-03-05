@@ -16,49 +16,33 @@ env:
   UV_FROZEN: "1"
 
 jobs:
-  ruff:
-    name: Ruff
+  # Run linters in one step to reduce checkout & dependencies setup overhead
+  lint:
+    name: Lint (ruff + mypy + validate pyproject.toml)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
+      # Run ruff
       - name: Run Ruff linter
         run: uv run ruff check .
       - name: Run Ruff formatter
         run: uv run ruff format --check .
-
-  validate-core-pyproject:
-    name: Validate extra dependencies in "agents-core/pyproject.toml"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Install dependencies
-        uses: ./.github/actions/python-uv-setup
-      - name: Run validation script
+      # Validate extras are defined in pyproject.toml
+      - name: Validate extra dependencies in "agents-core/pyproject.toml"
         run: uv run dev.py validate-extras
-
-  mypy:
-    name: Mypy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Install dependencies
-        uses: ./.github/actions/python-uv-setup
-      # Restore mypy cache to speed up the run
+      # Run mypy
       - name: Restore mypy cache
         uses: actions/cache/restore@v5
         with:
           path: .mypy_cache
           key: mypy-cache-${{ hashFiles('pyproject.toml') }}
       - name: Run mypy for core
-        run: uv run mypy --install-types --non-interactive agents-core/vision_agents
+        run: uv run dev.py mypy
       - name: Run mypy for plugins
-        run: uv run mypy --install-types --non-interactive --exclude 'plugins/.*/tests/.*' plugins
-      # Save the updated mypy cache
+        run: uv run dev.py mypy-plugins
       - name: Save mypy cache
         uses: actions/cache/save@v5
         with:
@@ -69,6 +53,7 @@ jobs:
     name: Test "${{ inputs.marker }}"
     runs-on: ubuntu-latest
     env:
+      ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
       DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
@@ -82,10 +67,13 @@ jobs:
       STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
       STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
-      AWS_BEARER_TOKEN_BEDROCK: "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
-      _BEARER_TOKEN_BEDROCK: "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      TURBOPUFFER_API_KEY: ${{ secrets.TURBOPUFFER_API_KEY }}
+      AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+      AWS_BEDROCK_API_KEY: ${{ secrets.AWS_BEDROCK_API_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -98,18 +86,7 @@ jobs:
           sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
-      - name: Export AWS_BEARER_TOKEN_BEDROCK (heredoc)
-        shell: bash
-        run: |
-          {
-            echo 'AWS_BEARER_TOKEN_BEDROCK<<EOF'
-            echo "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}"
-            echo 'EOF'
-          } >> "$GITHUB_ENV"
-
-      - name: Verify presence
-        run: uv run python -c "import os; v=os.getenv('AWS_BEARER_TOKEN_BEDROCK'); print('exists', v is not None, 'len', 0 if v is None else len(v))"
       - name: Run core tests
-        run: uv run pytest -n auto -m "${{ inputs.marker }}" tests/
+        run: uv run pytest -m "${{ inputs.marker }}" tests/
       - name: Run plugin tests
-        run: uv run pytest -n auto -m "${{ inputs.marker }}" plugins/*/tests/*.py
+        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py

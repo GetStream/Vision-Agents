@@ -91,7 +91,7 @@ class TestElevenLabsSTT:
         session = STTSession(stt)
 
         # Create a participant
-        participant = Participant({}, user_id="test-user-123")
+        participant = Participant({}, user_id="test-user-123", id="test-user-123")
 
         # Process the audio with participant
         await stt.process_audio(mia_audio_16khz, participant=participant)

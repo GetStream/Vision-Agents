@@ -38,7 +38,7 @@ async def create_agent(**kwargs) -> Agent:
         instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
         tts=deepgram.TTS(),  # Uses Deepgram for text-to-speech
         stt=mistral.STT(),  # Uses Mistral Voxtral for speech-to-text
-        llm=gemini.LLM("gemini-2.0-flash"),
+        llm=gemini.LLM(),
         # turn_detection=smart_turn.TurnDetection(),  # Required since Mistral STT has no turn detection
     )
     return agent
@@ -46,7 +46,6 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join the call and start the agent."""
-    await agent.create_user()
     call = await agent.create_call(call_type, call_id)
 
     logger.info("Starting Mistral STT Agent...")

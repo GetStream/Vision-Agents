@@ -110,7 +110,7 @@ class TestBedrockRealtime:
         @realtime.register_function(
             name="get_test_data", description="Get test data for a given key"
         )
-        def get_test_data(key: str) -> dict:
+        async def get_test_data(key: str) -> dict:
             """Get test data.
 
             Args:
@@ -235,7 +235,7 @@ class TestNova2Realtime:
         @realtime.register_function(
             name="get_test_data", description="Get test data for a given key"
         )
-        def get_test_data(key: str) -> dict:
+        async def get_test_data(key: str) -> dict:
             """Get test data.
 
             Args:

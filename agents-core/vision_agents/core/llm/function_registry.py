@@ -70,6 +70,12 @@ class FunctionRegistry:
         """
 
         def decorator(func: Callable) -> Callable:
+            if not inspect.iscoroutinefunction(func):
+                raise ValueError(
+                    f"Only async functions can be registered, "
+                    f"but '{func.__name__}' is synchronous"
+                )
+
             func_name = name or func.__name__
             func_description = description or func.__doc__ or ""
 
@@ -157,7 +163,7 @@ class FunctionRegistry:
                 schemas.append(schema)
         return schemas
 
-    def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
         """
         Call a registered function with the given arguments.
 
@@ -179,7 +185,7 @@ class FunctionRegistry:
 
         # For explicit schema functions, just call directly (validation is external)
         if isinstance(func_def, _ExplicitSchemaFunction):
-            return func_def.function(**arguments)
+            return await func_def.function(**arguments)
 
         # Validate required parameters for introspected functions
         for param in func_def.parameters:
@@ -188,8 +194,7 @@ class FunctionRegistry:
                     f"Missing required parameter '{param.name}' for function '{name}'"
                 )
 
-        # Call the function with the provided arguments
-        return func_def.function(**arguments)
+        return await func_def.function(**arguments)
 
     def get_callable(self, name: str) -> Callable:
         """

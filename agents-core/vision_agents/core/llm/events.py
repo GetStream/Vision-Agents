@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from getstream.video.rtc import PcmData
 
+from vision_agents.core.agents.transcript.buffer import TranscriptMode
 from vision_agents.core.events import PluginBaseEvent
 from typing import Optional, Any, Dict
 import uuid
@@ -43,6 +44,14 @@ class RealtimeAudioOutputEvent(PluginBaseEvent):
 
     type: str = field(default="plugin.realtime_audio_output", init=False)
     data: Optional[PcmData] = None
+    response_id: Optional[str] = None
+
+
+@dataclass
+class RealtimeAudioOutputDoneEvent(PluginBaseEvent):
+    """Event emitted when audio output generation is complete for a response."""
+
+    type: str = field(default="plugin.realtime_audio_output_done", init=False)
     response_id: Optional[str] = None
 
 
@@ -178,19 +187,39 @@ class ToolEndEvent(PluginBaseEvent):
 
 @dataclass
 class RealtimeUserSpeechTranscriptionEvent(PluginBaseEvent):
-    """Event emitted when user speech transcription is available from realtime session."""
+    """Event emitted when user speech transcription is available from realtime session.
+
+    Args:
+        text: The transcript text.
+        mode: How to interpret the text:
+            - "delta": incremental chunk, more to come
+            - "replacement": full utterance so far, more to come
+            - "final": utterance complete (text may be empty to just signal finality)
+        original: The raw provider event, if available.
+    """
 
     type: str = field(default="plugin.realtime_user_speech_transcription", init=False)
     text: str = ""
+    mode: TranscriptMode = "delta"
     original: Optional[Any] = None
 
 
 @dataclass
 class RealtimeAgentSpeechTranscriptionEvent(PluginBaseEvent):
-    """Event emitted when agent speech transcription is available from realtime session."""
+    """Event emitted when agent speech transcription is available from realtime session.
+
+    Args:
+        text: The transcript text.
+        mode: How to interpret the text:
+            - "delta": incremental chunk, more to come
+            - "replacement": full utterance so far, more to come
+            - "final": utterance complete (text may be empty to just signal finality)
+        original: The raw provider event, if available.
+    """
 
     type: str = field(default="plugin.realtime_agent_speech_transcription", init=False)
     text: str = ""
+    mode: TranscriptMode = "delta"
     original: Optional[Any] = None
 
 

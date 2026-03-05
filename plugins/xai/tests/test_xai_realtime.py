@@ -90,7 +90,7 @@ class TestXAIRealtime:
         """Test function calling with xAI realtime."""
 
         @realtime.register_function(description="Get the current weather")
-        def get_weather(location: str) -> str:
+        async def get_weather(location: str) -> str:
             """Get weather for a location."""
             return f"The weather in {location} is sunny and 72 degrees."
 

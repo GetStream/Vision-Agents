@@ -6,7 +6,17 @@ from uuid import uuid4
 import pytest
 from getstream.video.rtc import ConnectionManager
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from vision_agents.plugins.getstream.stream_edge_transport import StreamConnection
+from vision_agents.plugins.getstream.stream_edge_transport import (
+    StreamConnection,
+    StreamEdge,
+)
+
+
+@pytest.fixture
+async def stream_edge(monkeypatch):
+    monkeypatch.setenv("STREAM_API_KEY", "test-key")
+    monkeypatch.setenv("STREAM_API_SECRET", "test-secret")
+    return StreamEdge()
 
 
 @pytest.fixture
@@ -88,3 +98,11 @@ class TestStreamConnection:
 
         # Wait task should complete now
         await asyncio.wait_for(wait_task, timeout=1.0)
+
+
+class TestStreamEdge:
+    async def test_create_call_raises_before_authenticate(
+        self, stream_edge: StreamEdge
+    ):
+        with pytest.raises(RuntimeError, match="not authenticated"):
+            await stream_edge.create_call(call_id="call-1")

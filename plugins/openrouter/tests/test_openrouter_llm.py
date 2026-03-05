@@ -4,8 +4,7 @@ import os
 
 import pytest
 from dotenv import load_dotenv
-
-from vision_agents.core.agents.conversation import Message, InMemoryConversation
+from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.plugins.openrouter import LLM
@@ -54,7 +53,7 @@ class TestOpenRouterLLM:
 
     async def test_strict_mode_for_non_openai(self):
         """Non-OpenAI models should have strict mode enabled for tools with required params."""
-        llm = LLM(model="google/gemini-2.0-flash-001")
+        llm = LLM(model="google/gemini-3-flash-preview")
         tools = [
             {
                 "name": "test_tool",
@@ -180,7 +179,7 @@ class TestOpenRouterLLM:
         calls: list[str] = []
 
         @llm.register_function(description="Probe tool that records invocation")
-        def probe_tool(ping: str) -> str:
+        async def probe_tool(ping: str) -> str:
             calls.append(ping)
             return f"probe_ok:{ping}"
 
@@ -199,12 +198,12 @@ class TestOpenRouterLLM:
     async def test_function_calling_gemini(self):
         """Test function calling with Gemini model."""
         skip_without_api_key()
-        llm = LLM(model="google/gemini-2.0-flash-001")
+        llm = LLM(model="google/gemini-3-flash-preview")
 
         calls: list[str] = []
 
         @llm.register_function(description="Probe tool that records invocation")
-        def probe_tool(ping: str) -> str:
+        async def probe_tool(ping: str) -> str:
             calls.append(ping)
             return f"probe_ok:{ping}"
 
