@@ -2,27 +2,36 @@
 
 import dataclasses
 import uuid
+from typing import get_args
 
 from .buffer import TranscriptBuffer, TranscriptMode
+
+_VALID_MODES = get_args(TranscriptMode)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class TranscriptUpdate:
-    """Result of updating a transcript entry."""
+    """Result of updating a transcript entry.
+
+    The ``mode`` field indicates how ``text`` should be interpreted:
+
+    ``"delta"`` – ``text`` is a new fragment to append.
+    ``"replacement"`` – ``text`` is the full accumulated text so far.
+    ``"final"`` – ``text`` is the full accumulated text; the entry is complete.
+    """
 
     message_id: str
     user_id: str
     text: str
-    completed: bool
+    mode: TranscriptMode
 
 
 class TranscriptStore:
     """Tracks transcript buffers and message IDs for active speakers.
 
     Manages separate entries for each user participant (keyed by
-    participant.id) and a single entry for the agent. Handles cross-speaker
-    finalization: starting a user transcript finalizes the pending agent
-    transcript, and vice versa.
+    participant.id) and a single entry for the agent. Provides flush
+    helpers that callers use to implement cross-speaker finalization.
     """
 
     def __init__(self, agent_user_id: str):
@@ -41,6 +50,8 @@ class TranscriptStore:
         mode: TranscriptMode,
     ) -> TranscriptUpdate | None:
         """Update a user transcript. Returns update info, or None if skipped."""
+        if mode not in _VALID_MODES:
+            raise ValueError(f"Invalid transcript mode: {mode!r}")
         entry = self._users.get(participant_id)
         if entry is None:
             if not text:
@@ -57,18 +68,16 @@ class TranscriptStore:
         if mode == "final":
             self._users.pop(participant_id, None)
             return TranscriptUpdate(
-                message_id=msg_id, user_id=uid, text=buffer.text, completed=True
+                message_id=msg_id, user_id=uid, text=buffer.text, mode=mode
             )
         elif mode == "replacement":
             return TranscriptUpdate(
-                message_id=msg_id, user_id=uid, text=buffer.text, completed=False
-            )
-        elif mode == "delta":
-            return TranscriptUpdate(
-                message_id=msg_id, user_id=uid, text=text, completed=False
+                message_id=msg_id, user_id=uid, text=buffer.text, mode=mode
             )
         else:
-            raise ValueError(f"Invalid transcript update mode: {mode}")
+            return TranscriptUpdate(
+                message_id=msg_id, user_id=uid, text=text, mode=mode
+            )
 
     def get_buffer(
         self, *, participant_id: str, user_id: str
@@ -93,6 +102,8 @@ class TranscriptStore:
         self, *, text: str, mode: TranscriptMode
     ) -> TranscriptUpdate | None:
         """Update the agent transcript. Returns update info, or None if skipped."""
+        if mode not in _VALID_MODES:
+            raise ValueError(f"Invalid transcript mode: {mode!r}")
         entry = self._agent
         if entry is None:
             if not text:
@@ -112,24 +123,22 @@ class TranscriptStore:
                 message_id=msg_id,
                 user_id=self._agent_user_id,
                 text=buffer.text,
-                completed=True,
+                mode=mode,
             )
         elif mode == "replacement":
             return TranscriptUpdate(
                 message_id=msg_id,
                 user_id=self._agent_user_id,
                 text=buffer.text,
-                completed=False,
+                mode=mode,
             )
-        elif mode == "delta":
+        else:
             return TranscriptUpdate(
                 message_id=msg_id,
                 user_id=self._agent_user_id,
                 text=text,
-                completed=False,
+                mode=mode,
             )
-        else:
-            raise ValueError(f"Invalid transcript update mode: {mode}")
 
     def flush_users_transcripts(self) -> list[TranscriptUpdate]:
         """Return pending user transcripts for finalization and clear them."""
@@ -141,7 +150,7 @@ class TranscriptStore:
                         message_id=msg_id,
                         user_id=user_id,
                         text=buffer.text,
-                        completed=True,
+                        mode="final",
                     )
                 )
         self._users.clear()
@@ -159,5 +168,5 @@ class TranscriptStore:
             message_id=msg_id,
             user_id=self._agent_user_id,
             text=buffer.text,
-            completed=True,
+            mode="final",
         )

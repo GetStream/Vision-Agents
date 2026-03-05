@@ -463,6 +463,8 @@ class Agent:
                 return
 
             self.logger.info(f"🎤 [Transcript Complete]: {event.text}")
+            # Use "replacement" instead of "final" so the buffer stays available
+            # for the turn handler, which reads buffer.text before resetting it.
             self.transcripts.update_user_transcript(
                 participant_id=participant.id,
                 user_id=participant.user_id,
@@ -531,14 +533,13 @@ class Agent:
                     mode=event.mode,
                 )
                 if update:
-                    replace = event.mode in ("replacement", "final")
                     await self.conversation.upsert_message(
                         message_id=update.message_id,
                         role="user",
                         user_id=update.user_id,
                         content=update.text,
-                        completed=update.completed,
-                        replace=replace,
+                        completed=update.mode == "final",
+                        replace=update.mode != "delta",
                         original=event,
                     )
 
@@ -566,14 +567,13 @@ class Agent:
                     mode=event.mode,
                 )
                 if update:
-                    replace = event.mode in ("replacement", "final")
                     await self.conversation.upsert_message(
                         message_id=update.message_id,
                         role="assistant",
                         user_id=update.user_id,
                         content=update.text,
-                        completed=update.completed,
-                        replace=replace,
+                        completed=update.mode == "final",
+                        replace=update.mode != "delta",
                         original=event,
                     )
 

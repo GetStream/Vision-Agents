@@ -19,7 +19,7 @@ class TestTranscriptStore:
         assert result is not None
         assert result.text == "Hello"
         assert result.user_id == "user-1"
-        assert not result.completed
+        assert result.mode == "replacement"
 
         result2 = store.update_user_transcript(
             participant_id="p1", user_id="user-1", text="Hello world", mode="final"
@@ -27,7 +27,7 @@ class TestTranscriptStore:
         assert result2 is not None
         assert result2.text == "Hello world"
         assert result2.message_id == result.message_id
-        assert result2.completed
+        assert result2.mode == "final"
 
     def test_update_user_transcript_preserves_message_id(self):
         store = TranscriptStore(agent_user_id="agent-1")
@@ -67,7 +67,7 @@ class TestTranscriptStore:
         assert r1 is not None
         assert r1.text == "I'm "
         assert r1.user_id == "agent-1"
-        assert not r1.completed
+        assert r1.mode == "delta"
 
         r2 = store.update_agent_transcript(text="doing well", mode="delta")
         assert r2.text == "doing well"
@@ -75,7 +75,7 @@ class TestTranscriptStore:
 
         r3 = store.update_agent_transcript(text="", mode="final")
         assert r3.text == "I'm doing well"
-        assert r3.completed
+        assert r3.mode == "final"
 
     def test_update_agent_transcript_empty_text_skipped(self):
         store = TranscriptStore(agent_user_id="agent-1")
@@ -94,7 +94,7 @@ class TestTranscriptStore:
 
         pending = store.flush_users_transcripts()
         assert len(pending) == 2
-        assert all(p.completed for p in pending)
+        assert all(p.mode == "final" for p in pending)
 
         assert store.flush_users_transcripts() == []
 
@@ -106,7 +106,7 @@ class TestTranscriptStore:
         pending = store.flush_agent_transcript()
         assert pending is not None
         assert pending.text == "Response"
-        assert pending.completed
+        assert pending.mode == "final"
 
         assert store.flush_agent_transcript() is None
 
@@ -149,7 +149,7 @@ class TestTranscriptStore:
 
         r1 = store.update_agent_transcript(text="Thinking", mode="replacement")
         assert r1.text == "Thinking"
-        assert not r1.completed
+        assert r1.mode == "replacement"
 
         r2 = store.update_agent_transcript(text="Thinking about it", mode="replacement")
         assert r2.text == "Thinking about it"
@@ -157,7 +157,7 @@ class TestTranscriptStore:
 
         r3 = store.update_agent_transcript(text="Thinking about it.", mode="final")
         assert r3.text == "Thinking about it."
-        assert r3.completed
+        assert r3.mode == "final"
 
     def test_final_assigns_new_message_id_for_next_entry(self):
         store = TranscriptStore(agent_user_id="agent-1")
@@ -212,3 +212,15 @@ class TestTranscriptStore:
         pending = store.flush_users_transcripts()
         assert len(pending) == 1
         assert pending[0].user_id == "u1"
+
+    def test_update_user_transcript_invalid_mode_raises(self):
+        store = TranscriptStore(agent_user_id="agent-1")
+        with pytest.raises(ValueError, match="Invalid transcript mode"):
+            store.update_user_transcript(
+                participant_id="p1", user_id="u1", text="hi", mode="invalid"
+            )
+
+    def test_update_agent_transcript_invalid_mode_raises(self):
+        store = TranscriptStore(agent_user_id="agent-1")
+        with pytest.raises(ValueError, match="Invalid transcript mode"):
+            store.update_agent_transcript(text="hi", mode="invalid")
