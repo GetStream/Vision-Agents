@@ -7,9 +7,15 @@ import pytest
 from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import Agent, User
+from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge import Call, EdgeTransport
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import EventManager
-from vision_agents.core.llm.events import RealtimeAudioOutputEvent
+from vision_agents.core.llm.events import (
+    RealtimeAgentSpeechTranscriptionEvent,
+    RealtimeAudioOutputEvent,
+    RealtimeUserSpeechTranscriptionEvent,
+)
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
 from vision_agents.core.tts import TTS
@@ -441,3 +447,216 @@ class TestAgent:
         await agent.authenticate()
         async with agent.join(call):
             assert edge.authenticate_call_count == 1
+
+
+@pytest.fixture
+def participant() -> Participant:
+    return Participant(id="participant-user-1", user_id="user-1", original=None)
+
+
+@pytest.fixture
+async def transcript_agent() -> Agent:
+    agent = Agent(
+        llm=DummyLLM(),
+        tts=DummyTTS(),
+        edge=DummyEdge(),
+        agent_user=User(id="agent-1", name="bot"),
+    )
+    agent.conversation = InMemoryConversation(instructions="", messages=[])
+    return agent
+
+
+async def _send(agent: Agent, event) -> None:
+    agent.events.send(event)
+    await agent.events.wait(1.0)
+
+
+class TestAgentTranscriptHandling:
+    """Tests for accumulating realtime transcript events into conversation messages."""
+
+    async def test_final_user_transcript_creates_single_message(
+        self, transcript_agent, participant
+    ):
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hello world", mode="final", participant=participant
+            ),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "Hello world"
+
+    async def test_replacement_user_transcripts_reuse_message_id(
+        self, transcript_agent, participant
+    ):
+        for text in ["Hello", "Hello world", "Hello world how"]:
+            await _send(
+                transcript_agent,
+                RealtimeUserSpeechTranscriptionEvent(
+                    text=text, mode="replacement", participant=participant
+                ),
+            )
+
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "Hello world how"
+
+    async def test_final_after_replacements_reuses_same_message(
+        self, transcript_agent, participant
+    ):
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hi", mode="replacement", participant=participant
+            ),
+        )
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hi there", mode="final", participant=participant
+            ),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "Hi there"
+
+    async def test_agent_delta_transcripts_reuse_message_id(self, transcript_agent):
+        for text in ["I'm ", "doing ", "well"]:
+            await _send(
+                transcript_agent,
+                RealtimeAgentSpeechTranscriptionEvent(text=text, mode="delta"),
+            )
+
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "I'm doing well"
+
+    async def test_agent_final_transcript_reuses_delta_message(self, transcript_agent):
+        await _send(
+            transcript_agent,
+            RealtimeAgentSpeechTranscriptionEvent(text="Thinking", mode="delta"),
+        )
+        await _send(
+            transcript_agent,
+            RealtimeAgentSpeechTranscriptionEvent(text="", mode="final"),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "Thinking"
+
+    async def test_user_transcript_finalizes_pending_agent(
+        self, transcript_agent, participant
+    ):
+        """When user starts speaking, any pending agent transcript is finalized."""
+        await _send(
+            transcript_agent,
+            RealtimeAgentSpeechTranscriptionEvent(text="Agent response", mode="delta"),
+        )
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="User reply", mode="delta", participant=participant
+            ),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 2
+        assert transcript_agent.conversation.messages[0].role == "assistant"
+        assert transcript_agent.conversation.messages[1].role == "user"
+        assert transcript_agent.transcripts.flush_agent_transcript() is None
+
+    async def test_agent_transcript_finalizes_pending_user(
+        self, transcript_agent, participant
+    ):
+        """When agent starts speaking, any pending user transcript is finalized."""
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="User speaking", mode="delta", participant=participant
+            ),
+        )
+        await _send(
+            transcript_agent,
+            RealtimeAgentSpeechTranscriptionEvent(text="Agent reply", mode="delta"),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 2
+        assert transcript_agent.conversation.messages[0].role == "user"
+        assert transcript_agent.conversation.messages[1].role == "assistant"
+        assert not transcript_agent.transcripts.flush_users_transcripts()
+
+    async def test_multiple_turns_create_separate_messages(
+        self, transcript_agent, participant
+    ):
+        """Full conversation flow: user -> agent -> user."""
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="Hi", mode="final", participant=participant
+            ),
+        )
+        await _send(
+            transcript_agent,
+            RealtimeAgentSpeechTranscriptionEvent(text="Hello!", mode="final"),
+        )
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="How are you?", mode="final", participant=participant
+            ),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 3
+        assert transcript_agent.conversation.messages[0].content == "Hi"
+        assert transcript_agent.conversation.messages[1].content == "Hello!"
+        assert transcript_agent.conversation.messages[2].content == "How are you?"
+
+    async def test_gemini_style_delta_transcripts(self, transcript_agent, participant):
+        """Gemini sends incremental delta chunks."""
+        for text in ["I ", "am ", "walking ", "to ", "the store"]:
+            await _send(
+                transcript_agent,
+                RealtimeUserSpeechTranscriptionEvent(
+                    text=text, mode="delta", participant=participant
+                ),
+            )
+
+        assert len(transcript_agent.conversation.messages) == 1
+        assert (
+            transcript_agent.conversation.messages[0].content
+            == "I am walking to the store"
+        )
+
+    async def test_openai_style_final_transcripts(self, transcript_agent, participant):
+        """OpenAI sends a single final transcript (no deltas)."""
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="OK, everybody. Do.",
+                mode="final",
+                participant=participant,
+            ),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 1
+        assert transcript_agent.conversation.messages[0].content == "OK, everybody. Do."
+
+    async def test_no_participant_skips_sync(self, transcript_agent):
+        """Events without a participant should not create messages."""
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="orphan transcript", mode="final"
+            ),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 0
+
+    async def test_empty_text_skips_sync(self, transcript_agent, participant):
+        """Events with empty text should not create messages."""
+        await _send(
+            transcript_agent,
+            RealtimeUserSpeechTranscriptionEvent(
+                text="", mode="final", participant=participant
+            ),
+        )
+
+        assert len(transcript_agent.conversation.messages) == 0

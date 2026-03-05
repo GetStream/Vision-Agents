@@ -1,9 +1,8 @@
-from __future__ import annotations
-
 import abc
 import logging
 import uuid
 from typing import (
+    Any,
     Optional,
 )
 
@@ -175,23 +174,37 @@ class Realtime(OmniLLM):
     async def close(self):
         raise NotImplementedError("llm.close isn't implemented")
 
-    def _emit_user_speech_transcription(self, text: str, original=None):
+    def _emit_user_speech_transcription(
+        self,
+        text: str,
+        *,
+        mode: events.TranscriptMode,
+        original: Any = None,
+    ):
         """Emit a user speech transcription event with participant info."""
         event = events.RealtimeUserSpeechTranscriptionEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
+            mode=mode,
             original=original,
             participant=self._current_participant,
         )
         self.events.send(event)
 
-    def _emit_agent_speech_transcription(self, text: str, original=None):
+    def _emit_agent_speech_transcription(
+        self,
+        text: str,
+        *,
+        mode: events.TranscriptMode,
+        original: Any = None,
+    ):
         """Emit an agent speech transcription event."""
         event = events.RealtimeAgentSpeechTranscriptionEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
+            mode=mode,
             original=original,
         )
         self.events.send(event)

@@ -232,7 +232,7 @@ class Realtime(realtime.Realtime):
                 ResponseAudioTranscriptDoneEvent.model_validate(event_copy)
             )
             self._emit_agent_speech_transcription(
-                text=transcript_event.transcript, original=event
+                text=transcript_event.transcript, mode="final", original=event
             )
             self._emit_response_event(
                 text=transcript_event.transcript,
@@ -258,7 +258,7 @@ class Realtime(realtime.Realtime):
             # _current_participant is kept up-to-date in simple_audio_response
             # so it will be used by _emit_user_speech_transcription
             self._emit_user_speech_transcription(
-                text=user_transcript_event.transcript, original=event
+                text=user_transcript_event.transcript, mode="final", original=event
             )
         elif et == "input_audio_buffer.speech_started":
             # Validate event but don't need to store it
