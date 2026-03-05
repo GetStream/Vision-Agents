@@ -52,7 +52,6 @@ async def join_call(
     """Join the Stream Video call and coach until it ends."""
     logger.info("join_call invoked for %s/%s", call_type, call_id)
 
-    await agent.create_user()
     call = await agent.create_call(call_type, call_id)
 
     logger.info("Sales assistant joining call %s/%s", call_type, call_id)
