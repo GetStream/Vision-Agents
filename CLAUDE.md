@@ -14,11 +14,11 @@ All commands use `uv`. Never use `python -m`. If you run into dependency issues,
 # Full check (ruff + mypy + unit tests)
 uv run dev.py check
 
-# Unit tests only
-uv run pytest -m "not integration"
+# Unit tests only (--no-sync avoids uv panic in sandboxed environments)
+uv run --no-sync pytest -m "not integration"
 
 # Integration tests (needs .env secrets)
-uv run pytest -m "integration"
+uv run --no-sync pytest -m "integration"
 
 # Lint & format
 uv run ruff check .
@@ -79,6 +79,12 @@ module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, 
 **Method order**:
 
 - `__init__`, public lifecycle methods, properties, public feature methods, private helpers, dunder methods.
+
+## Token efficiency
+
+- When making multiple related changes to the same file, combine them into fewer Edit calls with enough surrounding context, rather than one edit per change.
+- Run tests with Bash directly. Only use subagents for test runs when you need to do other work in parallel.
+- Only use TodoWrite for tasks with 5+ steps. Don't update it after every individual edit.
 
 ## Changelog
 
