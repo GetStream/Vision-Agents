@@ -16,39 +16,24 @@ env:
   UV_FROZEN: "1"
 
 jobs:
-  ruff:
-    name: Ruff
+  # Run linters in one step to reduce checkout & dependencies setup overhead
+  lint:
+    name: Lint (ruff + mypy + validate pyproject.toml)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
+      # Run ruff
       - name: Run Ruff linter
         run: uv run ruff check .
       - name: Run Ruff formatter
         run: uv run ruff format --check .
-
-  validate-core-pyproject:
-    name: Validate extra dependencies in "agents-core/pyproject.toml"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Install dependencies
-        uses: ./.github/actions/python-uv-setup
-      - name: Run validation script
+      # Validate extras are defined in pyproject.toml
+      - name: Validate extra dependencies in "agents-core/pyproject.toml"
         run: uv run dev.py validate-extras
-
-  mypy:
-    name: Mypy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Install dependencies
-        uses: ./.github/actions/python-uv-setup
-      # Restore mypy cache to speed up the run
+      # Run mypy
       - name: Restore mypy cache
         uses: actions/cache/restore@v5
         with:
@@ -58,7 +43,6 @@ jobs:
         run: uv run dev.py mypy
       - name: Run mypy for plugins
         run: uv run dev.py mypy-plugins
-      # Save the updated mypy cache
       - name: Save mypy cache
         uses: actions/cache/save@v5
         with:
@@ -103,6 +87,6 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       - name: Run core tests
-        run: uv run pytest -n auto -m "${{ inputs.marker }}" tests/
+        run: uv run pytest -m "${{ inputs.marker }}" tests/
       - name: Run plugin tests
-        run: uv run pytest -n auto -m "${{ inputs.marker }}" plugins/*/tests/*.py
+        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py
