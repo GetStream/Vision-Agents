@@ -12,7 +12,7 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     llm = openai.ChatCompletionsVLM(
-        model="qwen3.5-plus",
+        model="qwen3.5-flash",
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         api_key=os.environ["DASHSCOPE_API_KEY"],
         frame_buffer_seconds=3,
@@ -23,7 +23,12 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Video Assistant", id="agent"),
-        instructions="You're a helpful video AI assistant. Analyze the video frames and respond to user questions about what you see. Keep responses to one sentence. Be concise and direct.",
+        instructions="""
+        You're a helpful video AI assistant. 
+        Analyze the video frames and respond to user questions about what you see. 
+        Keep responses to one sentence. 
+        Be concise and direct.
+        """,
         llm=llm,
         stt=deepgram.STT(),
         tts=elevenlabs.TTS(),
@@ -42,7 +47,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
             await agent.simple_response("Describe what you currently see")
 
     async with agent.join(call):
-        await agent.edge.open_demo(call)
         # The agent will automatically process video frames and respond to user input
         await agent.finish()
 

@@ -2,11 +2,13 @@
 Tests for function calling functionality.
 """
 
+from typing import Any, Optional
 from unittest.mock import Mock, patch
 
 import pytest
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import FunctionRegistry, function_registry
-from vision_agents.core.llm.llm import LLM
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.plugins.anthropic import LLM as ClaudeLLM
 from vision_agents.plugins.gemini import LLM as GeminiLLM
 from vision_agents.plugins.openai import LLM as OpenAILLM
@@ -136,12 +138,24 @@ class TestGlobalRegistry:
         assert result == 12
 
 
+class DummyLLM(LLM):
+    async def simple_response(
+        self,
+        text: str,
+        participant: Optional[Participant] = None,
+    ) -> LLMResponseEvent[Any]: ...
+
+
+@pytest.fixture()
+async def llm() -> DummyLLM:
+    return DummyLLM()
+
+
 class TestLLMFunctionCalling:
     """Test LLM function calling functionality."""
 
-    async def test_llm_function_registration(self):
+    async def test_llm_function_registration(self, llm: DummyLLM):
         """Test that LLM can register functions."""
-        llm = LLM()
 
         @llm.register_function(description="Test function")
         async def test_func(x: int) -> int:
@@ -152,9 +166,8 @@ class TestLLMFunctionCalling:
         assert len(functions) == 1
         assert functions[0]["name"] == "test_func"
 
-    async def test_llm_get_available_functions(self):
+    async def test_llm_get_available_functions(self, llm: DummyLLM):
         """Test getting available functions from LLM."""
-        llm = LLM()
 
         @llm.register_function(description="Function 1")
         async def func1(x: int) -> int:
@@ -426,9 +439,8 @@ class TestGeminiFunctionCalling:
 class TestFunctionCallingIntegration:
     """Test function calling integration scenarios."""
 
-    async def test_tool_call_processing(self):
+    async def test_tool_call_processing(self, llm: DummyLLM):
         """Test processing tool calls with multiple functions."""
-        llm = LLM()
 
         @llm.register_function(description="Get weather")
         async def get_weather(location: str) -> str:
@@ -449,9 +461,8 @@ class TestFunctionCallingIntegration:
         assert weather_result == "Weather in NYC: Sunny"
         assert sum_result == 8
 
-    async def test_error_handling_in_function_calls(self):
+    async def test_error_handling_in_function_calls(self, llm: DummyLLM):
         """Test error handling in function calls."""
-        llm = LLM()
 
         @llm.register_function(description="Test function that raises error")
         async def error_function(x: int) -> int:
@@ -467,9 +478,8 @@ class TestFunctionCallingIntegration:
         with pytest.raises(ValueError):
             await llm.call_function("error_function", {"x": -5})
 
-    async def test_function_schema_generation(self):
+    async def test_function_schema_generation(self, llm: DummyLLM):
         """Test that function schemas are generated correctly."""
-        llm = LLM()
 
         @llm.register_function(description="Complex function")
         async def complex_function(
@@ -509,9 +519,8 @@ class TestFunctionCallingIntegration:
 class TestConcurrentToolExecution:
     """Test concurrent tool execution functionality."""
 
-    async def test_dedup_and_execute(self):
+    async def test_dedup_and_execute(self, llm: DummyLLM):
         """Test the _dedup_and_execute method."""
-        llm = LLM()
 
         @llm.register_function(description="Test function")
         async def test_func(x: int) -> int:
@@ -540,11 +549,9 @@ class TestConcurrentToolExecution:
         assert 10 in results  # 5 * 2 (appears twice)
         assert 6 in results  # 3 * 2
 
-    async def test_tool_lifecycle_events(self):
+    async def test_tool_lifecycle_events(self, llm: DummyLLM):
         """Test that tool lifecycle events are emitted."""
         from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
-
-        llm = LLM()
 
         @llm.register_function(description="Test function")
         async def test_func(x: int) -> int:
@@ -576,9 +583,8 @@ class TestConcurrentToolExecution:
         assert end_events[0].tool_name == "test_func"
         assert end_events[0].success is True
 
-    async def test_output_sanitization(self):
+    async def test_output_sanitization(self, llm: DummyLLM):
         """Test output sanitization for large responses."""
-        llm = LLM()
 
         # Test normal output
         normal_output = "Hello world"

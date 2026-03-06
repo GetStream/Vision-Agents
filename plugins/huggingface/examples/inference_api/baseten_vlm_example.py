@@ -1,22 +1,24 @@
 """
-HuggingFace Inference API Example
+Baseten VLM Example
 
-Demonstrates HuggingFace Inference Providers integration with Vision Agents.
+Demonstrates using a vision-language model hosted on Baseten with the
+HuggingFace plugin's base_url parameter.
 
 Creates an agent that uses:
-- HuggingFace for LLM (via Inference Providers API)
+- HuggingFace VLM pointed at a Baseten endpoint for vision + text
 - Deepgram for speech-to-text (STT)
 - Deepgram for text-to-speech (TTS)
 - GetStream for edge/real-time communication
 
 Requirements:
-- HF_TOKEN environment variable
+- BASETEN_API_KEY environment variable
+- BASETEN_BASE_URL environment variable
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
 - DEEPGRAM_API_KEY environment variable
 """
 
-import asyncio
 import logging
+import os
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
@@ -29,13 +31,21 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create the agent with HuggingFace LLM."""
+    """Create the agent with a Baseten-hosted VLM."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="HuggingFace Agent", id="agent"),
-        instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
-        llm=huggingface.LLM(
-            model="meta-llama/Meta-Llama-3-8B-Instruct", provider="auto"
+        agent_user=User(name="Baseten VLM Agent", id="agent"),
+        instructions=(
+            "You are a vision assistant that can see the user's video feed. "
+            "Describe what you see concisely. Respond in one or two sentences. "
+            "Never use lists, markdown or special formatting."
+        ),
+        llm=huggingface.VLM(
+            model="Qwen/Qwen2.5-VL-72B-Instruct",
+            base_url=os.environ["BASETEN_BASE_URL"],
+            api_key=os.environ["BASETEN_API_KEY"],
+            fps=1,
+            frame_buffer_seconds=3,
         ),
         tts=deepgram.TTS(),
         stt=deepgram.STT(),
@@ -47,17 +57,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     """Join the call and start the agent."""
     call = await agent.create_call(call_type, call_id)
 
-    logger.info("Starting HuggingFace Agent...")
+    logger.info("Starting Baseten VLM Agent...")
 
     async with agent.join(call):
-        logger.info("Joining call")
-
-        await asyncio.sleep(2)
-        await agent.llm.simple_response(
-            text="I am experimenting with running you, an LLM on HuggingFace. "
-            "Tell me a short story"
-        )
-
         await agent.finish()
 
 

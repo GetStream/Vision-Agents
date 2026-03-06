@@ -1,29 +1,26 @@
 import time
 import uuid
-from typing import Optional, List, TYPE_CHECKING, Any, Dict, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
-from google.genai.client import AsyncClient, Client
 from google.genai import types
+from google.genai.client import AsyncClient, Client
 from google.genai.types import (
-    GenerateContentResponse,
     GenerateContentConfig,
-    ThinkingLevel,
+    GenerateContentResponse,
     MediaResolution,
+    ThinkingLevel,
 )
-
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
-    LLMResponseCompletedEvent,
     LLMResponseChunkEvent,
+    LLMResponseCompletedEvent,
 )
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
 from . import events
 from .tools import GeminiTool
-
-from vision_agents.core.processors import Processor
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
@@ -165,17 +162,10 @@ class GeminiLLM(LLM):
         return config
 
     async def simple_response(
-        self,
-        text: str,
-        processors: Optional[List[Processor]] = None,
-        participant: Optional[Any] = None,
+        self, text: str, participant: Participant | None = None
     ) -> LLMResponseEvent[Any]:
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
-
-        Args:
-            text: The text to respond to
-            processors: list of processors (which contain state) about the video/voice AI
 
         Examples:
 

@@ -621,9 +621,7 @@ class Agent:
         """
         self.logger.info('🤖 Asking LLM to reply to "%s"', text)
         with self.tracer.start_as_current_span("simple_response") as span:
-            await self.llm.simple_response(
-                text=text, processors=self.processors, participant=participant
-            )
+            await self.llm.simple_response(text=text, participant=participant)
             span.set_attribute("text", text)
 
     async def simple_audio_response(

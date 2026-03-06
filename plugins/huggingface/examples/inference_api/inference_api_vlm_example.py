@@ -1,10 +1,11 @@
 """
-HuggingFace Inference API Example
+HuggingFace Inference API VLM Example
 
-Demonstrates HuggingFace Inference Providers integration with Vision Agents.
+Demonstrates HuggingFace Inference Providers integration with Vision Agents
+using a vision-language model that can see the user's video feed.
 
 Creates an agent that uses:
-- HuggingFace for LLM (via Inference Providers API)
+- HuggingFace VLM (via Inference Providers API) for vision + text
 - Deepgram for speech-to-text (STT)
 - Deepgram for text-to-speech (TTS)
 - GetStream for edge/real-time communication
@@ -15,7 +16,6 @@ Requirements:
 - DEEPGRAM_API_KEY environment variable
 """
 
-import asyncio
 import logging
 
 from dotenv import load_dotenv
@@ -29,13 +29,19 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create the agent with HuggingFace LLM."""
+    """Create the agent with a HuggingFace VLM."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="HuggingFace Agent", id="agent"),
-        instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
-        llm=huggingface.LLM(
-            model="meta-llama/Meta-Llama-3-8B-Instruct", provider="auto"
+        agent_user=User(name="HuggingFace VLM Agent", id="agent"),
+        instructions=(
+            "You are a vision assistant that can see the user's video feed. "
+            "Describe what you see concisely. Respond in one or two sentences. "
+            "Never use lists, markdown or special formatting."
+        ),
+        llm=huggingface.VLM(
+            model="Qwen/Qwen3-VL-32B-Instruct",
+            fps=1,
+            frame_buffer_seconds=3,
         ),
         tts=deepgram.TTS(),
         stt=deepgram.STT(),
@@ -47,17 +53,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     """Join the call and start the agent."""
     call = await agent.create_call(call_type, call_id)
 
-    logger.info("Starting HuggingFace Agent...")
+    logger.info("Starting HuggingFace VLM Agent...")
 
     async with agent.join(call):
-        logger.info("Joining call")
-
-        await asyncio.sleep(2)
-        await agent.llm.simple_response(
-            text="I am experimenting with running you, an LLM on HuggingFace. "
-            "Tell me a short story"
-        )
-
         await agent.finish()
 
 

@@ -22,7 +22,6 @@ from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
 from vision_agents.core.warmup import Warmable
@@ -413,7 +412,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ):
         """

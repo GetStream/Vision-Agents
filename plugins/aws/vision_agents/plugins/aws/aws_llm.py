@@ -16,7 +16,6 @@ from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
-from vision_agents.core.processors import Processor
 from . import events
 from vision_agents.core.edge.types import Participant
 
@@ -95,7 +94,6 @@ class BedrockLLM(LLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ):
         """
@@ -103,7 +101,6 @@ class BedrockLLM(LLM):
 
         Args:
             text: The text to respond to
-            processors: list of processors (which contain state) about the video/voice AI
             participant: optionally the participant object
 
         Examples:

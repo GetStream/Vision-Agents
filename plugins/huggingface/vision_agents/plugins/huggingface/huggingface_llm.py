@@ -13,8 +13,6 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-from vision_agents.core.processors import Processor
-
 from . import events
 
 logger = logging.getLogger(__name__)
@@ -48,6 +46,7 @@ class HuggingFaceLLM(LLM):
         model: str,
         api_key: Optional[str] = None,
         provider: Optional[PROVIDER_OR_POLICY_T] = None,
+        base_url: Optional[str] = None,
         client: Optional[AsyncInferenceClient] = None,
     ):
         """
@@ -57,6 +56,8 @@ class HuggingFaceLLM(LLM):
             model: The HuggingFace model ID to use.
             api_key: HuggingFace API token. Defaults to HF_TOKEN environment variable.
             provider: Inference provider (e.g., "together", "groq", "fireworks-ai"). Defaults to "auto" which auto-selects.
+            base_url: Custom API base URL for OpenAI-compatible endpoints (e.g., Baseten).
+                Mutually exclusive with provider.
             client: Optional AsyncInferenceClient instance for dependency injection.
         """
         super().__init__()
@@ -65,8 +66,16 @@ class HuggingFaceLLM(LLM):
         self.events.register_events_from_module(events)
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
 
+        if base_url and provider:
+            raise ValueError("`base_url` and `provider` are mutually exclusive.")
+
         if client is not None:
             self._client = client
+        elif base_url:
+            self._client = AsyncInferenceClient(
+                base_url=base_url,
+                api_key=api_key,
+            )
         else:
             self._client = AsyncInferenceClient(
                 token=api_key,
@@ -77,9 +86,8 @@ class HuggingFaceLLM(LLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent:
+    ) -> LLMResponseEvent[Any]:
         """
         Create an LLM response from text input.
 
@@ -87,7 +95,6 @@ class HuggingFaceLLM(LLM):
 
         Args:
             text: The text to respond to.
-            processors: List of processors with video/voice AI state.
             participant: The participant object. If not provided, uses "user" role.
         """
         if self._conversation is None:
