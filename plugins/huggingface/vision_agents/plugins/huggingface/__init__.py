@@ -13,7 +13,7 @@ try:
 except ImportError as e:
     import warnings
 
-    optional = {"torch", "transformers", "av", "aiortc", "jinja2", "supervision"}
+    optional = {"torch", "transformers", "av", "aiortc", "jinja2", "supervision", "cv2"}
     if e.name in optional:
         warnings.warn(
             f"Optional dependency '{e.name}' is not installed. "
