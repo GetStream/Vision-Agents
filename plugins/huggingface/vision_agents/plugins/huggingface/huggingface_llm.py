@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
 from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
-
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
