@@ -18,7 +18,7 @@ from vision_agents.plugins.roboflow.events import (
     DetectedObject,
     DetectionCompletedEvent,
 )
-from vision_agents.core.utils.annotation import annotate_image
+from .annotation import annotate_image
 
 logger = logging.getLogger(__name__)
 

@@ -1,20 +1,10 @@
-"""Shared annotation utilities for video processor plugins.
-
-Requires ``supervision`` and ``opencv-python`` at runtime. These are not
-core dependencies — plugins that use annotation must declare them.
-"""
+"""Annotation utilities for drawing detection results on video frames."""
 
 from typing import Iterable, Optional
 
-try:
-    import cv2
-    import numpy as np
-    import supervision as sv
-except ImportError as _exc:
-    raise ImportError(
-        "annotation utilities require 'supervision', 'opencv-python', and 'numpy'. "
-        "Install the relevant plugin extras to enable annotation."
-    ) from _exc
+import cv2
+import numpy as np
+import supervision as sv
 
 
 def annotate_image(

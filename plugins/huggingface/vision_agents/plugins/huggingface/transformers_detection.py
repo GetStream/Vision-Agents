@@ -34,7 +34,7 @@ from PIL import Image
 from vision_agents.core import Agent
 from vision_agents.core.events import DetectedObject, EventManager
 from vision_agents.core.processors.base_processor import VideoProcessorPublisher
-from vision_agents.core.utils.annotation import annotate_image
+from .annotation import annotate_image
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
