@@ -9,13 +9,14 @@ import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
+from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
-    VLMInferenceStartEvent,
-    VLMInferenceCompletedEvent,
     VLMErrorEvent,
+    VLMInferenceCompletedEvent,
+    VLMInferenceStartEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
 from vision_agents.core.processors import Processor
@@ -53,7 +54,7 @@ class HuggingFaceVLM(VideoLLM):
         self,
         model: str,
         api_key: Optional[str] = None,
-        provider: Optional[str] = None,
+        provider: Optional[PROVIDER_OR_POLICY_T] = None,
         base_url: Optional[str] = None,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
@@ -82,7 +83,7 @@ class HuggingFaceVLM(VideoLLM):
 
         if client is not None:
             self._client = client
-        elif base_url is not None:
+        elif base_url:
             self._client = AsyncInferenceClient(
                 base_url=base_url,
                 api_key=api_key,
@@ -91,7 +92,7 @@ class HuggingFaceVLM(VideoLLM):
             self._client = AsyncInferenceClient(
                 token=api_key,
                 model=model,
-                provider=provider,  # type: ignore[arg-type]
+                provider=provider,
             )
 
         self._fps = fps

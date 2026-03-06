@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
+from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
+
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
@@ -46,7 +48,7 @@ class HuggingFaceLLM(LLM):
         self,
         model: str,
         api_key: Optional[str] = None,
-        provider: Optional[str] = None,
+        provider: Optional[PROVIDER_OR_POLICY_T] = None,
         base_url: Optional[str] = None,
         client: Optional[AsyncInferenceClient] = None,
     ):
@@ -67,12 +69,12 @@ class HuggingFaceLLM(LLM):
         self.events.register_events_from_module(events)
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
 
-        if base_url is not None and provider is not None:
+        if base_url and provider:
             raise ValueError("`base_url` and `provider` are mutually exclusive.")
 
         if client is not None:
             self._client = client
-        elif base_url is not None:
+        elif base_url:
             self._client = AsyncInferenceClient(
                 base_url=base_url,
                 api_key=api_key,
@@ -81,7 +83,7 @@ class HuggingFaceLLM(LLM):
             self._client = AsyncInferenceClient(
                 token=api_key,
                 model=model,
-                provider=provider,  # type: ignore[arg-type]
+                provider=provider,
             )
 
     async def simple_response(
