@@ -81,7 +81,7 @@ class MockVideoLLM(VideoLLM):
     async def stop_watching_video_track(self) -> None:
         pass
 
-    async def simple_response(self, text: str, processors=None, participant=None):
+    async def simple_response(self, text: str, participant=None):
         """Mock simple_response"""
         return Mock(text="mock response", original={})
 
@@ -93,7 +93,7 @@ class MockVideoLLM(VideoLLM):
 class MockLLM(LLM):
     """Mock LLM for non-video tests"""
 
-    async def simple_response(self, text: str, processors=None, participant=None):
+    async def simple_response(self, text: str, participant=None):
         """Mock simple_response"""
         return Mock(text="mock response", original={})
 

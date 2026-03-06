@@ -23,7 +23,7 @@ import re
 import time
 import uuid
 from threading import Thread
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, cast
 
 import jinja2
 import torch
@@ -45,9 +45,6 @@ from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.warmup import Warmable
 
 from . import events
-
-if TYPE_CHECKING:
-    from vision_agents.core.processors import Processor
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +216,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Any] = None,
     ) -> LLMResponseEvent:
         if self._conversation is None:

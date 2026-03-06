@@ -19,8 +19,6 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-from vision_agents.core.processors import Processor
-
 from . import events
 from .tool_utils import (
     convert_tools_to_openai_format,
@@ -88,7 +86,6 @@ class OpenAILLM(LLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Participant = None,
     ):
         """
@@ -96,7 +93,6 @@ class OpenAILLM(LLM):
 
         Args:
             text: The text to respond to
-            processors: list of processors (which contain state) about the video/voice AI
             participant: optionally the participant object
 
         Examples:

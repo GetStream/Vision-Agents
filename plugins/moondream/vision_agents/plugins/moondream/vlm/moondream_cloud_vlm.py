@@ -3,7 +3,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Optional, List, Literal
+from typing import Optional, Literal
 from concurrent.futures import ThreadPoolExecutor
 
 import aiortc
@@ -20,7 +20,6 @@ from vision_agents.core.llm.events import (
     VLMErrorEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
@@ -277,7 +276,6 @@ class CloudVLM(llm.VideoLLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent:
         """
@@ -285,7 +283,6 @@ class CloudVLM(llm.VideoLLM):
 
         Args:
             text: The text/question to respond to
-            processors: list of processors (which contain state) about the video/voice AI
             participant: optionally the participant object
 
         Examples:

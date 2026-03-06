@@ -21,7 +21,7 @@ import logging
 import time
 import uuid
 from collections import deque
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import av
 import torch
@@ -46,9 +46,6 @@ from .transformers_llm import (
     get_quantization_config,
     resolve_torch_dtype,
 )
-
-if TYPE_CHECKING:
-    from vision_agents.core.processors import Processor
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +217,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Any] = None,
     ) -> LLMResponseEvent:
         if self._conversation is None:
