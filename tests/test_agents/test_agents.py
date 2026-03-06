@@ -471,57 +471,6 @@ class TestAgent:
         async with agent.join(call):
             assert edge.authenticate_call_count == 1
 
-    async def test_user_message_synced_before_llm_call(self):
-        """User message must be in the conversation before the LLM is called."""
-        llm = RecordingLLM()
-        agent = Agent(
-            llm=llm,
-            stt=DummySTT(),
-            tts=DummyTTS(),
-            edge=DummyEdge(),
-            agent_user=User(name="agent"),
-        )
-        agent.conversation = InMemoryConversation(instructions="test", messages=[])
-
-        participant = Participant(original=None, user_id="user-1", id="session-1")
-        agent._pending_user_transcripts[participant.user_id].update(
-            "What is the weather?"
-        )
-
-        agent.events.send(TurnEndedEvent(participant=participant, confidence=1.0))
-        await agent.events.wait()
-
-        assert llm.messages_at_call_time == [
-            ("user", "What is the weather?"),
-        ]
-
-    async def test_stt_transcript_does_not_sync_to_conversation(self):
-        """STTTranscriptEvent should not add messages directly to the conversation.
-
-        Message sync now happens in _on_turn_event to guarantee ordering.
-        """
-        agent = Agent(
-            llm=DummyLLM(),
-            stt=DummySTT(),
-            tts=DummyTTS(),
-            edge=DummyEdge(),
-            agent_user=User(name="agent"),
-        )
-        agent.conversation = InMemoryConversation(instructions="test", messages=[])
-
-        participant = Participant(original=None, user_id="user-1", id="session-1")
-        agent.events.send(
-            STTTranscriptEvent(
-                plugin_name="test",
-                text="Hello there",
-                participant=participant,
-            )
-        )
-        await agent.events.wait()
-
-        user_messages = [m for m in agent.conversation.messages if m.role == "user"]
-        assert user_messages == []
-
 
 @pytest.fixture
 def participant() -> Participant:
@@ -734,3 +683,48 @@ class TestAgentTranscriptHandling:
         )
 
         assert len(transcript_agent.conversation.messages) == 0
+
+    async def test_user_message_synced_before_llm_call(self, participant):
+        """User message must be in the conversation before the LLM is called."""
+        llm = RecordingLLM()
+        agent = Agent(
+            llm=llm,
+            stt=DummySTT(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="agent"),
+        )
+        agent.conversation = InMemoryConversation(instructions="test", messages=[])
+
+        agent.transcripts.update_user_transcript(
+            participant_id=participant.id,
+            user_id=participant.user_id,
+            text="What is the weather?",
+            mode="replacement",
+        )
+
+        await _send(agent, TurnEndedEvent(participant=participant, confidence=1.0))
+        # The LLM call runs in a background task; give it a moment to complete.
+        await asyncio.sleep(0.1)
+
+        assert llm.messages_at_call_time == [
+            ("user", "What is the weather?"),
+        ]
+
+    async def test_stt_transcript_does_not_sync_to_conversation(
+        self, transcript_agent, participant
+    ):
+        """STTTranscriptEvent should not add messages directly to the conversation."""
+        await _send(
+            transcript_agent,
+            STTTranscriptEvent(
+                plugin_name="test",
+                text="Hello there",
+                participant=participant,
+            ),
+        )
+
+        user_messages = [
+            m for m in transcript_agent.conversation.messages if m.role == "user"
+        ]
+        assert user_messages == []
