@@ -12,7 +12,7 @@ All commands use `uv`. Never use `python -m`. If you run into dependency issues,
 
 ```bash
 # Full check (ruff + mypy + unit tests)
-uv run dev.py check
+uv run --no-sync dev.py check
 
 # Unit tests only (--no-sync avoids uv panic in sandboxed environments)
 uv run --no-sync pytest -m "not integration"
@@ -21,11 +21,11 @@ uv run --no-sync pytest -m "not integration"
 uv run --no-sync pytest -m "integration"
 
 # Lint & format
-uv run ruff check .
-uv run ruff format .
+uv run --no-sync ruff check .
+uv run --no-sync ruff format .
 
 # Type check
-uv run mypy
+uv run --no-sync mypy
 ```
 
 ## Testing
@@ -46,6 +46,7 @@ uv run mypy
 - Prefer `logger.exception()` when logging an error with a traceback instead of `logger.error("Error: {exc}")`
 - Do not use local imports, import at the top of the module
 - Avoid `# type: ignore` comments.
+- Avoid using `Any` type.
 - When adding code to an existing file, follow the patterns already established in that file (e.g. error handling style, import guards, naming).
 
 ## Code style
