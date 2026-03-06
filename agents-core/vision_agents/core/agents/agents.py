@@ -2,7 +2,6 @@ import asyncio
 import datetime
 import logging
 import time
-import uuid
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
@@ -484,25 +483,8 @@ class Agent:
         async def on_error(event: STTErrorEvent):
             self.logger.error("stt error event %s", event)
 
-        @self.events.subscribe
-        async def on_stt_transcript_event_sync_conversation(event: STTTranscriptEvent):
-            if self.conversation is None:
-                return
-
-            user_id = event.user_id()
-            if user_id is None:
-                raise ValueError("missing user_id")
-
-            with self.span("agent.on_stt_transcript_event_sync_conversation"):
-                await self.conversation.upsert_message(
-                    message_id=str(uuid.uuid4()),
-                    role="user",
-                    user_id=user_id,
-                    content=event.text or "",
-                    completed=True,
-                    replace=True,  # Replace any partial transcripts
-                    original=event,
-                )
+        # User messages are synced to the conversation in _on_turn_event,
+        # right before the LLM call, to guarantee correct ordering.
 
         @self.events.subscribe
         async def on_realtime_user_speech_transcription(
@@ -1417,8 +1399,18 @@ class Agent:
 
                 # create a new LLM turn
                 if self._pending_turn is None or self._pending_turn.input != transcript:
-                    # Without turn detection: trigger LLM immediately on transcript completion
-                    # This is the traditional STT -> LLM flow
+                    if self.conversation and event.participant:
+                        try:
+                            await self.conversation.send_message(
+                                role="user",
+                                user_id=event.participant.user_id,
+                                content=transcript,
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "Failed to sync user message to conversation"
+                            )
+
                     llm_turn = LLMTurn(
                         input=transcript,
                         participant=event.participant,

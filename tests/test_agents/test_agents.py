@@ -18,9 +18,17 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
+from vision_agents.core.stt.events import STTTranscriptEvent
+from vision_agents.core.stt.stt import STT
 from vision_agents.core.tts import TTS
 from vision_agents.core.tts.events import TTSAudioEvent
+from vision_agents.core.turn_detection import TurnEndedEvent
 from vision_agents.core.warmup import Warmable
+
+
+class DummySTT(STT):
+    async def process_audio(self, pcm_data, participant):
+        pass
 
 
 class DummyTTS(TTS):
@@ -43,6 +51,21 @@ class DummyLLM(LLM, Warmable[bool]):
 
     async def on_warmed_up(self, *_) -> None:
         self.warmed_up = True
+
+
+class RecordingLLM(DummyLLM):
+    """LLM that records conversation state at call time."""
+
+    def __init__(self):
+        super().__init__()
+        self.messages_at_call_time: list[tuple[str | None, str]] | None = None
+
+    async def simple_response(self, text=None, processors=None, participant=None):
+        if self.agent and self.agent.conversation:
+            self.messages_at_call_time = [
+                (m.role, m.content) for m in self.agent.conversation.messages
+            ]
+        return LLMResponseEvent(text="Agent response", original=None)
 
 
 class DummyEdge(EdgeTransport):
@@ -660,3 +683,48 @@ class TestAgentTranscriptHandling:
         )
 
         assert len(transcript_agent.conversation.messages) == 0
+
+    async def test_user_message_synced_before_llm_call(self, participant):
+        """User message must be in the conversation before the LLM is called."""
+        llm = RecordingLLM()
+        agent = Agent(
+            llm=llm,
+            stt=DummySTT(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="agent"),
+        )
+        agent.conversation = InMemoryConversation(instructions="test", messages=[])
+
+        agent.transcripts.update_user_transcript(
+            participant_id=participant.id,
+            user_id=participant.user_id,
+            text="What is the weather?",
+            mode="replacement",
+        )
+
+        await _send(agent, TurnEndedEvent(participant=participant, confidence=1.0))
+        # The LLM call runs in a background task; give it a moment to complete.
+        await asyncio.sleep(0.1)
+
+        assert llm.messages_at_call_time == [
+            ("user", "What is the weather?"),
+        ]
+
+    async def test_stt_transcript_does_not_sync_to_conversation(
+        self, transcript_agent, participant
+    ):
+        """STTTranscriptEvent should not add messages directly to the conversation."""
+        await _send(
+            transcript_agent,
+            STTTranscriptEvent(
+                plugin_name="test",
+                text="Hello there",
+                participant=participant,
+            ),
+        )
+
+        user_messages = [
+            m for m in transcript_agent.conversation.messages if m.role == "user"
+        ]
+        assert user_messages == []
