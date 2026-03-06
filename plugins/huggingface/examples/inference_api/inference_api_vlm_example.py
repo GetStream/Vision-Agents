@@ -51,8 +51,7 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join the call and start the agent."""
-    await agent.create_user()  # type: ignore[attr-defined]
-    call = await agent.create_call(call_type, call_id)  # type: ignore[attr-defined]
+    call = await agent.create_call(call_type, call_id)
 
     logger.info("Starting HuggingFace VLM Agent...")
 

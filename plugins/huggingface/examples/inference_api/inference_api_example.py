@@ -45,8 +45,7 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     """Join the call and start the agent."""
-    await agent.create_user()  # type: ignore[attr-defined]
-    call = await agent.create_call(call_type, call_id)  # type: ignore[attr-defined]
+    call = await agent.create_call(call_type, call_id)
 
     logger.info("Starting HuggingFace Agent...")
 
@@ -55,7 +54,8 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
         await asyncio.sleep(2)
         await agent.llm.simple_response(
-            text="I am experimenting with running you, an LLM on HuggingFace. Tell me a short story"
+            text="I am experimenting with running you, an LLM on HuggingFace. "
+            "Tell me a short story"
         )
 
         await agent.finish()
