@@ -1,11 +1,21 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 from vision_agents.core.events import (
-    DetectedObject,
     PluginBaseEvent,
     VideoProcessorDetectionEvent,
 )
+
+
+class DetectedObject(TypedDict):
+    """An object detected by a video processor."""
+
+    label: str
+    confidence: float
+    x1: int
+    y1: int
+    x2: int
+    y2: int
 
 
 @dataclass

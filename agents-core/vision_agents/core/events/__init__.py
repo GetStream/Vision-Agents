@@ -2,7 +2,6 @@ from .base import (
     AudioFormat,
     BaseEvent,
     ConnectionState,
-    DetectedObject,
     PluginBaseEvent,
     VideoProcessorDetectionEvent,
 )
@@ -12,7 +11,6 @@ __all__ = [
     "AudioFormat",
     "BaseEvent",
     "ConnectionState",
-    "DetectedObject",
     "EventManager",
     "PluginBaseEvent",
     "VideoProcessorDetectionEvent",

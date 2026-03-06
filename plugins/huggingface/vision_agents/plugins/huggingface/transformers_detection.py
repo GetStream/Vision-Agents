@@ -32,7 +32,9 @@ import torch
 from PIL import Image
 
 from vision_agents.core import Agent
-from vision_agents.core.events import DetectedObject, EventManager
+from vision_agents.core.events import EventManager
+
+from .events import DetectedObject
 from vision_agents.core.processors.base_processor import VideoProcessorPublisher
 from .annotation import annotate_image
 from vision_agents.core.utils.video_forwarder import VideoForwarder
