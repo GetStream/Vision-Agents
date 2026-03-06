@@ -77,7 +77,7 @@ class HuggingFaceVLM(VideoLLM):
         self.provider = provider
         self.events.register_events_from_module(events)
 
-        if base_url is not None and provider is not None:
+        if base_url and provider:
             raise ValueError("`base_url` and `provider` are mutually exclusive.")
 
         if client is not None:
