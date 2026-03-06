@@ -45,7 +45,7 @@ uv run mypy
 - Do not use section comments like `# -- some section --`
 - Prefer `logger.exception()` when logging an error with a traceback instead of `logger.error("Error: {exc}")`
 - Do not use local imports, import at the top of the module
-- Do not duplicate utility functions across packages. If a utility exists in a plugin, consolidate it into `agents-core` and have the plugin import from core.
+- Avoid `# type: ignore` comments.
 - When adding code to an existing file, follow the patterns already established in that file (e.g. error handling style, import guards, naming).
 
 ## Code style
