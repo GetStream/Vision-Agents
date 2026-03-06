@@ -9,7 +9,9 @@ dependencies = [
   "vision-agents-plugins-elevenlabs",
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-gemini",
-  "vision-agents>=0.2.8",
+  "vision-agents[redis]>=0.4.1",
+  "getstream>=2.0.0,<3.0.0",
+  "prometheus-client>=0.20",
 ]
 
 # For local development, uncomment the following:

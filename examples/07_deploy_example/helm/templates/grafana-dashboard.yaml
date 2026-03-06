@@ -1,0 +1,137 @@
+{{- if .Values.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vision-agent.fullname" . }}-grafana-dashboard
+  labels:
+    {{- include "vision-agent.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  vision-agent.json: |-
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "Active Sessions",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10 } },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "sum(ai_demo_active_sessions)",
+            "legendFormat": "Active Sessions",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "Pipeline Latency (seconds)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(ai_demo_stt_latency_seconds)", "legendFormat": "STT", "refId": "A" },
+            { "expr": "avg(ai_demo_llm_latency_seconds)", "legendFormat": "LLM", "refId": "B" },
+            { "expr": "avg(ai_demo_tts_latency_seconds)", "legendFormat": "TTS", "refId": "C" }
+          ]
+        },
+        {
+          "title": "LLM Tokens",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" } },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(ai_demo_llm_input_tokens)", "legendFormat": "Input", "refId": "A" },
+            { "expr": "sum(ai_demo_llm_output_tokens)", "legendFormat": "Output", "refId": "B" }
+          ]
+        },
+        {
+          "title": "TTS Characters",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" } },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "sum(ai_demo_tts_characters)",
+            "legendFormat": "Characters",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "Pod CPU Usage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "rate(container_cpu_usage_seconds_total{pod=~\".*vision-agent.*\", container!=\"POD\", container!=\"\"}[5m])",
+            "legendFormat": "{{`{{`}} pod {{`}}`}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "Pod Memory Usage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes" },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "container_memory_working_set_bytes{pod=~\".*vision-agent.*\", container!=\"POD\", container!=\"\"}",
+            "legendFormat": "{{`{{`}} pod {{`}}`}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "LLM Time to First Token (seconds)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "avg(ai_demo_llm_ttft_seconds)",
+            "legendFormat": "TTFT",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "Turn Duration (seconds)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "avg(ai_demo_turn_duration_seconds)",
+            "legendFormat": "Turn Duration",
+            "refId": "A"
+          }]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["vision-agents"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "title": "Vision Agent Overview",
+      "uid": "vision-agent-overview"
+    }
+{{- end }}
