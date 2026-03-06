@@ -30,18 +30,15 @@ import numpy as np
 import supervision as sv
 import torch
 from PIL import Image
-
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
-
-from .events import DetectedObject
 from vision_agents.core.processors.base_processor import VideoProcessorPublisher
-from .annotation import annotate_image
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
 
-from .events import DetectionCompletedEvent
+from .annotation import annotate_image
+from .events import DetectedObject, DetectionCompletedEvent
 from .transformers_llm import DeviceType
 
 if TYPE_CHECKING:
