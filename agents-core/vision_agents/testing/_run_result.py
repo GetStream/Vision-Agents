@@ -179,4 +179,3 @@ class TestResponse:
             output_repr = cls._truncate(repr(event.output))
             return f"FunctionCallOutputEvent(name='{event.name}', output={output_repr}, is_error={event.is_error})"
         return repr(event)
-
