@@ -2,7 +2,7 @@
 
 import time
 from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any
 
 from vision_agents.testing import (
     ChatMessageEvent,
@@ -14,8 +14,6 @@ from vision_agents.testing import (
 _NOT_GIVEN = object()
 
 _PREVIEW_MAX_LEN = 80  # max chars for content/output previews
-_SELECTED_MARKER = ">>>"  # prefix for the event that caused the failure
-_DEFAULT_PADDING = "   "  # prefix for all other events
 
 
 @dataclass
@@ -162,17 +160,6 @@ class TestResponse:
             msg += f"\nFunction outputs:\n{lines}"
         raise AssertionError(msg)
 
-    def _raise_with_debug_info(
-        self,
-        message: str,
-        event_index: int | None = None,
-    ) -> NoReturn:
-        __tracebackhide__ = True
-        events_str = "\n".join(
-            self._format_events(self.events, selected_index=event_index)
-        )
-        raise AssertionError(f"{message}\nContext:\n{events_str}")
-
     @classmethod
     def _truncate(cls, text: str, max_len: int = _PREVIEW_MAX_LEN) -> str:
         if len(text) <= max_len:
@@ -193,16 +180,3 @@ class TestResponse:
             return f"FunctionCallOutputEvent(name='{event.name}', output={output_repr}, is_error={event.is_error})"
         return repr(event)
 
-    @classmethod
-    def _format_events(
-        cls,
-        events: list[RunEvent],
-        *,
-        selected_index: int | None = None,
-    ) -> list[str]:
-        """Format events for debug output."""
-        lines: list[str] = []
-        for i, event in enumerate(events):
-            marker = _SELECTED_MARKER if i == selected_index else _DEFAULT_PADDING
-            lines.append(f"{marker} [{i}] {cls._format_event(event)}")
-        return lines
