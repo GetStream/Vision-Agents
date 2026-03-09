@@ -28,7 +28,6 @@ from vision_agents.core.llm.events import (
     VLMInferenceStartEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
@@ -142,7 +141,6 @@ class GeminiVLM(VideoLLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         """
@@ -150,7 +148,6 @@ class GeminiVLM(VideoLLM):
 
         Args:
             text: The prompt to respond to.
-            processors: List of processors (unused).
             participant: Optional participant object for message attribution.
         """
         if participant is None and self._conversation is not None:

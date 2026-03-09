@@ -15,7 +15,9 @@ Streaming Speech-to-Text (STT) plugin for Vision Agents using AssemblyAI's Unive
 ## Installation
 
 ```bash
-uv add vision-agents[assemblyai]
+uv add "vision-agents[assemblyai]"
+# or directly
+uv add vision-agents-plugins-assemblyai
 ```
 
 ## Usage

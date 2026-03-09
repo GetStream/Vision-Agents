@@ -5,6 +5,8 @@ Speech-to-Text (STT) and Text-to-Speech (TTS) plugins for Vision Agents using th
 ## Installation
 
 ```bash
+uv add "vision-agents[deepgram]"
+# or directly
 uv add vision-agents-plugins-deepgram
 ```
 
@@ -42,6 +44,7 @@ tts = deepgram.TTS(
 ### Available Voices
 
 Deepgram offers various Aura voice models:
+
 - `aura-2-thalia-en` - Default female voice
 - `aura-2-orion-en` - Male voice
 - See [TTS Models](https://developers.deepgram.com/docs/tts-models) for all options

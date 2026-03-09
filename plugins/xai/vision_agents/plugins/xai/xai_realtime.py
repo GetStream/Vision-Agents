@@ -28,7 +28,6 @@ from vision_agents.core.llm import realtime
 from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.llm.llm_types import ToolSchema
-from vision_agents.core.processors import Processor
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +316,6 @@ class XAIRealtime(realtime.Realtime):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         """
@@ -325,7 +323,6 @@ class XAIRealtime(realtime.Realtime):
 
         Args:
             text: Text message to send.
-            processors: Optional list of processors (unused).
             participant: Optional participant information.
 
         Returns:

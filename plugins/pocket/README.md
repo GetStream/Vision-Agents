@@ -13,7 +13,9 @@ A lightweight Text-to-Speech (TTS) plugin for [Vision Agents](https://github.com
 ## Installation
 
 ```bash
-uv add vision-agents[pocket]
+uv add "vision-agents[pocket]"
+# or directly
+uv add vision-agents-plugins-pocket
 ```
 
 ## Usage
@@ -33,9 +35,9 @@ tts = pocket.TTS(voice="path/to/your/voice.wav")
 
 ## Configuration
 
-| Parameter | Description | Values |
-|-----------|-------------|--------|
-| `voice` | Built-in voice name or path to custom wav file | `"alba"` (default), `"marius"`, `"javert"`, `"jean"`, `"fantine"`, `"cosette"`, `"eponine"`, `"azelma"`, or custom path |
+| Parameter | Description                                    | Values                                                                                                                  |
+|-----------|------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
+| `voice`   | Built-in voice name or path to custom wav file | `"alba"` (default), `"marius"`, `"javert"`, `"jean"`, `"fantine"`, `"cosette"`, `"eponine"`, `"azelma"`, or custom path |
 
 ## Built-in Voices
 

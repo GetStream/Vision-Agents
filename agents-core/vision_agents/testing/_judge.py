@@ -60,6 +60,7 @@ class LLMJudge:
 
     def __init__(self, llm: LLM) -> None:
         self._llm = llm
+        self._llm.set_instructions(_JUDGE_SYSTEM_PROMPT)
 
     async def evaluate(self, event: ChatMessageEvent, intent: str) -> JudgeVerdict:
         if not event.content:
@@ -77,9 +78,6 @@ class LLMJudge:
             'Respond with ONLY a JSON object: {"verdict": "pass" or "fail", "reason": "..."}'
         )
 
-        original_instructions = self._llm._instructions
-        self._llm.set_instructions(_JUDGE_SYSTEM_PROMPT)
-
         try:
             response = await self._llm.simple_response(text=prompt)
 
@@ -93,9 +91,6 @@ class LLMJudge:
         except (OSError, ValueError, RuntimeError) as exc:
             logger.exception("Judge evaluation failed")
             return JudgeVerdict(success=False, reason=f"Judge evaluation error: {exc}")
-
-        finally:
-            self._llm.set_instructions(original_instructions)
 
     @staticmethod
     def _parse_verdict(text: str) -> JudgeVerdict:

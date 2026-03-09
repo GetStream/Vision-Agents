@@ -1,9 +1,12 @@
-# Sales Assistant — AI Meeting Coach
+# Sales Assistant — AI Meeting Copilot
+
 <p align="center">
 <img src="https://github.com/GetStream/vision-agents-sales-assistant-demo/blob/main/gh_assets/screenshot.png" alt="Sales Assistant Example" height="300">
 </p>
 
-A real-time AI coaching example app that provides coaching suggestions during meetings and interviews. It captures your microphone audio, sends it to an AI agent for transcription and analysis, and displays coaching suggestions on a translucent macOS overlay.
+A real-time AI copilot that silently listens to your microphone and system audio during meetings, interviews, and sales calls. It transcribes the conversation with speaker diarization, analyzes the dialogue, and surfaces coaching suggestions on a translucent macOS overlay — invisible to other participants.
+
+The agent can be extended with RAG and custom knowledge bases to tailor suggestions to your product, company playbook, or deal context.
 
 ## Architecture
 
@@ -11,15 +14,15 @@ The project has two components:
 
 | Component | Location | Description |
 |-----------|----------|-------------|
-| **Python Agent** | This directory | Vision Agents backend that joins a Stream Video call, transcribes audio with AssemblyAI, analyzes transcripts with Gemini, and sends coaching text back |
-| **Flutter App** | [vision-agents-sales-assistant-demo](https://github.com/GetStream/vision-agents-sales-assistant-demo) | Translucent macOS overlay that captures mic+system audio via a Stream Video call and displays the agent's suggestions |
+| **Python Agent** | This directory | Vision Agents backend that joins a Stream Video call, transcribes audio with AssemblyAI (with diarization), analyzes transcripts with Gemini, and sends coaching text back |
+| **macOS App** | [vision-agents-sales-assistant-demo](https://github.com/GetStream/vision-agents-sales-assistant-demo) | Translucent macOS overlay that captures mic + system audio via a Stream Video call and displays the agent's suggestions |
 
 **Flow:**
 
-1. User opens the Flutter overlay and clicks **Start**
-2. The Flutter app creates a Stream Video call with screen sharing (including system audio capture)
-3. The Flutter app tells the Python agent server to join the call
-4. The agent transcribes audio (AssemblyAI STT) and generates coaching suggestions from transcripts (Gemini LLM)
+1. User opens the macOS overlay and clicks **Start**
+2. The app creates a Stream Video call with screen sharing (including system audio capture)
+3. The app tells the Python agent server to join the call
+4. The agent transcribes audio (AssemblyAI STT with diarization) and generates coaching suggestions (Gemini LLM)
 5. Coaching suggestions appear as text on the translucent overlay via Stream Chat
 
 ## Prerequisites
@@ -44,17 +47,17 @@ cp .env.example .env
 uv sync
 
 # Start the agent HTTP server
-uv run main.py serve --host 0.0.0.0 --port 8000
+uv run main.py serve
 ```
 
-The server will listen on `http://localhost:8000`. The Flutter app calls `POST /sessions` to start coaching sessions.
+The server will listen on `http://localhost:8000`. The macOS app calls `POST /sessions` to start coaching sessions.
 
 ### 2. Flutter App
 
-The macOS Flutter app lives in a separate repository:
+The companion macOS app lives in a separate repository:
 **https://github.com/GetStream/vision-agents-sales-assistant-demo**
 
-See the README there for setup and run instructions. The app expects the agent server to be running at `http://localhost:8000`.
+See the README there for build and run instructions. The app expects the agent server to be running at `http://localhost:8000`.
 
 ## Usage
 
@@ -62,8 +65,7 @@ See the README there for setup and run instructions. The app expects the agent s
    ```bash
    uv run main.py serve
    ```
-
-2. Run the Flutter overlay (Terminal 2) — see the [Flutter app repo](https://github.com/GetStream/vision-agents-sales-assistant-demo) for instructions.
+2. Run the macOS overlay — see the [companion app repo](https://github.com/GetStream/vision-agents-sales-assistant-demo) for instructions.
 
 3. The translucent overlay window appears in the top-right corner of your screen.
 

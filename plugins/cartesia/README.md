@@ -8,8 +8,10 @@ The Cartesia plugin for the Stream Python AI SDK allows you to add TTS functiona
 
 Install the Stream Cartesia plugin with
 
-```sh  theme={null}
-uv add vision-agents[cartesia]
+```bash
+uv add "vision-agents[cartesia]"
+# or directly
+uv add vision-agents-plugins-cartesia
 ```
 
 ## Examples
@@ -18,8 +20,6 @@ Read on for some key details and check out our [Cartesia examples](https://githu
 
 - in [tts.py](https://github.com/GetStream/vision-agents/tree/main/examples/other_examples/plugins_examples/tts_cartesia/tts.py) we see a simple bot greeting users upon joining a call
 - in [narrator-example.py](https://github.com/GetStream/vision-agents/tree/main/examples/other_examples/plugins_examples/tts_cartesia/narrator-example.py) we see a well-prompted combination of a STT -> LLM -> TTS flow that leverages the powers of Cartesia's Sonic 3 model to narrate a creative story from the user's input
-
-
 
 ## Initialisation
 
@@ -42,7 +42,7 @@ tts = cartesia.TTS()
 These are the parameters available in the CartesiaTTS plugin for you to customise:
 
 | Name          | Type            | Default                                  | Description                                                                                                   |
-| ------------- | --------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+|---------------|-----------------|------------------------------------------|---------------------------------------------------------------------------------------------------------------|
 | `api_key`     | `str` or `None` | `None`                                   | Your Cartesia API key. If not provided, the plugin will look for the `CARTESIA_API_KEY` environment variable. |
 | `model_id`    | `str`           | `"sonic-3"`                              | ID of the Cartesia STT or TTS model to use. Defaults to the recently released Sonic-3                         |
 | `voice_id`    | `str` or `None` | `"f9836c6e-a0bd-460e-9d3c-f7299fa60f94"` | ID of the voice to use for TTS responses.                                                                     |
