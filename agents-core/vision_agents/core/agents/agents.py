@@ -1649,30 +1649,28 @@ class Agent:
         turn = self._pending_turn
         event = turn.response
 
-        # Write deferred assistant response to conversation.
-        # The user message was already written by on_stt_transcript_event_sync_conversation
-        # which fires on the final STTTranscriptEvent before TurnEndedEvent.
-        assert self.agent_user.id
-        if self.conversation is not None and event and event.text:
-            await self.conversation.upsert_message(
-                message_id=event.item_id,
-                role="assistant",
-                user_id=self.agent_user.id,
-                content=event.text,
-                completed=True,
-                replace=True,
-            )
-
-        if self.streaming_tts:
-            await self._flush_streaming_tts_buffer()
-        elif self.tts and event and event.text and event.text.strip():
-            sanitized_text = self._sanitize_text(event.text)
-            await self.tts.send(sanitized_text)
-
-        # Clear _pending_turn after all async work so concurrent handlers
+        # Keep _pending_turn set during async work so concurrent handlers
         # (on_llm_response_sync_conversation, _handle_output_text_delta)
-        # see _pending_turn as non-None and skip their duplicate writes.
-        self._pending_turn = None
+        # see it as non-None and skip their duplicate writes.
+        try:
+            assert self.agent_user.id
+            if self.conversation is not None and event and event.text:
+                await self.conversation.upsert_message(
+                    message_id=event.item_id,
+                    role="assistant",
+                    user_id=self.agent_user.id,
+                    content=event.text,
+                    completed=True,
+                    replace=True,
+                )
+
+            if self.streaming_tts:
+                await self._flush_streaming_tts_buffer()
+            elif self.tts and event and event.text and event.text.strip():
+                sanitized_text = self._sanitize_text(event.text)
+                await self.tts.send(sanitized_text)
+        finally:
+            self._pending_turn = None
 
     async def _flush_streaming_tts_buffer(self):
         """Send any remaining text in the streaming TTS buffer."""
