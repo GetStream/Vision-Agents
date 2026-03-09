@@ -1619,11 +1619,6 @@ class Agent:
 
         # Cancel the old task if the text changed in the meantime
         if self._pending_turn is not None and self._pending_turn.input != transcript:
-            logger.debug(
-                "Eager turn and completed turn didn't match. Cancelling in flight response. %s vs %s ",
-                self._pending_turn.input,
-                transcript,
-            )
             if self._pending_turn.task and not self._pending_turn.task.done():
                 await cancel_and_wait(self._pending_turn.task)
 
