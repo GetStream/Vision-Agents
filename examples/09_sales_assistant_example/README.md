@@ -32,7 +32,7 @@ The project has two components:
 - API keys for:
   - [Stream](https://getstream.io/try-for-free/) (Video API key + secret)
   - [Google AI Studio](https://aistudio.google.com) (Gemini API key)
-  - [AssemblyAI](https://www.assemblyai.com/dashboard) (STT API key)
+  - [AssemblyAI](https://www.assemblyai.com/) (STT API key)
 
 ## Setup
 
@@ -65,7 +65,6 @@ See the README there for build and run instructions. The app expects the agent s
    ```bash
    uv run main.py serve
    ```
-
 2. Run the macOS overlay — see the [companion app repo](https://github.com/GetStream/vision-agents-sales-assistant-demo) for instructions.
 
 3. The translucent overlay window appears in the top-right corner of your screen.
@@ -93,10 +92,10 @@ sales_assistant/
 ### AI Pipeline
 
 The agent uses a non-realtime STT + LLM pipeline:
-- **AssemblyAI STT** transcribes meeting audio with speaker diarization, so the agent knows who said what
+- **AssemblyAI STT** transcribes meeting audio into text with speaker diarisation
 - **Gemini LLM** analyzes transcripts and generates short coaching suggestions
-- Responses are synced to a **Stream Chat** channel (`messaging:{callId}`) that the macOS app listens to
-- No TTS is needed since suggestions are displayed as text only — the agent is completely silent and invisible to other call participants
+- Responses are synced to a **Stream Chat** channel (`messaging:{callId}`) that the Flutter app listens to
+- No TTS is needed since suggestions are displayed as text
 
 > **Tip:** To add screen analysis, swap `gemini.LLM` for `gemini.Realtime(fps=3)`.
 > Note that Realtime mode also outputs audio, so the agent would speak its suggestions aloud in addition to writing them to chat.
