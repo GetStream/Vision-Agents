@@ -332,9 +332,6 @@ class Agent:
                 self._pending_turn.response = event
                 if self._pending_turn.turn_finished:
                     await self._finish_llm_turn()
-                else:
-                    # we are in eager turn completion mode. wait for confirmation
-                    self._pending_turn.response = event
 
         # Stream LLM text chunks to TTS as sentences complete
         if self.streaming_tts:
