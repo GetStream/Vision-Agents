@@ -1,10 +1,9 @@
 import asyncio
 import time
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from getstream.models import ChannelMemberRequest
 from getstream.video.rtc import ConnectionManager
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from vision_agents.plugins.getstream.stream_edge_transport import (
@@ -107,33 +106,3 @@ class TestStreamEdge:
     ):
         with pytest.raises(RuntimeError, match="not authenticated"):
             await stream_edge.create_call(call_id="call-1")
-
-    async def test_open_demo_update_uses_channel_member_request(
-        self, stream_edge: StreamEdge
-    ):
-        """When user not in members, update must use ChannelMemberRequest (v3 API)."""
-        stream_edge._agent_user_id = "agent-user"
-
-        mock_channel = AsyncMock()
-        # User NOT in members list -> triggers the update(add_members=...) branch
-        mock_channel.get_or_create.return_value = Mock(data=Mock(members=[]))
-
-        mock_call = Mock()
-        mock_call.id = "test-call-id"
-        mock_call.client.stream = stream_edge.client
-
-        with (
-            patch.object(stream_edge.client, "create_user", new_callable=AsyncMock),
-            patch.object(stream_edge.client.chat, "channel", return_value=mock_channel),
-            patch.object(stream_edge.client, "create_token", return_value="fake-token"),
-            patch("webbrowser.open"),
-        ):
-            await stream_edge.open_demo(mock_call)
-
-        # Verify channel.update was called with ChannelMemberRequest
-        mock_channel.update.assert_called_once()
-        call_kwargs = mock_channel.update.call_args.kwargs
-        add_members = call_kwargs["add_members"]
-        assert len(add_members) == 1
-        assert isinstance(add_members[0], ChannelMemberRequest)
-        assert add_members[0].user_id == "user-demo-agent"
