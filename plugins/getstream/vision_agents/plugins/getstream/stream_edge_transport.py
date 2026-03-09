@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import logging
 import os
 import time
@@ -12,7 +11,6 @@ import getstream.models
 from getstream import AsyncStream
 from getstream.models import (
     ChannelInput,
-    ChannelMember,
     ChannelMemberRequest,
     UserRequest,
 )
@@ -553,20 +551,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         if human_id not in [m.user_id for m in response.data.members]:
             await channel.update(
-                add_members=[
-                    ChannelMember(
-                        user_id=human_id,
-                        # TODO: get rid of this when codegen for stream-py is fixed, these fields are meaningless
-                        banned=False,
-                        channel_role="",
-                        created_at=datetime.datetime.now(datetime.timezone.utc),
-                        notifications_muted=False,
-                        shadow_banned=False,
-                        updated_at=datetime.datetime.now(datetime.timezone.utc),
-                        custom={},
-                        is_global_banned=False,
-                    )
-                ]
+                add_members=[ChannelMemberRequest(user_id=human_id)]
             )
 
         # Create user token for browser access
