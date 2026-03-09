@@ -550,9 +550,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         )
 
         if human_id not in [m.user_id for m in response.data.members]:
-            await channel.update(
-                add_members=[ChannelMemberRequest(user_id=human_id)]
-            )
+            await channel.update(add_members=[ChannelMemberRequest(user_id=human_id)])
 
         # Create user token for browser access
         token = client.create_token(human_id, expiration=3600)
