@@ -1647,7 +1647,6 @@ class Agent:
                 "Finish LLM turn should only be called after self._pending_turn is set"
             )
         turn = self._pending_turn
-        self._pending_turn = None
         event = turn.response
 
         # Write deferred assistant response to conversation.
@@ -1669,6 +1668,11 @@ class Agent:
         elif self.tts and event and event.text and event.text.strip():
             sanitized_text = self._sanitize_text(event.text)
             await self.tts.send(sanitized_text)
+
+        # Clear _pending_turn after all async work so concurrent handlers
+        # (on_llm_response_sync_conversation, _handle_output_text_delta)
+        # see _pending_turn as non-None and skip their duplicate writes.
+        self._pending_turn = None
 
     async def _flush_streaming_tts_buffer(self):
         """Send any remaining text in the streaming TTS buffer."""
