@@ -564,7 +564,7 @@ class Agent:
             if self.conversation is None:
                 return
 
-            if self._has_pending_eager_turn:
+            if self._pending_turn is not None:
                 return
 
             with self.span("agent.on_llm_response_sync_conversation"):
@@ -585,7 +585,7 @@ class Agent:
             if self.conversation is None:
                 return
 
-            if self._has_pending_eager_turn:
+            if self._pending_turn is not None:
                 return
 
             with self.span("agent._handle_output_text_delta"):
@@ -1648,11 +1648,6 @@ class Agent:
             self._pending_turn.turn_finished = True
             if self._pending_turn.response is not None:
                 await self._finish_llm_turn()
-
-    @property
-    def _has_pending_eager_turn(self) -> bool:
-        """True when an eager turn is in flight and not yet confirmed."""
-        return self._pending_turn is not None and not self._pending_turn.turn_finished
 
     async def _finish_llm_turn(self):
         if self._pending_turn is None or self._pending_turn.response is None:
