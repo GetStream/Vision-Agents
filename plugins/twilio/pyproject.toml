@@ -12,7 +12,7 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "twilio>=9.0.0,<10",
-    "numpy>=1.24.0",
+    "numpy>=1.24.0", # capped at <2.0 via workspace override in root pyproject.toml
     "fastapi>=0.128.0,<0.129.0",
 ]
 
