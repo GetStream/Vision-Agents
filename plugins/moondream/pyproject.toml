@@ -11,13 +11,13 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "numpy>=2.0.0",
+    "numpy>=2.4.3",
     "pillow>=10.4.0",
     "opencv-python>=4.8.0",
-    "moondream>=0.1.1",  # Now compatible with vision-agents pillow>=10.4.0
-    "transformers>=4.40.0",  # For local model loading
-    "torch>=2.0.0",  # PyTorch for model inference
-    "accelerate>=0.20.0",  # Required for device_map and device management
+    "moondream>=0.2.0",
+    "transformers>=4.57.6",
+    "torch>=2.10.0",
+    "accelerate>=1.13.0",
 ]
 
 [project.urls]
