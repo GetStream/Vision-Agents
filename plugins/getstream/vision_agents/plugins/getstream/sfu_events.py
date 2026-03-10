@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from dataclasses_json import DataClassJsonMixin
-from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
 from google.protobuf.json_format import MessageToDict
+from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
 from vision_agents.core.events.base import BaseEvent
 
 # Note: For enum fields typed as 'int', use the corresponding enum from:
@@ -27,6 +27,25 @@ def _to_dict(message) -> Dict[str, Any]:
 # Message Type Wrappers
 # These are wrappers for protobuf message types used in events
 # ==============================================================================
+
+
+@dataclass
+class AudioBitrate(DataClassJsonMixin):
+    """Wrapper for stream.video.sfu.models.AudioBitrate.
+
+    Enum fields (use values from models_pb2):
+        - profile: AudioBitrateProfile
+    """
+
+    profile: Optional[int] = None
+    bitrate: Optional[int] = None
+
+    @classmethod
+    def from_proto(cls, proto_obj) -> "AudioBitrate":
+        """Create from protobuf AudioBitrate."""
+        if proto_obj is None:
+            return cls()
+        return cls(profile=proto_obj.profile, bitrate=proto_obj.bitrate)
 
 
 @dataclass
@@ -232,6 +251,7 @@ class Participant(DataClassJsonMixin):
     Enum fields (use values from models_pb2):
         - published_tracks: TrackType
         - connection_quality: ConnectionQuality
+        - source: ParticipantSource
     """
 
     user_id: Optional[str] = None
@@ -247,6 +267,7 @@ class Participant(DataClassJsonMixin):
     image: Optional[str] = None
     custom: Optional[Any] = None
     roles: Optional[List[str]] = None
+    source: Optional[int] = None
 
     @classmethod
     def from_proto(cls, proto_obj) -> "Participant":
@@ -267,6 +288,7 @@ class Participant(DataClassJsonMixin):
             image=proto_obj.image,
             custom=proto_obj.custom if proto_obj.HasField("custom") else None,
             roles=list(proto_obj.roles),
+            source=proto_obj.source,
         )
 
 
@@ -317,6 +339,7 @@ class PublishOption(DataClassJsonMixin):
     video_dimension: Optional[VideoDimension] = None
     id: Optional[int] = None
     use_single_layer: Optional[bool] = None
+    audio_bitrate_profiles: Optional[List[AudioBitrate]] = None
 
     @classmethod
     def from_proto(cls, proto_obj) -> "PublishOption":
@@ -337,6 +360,10 @@ class PublishOption(DataClassJsonMixin):
             else None,
             id=proto_obj.id,
             use_single_layer=proto_obj.use_single_layer,
+            audio_bitrate_profiles=[
+                AudioBitrate.from_proto(item)
+                for item in proto_obj.audio_bitrate_profiles
+            ],
         )
 
 
@@ -1238,6 +1265,13 @@ class JoinRequestEvent(BaseEvent):
         return getattr(self.payload, "token", None)
 
     @property
+    def unified_session_id(self) -> Optional[str]:
+        """Access unified_session_id field from the protobuf payload."""
+        if self.payload is None:
+            return None
+        return getattr(self.payload, "unified_session_id", None)
+
+    @property
     def subscriber_sdp(self) -> Optional[str]:
         """Access subscriber_sdp field from the protobuf payload."""
         if self.payload is None:
@@ -1310,6 +1344,13 @@ class JoinRequestEvent(BaseEvent):
         if self.payload is None:
             return None
         return getattr(self.payload, "capabilities", None)
+
+    @property
+    def source(self) -> Optional[int]:
+        """Access source field from the protobuf payload. Use models_pb2.ParticipantSource enum."""
+        if self.payload is None:
+            return None
+        return getattr(self.payload, "source", None)
 
     @classmethod
     def from_proto(cls, proto_obj: events_pb2.JoinRequest, **extra):
@@ -1503,7 +1544,6 @@ class ParticipantJoinedEvent(BaseEvent):
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
-        # Store in _participant but don't use it (payload takes precedence)
         self._participant = value
 
     @classmethod
@@ -1541,7 +1581,7 @@ class ParticipantLeftEvent(BaseEvent):
             return None
         return getattr(self.payload, "call_cid", None)
 
-    @property  # type: ignore[misc,override]
+    @property  # type: ignore[override,misc]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
@@ -1552,7 +1592,6 @@ class ParticipantLeftEvent(BaseEvent):
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
-        # Store in _participant but don't use it (payload takes precedence)
         self._participant = value
 
     @classmethod
@@ -1621,7 +1660,7 @@ class ParticipantUpdatedEvent(BaseEvent):
             return None
         return getattr(self.payload, "call_cid", None)
 
-    @property  # type: ignore[misc,override]
+    @property  # type: ignore[override,misc]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
@@ -1632,7 +1671,6 @@ class ParticipantUpdatedEvent(BaseEvent):
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
-        # Store in _participant but don't use it (payload takes precedence)
         self._participant = value
 
     @classmethod
@@ -2096,7 +2134,7 @@ class TrackPublishedEvent(BaseEvent):
             return None
         return getattr(self.payload, "user_id", None)
 
-    @property  # type: ignore[misc,override]
+    @property  # type: ignore[override,misc]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
@@ -2107,7 +2145,6 @@ class TrackPublishedEvent(BaseEvent):
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
-        # Store in _participant but don't use it (payload takes precedence)
         self._participant = value
 
     @classmethod
@@ -2152,7 +2189,7 @@ class TrackUnpublishedEvent(BaseEvent):
             return None
         return getattr(self.payload, "cause", None)
 
-    @property  # type: ignore[misc,override]
+    @property  # type: ignore[override,misc]
     def participant(self) -> Optional[Participant]:  # type: ignore[override]
         """Access participant field from the protobuf payload."""
         if self.payload is None:
@@ -2163,7 +2200,6 @@ class TrackUnpublishedEvent(BaseEvent):
     @participant.setter  # type: ignore[misc]
     def participant(self, value: Optional[Participant]) -> None:
         """Setter for participant to satisfy dataclass __init__."""
-        # Store in _participant but don't use it (payload takes precedence)
         self._participant = value
 
     @classmethod
