@@ -13,22 +13,15 @@ from vision_agents.core.stt import TranscriptResponse
 
 logger = logging.getLogger(__name__)
 
+MIN_DURATION_MS = 1000.0
+
 
 class STT(stt.STT):
     """
     Fish Audio Speech-to-Text implementation.
 
-    Fish Audio provides fast and accurate speech-to-text transcription with
-    support for multiple languages and automatic language detection.
-
-    This implementation operates in synchronous mode - it processes audio immediately
-    and returns results to the base class, which then emits the appropriate events.
-
-    Events:
-        - transcript: Emitted when a complete transcript is available.
-            Args: text (str), user_metadata (dict), metadata (dict)
-        - error: Emitted when an error occurs during transcription.
-            Args: error (Exception)
+    Fish Audio requires at least 1 second of audio per request. Audio is buffered
+    per participant until the minimum duration is reached, then sent to the API.
     """
 
     def __init__(
@@ -45,9 +38,13 @@ class STT(stt.STT):
         if client is not None:
             self.client = client
         else:
+            if not api_key:
+                raise ValueError("api_key is required")
             self.client = Session(api_key)
 
         self.language = language
+        self._buffers: dict[str, PcmData] = {}
+        self._buffer_participant: dict[str, Participant] = {}
 
     async def process_audio(
         self,
@@ -72,68 +69,78 @@ class STT(stt.STT):
             logger.warning("Fish Audio STT is closed, ignoring audio")
             return None
 
-        # Check if we have valid audio data
-        if not hasattr(pcm_data, "samples") or pcm_data.samples is None:
+        if pcm_data.samples is None:
             logger.warning("No audio samples to process")
             return None
 
-        # Check for empty audio
         if isinstance(pcm_data.samples, np.ndarray) and pcm_data.samples.size == 0:
             logger.debug("Received empty audio data")
             return None
 
+        key = participant.user_id
+        if key not in self._buffers:
+            self._buffers[key] = pcm_data.copy()
+            self._buffer_participant[key] = participant
+        else:
+            self._buffers[key].append(pcm_data)
+
+        buf = self._buffers[key]
+        if buf.duration_ms < MIN_DURATION_MS:
+            return None
+
+        await self._send_buffer(key)
+
+    async def _send_buffer(self, key: str) -> None:
+        buf = self._buffers.get(key)
+        participant = self._buffer_participant.get(key)
+        if buf is None or participant is None or buf.duration_ms < MIN_DURATION_MS:
+            return
+
+        pcm_to_send = buf.copy()
+        buf.clear()
+
         try:
             start_time = time.perf_counter()
-            # Convert PCM to WAV format using shared PcmData method
-            wav_data = pcm_data.to_wav_bytes()
-
-            # Build ASR request
+            wav_data = pcm_to_send.to_wav_bytes()
             asr_request = ASRRequest(
                 audio=wav_data,
                 language=self.language,
                 ignore_timestamps=True,
             )
-
-            # Send to Fish Audio API (run in thread pool to avoid blocking)
             logger.debug(
                 "Sending audio to Fish Audio ASR",
                 extra={"audio_bytes": len(wav_data)},
             )
             response = await asyncio.to_thread(self.client.asr, asr_request)
-
-            # Extract transcript text
             transcript_text = response.text.strip()
 
             if not transcript_text:
-                logger.error(
-                    "No transcript returned from Fish Audio %s", pcm_data.duration
+                logger.debug(
+                    "No transcript from Fish Audio (duration_ms=%.0f)", pcm_to_send.duration_ms
                 )
-                return None
+                return
 
             processing_time_ms = (time.perf_counter() - start_time) * 1000
-
-            # Build response metadata
             response_metadata = TranscriptResponse(
                 audio_duration_ms=response.duration,
                 language=self.language or "auto",
                 model_name="fish-audio-asr",
                 processing_time_ms=processing_time_ms,
             )
-
             logger.debug(
                 "Received transcript from Fish Audio",
-                extra={
-                    "text_length": len(transcript_text),
-                    "duration_ms": response.duration,
-                },
+                extra={"text_length": len(transcript_text), "duration_ms": response.duration},
             )
-
             self._emit_transcript_event(transcript_text, participant, response_metadata)
 
-        except Exception as e:
-            logger.error(
-                "Error during Fish Audio transcription",
-                exc_info=e,
-            )
-            # Let the base class handle error emission
+        except Exception:
+            logger.exception("Error during Fish Audio transcription")
             raise
+
+    async def clear(self) -> None:
+        for key in list(self._buffers):
+            if self._buffers[key].duration_ms >= MIN_DURATION_MS:
+                await self._send_buffer(key)
+            else:
+                self._buffers[key].clear()
+        await super().clear()
