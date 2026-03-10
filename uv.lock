@@ -75,7 +75,7 @@ dev = [
 
 [[package]]
 name = "accelerate"
-version = "0.34.2"
+version = "1.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -86,9 +86,9 @@ dependencies = [
     { name = "safetensors" },
     { name = "torch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/82/5712c44a5a5ef7c4d375363b179a099e834491221ece02e81a1209b08233/accelerate-0.34.2.tar.gz", hash = "sha256:98c1ebe1f5a45c0a3af02dc60b5bb8b7d58d60c3326a326a06ce6d956b18ca5b", size = 328806, upload-time = "2024-09-05T16:45:20.816Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/60/2757c4f03a8705dbf80b1268b03881927878dca5ed07d74f733fb6c219e0/accelerate-1.11.0.tar.gz", hash = "sha256:bb1caf2597b4cd632b917b5000c591d10730bb024a79746f1ee205bba80bd229", size = 393715, upload-time = "2025-10-20T14:42:25.025Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/5e/80cee674cdbe529ef008721d7eebb50ae5def4314211d82123aa23e828f8/accelerate-0.34.2-py3-none-any.whl", hash = "sha256:d69159e2c4e4a473d14443b27d2d732929254e826b3ab4813b3785b5ac616c7c", size = 324366, upload-time = "2024-09-05T16:45:17.121Z" },
+    { url = "https://files.pythonhosted.org/packages/77/85/85951bc0f9843e2c10baaa1b6657227056095de08f4d1eea7d8b423a6832/accelerate-1.11.0-py3-none-any.whl", hash = "sha256:a628fa6beb069b8e549460fc449135d5bd8d73e7a11fd09f0bc9fc4ace7f06f1", size = 375777, upload-time = "2025-10-20T14:42:23.256Z" },
 ]
 
 [[package]]
@@ -7229,7 +7229,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aws-sdk-bedrock-runtime", specifier = ">=0.2.0,<15" },
+    { name = "aws-sdk-bedrock-runtime", specifier = ">=0.2.0,<1" },
     { name = "boto3", specifier = ">=1.42.7,<2" },
     { name = "onnxruntime", specifier = ">=1.16.1,<2" },
     { name = "vision-agents", editable = "agents-core" },
@@ -7751,7 +7751,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "openai", extras = ["realtime"], specifier = ">=2.7.2,<4" },
+    { name = "openai", extras = ["realtime"], specifier = ">=2.7.2,<3" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
