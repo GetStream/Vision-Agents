@@ -116,7 +116,8 @@ class STT(stt.STT):
 
             if not transcript_text:
                 logger.debug(
-                    "No transcript from Fish Audio (duration_ms=%.0f)", pcm_to_send.duration_ms
+                    "No transcript from Fish Audio (duration_ms=%.0f)",
+                    pcm_to_send.duration_ms,
                 )
                 return
 
@@ -129,7 +130,10 @@ class STT(stt.STT):
             )
             logger.debug(
                 "Received transcript from Fish Audio",
-                extra={"text_length": len(transcript_text), "duration_ms": response.duration},
+                extra={
+                    "text_length": len(transcript_text),
+                    "duration_ms": response.duration,
+                },
             )
             self._emit_transcript_event(transcript_text, participant, response_metadata)
 
