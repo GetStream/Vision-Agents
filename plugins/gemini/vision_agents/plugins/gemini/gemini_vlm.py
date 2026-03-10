@@ -388,6 +388,14 @@ class GeminiVLM(VideoLLM):
 
         return input_tokens, output_tokens
 
+    def add_frame(self, frame: av.VideoFrame) -> None:
+        """Append a video frame to the internal buffer.
+
+        Args:
+            frame: The video frame to add.
+        """
+        self._frame_buffer.append(frame)
+
     async def close(self) -> None:
         """Clean up resources."""
         await self.stop_watching_video_track()

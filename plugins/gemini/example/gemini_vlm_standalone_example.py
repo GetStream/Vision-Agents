@@ -63,11 +63,12 @@ async def main() -> None:
         return
 
     vlm = VLM(model=MODEL, api_key=api_key)
-    vlm.set_conversation(InMemoryConversation("Describe what you see concisely.", []))
+    vlm.set_instructions("Describe what you see concisely.")
+    vlm.set_conversation(InMemoryConversation("", []))
 
     frames = capture_webcam_frames() or make_synthetic_frames()
     for frame in frames:
-        vlm._frame_buffer.append(frame)
+        vlm.add_frame(frame)
 
     logger.info(f"Loaded {len(frames)} frames, sending to {MODEL}...")
 
