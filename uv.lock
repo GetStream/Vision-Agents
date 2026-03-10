@@ -7074,7 +7074,7 @@ requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.128.0" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.16" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.0.0,<4" },
     { name = "mcp", specifier = ">=1.23.3" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
@@ -7449,7 +7449,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.0.0" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.0.0,<4" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
