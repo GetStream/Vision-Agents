@@ -7,14 +7,13 @@ import asyncio
 from unittest.mock import Mock, AsyncMock
 from dotenv import load_dotenv
 
+from getstream import AsyncStream
 from getstream.models import (
-    Message,
-    MessageRequest,
     ChannelInput,
     MessagePaginationParams,
+    MessageRequest,
 )
-from getstream import AsyncStream
-
+from vision_agents.core.agents.conversation import Message
 from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
 logger = logging.getLogger(__name__)

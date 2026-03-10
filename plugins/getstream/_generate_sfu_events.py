@@ -292,18 +292,38 @@ def _render_class(proto_name: str, message_cls: Type[Message]) -> List[str]:
         f"    payload: Optional[events_pb2.{proto_name}] = field(default=None, repr=False)"
     )
 
-    # Add property fields for each protobuf field (skip fields that conflict with BaseEvent)
+    # Fields inherited from BaseEvent that should not be generated as properties
     base_event_fields = {"type", "event_id", "timestamp", "session_id", "user_metadata"}
+    # Fields that need special handling to override BaseEvent without breaking dataclass
+    override_fields = {"user_id", "participant"}
+
+    # Check if this event has a participant field that needs the backing-field workaround
+    proto_field_names = {f.name for f in field_descriptors}
+    if "participant" in proto_field_names:
+        lines.append(
+            "    _participant: Optional[Participant] = field(init=False, default=None, repr=False)"
+        )
+
     for field_desc in field_descriptors:
         field_name = field_desc.name
-        if (
-            field_name in base_event_fields
-        ):  # Skip fields that conflict with BaseEvent fields
+        if field_name in base_event_fields:
             continue
         type_hint = _get_python_type_from_protobuf_field(field_desc)
         lines.append("")
-        lines.append("    @property")
-        lines.append(f"    def {field_name}(self) -> {type_hint}:")
+
+        if field_name == "participant":
+            lines.append("    @property  # type: ignore[override,misc]")
+            lines.append(
+                f"    def {field_name}(self) -> {type_hint}:  # type: ignore[override]"
+            )
+        elif field_name in override_fields:
+            lines.append("    @property")
+            lines.append(
+                f"    def {field_name}(self) -> {type_hint}:  # type: ignore[override]"
+            )
+        else:
+            lines.append("    @property")
+            lines.append(f"    def {field_name}(self) -> {type_hint}:")
 
         # Build docstring with enum information if applicable
         docstring = f"Access {field_name} field from the protobuf payload."
@@ -341,6 +361,18 @@ def _render_class(proto_name: str, message_cls: Type[Message]) -> List[str]:
         else:
             # Scalar or enum fields
             lines.append(f"        return getattr(self.payload, '{field_name}', None)")
+
+        # Add setter for participant to satisfy dataclass __init__
+        if field_name == "participant":
+            lines.append("")
+            lines.append("    @participant.setter  # type: ignore[misc]")
+            lines.append(
+                "    def participant(self, value: Optional[Participant]) -> None:"
+            )
+            lines.append(
+                '        """Setter for participant to satisfy dataclass __init__."""'
+            )
+            lines.append("        self._participant = value")
 
     lines.append("")
     lines.append("    @classmethod")
