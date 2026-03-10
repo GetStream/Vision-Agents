@@ -23,9 +23,9 @@ requires-python = ">=3.10"
 dependencies = [
     "getstream[webrtc,telemetry]>=2.5.16,<3",
     "python-dotenv>=1.1.1",
-    "pillow>=10.4.0", # Compatible with moondream SDK (<11.0.0)
+    "pillow>=10.4.0,<11", # Compatible with moondream SDK
     "numpy>=1.24.0",
-    "mcp>=1.23.3",
+    "mcp>=1.23.3,<2",
     "colorlog>=6.10.1",
     "fastapi>=0.128.0,<1",
     "uvicorn>=0.38.0",
