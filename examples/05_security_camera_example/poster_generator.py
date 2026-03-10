@@ -70,7 +70,7 @@ async def generate_wanted_poster(face_image: np.ndarray, name: str) -> Optional[
 
     logger.info(f"🎨 Generating wanted poster for {name}...")
     response = await client.models.generate_content(
-        model="gemini-2.5-flash-image",
+        model="gemini-3.1-flash-image-preview",
         contents=[image_part, WANTED_POSTER_PROMPT.format(name=name)],
         config=GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
     )

@@ -53,7 +53,7 @@ The `create_agent` function defines how agents are configured:
 
 ```python
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-2.5-flash-lite")
+    llm = gemini.LLM("gemini-3.1-flash-lite-preview")
 
     agent = Agent(
         edge=getstream.Edge(),

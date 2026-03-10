@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
 
 
-DEFAULT_MODEL = "gemini-3-pro-preview"
+DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
 
 class GeminiLLM(LLM):
@@ -64,7 +64,7 @@ class GeminiLLM(LLM):
         Initialize the GeminiLLM class.
 
         Args:
-            model (str): The model to use. Defaults to models/gemini-3-pro-preview.
+            model (str): The model to use. Defaults to models/gemini-3.1-pro-preview.
             api_key: optional API key. by default loads from GOOGLE_API_KEY
             client: optional Gemini client. by default creates a new client object.
             thinking_level: Optional thinking level for Gemini 3. Use ThinkingLevel.LOW or
