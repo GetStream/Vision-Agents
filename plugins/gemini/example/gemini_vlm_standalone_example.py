@@ -27,7 +27,6 @@ MODEL = "gemini-3.1-flash-lite-preview"
 
 def capture_webcam_frames(count: int = 3) -> list[av.VideoFrame]:
     """Capture frames from the default webcam via PyAV."""
-    frames: list[av.VideoFrame] = []
     try:
         container = av.open("/dev/video0", format="v4l2")
     except (av.error.FileNotFoundError, av.error.InvalidDataError):
@@ -37,11 +36,12 @@ def capture_webcam_frames(count: int = 3) -> list[av.VideoFrame]:
             logger.warning("No webcam found, falling back to synthetic frames")
             return []
 
-    for i, frame in enumerate(container.decode(video=0)):
-        frames.append(frame)
-        if i >= count - 1:
-            break
-    container.close()
+    frames: list[av.VideoFrame] = []
+    with container:
+        for i, frame in enumerate(container.decode(video=0)):
+            frames.append(frame)
+            if i >= count - 1:
+                break
     return frames
 
 
