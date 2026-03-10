@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "twilio>=9.0.0",
+    "twilio>=9.0.0,<10",
     "numpy>=1.24.0",
     "fastapi>=0.100.0",
 ]
@@ -40,5 +40,3 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-
-

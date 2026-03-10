@@ -7073,12 +7073,12 @@ xai = [
 requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
-    { name = "fastapi", specifier = ">=0.128.0" },
+    { name = "fastapi", specifier = ">=0.128.0,<1" },
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=2.5.16,<3" },
     { name = "mcp", specifier = ">=1.23.3" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
-    { name = "onnxruntime", specifier = ">=1.16.1" },
+    { name = "onnxruntime", specifier = ">=1.16.1,<2" },
     { name = "pillow", specifier = ">=10.4.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
@@ -7169,7 +7169,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic" },
+    { name = "anthropic", specifier = ">=0.7.0,<1" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7229,9 +7229,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aws-sdk-bedrock-runtime", specifier = ">=0.2.0" },
-    { name = "boto3", specifier = ">=1.42.7" },
-    { name = "onnxruntime" },
+    { name = "aws-sdk-bedrock-runtime", specifier = ">=0.2.0,<15" },
+    { name = "boto3", specifier = ">=1.42.7,<2" },
+    { name = "onnxruntime", specifier = ">=1.16.1,<2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7312,7 +7312,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=6.0.1" },
+    { name = "deepgram-sdk", specifier = ">=6.0.1,<7" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7341,7 +7341,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "elevenlabs", specifier = ">=2.24.0" },
+    { name = "elevenlabs", specifier = ">=2.24.0,<3" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7421,7 +7421,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "google-genai", specifier = ">=1.59.0" },
+    { name = "google-genai", specifier = ">=1.59.0,<2" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "vision-agents", editable = "agents-core" },
 ]
@@ -7619,8 +7619,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "livekit", specifier = ">=1.0.0" },
-    { name = "livekit-api", specifier = ">=1.0.0" },
+    { name = "livekit", specifier = ">=1.0.0,<2" },
+    { name = "livekit-api", specifier = ">=1.0.0,<2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7646,7 +7646,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mistralai", extras = ["realtime"], specifier = ">=1.12.0" },
+    { name = "mistralai", extras = ["realtime"], specifier = ">=1.12.0,<2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7751,7 +7751,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "openai", extras = ["realtime"], specifier = ">=2.7.2" },
+    { name = "openai", extras = ["realtime"], specifier = ">=2.7.2,<4" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7953,7 +7953,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "numpy", specifier = ">=1.24.0" },
-    { name = "twilio", specifier = ">=9.0.0" },
+    { name = "twilio", specifier = ">=9.0.0,<10" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -8075,7 +8075,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "vision-agents", editable = "agents-core" },
     { name = "websockets", specifier = ">=13.0" },
-    { name = "xai-sdk", specifier = ">=1.5.0" },
+    { name = "xai-sdk", specifier = ">=1.5.0,<2" },
 ]
 
 [package.metadata.requires-dev]
