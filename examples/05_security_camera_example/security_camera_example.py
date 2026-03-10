@@ -80,7 +80,7 @@ _package_history: Dict[
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-2.5-flash-lite")
+    llm = gemini.LLM("gemini-3.1-flash-lite-preview")
 
     # Create security camera processor
     security_processor = SecurityCameraProcessor(

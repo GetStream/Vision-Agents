@@ -52,7 +52,7 @@ logger.addHandler(handler)
 
 async def create_agent(**kwargs) -> Agent:
     """Create an agent with STT/LLM/TTS workflow."""
-    llm = gemini.LLM("gemini-2.5-flash-lite")
+    llm = gemini.LLM("gemini-3.1-flash-lite-preview")
 
     agent = Agent(
         edge=getstream.Edge(),

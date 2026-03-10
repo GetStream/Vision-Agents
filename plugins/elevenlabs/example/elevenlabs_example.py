@@ -34,7 +34,7 @@ async def create_agent(**kwargs) -> Agent:
         instructions="You're a friendly voice AI assistant. Keep your replies conversational",
         tts=elevenlabs.TTS(),  # Uses ElevenLabs for text-to-speech
         stt=elevenlabs.STT(),  # Uses ElevenLabs Scribe v2 for speech-to-text
-        llm=gemini.LLM("gemini-2.5-flash-lite"),
+        llm=gemini.LLM("gemini-3.1-flash-lite-preview"),
         turn_detection=smart_turn.TurnDetection(),
     )
     return agent

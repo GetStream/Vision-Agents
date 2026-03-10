@@ -15,7 +15,7 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
         agent_user=User(name="My happy AI friend", id="agent"),
         instructions="You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful.",
-        llm=gemini.LLM("gemini-2.5-flash-lite"),
+        llm=gemini.LLM("gemini-3.1-flash-lite-preview"),
         tts=elevenlabs.TTS(),
         stt=elevenlabs.STT(),
         turn_detection=smart_turn.TurnDetection(),  # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)

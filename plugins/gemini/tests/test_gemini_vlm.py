@@ -36,7 +36,7 @@ async def vlm() -> VLM:
 
 @pytest.mark.integration
 async def test_gemini_vlm_simple_response(vlm: VLM):
-    vlm._frame_buffer.append(_solid_color_frame())
+    vlm.add_frame(_solid_color_frame())
 
     events: list[LLMResponseCompletedEvent | VLMInferenceCompletedEvent] = []
 
