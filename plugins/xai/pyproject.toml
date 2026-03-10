@@ -12,8 +12,8 @@ license = "Apache-2.0"
 dependencies = [
     "vision-agents",
     "xai-sdk>=1.5.0,<2",
-    "websockets>=13.0",
-    "aiohttp>=3.9.0",
+    "websockets>=15.0,<16",
+    "aiohttp>=3.9.0,<4",
 ]
 
 [project.urls]

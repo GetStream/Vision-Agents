@@ -14,7 +14,7 @@ dependencies = [
     "vision-agents",
     "livekit>=1.0.0,<2",
     "livekit-api>=1.0.0,<2",
-    "httpx>=0.27.0",
+    "httpx>=0.27.0,<1",
 ]
 
 [project.urls]
