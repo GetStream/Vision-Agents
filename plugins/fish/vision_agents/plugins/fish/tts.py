@@ -1,10 +1,13 @@
 import logging
 import os
-from typing import AsyncIterator, Iterator, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, Optional
 
 from fish_audio_sdk import Session, TTSRequest
 from vision_agents.core import tts
 from getstream.video.rtc.track_util import PcmData, AudioFormat
+
+if TYPE_CHECKING:
+    from fish_audio_sdk.schemas import Backends
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +17,15 @@ class TTS(tts.TTS):
     Fish Audio Text-to-Speech implementation.
 
     Fish Audio provides high-quality, multilingual text-to-speech synthesis with
-    support for voice cloning via reference audio.
+    support for voice cloning via reference audio and multiple backend models.
 
-
+    Supported models:
+        - s2-pro: Latest S2 model with fine-grained prosody control and natural
+                  language tags like [laugh], [whisper], [super happy] (default)
+        - speech-1.5: Legacy model
+        - speech-1.6: Improved legacy model
+        - s1: Fast model
+        - s1-mini: Lightweight fast model
     """
 
     def __init__(
@@ -25,6 +34,7 @@ class TTS(tts.TTS):
         reference_id: Optional[str] = "03397b4c4be74759b72533b663fbd001",
         base_url: Optional[str] = None,
         client: Optional[Session] = None,
+        model: "Backends" = "s2-pro",
     ):
         """
         Initialize the Fish Audio TTS service.
@@ -35,6 +45,8 @@ class TTS(tts.TTS):
             reference_id: Optional reference voice ID to use for synthesis.
             base_url: Optional custom API endpoint.
             client: Optionally pass in your own instance of the Fish Audio Session.
+            model: Backend model to use. Options: "s2-pro", "speech-1.5", "speech-1.6",
+                   "s1", "s1-mini". Defaults to "s2-pro".
         """
         super().__init__(provider_name="fish")
 
@@ -47,27 +59,34 @@ class TTS(tts.TTS):
         if client is not None:
             self.client = client
         elif base_url:
+            if not api_key:
+                raise ValueError("api_key is required when base_url is provided")
             self.client = Session(api_key, base_url=base_url)
         else:
+            if not api_key:
+                raise ValueError("api_key is required")
             self.client = Session(api_key)
 
         self.reference_id = reference_id
+        self.model = model
 
     async def stream_audio(
-        self, text: str, *_, **kwargs
+        self, text: str, *_, **kwargs: Any
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
         """
         Convert text to speech using Fish Audio API.
 
         Args:
-            text: The text to convert to speech.
+            text: The text to convert to speech. When using s2-pro model,
+                  you can include inline control tags like [laugh], [whisper],
+                  [super happy] for fine-grained prosody control.
             **kwargs: Additional arguments to pass to TTSRequest (e.g., references).
 
         Returns:
             An async iterator of audio chunks as bytes.
         """
         # Build the TTS request
-        tts_request_kwargs = {"text": text}
+        tts_request_kwargs: dict[str, Any] = {"text": text}
 
         # Add reference_id if configured
         if self.reference_id:
@@ -83,8 +102,8 @@ class TTS(tts.TTS):
             **tts_request_kwargs,
         )
 
-        # Stream audio from Fish Audio; let PcmData normalize response types
-        stream = self.client.tts.awaitable(tts_request)
+        # Stream audio from Fish Audio with the configured model
+        stream = self.client.tts.awaitable(tts_request, backend=self.model)
         return PcmData.from_response(
             stream, sample_rate=16000, channels=1, format=AudioFormat.S16
         )
