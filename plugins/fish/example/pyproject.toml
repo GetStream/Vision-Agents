@@ -7,7 +7,7 @@ dependencies = [
   "python-dotenv>=1.0",
   "vision-agents-plugins-fish",
   "vision-agents-plugins-getstream",
-  "vision-agents-plugins-deepgram",
+  "vision-agents-plugins-gemini",
   "vision-agents-plugins-smart-turn",
   "vision-agents",
 ]
@@ -15,7 +15,7 @@ dependencies = [
 [tool.uv.sources]
 "vision-agents-plugins-fish" = {path = "..", editable=true}
 "vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
-"vision-agents-plugins-deepgram" = {path = "../../deepgram", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../gemini", editable=true}
 "vision-agents-plugins-smart-turn" = {path = "../../smart_turn", editable=true}
 "vision-agents" = {path = "../../../agents-core", editable=true}
 
