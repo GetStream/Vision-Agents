@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "numpy>=2.4.3",
+    "numpy>=2.0.0",
     "pillow>=10.4.0",
     "opencv-python>=4.8.0",
     "moondream>=0.2.0",

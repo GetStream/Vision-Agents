@@ -7124,7 +7124,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fish-audio-sdk", specifier = "==1.3.0" },
+    { name = "fish-audio-sdk", specifier = ">=1.3.0,<2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7139,7 +7139,6 @@ name = "vision-agents-plugins-gemini"
 source = { editable = "plugins/gemini" }
 dependencies = [
     { name = "google-genai" },
-    { name = "numpy" },
     { name = "vision-agents" },
 ]
 
@@ -7153,7 +7152,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "google-genai", specifier = ">=1.66.0" },
-    { name = "numpy", specifier = ">=2.4.3" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7411,7 +7409,7 @@ dev = [
 requires-dist = [
     { name = "accelerate", specifier = ">=1.13.0" },
     { name = "moondream", specifier = ">=0.2.0" },
-    { name = "numpy", specifier = ">=2.4.3" },
+    { name = "numpy", specifier = ">=2.0.0" },
     { name = "opencv-python", specifier = ">=4.8.0" },
     { name = "pillow", specifier = ">=10.4.0" },
     { name = "torch", specifier = ">=2.10.0" },
@@ -7591,7 +7589,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "inference-sdk", specifier = ">=0.17.0" },
-    { name = "numpy", specifier = ">=2.4.3" },
+    { name = "numpy", specifier = ">=2.0.0" },
     { name = "rfdetr", specifier = ">=1.3.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
@@ -7683,7 +7681,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "numpy", specifier = ">=2.4.3" },
+    { name = "numpy", specifier = ">=1.24.0" },
     { name = "twilio", specifier = ">=9.10.3" },
     { name = "vision-agents", editable = "agents-core" },
 ]
@@ -7711,7 +7709,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "numpy", specifier = ">=2.4.3" },
+    { name = "numpy", specifier = ">=2.0.0" },
     { name = "ultralytics", specifier = ">=8.4.21" },
     { name = "vision-agents", editable = "agents-core" },
 ]

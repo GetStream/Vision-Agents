@@ -13,7 +13,6 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "google-genai>=1.66.0",
-    "numpy>=2.4.3",
 ]
 
 [project.urls]

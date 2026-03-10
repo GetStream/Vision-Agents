@@ -12,7 +12,7 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "ultralytics>=8.4.21",
-    "numpy>=2.4.3",
+    "numpy>=2.0.0",
 ]
 
 [project.urls]
