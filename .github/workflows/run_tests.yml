@@ -6,7 +6,9 @@ on:
         description: 'pytest -m expression (e.g., `not integration` or `integration`)'
         required: true
         type: string
-    secrets: { }
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: false
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -90,3 +92,25 @@ jobs:
         run: uv run pytest -m "${{ inputs.marker }}" tests/
       - name: Run plugin tests
         run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py
+
+  notify-slack:
+    name: Notify Slack on failure
+    needs: [lint, test]
+    if: ${{ always() && (needs.lint.result == 'failure' || needs.test.result == 'failure') }}
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Post failure notification
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          webhook: ${{ env.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: "[FAILED] ${{ github.workflow }} in ${{ github.repository }}"
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: "*GitHub Actions failure*\n*Workflow:* `${{ github.workflow }}`\n*Repository:* `${{ github.repository }}`\n*Ref:* `${{ github.head_ref || github.ref_name }}`\n*Event:* `${{ github.event_name }}`\n*Marker:* `${{ inputs.marker }}`\n*Results:* `lint=${{ needs.lint.result }}, test=${{ needs.test.result }}`\n*Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
