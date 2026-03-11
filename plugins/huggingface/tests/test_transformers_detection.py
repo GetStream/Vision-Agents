@@ -12,7 +12,6 @@ import PIL.Image
 import pytest
 import torch
 from av import VideoFrame
-from conftest import skip_blockbuster
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
 from vision_agents.core.utils.video_track import QueuedVideoTrack
@@ -21,6 +20,8 @@ from vision_agents.plugins.huggingface.transformers_detection import (
     DetectionResources,
     TransformersDetectionProcessor,
 )
+
+from conftest import skip_blockbuster
 
 
 @pytest.fixture()
@@ -194,7 +195,13 @@ class TestTransformersDetectionProcessor:
 
     async def test_process_video_nothing_detected(self, agent_mock, events_manager):
         """Empty input (blue screen) should produce no detection events."""
-        processor = TransformersDetectionProcessor(model=MODEL_ID, fps=10)
+        processor = TransformersDetectionProcessor(
+            model=MODEL_ID,
+            fps=10,
+            # Set confidence threshold very high to make sure the model
+            # does not hallucinate
+            conf_threshold=0.99,
+        )
         await processor.warmup()
         processor.attach_agent(agent_mock)
 
