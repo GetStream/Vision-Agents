@@ -859,14 +859,18 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 # transcript.  The actual barge-in handling
                                 # happens in contentEnd with
                                 # stopReason == "INTERRUPTED".
-                                barge_in = "{ \"interrupted\" : true }" in text_content
+                                barge_in = '{ "interrupted" : true }' in text_content
                                 if not barge_in:
                                     # Emit as delta so text appears
                                     # immediately in the UI.  Prepend a
                                     # space between consecutive chunks to
                                     # avoid words running together.
                                     _delta = text_content
-                                    if self._emitted_text_in_turn and _delta and not _delta[0].isspace():
+                                    if (
+                                        self._emitted_text_in_turn
+                                        and _delta
+                                        and not _delta[0].isspace()
+                                    ):
                                         _delta = " " + _delta
                                     self._emitted_text_in_turn = True
 
@@ -891,7 +895,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         "output done to flush playback buffer"
                                     )
                                     self._emit_audio_output_done_event()
-                                
+
                             elif "completionStart" in json_data["event"]:
                                 logger.debug(
                                     "Completion start from AWS Bedrock: %s",
