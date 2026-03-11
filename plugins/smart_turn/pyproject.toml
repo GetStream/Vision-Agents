@@ -12,9 +12,9 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "numpy>=2.2.6,<2.3",
-    "httpx>=0.28.1",
-    "onnxruntime>=1.24.3",
-    "transformers>=4.57.6",
+    "httpx>=0.28.1,<1",
+    "onnxruntime>=1.24.3,<2",
+    "transformers>=4.57.6,<5",
 ]
 
 [project.urls]
@@ -40,4 +40,3 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-
