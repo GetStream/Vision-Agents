@@ -7,14 +7,17 @@ import subprocess
 from collections.abc import Callable, Coroutine
 from typing import Any, Literal
 
-import pyautogui
-
 from ._grid import VIRTUAL_SIZE, Grid
 
 logger = logging.getLogger(__name__)
 
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0.1
+try:
+    import pyautogui
+
+    pyautogui.FAILSAFE = False
+    pyautogui.PAUSE = 0.1
+except (KeyError, ImportError):
+    pyautogui = None  # type: ignore[assignment]
 
 
 def _run_sync(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
