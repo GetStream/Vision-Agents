@@ -39,7 +39,8 @@ vision-agents-plugins-assemblyai = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
-# vogent-turn requires numpy<2.0, so we override to use 1.26.x
+# moondream requires pillow<11, inference-sdk (newer) requires pillow>=11
+# Keeping numpy<2.0 forces inference-sdk to older versions that don't conflict
 override-dependencies = ["numpy>=1.26.0,<2.0"]
 
 # Store uv cache in project directory for better sandboxing
