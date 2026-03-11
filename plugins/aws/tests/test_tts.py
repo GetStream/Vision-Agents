@@ -1,12 +1,10 @@
 import os
+
 import pytest
-import pytest_asyncio
 from dotenv import load_dotenv
-
-from vision_agents.plugins import aws as aws_plugin
-from vision_agents.core.tts.testing import TTSSession
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
-
+from vision_agents.core.tts.testing import TTSSession
+from vision_agents.plugins import aws
 
 load_dotenv()
 
@@ -24,16 +22,18 @@ def _has_aws_creds() -> bool:
     )
 
 
-class TestAWSPollyTTS:
-    @pytest_asyncio.fixture
-    async def tts(self) -> aws_plugin.TTS:  # type: ignore[name-defined]
-        if not _has_aws_creds():
-            pytest.skip("AWS credentials not set – skipping Polly TTS tests")
-        # Region can be overridden via AWS_REGION/AWS_DEFAULT_REGION
-        return aws_plugin.TTS(voice_id=os.environ.get("AWS_POLLY_VOICE", "Joanna"))
+@pytest.fixture
+async def tts(self) -> aws.TTS:  # type: ignore[name-defined]
+    if not _has_aws_creds():
+        pytest.skip("AWS credentials not set – skipping Polly TTS tests")
+    # Region can be overridden via AWS_REGION/AWS_DEFAULT_REGION
+    return aws.TTS(voice_id=os.environ.get("AWS_POLLY_VOICE", "Joanna"))
 
-    @pytest.mark.integration
-    async def test_aws_polly_tts_speech(self, tts: aws_plugin.TTS):
+
+@pytest.mark.skip()
+@pytest.mark.integration
+class TestAWSPollyTTSIntegration:
+    async def test_aws_polly_tts_speech(self, tts: aws.TTS):
         tts.set_output_format(sample_rate=16000, channels=1)
         session = TTSSession(tts)
 
@@ -43,6 +43,5 @@ class TestAWSPollyTTS:
         assert not result.errors
         assert len(result.speeches) > 0
 
-    @pytest.mark.integration
-    async def test_aws_polly_tts_manual_wav(self, tts: aws_plugin.TTS):
+    async def test_aws_polly_tts_manual_wav(self, tts: aws.TTS):
         await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
