@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import logging
 import types
@@ -314,3 +315,26 @@ class TestEventManager:
         async def on_event(event: ValidEvent): ...
 
         assert manager.has_subscribers(ValidEvent)
+
+    async def test_shutdown_awaits_handler_tasks(self):
+        """shutdown() should await pending handler tasks before clearing state."""
+        manager = EventManager()
+        manager.register(ValidEvent)
+
+        task_was_awaited = False
+
+        @manager.subscribe
+        async def slow_handler(event: ValidEvent):
+            nonlocal task_was_awaited
+            await asyncio.sleep(0.05)
+            task_was_awaited = True
+
+        manager.send(ValidEvent(field=1))
+        # Give the processing loop time to dispatch the handler task
+        await asyncio.sleep(0.01)
+
+        await manager.shutdown()
+
+        assert task_was_awaited
+        assert len(manager._handler_tasks) == 0
+        assert len(manager._handlers) == 0
