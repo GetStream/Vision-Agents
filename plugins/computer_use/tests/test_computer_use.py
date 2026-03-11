@@ -162,13 +162,13 @@ class TestActions:
     @pytest.mark.integration
     async def test_click_executes(self):
         actions = make_grid_actions(Grid())
-        result = await actions["click"](cell="A1", position="center")
+        result = await actions["click"](cell="A1")
         assert "Clicked" in result
 
     @pytest.mark.integration
     async def test_double_click_executes(self):
         actions = make_grid_actions(Grid())
-        result = await actions["double_click"](cell="A1", position="center")
+        result = await actions["double_click"](cell="A1")
         assert "Double-clicked" in result
 
     @pytest.mark.integration
@@ -184,13 +184,11 @@ class TestActions:
     @pytest.mark.integration
     async def test_scroll_executes(self):
         actions = make_grid_actions(Grid())
-        result = await actions["scroll"](
-            cell="A1", position="center", clicks=1, direction="down"
-        )
+        result = await actions["scroll"](cell="A1", clicks=1, direction="down")
         assert "Scrolled" in result
 
     @pytest.mark.integration
     async def test_mouse_move_executes(self):
         actions = make_grid_actions(Grid())
-        result = await actions["mouse_move"](cell="A1", position="center")
+        result = await actions["mouse_move"](cell="A1")
         assert "Moved" in result
