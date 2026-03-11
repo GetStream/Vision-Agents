@@ -32,7 +32,7 @@ def register(
         f" {grid.col_labels[0]}-{grid.col_labels[-1]}"
         f" and rows 1-{grid.rows}."
         " Provide the 'cell' parameter (e.g. 'H8') to target a grid cell."
-        " Use 'position' to refine within the cell"
+        " You MUST also provide 'position' to specify where within the cell"
         " (top-left, top, top-right, left, center, right,"
         " bottom-left, bottom, bottom-right)."
     )

@@ -50,14 +50,14 @@ def make_grid_actions(grid: Grid) -> dict[str, ActionFunc]:
 
     async def click(
         cell: str,
-        position: str = "center",
+        position: str,
         button: str = "left",
     ) -> str:
         """Click at a grid cell.
 
         Args:
             cell: Grid cell reference, e.g. "H8".
-            position: Where within the cell to click. One of: top-left, top,
+            position: Required. Where within the cell to click. One of: top-left, top,
                 top-right, left, center, right, bottom-left, bottom, bottom-right.
             button: Mouse button — "left", "right", or "middle".
         """
@@ -75,13 +75,13 @@ def make_grid_actions(grid: Grid) -> dict[str, ActionFunc]:
 
     async def double_click(
         cell: str,
-        position: str = "center",
+        position: str,
     ) -> str:
         """Double-click at a grid cell.
 
         Args:
             cell: Grid cell reference, e.g. "H8".
-            position: Where within the cell to click. One of: top-left, top,
+            position: Required. Where within the cell to click. One of: top-left, top,
                 top-right, left, center, right, bottom-left, bottom, bottom-right.
         """
         sx, sy = _cell_to_screen(cell, position)
@@ -97,7 +97,7 @@ def make_grid_actions(grid: Grid) -> dict[str, ActionFunc]:
 
     async def scroll(
         cell: str,
-        position: str = "center",
+        position: str,
         clicks: int = 3,
         direction: Literal["up", "down"] = "down",
     ) -> str:
@@ -105,7 +105,7 @@ def make_grid_actions(grid: Grid) -> dict[str, ActionFunc]:
 
         Args:
             cell: Grid cell reference, e.g. "H8".
-            position: Where within the cell to scroll. One of: top-left, top,
+            position: Required. Where within the cell to scroll. One of: top-left, top,
                 top-right, left, center, right, bottom-left, bottom, bottom-right.
             clicks: Number of scroll increments.
             direction: "up" or "down".
@@ -125,13 +125,13 @@ def make_grid_actions(grid: Grid) -> dict[str, ActionFunc]:
 
     async def mouse_move(
         cell: str,
-        position: str = "center",
+        position: str,
     ) -> str:
         """Move the mouse cursor to a grid cell.
 
         Args:
             cell: Grid cell reference, e.g. "H8".
-            position: Where within the cell to move. One of: top-left, top,
+            position: Required. Where within the cell to move. One of: top-left, top,
                 top-right, left, center, right, bottom-left, bottom, bottom-right.
         """
         sx, sy = _cell_to_screen(cell, position)
