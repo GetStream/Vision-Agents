@@ -13,8 +13,8 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "onnxruntime>=1.16.1,<2",
-    "boto3>=1.42.7,<2",
-    "aws-sdk-bedrock-runtime>=0.2.0,<1",
+    "boto3>=1.42.65,<2",
+    "aws-sdk-bedrock-runtime>=0.4.0,<1",
 ]
 
 [project.urls]

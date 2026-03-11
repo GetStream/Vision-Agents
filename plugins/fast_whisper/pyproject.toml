@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "faster-whisper>=1.0.0,<2",
+    "faster-whisper>=1.2.1,<2",
 ]
 
 [project.urls]
