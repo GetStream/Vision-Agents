@@ -446,11 +446,11 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         # Start the connection
         await connection.__aenter__()
+        self._real_connection = connection
+        self._call = call
         # Re-publish already published tracks in case somebody is already on the call when we joined.
         # Otherwise, we won't get the video track from participants joined before us.
         await connection.republish_tracks()
-        self._real_connection = connection
-        self._call = call
 
         standardize_connection = StreamConnection(connection)
         return standardize_connection
