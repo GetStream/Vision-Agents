@@ -321,20 +321,20 @@ class TestEventManager:
         manager = EventManager()
         manager.register(ValidEvent)
 
-        task_was_awaited = False
+        handler_started = asyncio.Event()
+        handler_completed = asyncio.Event()
 
         @manager.subscribe
         async def slow_handler(event: ValidEvent):
-            nonlocal task_was_awaited
+            handler_started.set()
             await asyncio.sleep(0.05)
-            task_was_awaited = True
+            handler_completed.set()
 
         manager.send(ValidEvent(field=1))
-        # Give the processing loop time to dispatch the handler task
-        await asyncio.sleep(0.01)
+        await handler_started.wait()
 
         await manager.shutdown()
 
-        assert task_was_awaited
+        assert handler_completed.is_set()
         assert len(manager._handler_tasks) == 0
         assert len(manager._handlers) == 0
