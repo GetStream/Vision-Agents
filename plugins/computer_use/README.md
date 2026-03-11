@@ -15,27 +15,37 @@ Register the tools on any LLM, then use with an agent that receives screen-share
 ```python
 from vision_agents.plugins import gemini, computer_use
 
-llm = gemini.Realtime("gemini-2.0-flash-live-001")
-computer_use.ComputerUseToolkit().register(llm)
+llm = gemini.Realtime(fps=2)
+computer_use.register(llm)
 
-agent = Agent(llm=llm)
+agent = Agent(
+    llm=llm,
+    processors=[computer_use.GridOverlayProcessor(fps=2)],
+)
 ```
 
-With screen sharing active, the model sees the desktop and can call:
+The `GridOverlayProcessor` draws a labeled grid on screen frames so the model can reference cells by name. Grid size is customizable:
+
+```python
+computer_use.register(llm, cols=10, rows=10)
+computer_use.GridOverlayProcessor(cols=10, rows=10, fps=2)
+```
+
+With screen sharing active, the model sees the grid and can call:
 
 | Tool | Description |
 |------|-------------|
-| `click(x, y, button)` | Click at coordinates |
-| `double_click(x, y)` | Double-click at coordinates |
+| `click(cell, position, button)` | Click at a grid cell |
+| `double_click(cell, position)` | Double-click at a grid cell |
 | `type_text(text)` | Type text into the focused element |
 | `key_press(keys)` | Press a key combo, e.g. `"cmd+c"` |
-| `scroll(x, y, clicks, direction)` | Scroll at coordinates |
-| `mouse_move(x, y)` | Move cursor to coordinates |
+| `scroll(cell, position, clicks, direction)` | Scroll at a grid cell |
+| `mouse_move(cell, position)` | Move cursor to a grid cell |
 | `open_path(path)` | Open a file/folder with the OS default handler |
 
 ## How it works
 
-The SDK's screen-share pipeline (`TrackType.SCREEN_SHARE`) feeds frames to the VLM/Realtime model continuously. The model sees the screen, decides what to do, and calls action tools backed by [PyAutoGUI](https://pyautogui.readthedocs.io/).
+The SDK's screen-share pipeline (`TrackType.SCREEN_SHARE`) feeds frames to the VLM/Realtime model continuously. The `GridOverlayProcessor` annotates these frames with a labeled grid (e.g. A-O / 1-15). The model reads the grid labels, picks the right cell, and calls action tools backed by [PyAutoGUI](https://pyautogui.readthedocs.io/).
 
 ## Platform support
 

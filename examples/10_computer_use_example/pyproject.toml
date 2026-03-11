@@ -1,0 +1,19 @@
+[project]
+name = "computer-use-example"
+version = "0.1.0"
+description = "AI desktop assistant that can see and control your screen"
+requires-python = ">=3.10"
+
+dependencies = [
+    "python-dotenv>=1.0",
+    "vision-agents",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-computer-use",
+]
+
+[tool.uv.sources]
+"vision-agents" = { path = "../../agents-core", editable = true }
+"vision-agents-plugins-gemini" = { path = "../../plugins/gemini", editable = true }
+"vision-agents-plugins-getstream" = { path = "../../plugins/getstream", editable = true }
+"vision-agents-plugins-computer-use" = { path = "../../plugins/computer_use", editable = true }
