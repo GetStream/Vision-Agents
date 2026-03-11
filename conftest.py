@@ -67,6 +67,9 @@ def blockbuster(request) -> Iterator[BlockBuster | None]:
         with blockbuster_ctx() as bb:
             for func in bb.functions.values():
                 func.can_block_in(agent_cls_file, "__init__")
+                # Some libs use "importlib_metadata" to determine the current version
+                func.can_block_in("importlib_metadata/__init__.py", "mtime")
+                func.can_block_in("importlib_metadata/__init__.py", "version")
 
             # Allow Python's standard logging which is inherently synchronous.
             if "io.TextIOWrapper.write" in bb.functions:
