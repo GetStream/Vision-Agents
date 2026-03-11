@@ -146,6 +146,15 @@ class TestRegister:
         assert "A-H" in schemas["click"]["description"]
         assert "1-8" in schemas["click"]["description"]
 
+    def test_register_with_shared_grid(self):
+        llm = _FakeLLM()
+        grid = Grid(cols=10, rows=10)
+        register(llm, grid=grid)
+
+        schemas = {s["name"]: s for s in llm.function_registry.get_tool_schemas()}
+        assert "A-J" in schemas["click"]["description"]
+        assert "1-10" in schemas["click"]["description"]
+
 
 class TestActions:
     """Test that action functions are valid async callables with correct signatures."""

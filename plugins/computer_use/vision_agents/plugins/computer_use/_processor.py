@@ -21,24 +21,32 @@ class GridOverlayProcessor(VideoProcessorPublisher):
     grid cells (e.g. "C2") instead of guessing raw pixel coordinates.
 
     Args:
+        grid: Shared Grid instance. If provided, cols/rows are ignored.
         cols: Number of grid columns (1-26). Default 15.
         rows: Number of grid rows (1-99). Default 15.
         fps: Frame rate for processing. Default 2.
 
     Usage::
 
-        from vision_agents.plugins.computer_use import GridOverlayProcessor
+        from vision_agents.plugins.computer_use import Grid, GridOverlayProcessor
 
+        grid = Grid(cols=20, rows=20)
         agent = Agent(
             ...,
-            processors=[GridOverlayProcessor(cols=15, rows=15)],
+            processors=[GridOverlayProcessor(grid=grid)],
         )
     """
 
     name = "grid_overlay"
 
-    def __init__(self, cols: int = 15, rows: int = 15, fps: float = 2):
-        self._grid = Grid(cols=cols, rows=rows)
+    def __init__(
+        self,
+        grid: Grid | None = None,
+        cols: int = 15,
+        rows: int = 15,
+        fps: float = 2,
+    ):
+        self._grid = grid if grid is not None else Grid(cols=cols, rows=rows)
         self._fps = fps
         self._video_forwarder: Optional[VideoForwarder] = None
         self._video_track = QueuedVideoTrack()

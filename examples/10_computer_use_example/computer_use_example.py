@@ -22,9 +22,12 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
+grid = computer_use.Grid(cols=15, rows=15)
+
+
 def setup_llm() -> gemini.Realtime:
     llm = gemini.Realtime(fps=2)
-    computer_use.register(llm)
+    computer_use.register(llm, grid=grid)
     return llm
 
 
@@ -34,7 +37,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="Desktop Assistant", id="desktop-agent"),
         instructions="Read @examples/10_computer_use_example/instructions.md",
         llm=setup_llm(),
-        processors=[computer_use.GridOverlayProcessor(fps=2)],
+        processors=[computer_use.GridOverlayProcessor(grid=grid, fps=2)],
     )
     return agent
 

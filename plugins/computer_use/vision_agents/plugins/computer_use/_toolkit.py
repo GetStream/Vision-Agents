@@ -10,15 +10,22 @@ from ._grid import Grid
 logger = logging.getLogger(__name__)
 
 
-def register(llm: LLM, cols: int = 15, rows: int = 15) -> None:
+def register(
+    llm: LLM,
+    grid: Grid | None = None,
+    cols: int = 15,
+    rows: int = 15,
+) -> None:
     """Register all computer-use action tools on *llm*.
 
     Args:
         llm: The LLM to register tools on.
+        grid: Shared Grid instance. If provided, cols/rows are ignored.
         cols: Number of grid columns (1-26). Default 15.
         rows: Number of grid rows (1-99). Default 15.
     """
-    grid = Grid(cols=cols, rows=rows)
+    if grid is None:
+        grid = Grid(cols=cols, rows=rows)
 
     cell_hint = (
         f" The screen has a grid overlay with columns"

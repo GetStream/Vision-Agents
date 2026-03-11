@@ -7059,6 +7059,7 @@ all-plugins = [
     { name = "vision-agents-plugins-assemblyai" },
     { name = "vision-agents-plugins-aws" },
     { name = "vision-agents-plugins-cartesia" },
+    { name = "vision-agents-plugins-computer-use" },
     { name = "vision-agents-plugins-decart" },
     { name = "vision-agents-plugins-deepgram" },
     { name = "vision-agents-plugins-elevenlabs" },
@@ -7099,6 +7100,9 @@ aws = [
 ]
 cartesia = [
     { name = "vision-agents-plugins-cartesia" },
+]
+computer-use = [
+    { name = "vision-agents-plugins-computer-use" },
 ]
 decart = [
     { name = "vision-agents-plugins-decart" },
@@ -7219,6 +7223,8 @@ requires-dist = [
     { name = "vision-agents-plugins-aws", marker = "extra == 'aws'", editable = "plugins/aws" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'all-plugins'", editable = "plugins/cartesia" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'cartesia'", editable = "plugins/cartesia" },
+    { name = "vision-agents-plugins-computer-use", marker = "extra == 'all-plugins'", editable = "plugins/computer_use" },
+    { name = "vision-agents-plugins-computer-use", marker = "extra == 'computer-use'", editable = "plugins/computer_use" },
     { name = "vision-agents-plugins-decart", marker = "extra == 'all-plugins'", editable = "plugins/decart" },
     { name = "vision-agents-plugins-decart", marker = "extra == 'decart'", editable = "plugins/decart" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'all-plugins'", editable = "plugins/deepgram" },
@@ -7276,7 +7282,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anthropic", "assemblyai", "aws", "cartesia", "computer-use", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"

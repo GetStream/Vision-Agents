@@ -24,11 +24,12 @@ agent = Agent(
 )
 ```
 
-The `GridOverlayProcessor` draws a labeled grid on screen frames so the model can reference cells by name. Grid size is customizable:
+The `GridOverlayProcessor` draws a labeled grid on screen frames so the model can reference cells by name. Grid size is customizable — share a `Grid` instance to keep tools and overlay in sync:
 
 ```python
-computer_use.register(llm, cols=10, rows=10)
-computer_use.GridOverlayProcessor(cols=10, rows=10, fps=2)
+grid = computer_use.Grid(cols=20, rows=20)
+computer_use.register(llm, grid=grid)
+computer_use.GridOverlayProcessor(grid=grid, fps=2)
 ```
 
 With screen sharing active, the model sees the grid and can call:
