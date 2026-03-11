@@ -31,7 +31,7 @@ An AI desktop assistant that can see your screen and control your computer. Shar
    ```
 
 3. Set up your `.env`:
-   ```
+   ```bash
    GOOGLE_API_KEY=your_google_key
    STREAM_API_KEY=your_stream_key
    STREAM_API_SECRET=your_stream_secret
@@ -49,12 +49,12 @@ The agent will create a call and open a demo UI. Share your screen in the call, 
 
 | Tool | What it does |
 |------|-------------|
-| `click(x, y)` | Click at screen coordinates |
-| `double_click(x, y)` | Double-click at coordinates |
+| `click(cell, position, button)` | Click at a grid cell |
+| `double_click(cell, position)` | Double-click at a grid cell |
 | `type_text(text)` | Type into the focused element |
 | `key_press(keys)` | Press a key combo, e.g. `"cmd+c"` |
-| `scroll(x, y, clicks, direction)` | Scroll at coordinates |
-| `mouse_move(x, y)` | Move the cursor |
+| `scroll(cell, position, clicks, direction)` | Scroll at a grid cell |
+| `mouse_move(cell, position)` | Move the cursor to a grid cell |
 | `open_path(path)` | Open a file or folder with the OS default handler |
 
 ## Important notes
