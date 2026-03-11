@@ -64,8 +64,7 @@ class RestylingProcessor(VideoProcessorPublisher):
         api_key: Optional[str] = None,
         model: RealTimeModels = "mirage_v2",
         initial_prompt: str = "Cyberpunk city",
-        enrich: bool = True,
-        mirror: bool = True,
+        enhance: bool = True,
         width: int = 1280,  # Model preferred
         height: int = 720,
         **kwargs,
@@ -76,8 +75,7 @@ class RestylingProcessor(VideoProcessorPublisher):
             api_key: Decart API key. Uses DECART_API_KEY env var if not provided.
             model: Decart model name (default: "mirage_v2").
             initial_prompt: Initial style prompt text.
-            enrich: Whether to enrich prompt (default: True).
-            mirror: Mirror mode for front camera (default: True).
+            enhance: Whether to enhance prompt (default: True).
             width: Output video width (default: 1280).
             height: Output video height (default: 720).
             **kwargs: Additional arguments passed to parent class.
@@ -92,8 +90,7 @@ class RestylingProcessor(VideoProcessorPublisher):
 
         self.model_name = model
         self.initial_prompt = initial_prompt
-        self.enrich = enrich
-        self.mirror = mirror
+        self.enhance = enhance
         self.width = width
         self.height = height
 
@@ -124,44 +121,22 @@ class RestylingProcessor(VideoProcessorPublisher):
         return self._video_track
 
     async def update_prompt(
-        self, prompt_text: str, enrich: Optional[bool] = None
+        self, prompt_text: str, enhance: Optional[bool] = None
     ) -> None:
-        """
-        Updates the prompt used for the Decart real-time client. This method allows
-        changing the current prompt and optionally specifies whether to enrich the
-        prompt content. The operation is performed asynchronously and requires an
-        active connection to the Decart client.
+        """Updates the prompt used for the Decart real-time client.
 
-        If the `enrich` parameter is not provided, the method uses the default
-        `self.enrich` value.
-
-        Parameters:
-            prompt_text: str
-                The text of the new prompt to be applied.
-            enrich: Optional[bool]
-                Specifies whether to enrich the prompt content. If not provided,
-                defaults to the object's `enrich` attribute.
-
-        Returns:
-            None
+        Args:
+            prompt_text: The text of the new prompt to be applied.
+            enhance: Whether to enhance the prompt content. Defaults to self.enhance.
         """
         if not self._realtime_client:
             logger.debug("Cannot set prompt: not connected to Decart")
             return
 
-        enrich_value = enrich if enrich is not None else self.enrich
-        await self._realtime_client.set_prompt(prompt_text, enrich=enrich_value)
+        enhance_value = enhance if enhance is not None else self.enhance
+        await self._realtime_client.set_prompt(prompt_text, enhance=enhance_value)
         self.initial_prompt = prompt_text
         logger.info(f"Updated Decart prompt: {prompt_text[:50]}...")
-
-    async def set_mirror(self, enabled: bool) -> None:
-        if not self._realtime_client:
-            logger.debug("Cannot set mirror: not connected to Decart")
-            return
-
-        await self._realtime_client.set_mirror(enabled)
-        self.mirror = enabled
-        logger.debug(f"Updated Decart mirror mode: {enabled}")
 
     async def _connect_to_decart(self, local_track: MediaStreamTrack) -> None:
         if self._connecting:
@@ -178,9 +153,8 @@ class RestylingProcessor(VideoProcessorPublisher):
             initial_state = ModelState(
                 prompt=Prompt(
                     text=self.initial_prompt,
-                    enrich=self.enrich,
+                    enhance=self.enhance,
                 ),
-                mirror=self.mirror,
             )
 
             self._realtime_client = await RealtimeClient.connect(
