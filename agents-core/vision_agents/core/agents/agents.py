@@ -37,6 +37,7 @@ from ..llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
     RealtimeAgentSpeechTranscriptionEvent,
+    RealtimeAudioOutputDoneEvent,
     RealtimeAudioOutputEvent,
     RealtimeUserSpeechTranscriptionEvent,
 )
@@ -1458,6 +1459,11 @@ class Agent:
                     and not self.audio_publishers
                 ):
                     await self._audio_track.write(event.data)
+
+            @self.events.subscribe
+            async def on_audio_done(_: RealtimeAudioOutputDoneEvent):
+                if self._audio_track is not None and not self.audio_publishers:
+                    await self._audio_track.flush()
 
         # Set up video track if video publishers are available
         if self.publish_video:
