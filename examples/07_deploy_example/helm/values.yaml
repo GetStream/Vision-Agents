@@ -42,7 +42,7 @@ service:
 
 # Ingress configuration
 ingress:
-  enabled: true
+  enabled: false
   className: ""   # nginx, traefik, etc.
   host: ""        # e.g. agent.example.com
   annotations: {}
