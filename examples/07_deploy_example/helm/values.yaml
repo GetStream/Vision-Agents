@@ -62,7 +62,7 @@ redis:
   url: ""  # e.g. redis://redis:6379/0 or rediss://:auth@host:6380/0
   # Bitnami Redis chart overrides (only when redis.deploy.enabled=true)
   auth:
-    enabled: false
+    enabled: true
   architecture: standalone
 
 # Prometheus metrics scraping

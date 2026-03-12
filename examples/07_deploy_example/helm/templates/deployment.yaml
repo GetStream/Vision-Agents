@@ -31,8 +31,21 @@ spec:
                 name: {{ include "vision-agent.secretName" . }}
           {{- if or .Values.redis.url .Values.redis.deploy.enabled }}
           env:
+            {{- if .Values.redis.url }}
             - name: REDIS_URL
-              value: {{ .Values.redis.url | default (printf "redis://%s-redis-master:6379/0" .Release.Name) | quote }}
+              value: {{ .Values.redis.url | quote }}
+            {{- else if and .Values.redis.deploy.enabled .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-redis
+                  key: redis-password
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@{{ .Release.Name }}-redis-master:6379/0"
+            {{- else }}
+            - name: REDIS_URL
+              value: {{ printf "redis://%s-redis-master:6379/0" .Release.Name | quote }}
+            {{- end }}
           {{- end }}
           livenessProbe:
             httpGet:
