@@ -10,7 +10,6 @@ dependencies = [
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-gemini",
   "vision-agents[redis]>=0.4.1",
-  "getstream>=2.0.0,<3.0.0",
   "prometheus-client>=0.20",
 ]
 
