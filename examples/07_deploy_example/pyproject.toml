@@ -10,8 +10,6 @@ dependencies = [
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-gemini",
   "vision-agents[redis]>=0.4.1",
-  "opentelemetry-api",
-  "opentelemetry-sdk",
   "opentelemetry-exporter-prometheus",
   "prometheus-client>=0.20",
 ]
@@ -23,4 +21,3 @@ dependencies = [
 # "vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
 # "vision-agents-plugins-gemini" = {path = "../../plugins/gemini", editable=true}
 # "vision-agents" = {path = "../../agents-core", editable=true}
-
