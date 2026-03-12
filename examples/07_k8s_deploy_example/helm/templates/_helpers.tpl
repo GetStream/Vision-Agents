@@ -56,4 +56,3 @@ Secret name
 {{- include "vision-agent.fullname" . }}-secrets
 {{- end }}
 {{- end }}
-

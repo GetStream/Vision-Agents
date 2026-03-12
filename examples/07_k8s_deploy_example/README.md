@@ -234,7 +234,7 @@ Just change `gpu.enabled` and redeploy:
 # Switch to GPU
 helm upgrade vision-agent ./helm --reuse-values --set gpu.enabled=true
 
-# Switch to CPU  
+# Switch to CPU
 helm upgrade vision-agent ./helm --reuse-values --set gpu.enabled=false
 ```
 
