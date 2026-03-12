@@ -87,6 +87,8 @@ def _should_reconnect(exc: Exception) -> bool:
         and exc.rcvd.code in reconnect_close_codes
     ):
         return True
+    if isinstance(exc, genai.errors.APIError) and exc.code in reconnect_close_codes:
+        return True
     return False
 
 
@@ -258,6 +260,9 @@ class GeminiRealtime(realtime.Realtime):
         Parameters:
             frame: Video frame to send.
         """
+        if not self.connected:
+            return
+
         loop = asyncio.get_running_loop()
 
         # Run frame conversion in a separate thread to avoid blocking the loop.
@@ -267,7 +272,7 @@ class GeminiRealtime(realtime.Realtime):
 
         blob = Blob(data=png_bytes, mime_type="image/png")
         try:
-            await self._session.send_realtime_input(media=blob)
+            await self._session.send_realtime_input(video=blob)
         except Exception:
             logger.exception("Failed to send a video frame to Gemini Live API")
 
@@ -469,6 +474,21 @@ class GeminiRealtime(realtime.Realtime):
             while True:
                 try:
                     await self._process_events()
+                except genai.errors.APIError as exc:
+                    if _should_reconnect(exc):
+                        logger.warning(
+                            "Gemini Live session closed with code %s, reconnecting",
+                            exc.code,
+                        )
+                        await self.connect()
+                        continue
+
+                    self.connected = False
+                    await self.stop_watching_video_track()
+                    logger.exception(
+                        "Fatal Gemini Live API error, stopping event processing"
+                    )
+                    return
                 except websockets.ConnectionClosedError as e:
                     if not _should_reconnect(e):
                         raise e
