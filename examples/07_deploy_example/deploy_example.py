@@ -61,7 +61,8 @@ def _collect(launcher: AgentLauncher) -> None:
                 v = s.agent.metrics.to_dict().get(key)
                 if v is not None:
                     values.append(v)
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
+                logger.exception("Failed to collect avg metric '%s'", key)
                 continue
         gauge.set(sum(values) / len(values) / 1000 if values else 0)
 
@@ -72,7 +73,8 @@ def _collect(launcher: AgentLauncher) -> None:
                 v = s.agent.metrics.to_dict().get(key)
                 if v is not None:
                     total += int(v)
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
+                logger.exception("Failed to collect sum metric '%s'", key)
                 continue
         gauge.set(total)
 
