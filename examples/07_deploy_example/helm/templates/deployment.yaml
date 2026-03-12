@@ -29,12 +29,9 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "vision-agent.secretName" . }}
-          {{- if or .Values.redis.url .Values.redis.deploy.enabled }}
+          {{- if and .Values.redis.deploy.enabled (not .Values.redis.url) }}
           env:
-            {{- if .Values.redis.url }}
-            - name: REDIS_URL
-              value: {{ .Values.redis.url | quote }}
-            {{- else if and .Values.redis.deploy.enabled .Values.redis.auth.enabled }}
+            {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
