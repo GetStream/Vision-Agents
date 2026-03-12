@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from uuid import uuid4
 
 import numpy as np
@@ -14,6 +14,7 @@ from vision_agents.core.events import EventManager
 from vision_agents.core.llm.events import (
     RealtimeAgentSpeechTranscriptionEvent,
     RealtimeAudioOutputEvent,
+    RealtimeAudioOutputDoneEvent,
     RealtimeUserSpeechTranscriptionEvent,
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
@@ -41,7 +42,7 @@ class DummyLLM(LLM, Warmable[bool]):
     async def on_warmup(self) -> bool:
         return True
 
-    async def on_warmed_up(self, *_) -> None:
+    def on_warmed_up(self, resource: bool) -> None:
         self.warmed_up = True
 
 
@@ -131,8 +132,8 @@ class DummyAudioPublisher(AudioPublisher):
     def __init__(self):
         self.track = WriteRecordingTrack()
 
-    def publish_audio_track(self) -> WriteRecordingTrack:
-        return self.track
+    def publish_audio_track(self) -> AudioStreamTrack:
+        return cast(AudioStreamTrack, self.track)
 
     async def close(self) -> None:
         pass
@@ -145,6 +146,15 @@ class RecordingEdge(DummyEdge):
 
     def create_audio_track(self, *args, **kwargs) -> WriteRecordingTrack:
         return self.recorded_audio_track
+
+
+def _pcm_for_duration(duration_ms: int, sample_rate: int = 16000) -> PcmData:
+    num_samples = int((duration_ms / 1000) * sample_rate)
+    return PcmData(
+        samples=np.zeros(num_samples, dtype=np.int16),
+        sample_rate=sample_rate,
+        format=AudioFormat.S16,
+    )
 
 
 class TestAgent:
@@ -376,6 +386,70 @@ class TestAgent:
         agent.events.send(RealtimeAudioOutputEvent(data=pcm))
         await agent.events.wait()
         assert publisher.track.writes == []
+
+    async def test_realtime_audio_prebuffers_before_forwarding(self):
+        edge = RecordingEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        agent._realtime_audio_prebuffer_ms = 15
+        agent._realtime_audio_chunk_ms = 5
+
+        for _ in range(2):
+            agent.events.send(RealtimeAudioOutputEvent(data=_pcm_for_duration(5)))
+            await agent.events.wait()
+
+        assert edge.recorded_audio_track.writes == []
+
+        agent.events.send(RealtimeAudioOutputEvent(data=_pcm_for_duration(5)))
+        await agent.events.wait()
+        assert edge.recorded_audio_track.writes == []
+
+        await asyncio.sleep(0.03)
+
+        assert len(edge.recorded_audio_track.writes) == 3
+        assert [len(pcm.samples) for pcm in edge.recorded_audio_track.writes] == [
+            80,
+            80,
+            80,
+        ]
+
+    async def test_realtime_audio_done_flushes_and_resets_prebuffer(self):
+        edge = RecordingEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        agent._realtime_audio_prebuffer_ms = 50
+        agent._realtime_audio_chunk_ms = 10
+
+        for _ in range(3):
+            agent.events.send(RealtimeAudioOutputEvent(data=_pcm_for_duration(10)))
+            await agent.events.wait()
+
+        assert edge.recorded_audio_track.writes == []
+
+        agent.events.send(RealtimeAudioOutputDoneEvent())
+        await agent.events.wait()
+        await asyncio.sleep(0.04)
+
+        assert len(edge.recorded_audio_track.writes) == 3
+        assert [len(pcm.samples) for pcm in edge.recorded_audio_track.writes] == [
+            160,
+            160,
+            160,
+        ]
+
+        agent.events.send(RealtimeAudioOutputEvent(data=_pcm_for_duration(10)))
+        await agent.events.wait()
+        await asyncio.sleep(0.01)
+
+        assert len(edge.recorded_audio_track.writes) == 3
 
     async def test_authenticate_calls_edge(self):
         edge = DummyEdge()
