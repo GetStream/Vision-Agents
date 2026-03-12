@@ -38,9 +38,9 @@ data:
             "overrides": []
           },
           "targets": [
-            { "expr": "avg(ai_demo_stt_latency_seconds{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "STT", "refId": "A" },
-            { "expr": "avg(ai_demo_llm_latency_seconds{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "LLM", "refId": "B" },
-            { "expr": "avg(ai_demo_tts_latency_seconds{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "TTS", "refId": "C" }
+            { "expr": "rate(stt_latency_ms_ms_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(stt_latency_ms_ms_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000", "legendFormat": "STT", "refId": "A" },
+            { "expr": "rate(llm_latency_ms_ms_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(llm_latency_ms_ms_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000", "legendFormat": "LLM", "refId": "B" },
+            { "expr": "rate(tts_latency_ms_ms_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(tts_latency_ms_ms_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000", "legendFormat": "TTS", "refId": "C" }
           ]
         },
         {
@@ -52,8 +52,8 @@ data:
             "overrides": []
           },
           "targets": [
-            { "expr": "sum(ai_demo_llm_input_tokens{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Input", "refId": "A" },
-            { "expr": "sum(ai_demo_llm_output_tokens{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Output", "refId": "B" }
+            { "expr": "sum(llm_tokens_input_total{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Input", "refId": "A" },
+            { "expr": "sum(llm_tokens_output_total{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Output", "refId": "B" }
           ]
         },
         {
@@ -65,7 +65,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "sum(ai_demo_tts_characters{namespace=\"{{ .Release.Namespace }}\"})",
+            "expr": "sum(tts_characters_total{namespace=\"{{ .Release.Namespace }}\"})",
             "legendFormat": "Characters",
             "refId": "A"
           }]
@@ -107,7 +107,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "avg(ai_demo_llm_ttft_seconds{namespace=\"{{ .Release.Namespace }}\"})",
+            "expr": "rate(llm_time_to_first_token_ms_ms_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(llm_time_to_first_token_ms_ms_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000",
             "legendFormat": "TTFT",
             "refId": "A"
           }]
@@ -121,7 +121,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "avg(ai_demo_turn_duration_seconds{namespace=\"{{ .Release.Namespace }}\"})",
+            "expr": "rate(turn_duration_ms_ms_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(turn_duration_ms_ms_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000",
             "legendFormat": "Turn Duration",
             "refId": "A"
           }]

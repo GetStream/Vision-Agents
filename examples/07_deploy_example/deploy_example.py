@@ -5,6 +5,9 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import Response
+from opentelemetry import metrics
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from opentelemetry.sdk.metrics import MeterProvider
 from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
 from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.agents.session_registry import (
@@ -28,64 +31,13 @@ Eager turn taking STT, LLM, TTS workflow
 - stream's edge network for video transport
 """
 
-# Prometheus metrics
+# Configure OpenTelemetry to export metrics via Prometheus
+reader = PrometheusMetricReader()
+provider = MeterProvider(metric_readers=[reader])
+metrics.set_meter_provider(provider)
 
+# Active sessions is not covered by OTel MetricsCollector, track it separately
 ACTIVE_SESSIONS = Gauge("ai_demo_active_sessions", "Number of active agent sessions")
-STT_LATENCY = Gauge("ai_demo_stt_latency_seconds", "Average STT latency")
-LLM_LATENCY = Gauge("ai_demo_llm_latency_seconds", "Average LLM latency")
-TTS_LATENCY = Gauge("ai_demo_tts_latency_seconds", "Average TTS latency")
-LLM_TTFT = Gauge("ai_demo_llm_ttft_seconds", "Average LLM time-to-first-token")
-TURN_DURATION = Gauge("ai_demo_turn_duration_seconds", "Average turn duration")
-LLM_INPUT_TOKENS = Gauge("ai_demo_llm_input_tokens", "Total LLM input tokens")
-LLM_OUTPUT_TOKENS = Gauge("ai_demo_llm_output_tokens", "Total LLM output tokens")
-TTS_CHARACTERS = Gauge("ai_demo_tts_characters", "Total TTS characters")
-
-_AVG_METRICS = [
-    ("stt_latency_ms__avg", STT_LATENCY),
-    ("llm_latency_ms__avg", LLM_LATENCY),
-    ("tts_latency_ms__avg", TTS_LATENCY),
-    ("llm_time_to_first_token_ms__avg", LLM_TTFT),
-    ("turn_duration_ms__avg", TURN_DURATION),
-]
-_SUM_METRICS = [
-    ("llm_input_tokens__total", LLM_INPUT_TOKENS),
-    ("llm_output_tokens__total", LLM_OUTPUT_TOKENS),
-    ("tts_characters__total", TTS_CHARACTERS),
-]
-
-
-def _collect(launcher: AgentLauncher) -> None:
-    sessions = dict(launcher._sessions)  # noqa: SLF001
-    ACTIVE_SESSIONS.set(len(sessions))
-
-    for key, gauge in _AVG_METRICS:
-        total_sum = 0.0
-        total_count = 0
-        for s in sessions.values():
-            try:
-                metric = getattr(s.agent.metrics, key)
-                if metric._total > 0:  # noqa: SLF001
-                    total_sum += metric._sum  # noqa: SLF001
-                    total_count += metric._total  # noqa: SLF001
-            except (AttributeError, TypeError, ValueError):
-                logger.exception("Failed to collect avg metric '%s'", key)
-                continue
-        gauge.set(total_sum / total_count / 1000 if total_count else 0)
-
-    for key, gauge in _SUM_METRICS:
-        total = 0
-        for s in sessions.values():
-            try:
-                v = s.agent.metrics.to_dict().get(key)
-                if v is not None:
-                    total += int(v)
-            except (AttributeError, TypeError, ValueError):
-                logger.exception("Failed to collect sum metric '%s'", key)
-                continue
-        gauge.set(total)
-
-
-# Agent setup
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -135,9 +87,8 @@ launcher = AgentLauncher(
 runner = Runner(launcher)
 
 
-# Prometheus metrics endpoint
 async def metrics_endpoint() -> Response:
-    _collect(launcher)
+    ACTIVE_SESSIONS.set(len(dict(launcher._sessions)))  # noqa: SLF001
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
