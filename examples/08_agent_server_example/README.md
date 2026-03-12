@@ -325,5 +325,5 @@ Check if the server is ready to spawn new agents. Returns `200 OK` when ready, `
 - [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
 - [Simple Agent Example](../01_simple_agent_example) - Basic agent setup
 - [Prometheus Metrics Example](../06_prometheus_metrics_example) - Export metrics to Prometheus
-- [Deploy Example](../07_deploy_example) - Deploy to Kubernetes
+- [Deploy Example](../07_k8s_deploy_example) - Deploy to Kubernetes
 - [Main Vision Agents README](../../README.md)
