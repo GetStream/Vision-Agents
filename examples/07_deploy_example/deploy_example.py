@@ -28,7 +28,7 @@ Eager turn taking STT, LLM, TTS workflow
 - stream's edge network for video transport
 """
 
-# ── Prometheus metrics ──────────────────────────────────────────────
+# Prometheus metrics
 
 ACTIVE_SESSIONS = Gauge("ai_demo_active_sessions", "Number of active agent sessions")
 STT_LATENCY = Gauge("ai_demo_stt_latency_seconds", "Average STT latency")
@@ -85,7 +85,7 @@ def _collect(launcher: AgentLauncher) -> None:
         gauge.set(total)
 
 
-# ── Agent setup ─────────────────────────────────────────────────────
+# Agent setup
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -116,7 +116,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         await agent.finish()
 
 
-# ── Launcher + Runner ───────────────────────────────────────────────
+# Launcher + Runner
 
 redis_url = os.environ.get("REDIS_URL")
 registry = None
