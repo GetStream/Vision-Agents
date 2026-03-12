@@ -55,16 +55,18 @@ def _collect(launcher: AgentLauncher) -> None:
     ACTIVE_SESSIONS.set(len(sessions))
 
     for key, gauge in _AVG_METRICS:
-        values = []
+        total_sum = 0.0
+        total_count = 0
         for s in sessions.values():
             try:
-                v = s.agent.metrics.to_dict().get(key)
-                if v is not None:
-                    values.append(v)
+                metric = getattr(s.agent.metrics, key)
+                if metric._total > 0:  # noqa: SLF001
+                    total_sum += metric._sum  # noqa: SLF001
+                    total_count += metric._total  # noqa: SLF001
             except (AttributeError, TypeError, ValueError):
                 logger.exception("Failed to collect avg metric '%s'", key)
                 continue
-        gauge.set(sum(values) / len(values) / 1000 if values else 0)
+        gauge.set(total_sum / total_count / 1000 if total_count else 0)
 
     for key, gauge in _SUM_METRICS:
         total = 0
