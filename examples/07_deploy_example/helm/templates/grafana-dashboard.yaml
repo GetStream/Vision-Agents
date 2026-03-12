@@ -79,7 +79,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "rate(container_cpu_usage_seconds_total{pod=~\"{{ include "vision-agent.fullname" . }}.*\", container!=\"POD\", container!=\"\"}[5m])",
+            "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{pod=~\"{{ include "vision-agent.fullname" . }}.*\"}[5m]))",
             "legendFormat": "{{`{{`}} pod {{`}}`}}",
             "refId": "A"
           }]
@@ -93,7 +93,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "container_memory_working_set_bytes{pod=~\"{{ include "vision-agent.fullname" . }}.*\", container!=\"POD\", container!=\"\"}",
+            "expr": "sum by (pod) (container_memory_working_set_bytes{pod=~\"{{ include "vision-agent.fullname" . }}.*\"})",
             "legendFormat": "{{`{{`}} pod {{`}}`}}",
             "refId": "A"
           }]
