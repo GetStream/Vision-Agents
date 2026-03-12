@@ -1,6 +1,7 @@
 import logging
 import os
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import Response
@@ -120,7 +121,8 @@ if redis_url:
 
     store = RedisSessionKVStore(url=redis_url)
     registry = SessionRegistry(store=store)
-    logger.info("Using Redis session registry: %s", redis_url.split("@")[-1])
+    parsed = urlparse(redis_url)
+    logger.info("Using Redis session registry: %s:%s", parsed.hostname, parsed.port)
 
 launcher = AgentLauncher(
     create_agent=create_agent,
