@@ -10,7 +10,6 @@ imagePullSecrets: []
 # GPU configuration
 gpu:
   enabled: false
-  # Number of GPUs to request (usually 1)
   count: 1
 
 # Resources - automatically adjusted when gpu.enabled=true
@@ -33,17 +32,61 @@ gpuResources:
     memory: 100Gi
     nvidia.com/gpu: 1
 
+# Application port (Vision Agents default: 8080)
+containerPort: 8080
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""   # nginx, traefik, etc.
+  host: ""        # e.g. agent.example.com
+  annotations: {}
+  tls: []
+  # - secretName: agent-tls
+  #   hosts:
+  #     - agent.example.com
+
+# Redis for horizontal scaling (multi-replica session registry)
+redis:
+  # Deploy Redis alongside the agent (for dev/testing)
+  deploy:
+    enabled: true
+  # External Redis URL (for production — use managed Redis)
+  # When redis.deploy.enabled=true and url is empty, auto-connects to the bundled Redis
+  # When redis.deploy.enabled=false, set this to your managed Redis URL
+  url: ""  # e.g. redis://redis:6379/0 or rediss://:auth@host:6380/0
+  # Bitnami Redis chart overrides (only when redis.deploy.enabled=true)
+  auth:
+    enabled: true
+  architecture: standalone
+
+# Prometheus metrics scraping
+metrics:
+  enabled: true
+  path: /metrics
+  port: 8080
+  # Additional labels for ServiceMonitor (e.g. to match Prometheus serviceMonitorSelector)
+  additionalLabels: {}
+  #   release: monitoring
+
+# Grafana dashboard (requires grafana sidecar with dashboard provisioning)
+grafana:
+  enabled: true
+
 # Persistent cache for uv packages (faster restarts)
 cache:
   enabled: true
   size: 10Gi
-  storageClass: ""  # Leave empty for default
+  storageClass: ""
 
 # API keys - set these or use existing secret
 secrets:
-  # Set to existing secret name to use pre-created secret
   existingSecret: ""
-  # Or provide values directly (will create secret)
   googleApiKey: ""
   elevenlabsApiKey: ""
   deepgramApiKey: ""
@@ -52,8 +95,6 @@ secrets:
 
 # Use to schedule on specific node groups
 nodeSelector: {}
-# Example for GPU nodes:
-#   nebius.com/gpu: "true"
 
 tolerations: []
 # GPU nodes often have taints, add toleration:

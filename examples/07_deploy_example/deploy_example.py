@@ -1,8 +1,19 @@
 import logging
+import os
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+from fastapi import Response
+from opentelemetry import metrics
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from opentelemetry.sdk.metrics import MeterProvider
+from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
 from vision_agents.core import Agent, AgentLauncher, Runner, User
+from vision_agents.core.agents.session_registry import (
+    RedisSessionKVStore,
+    SessionRegistry,
+)
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
@@ -19,6 +30,14 @@ Eager turn taking STT, LLM, TTS workflow
 - gemini-3.1-flash-lite-preview for fast responses
 - stream's edge network for video transport
 """
+
+# Configure OpenTelemetry to export metrics via Prometheus
+reader = PrometheusMetricReader()
+provider = MeterProvider(metric_readers=[reader])
+metrics.set_meter_provider(provider)
+
+# Active sessions is not covered by OTel MetricsCollector, track it separately
+ACTIVE_SESSIONS = Gauge("ai_demo_active_sessions", "Number of active agent sessions")
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -49,5 +68,31 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         await agent.finish()
 
 
+# Launcher + Runner
+
+redis_url = os.environ.get("REDIS_URL")
+registry = None
+
+if redis_url:
+    store = RedisSessionKVStore(url=redis_url)
+    registry = SessionRegistry(store=store)
+    parsed = urlparse(redis_url)
+    logger.info("Using Redis session registry: %s:%s", parsed.hostname, parsed.port)
+
+launcher = AgentLauncher(
+    create_agent=create_agent,
+    join_call=join_call,
+    registry=registry,
+)
+runner = Runner(launcher)
+
+
+async def metrics_endpoint() -> Response:
+    ACTIVE_SESSIONS.set(len(dict(launcher._sessions)))  # noqa: SLF001
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+runner.fast_api.add_api_route("/metrics", metrics_endpoint, methods=["GET"])
+
 if __name__ == "__main__":
-    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
+    runner.cli()
