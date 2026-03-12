@@ -16,7 +16,7 @@ Agent example optimized for fast response time.
 Eager turn taking STT, LLM, TTS workflow
 - deepgram for optimal latency
 - eleven labs for TTS
-- gemini-2.5-flash-lite for fast responses
+- gemini-3.1-flash-lite-preview for fast responses
 - stream's edge network for video transport
 
 This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_example
@@ -26,7 +26,7 @@ This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_ex
 INSTRUCTIONS = "You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful."
 
 
-def setup_llm(model: str = "gemini-3-flash-preview") -> gemini.LLM:
+def setup_llm(model: str = "gemini-3.1-flash-lite-preview") -> gemini.LLM:
     llm = gemini.LLM(model)
 
     @llm.register_function(description="Get current weather for a location")

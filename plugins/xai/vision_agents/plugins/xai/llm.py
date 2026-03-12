@@ -10,7 +10,6 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-from vision_agents.core.processors import Processor
 from xai_sdk import AsyncClient
 from xai_sdk.chat import Chunk, Response, system, tool, tool_result, user
 from xai_sdk.proto import chat_pb2
@@ -73,7 +72,6 @@ class XAILLM(LLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ):
         """
@@ -81,7 +79,6 @@ class XAILLM(LLM):
 
         Args:
             text: The text to respond to
-            processors: list of processors (which contain state) about the video/voice AI
             participant: optionally the participant object
 
         Examples:

@@ -19,7 +19,7 @@ Deploy example - similar to 01_simple_agent_example but containerized.
 Eager turn taking STT, LLM, TTS workflow
 - deepgram for optimal latency
 - eleven labs for TTS
-- gemini-2.5-flash-lite for fast responses
+- gemini-3.1-flash-lite-preview for fast responses
 - stream's edge network for video transport
 """
 
@@ -80,7 +80,7 @@ def _collect(launcher: AgentLauncher) -> None:
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-2.5-flash-lite")
+    llm = gemini.LLM("gemini-3.1-flash-lite-preview")
 
     agent = Agent(
         edge=getstream.Edge(),

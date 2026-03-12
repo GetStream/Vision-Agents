@@ -168,7 +168,7 @@ async def create_agent() -> Agent:
     instructions = """Read the instructions in @instructions.md"""
 
     if RAG_BACKEND == "turbopuffer":
-        llm = gemini.LLM("gemini-2.5-flash-lite")
+        llm = gemini.LLM("gemini-3.1-flash-lite-preview")
 
         @llm.register_function(
             description="Search Stream's product knowledge base for detailed information about Chat, Video, Feeds, and Moderation APIs."
@@ -178,7 +178,7 @@ async def create_agent() -> Agent:
 
     else:
         llm = gemini.LLM(
-            "gemini-2.5-flash-lite",
+            "gemini-3.1-flash-lite-preview",
             tools=[gemini.tools.FileSearch(file_search_store)],
         )
 

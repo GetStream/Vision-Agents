@@ -15,21 +15,18 @@ Example:
     )
 """
 
-from __future__ import annotations
-
 import asyncio
 import gc
 import logging
 import time
 import uuid
 from collections import deque
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import av
 import torch
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from transformers import AutoModelForImageTextToText, AutoProcessor, PreTrainedModel
-
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseCompletedEvent,
@@ -49,9 +46,6 @@ from .transformers_llm import (
     get_quantization_config,
     resolve_torch_dtype,
 )
-
-if TYPE_CHECKING:
-    from vision_agents.core.processors import Processor
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +162,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         )
 
         if self._device_config == "mps":
-            model = model.to(torch.device("mps"))  # type: ignore[arg-type]
+            cast(torch.nn.Module, model).to(torch.device("mps"))
 
         model.eval()
 
@@ -223,7 +217,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Any] = None,
     ) -> LLMResponseEvent:
         if self._conversation is None:
@@ -300,7 +293,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             if pad_token_id is not None:
                 gen_kwargs["pad_token_id"] = pad_token_id
             with torch.no_grad():
-                return model.generate(**gen_kwargs)  # type: ignore[operator]
+                return cast(Callable[..., torch.Tensor], model.generate)(**gen_kwargs)
 
         try:
             outputs = await asyncio.to_thread(_do_generate)
@@ -365,7 +358,8 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         Converts ``av.VideoFrame`` objects to PIL Images and passes them
         to the processor alongside a structured message list.
         """
-        processor = self._resources.processor  # type: ignore[union-attr]
+        assert self._resources is not None
+        processor = self._resources.processor
 
         # Sample frames evenly to stay within context limits
         all_frames = list(frames)

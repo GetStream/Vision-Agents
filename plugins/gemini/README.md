@@ -2,10 +2,12 @@
 
 Google Gemini Live Speech-to-Speech (STS) plugin for GetStream. It connects a realtime Gemini Live session to a Stream video call so your assistant can speak and listen in the same call.
 
-### Installation
+## Installation
 
 ```bash
-uv add vision-agents[gemini]
+uv add "vision-agents[gemini]"
+# or directly
+uv add vision-agents-plugins-gemini
 ```
 
 ### Requirements
@@ -83,6 +85,7 @@ from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
+
 async def create_agent(**kwargs) -> Agent:
     vlm = gemini.VLM(model="gemini-3-flash-preview")
     return Agent(
@@ -94,10 +97,12 @@ async def create_agent(**kwargs) -> Agent:
         tts=elevenlabs.TTS(),
     )
 
+
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     call = await agent.create_call(call_type, call_id)
     async with agent.join(call):
         await agent.finish()
+
 
 Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
 ```
@@ -111,14 +116,17 @@ Key configuration knobs for `GeminiVLM`: `fps`, `frame_buffer_seconds`,
 - **Bidirectional audio**: Streams microphone PCM to Gemini, and plays Gemini speech into the call using `output_track`.
 - **Video frame forwarding**: Sends remote participant video frames to Gemini Live for multimodal understanding. Use `start_video_sender` with a remote `MediaStreamTrack`.
 - **Text messages**: Use `send_text` to add text turns directly to the conversation.
-- **Barge-in (interruptions)**: When the user starts speaking, current playback is interrupted so Gemini can focus on the new input. Playback automatically resumes after brief silence.
+- **Barge-in (interruptions)
+  **: When the user starts speaking, current playback is interrupted so Gemini can focus on the new input. Playback automatically resumes after brief silence.
 - **Auto resampling**: `send_audio_pcm` will resample input frames to the target rate when needed.
 - **Events**: Subscribe to `"audio"` for synthesized audio chunks and `"text"` for assistant text.
 
 ### API Overview
 
-- **`GeminiLive(api_key: str | None = None, model: str = "gemini-live-2.5-flash-preview", config: LiveConnectConfigDict | None = None)`**: Create a new Gemini Live session. If `api_key` is not provided, the plugin reads `GOOGLE_API_KEY` or `GEMINI_API_KEY` from the environment.
-- **`GeminiVLM(model: str = "gemini-3-flash-preview", fps: int = 1, frame_buffer_seconds: int = 10, ...)`**: Vision-language model that buffers video frames and sends them with prompts.
+- **`GeminiLive(api_key: str | None = None, model: str = "gemini-live-2.5-flash-preview", config: LiveConnectConfigDict | None = None)`**: Create a new Gemini Live session. If
+  `api_key` is not provided, the plugin reads `GOOGLE_API_KEY` or `GEMINI_API_KEY` from the environment.
+- **`GeminiVLM(model: str = "gemini-3-flash-preview", fps: int = 1, frame_buffer_seconds: int = 10, ...)`
+  **: Vision-language model that buffers video frames and sends them with prompts.
 - **`output_track`**: An `AudioStreamTrack` you can publish in your call via `add_tracks(audio=...)`.
 - **`await send_text(text: str)`**: Send a user text message to the current turn.
 - **`await send_audio_pcm(pcm: PcmData, target_rate: int = 48000)`**: Stream PCM frames to Gemini. Frames are converted to the required format and resampled if necessary.
@@ -135,7 +143,8 @@ Key configuration knobs for `GeminiVLM`: `fps`, `frame_buffer_seconds`,
 
 ### Notes on Interruptions
 
-- **How it works**: The plugin detects user speech activity in incoming PCM and interrupts any ongoing playback. After a short period of silence, playback is enabled again so the assistant can speak.
+- **How it works
+  **: The plugin detects user speech activity in incoming PCM and interrupts any ongoing playback. After a short period of silence, playback is enabled again so the assistant can speak.
 - **Why it matters**: This enables natural barge-in experiences, where users can cut off the assistant mid-sentence and ask follow-up questions.
 
 ### Troubleshooting

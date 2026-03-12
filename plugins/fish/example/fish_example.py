@@ -32,12 +32,15 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Friendly AI", id="agent"),
-        instructions="You're a voice AI called Elon Musk. Short replies only no special characters. Read @elon.md to stay in character",
-        tts=fish.TTS(),  # Uses Fish Audio for text-to-speech
+        instructions="You're a friendly voice AI assistant. Keep your responses short and conversational.",
+        # Uses Fish Audio S2 model (default) for text-to-speech with prosody control
+        # Available models: "s2-pro" (default), "speech-1.5", "speech-1.6", "s1", "s1-mini"
+        tts=fish.TTS(),
         stt=fish.STT(),  # Uses Fish Audio for speech-to-text
         llm=gemini.LLM(),
         turn_detection=smart_turn.TurnDetection(
-            buffer_in_seconds=2.0, confidence_threshold=0.5
+            silence_duration_ms=2000,
+            speech_probability_threshold=0.5,
         ),
     )
     return agent

@@ -565,3 +565,25 @@ class EventManager:
         if self._processing_task and not self._processing_task.done():
             self._processing_task.cancel()
             self._processing_task = None
+
+    async def shutdown(self) -> None:
+        """Stop processing and release all references to prevent memory leaks.
+
+        Unlike ``stop()`` (which only cancels the processing task), this method
+        also cancels pending handler tasks and clears handler registrations.
+        This breaks the closure reference chain that keeps the Agent object
+        graph (~1-5MB per session) alive after the session ends.
+
+        Call this when the agent session is fully done and will not be reused.
+        """
+        processing_task = self._processing_task
+        self.stop()
+        if processing_task is not None:
+            await asyncio.gather(processing_task, return_exceptions=True)
+
+        handler_tasks = [t for t in self._handler_tasks.values() if not t.done()]
+        if handler_tasks:
+            await asyncio.gather(*handler_tasks, return_exceptions=True)
+        self._handler_tasks.clear()
+        self._handlers.clear()
+        self._queue.clear()

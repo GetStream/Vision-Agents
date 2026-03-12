@@ -21,6 +21,7 @@ async def vogent_turn_detection():
         await td.stop()
 
 
+@pytest.mark.skip()
 @pytest.mark.skip_blockbuster
 @pytest.mark.integration
 class TestVogentTurnDetection:

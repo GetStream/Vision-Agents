@@ -13,7 +13,6 @@ from vision_agents.core.llm.events import (
     LLMResponseCompletedEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
@@ -188,7 +187,6 @@ class NvidiaVLM(VideoLLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent:
         """
@@ -198,7 +196,6 @@ class NvidiaVLM(VideoLLM):
 
         Args:
             text: The text to respond to.
-            processors: List of processors with video/voice AI state.
             participant: The participant object. If not provided, uses "user" role.
         """
         if self._conversation is None:

@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 import aiortc
 import av
@@ -22,7 +22,6 @@ from vision_agents.core.llm.events import (
     VLMErrorEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent
-from vision_agents.core.processors import Processor
 from vision_agents.core.stt.events import STTTranscriptEvent
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
@@ -403,7 +402,6 @@ class LocalVLM(llm.VideoLLM, Warmable):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent:
         """
@@ -411,7 +409,6 @@ class LocalVLM(llm.VideoLLM, Warmable):
 
         Args:
             text: The text/question to respond to
-            processors: list of processors (which contain state) about the video/voice AI
             participant: optionally the participant object
 
         Examples:

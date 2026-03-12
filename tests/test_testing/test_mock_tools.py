@@ -6,7 +6,6 @@ import pytest
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.processors import Processor
 from vision_agents.testing import TestSession
 
 
@@ -16,7 +15,6 @@ class _FakeLLM(LLM):
     async def simple_response(
         self,
         text: str = "",
-        processors: list[Processor] | None = None,
         participant: Participant | None = None,
     ) -> LLMResponseEvent:
         return LLMResponseEvent(original=None, text="fake")

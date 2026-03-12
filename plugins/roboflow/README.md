@@ -5,6 +5,8 @@ Object detection using Roboflow's hosted inference API for vision-agents.
 ## Installation
 
 ```bash
+uv add "vision-agents[roboflow]"
+# or directly
 uv add vision-agents-plugins-roboflow
 ```
 
@@ -111,4 +113,3 @@ pytest plugins/roboflow/tests/test_roboflow.py -v
 - [Roboflow Inference Documentation](https://inference.roboflow.com/)
 - [Vision Agents Documentation](https://visionagents.ai/)
 - [GitHub Repository](https://github.com/GetStream/Vision-Agents)
-

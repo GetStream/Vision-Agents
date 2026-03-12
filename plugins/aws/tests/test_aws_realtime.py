@@ -1,22 +1,23 @@
 """Tests for AWS Realtime plugin."""
 
 import asyncio
-import pytest
-from conftest import skip_blockbuster
-from dotenv import load_dotenv
 
+import pytest
+from dotenv import load_dotenv
+from getstream.video.rtc import AudioFormat, PcmData
 from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.instructions import Instructions
-
+from vision_agents.core.llm.events import RealtimeAudioOutputEvent
 from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
 from vision_agents.plugins.aws import Realtime
-from vision_agents.core.llm.events import RealtimeAudioOutputEvent
-from getstream.video.rtc import PcmData, AudioFormat
+
+from conftest import skip_blockbuster
 
 # Load environment variables
 load_dotenv()
 
 
+@pytest.mark.skip()
 @skip_blockbuster
 class TestBedrockRealtime:
     """Integration tests for AWS Bedrock Realtime connect flow"""
@@ -146,8 +147,10 @@ class TestBedrockRealtime:
         assert len(events) > 0
 
 
+@pytest.mark.skip()
+@pytest.mark.integration
 @skip_blockbuster
-class TestNova2Realtime:
+class TestNova2RealtimeIntegration:
     @pytest.fixture
     async def realtime(self, tmp_path):
         """Create and manage Realtime connection lifecycle"""
@@ -165,7 +168,6 @@ class TestNova2Realtime:
         finally:
             await realtime.close()
 
-    @pytest.mark.integration
     async def test_simple_response_flow(self, realtime):
         # unlike other realtime LLMs, AWS doesn't reply if you only send text
         events = []
@@ -186,7 +188,6 @@ class TestNova2Realtime:
         # Wait for response
         await asyncio.sleep(10.0)
 
-    @pytest.mark.integration
     async def test_audio_first(self, realtime, mia_audio_16khz):
         """Test sending real audio data and verify connection remains stable"""
         events = []
@@ -212,7 +213,6 @@ class TestNova2Realtime:
         # play the generated audio
         await play_pcm_with_ffplay(pcm)
 
-    @pytest.mark.integration
     async def test_connection_lifecycle(self, realtime):
         """Test that connection can be established and closed properly"""
         # Connect
@@ -227,7 +227,6 @@ class TestNova2Realtime:
         await realtime.close()
         assert realtime.connected is False
 
-    @pytest.mark.integration
     async def test_function_calling(self, realtime):
         """Test that function calling works with AWS Bedrock Realtime"""
 

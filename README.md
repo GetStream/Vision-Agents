@@ -87,7 +87,7 @@ agent = Agent(
 )
 ```
 
-### Cluely style Invisible Assistant (coming soon)
+### Sales Assistant — Invisible Overlay Coach
 
 Apps like Cluely offer realtime coaching via an invisible overlay. This example shows you how you can build your own
 invisible assistant.

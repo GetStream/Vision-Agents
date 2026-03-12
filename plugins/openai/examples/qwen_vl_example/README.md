@@ -1,4 +1,5 @@
 # Qwen3-VL hosted on Baseten
+
 Qwen3-VL is the latest open-source Video Language Model (VLM) from Alibaba.
 This plugin allows developers to easily run the model hosted on [Baseten](https://www.baseten.co/) with Vision Agents.
 The model accepts text and video and responds with text vocalised with the TTS service of your choice.
@@ -13,7 +14,7 @@ The model accepts text and video and responds with text vocalised with the TTS s
 ## Installation
 
 ```bash
-uv add vision-agents[openai]
+uv add "vision-agents[openai]"
 ```
 
 ## Quick Start
@@ -82,9 +83,9 @@ openai.ChatCompletionsVLM(
 1. **Video Frame Buffering**: The plugin automatically subscribes to video tracks when the agent joins a call. It buffers frames at the specified FPS for the configured duration.
 
 2. **Frame Processing**: When responding to user input, the plugin:
-   - Converts buffered video frames to JPEG format
-   - Resizes frames to 800x600 (maintaining aspect ratio)
-   - Encodes frames as base64 data URLs
+    - Converts buffered video frames to JPEG format
+    - Resizes frames to 800x600 (maintaining aspect ratio)
+    - Encodes frames as base64 data URLs
 
 3. **API Request**: Sends the conversation history (including system instructions) along with all buffered frames to the Baseten model.
 

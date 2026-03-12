@@ -11,9 +11,9 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "twilio>=9.0.0",
-    "numpy>=1.24.0",
-    "fastapi>=0.100.0",
+    "twilio>=9.10.3,<10",
+    "numpy>=1.24.0", # capped at <2.0 via workspace override in root pyproject.toml
+    "fastapi>=0.135.1",
 ]
 
 [project.urls]
@@ -40,5 +40,3 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-
-

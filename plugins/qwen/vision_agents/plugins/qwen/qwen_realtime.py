@@ -14,7 +14,6 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import Realtime
 from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.core.llm.llm import LLMResponseEvent
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
@@ -119,7 +118,6 @@ class Qwen3Realtime(Realtime):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         logger.warning(

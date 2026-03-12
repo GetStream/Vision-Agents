@@ -22,7 +22,6 @@ from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
 from vision_agents.core.warmup import Warmable
@@ -193,6 +192,13 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         self._pending_tool_calls: Dict[
             str, Dict[str, Any]
         ] = {}  # Store tool calls until contentEnd: key=toolUseId
+
+        # Track current content role for transcription events
+        self.role: Optional[str] = None
+        self.display_assistant_text: bool = False
+        # Whether we've already emitted text in the current turn so we
+        # know to insert a space between consecutive chunks.
+        self._emitted_text_in_turn: bool = False
 
     async def on_warmup(self) -> SileroVADSessionPool:
         return await SileroVADSessionPool.load(self.options.model_dir)
@@ -393,6 +399,10 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if self._vad_session is None:
             raise ValueError("The VAD model has not been initialized.")
 
+        # Track current participant so user speech transcription events
+        # carry the participant info required by the agent event handler.
+        self._current_participant = participant
+
         # Resample to 24kHz if needed, as required by AWS Nova
         pcm = pcm.resample(24000)
         is_talking = self._vad_session.predict_speech(pcm) > 0.5
@@ -413,7 +423,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ):
         """
@@ -818,6 +827,8 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 )
                                 # set role
                                 self.role = content_start["role"]
+                                # Reset per-turn text tracking
+                                self._emitted_text_in_turn = False
                                 # Check for speculative content
                                 if "additionalModelFields" in content_start:
                                     try:
@@ -841,6 +852,50 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 logger.debug(
                                     f"Text output from AWS Bedrock: {text_content}"
                                 )
+
+                                # Nova sends '{ "interrupted" : true }' as
+                                # a textOutput event when the user barges
+                                # in.  Skip it so it doesn't appear as a
+                                # transcript.  The actual barge-in handling
+                                # happens in contentEnd with
+                                # stopReason == "INTERRUPTED".
+                                barge_in = '{ "interrupted" : true }' in text_content
+                                if not barge_in:
+                                    # Emit as delta so text appears
+                                    # immediately in the UI.  Prepend a
+                                    # space between consecutive chunks to
+                                    # avoid words running together.
+                                    _delta = text_content
+                                    if (
+                                        self._emitted_text_in_turn
+                                        and _delta
+                                        and not _delta[0].isspace()
+                                    ):
+                                        _delta = " " + _delta
+                                    self._emitted_text_in_turn = True
+
+                                    if self.role == "USER":
+                                        self._emit_user_speech_transcription(
+                                            text=_delta,
+                                            mode="delta",
+                                            original=json_data,
+                                        )
+                                    elif (
+                                        self.role == "ASSISTANT"
+                                        and self.display_assistant_text
+                                    ):
+                                        self._emit_agent_speech_transcription(
+                                            text=_delta,
+                                            mode="delta",
+                                            original=json_data,
+                                        )
+                                else:
+                                    logger.info(
+                                        "Barge-in detected — emitting audio "
+                                        "output done to flush playback buffer"
+                                    )
+                                    self._emit_audio_output_done_event()
+
                             elif "completionStart" in json_data["event"]:
                                 logger.debug(
                                     "Completion start from AWS Bedrock: %s",
@@ -915,8 +970,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                             )
                                         )
 
-                                if stop_reason == "INTERRUPTED":
-                                    logger.debug("TODO: should flush audio buffer")
                                 logger.debug(
                                     f"Content end from AWS Bedrock {stop_reason}: {content_end_data}"
                                 )
