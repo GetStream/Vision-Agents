@@ -7,6 +7,10 @@ from dotenv import load_dotenv
 from fastapi import Response
 from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
 from vision_agents.core import Agent, AgentLauncher, Runner, User
+from vision_agents.core.agents.session_registry import (
+    RedisSessionKVStore,
+    SessionRegistry,
+)
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
@@ -118,11 +122,6 @@ redis_url = os.environ.get("REDIS_URL")
 registry = None
 
 if redis_url:
-    from vision_agents.core.agents.session_registry import (
-        RedisSessionKVStore,
-        SessionRegistry,
-    )
-
     store = RedisSessionKVStore(url=redis_url)
     registry = SessionRegistry(store=store)
     parsed = urlparse(redis_url)
