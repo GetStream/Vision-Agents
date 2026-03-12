@@ -129,10 +129,12 @@ launcher = AgentLauncher(
 )
 runner = Runner(launcher)
 
+
 # Prometheus metrics endpoint
 async def metrics_endpoint() -> Response:
     _collect(launcher)
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 runner.fast_api.add_api_route("/metrics", metrics_endpoint, methods=["GET"])
 
