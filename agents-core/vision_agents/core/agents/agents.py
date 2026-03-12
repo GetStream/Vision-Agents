@@ -37,6 +37,7 @@ from ..llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
     RealtimeAgentSpeechTranscriptionEvent,
+    RealtimeAudioOutputDoneEvent,
     RealtimeAudioOutputEvent,
     RealtimeUserSpeechTranscriptionEvent,
 )
@@ -187,7 +188,18 @@ class Agent:
 
         # Per-participant audio queues keyed by participant.id
         self._participant_queues: dict[str, tuple[Participant, AudioQueue]] = {}
-        self._audio_buffer_limit_ms = 8000
+        # self._audio_buffer_limit_ms = 8000
+        self._audio_buffer_limit_ms = 15000
+        self._realtime_audio_prebuffer_ms = 250
+        self._realtime_audio_chunk_ms = 40
+        self._realtime_audio_queue = AudioQueue(
+            buffer_limit_ms=self._audio_buffer_limit_ms
+        )
+        self._realtime_audio_started = False
+        self._realtime_audio_done = False
+        self._realtime_audio_playback_task: Optional[asyncio.Task] = None
+        self._realtime_audio_update_event = asyncio.Event()
+        self._realtime_audio_lock = asyncio.Lock()
 
         # Built-in first-speaker-wins filter for multi-participant calls
         self._multi_speaker_filter: AudioFilter = (
@@ -895,6 +907,8 @@ class Agent:
             await cancel_and_wait(self._metrics_broadcast_task)
             self._metrics_broadcast_task = None
 
+        await self._cancel_realtime_audio_playback()
+
         # run stop on all subclasses
         await self._apply("stop")
         # run close on all subclasses
@@ -1457,7 +1471,12 @@ class Agent:
                     and event.data is not None
                     and not self.audio_publishers
                 ):
-                    await self._audio_track.write(event.data)
+                    await self._buffer_realtime_audio_output(event.data)
+
+            @self.events.subscribe
+            async def flush_audio(_: RealtimeAudioOutputDoneEvent):
+                if self._audio_track is not None and not self.audio_publishers:
+                    await self._flush_realtime_audio_output()
 
         # Set up video track if video publishers are available
         if self.publish_video:
@@ -1481,6 +1500,127 @@ class Agent:
             )
 
             self.logger.info("🎥 Video track initialized from video publisher")
+
+    async def _buffer_realtime_audio_output(self, audio_data: PcmData) -> None:
+        """Buffer realtime audio before forwarding it to the call track."""
+        async with self._realtime_audio_lock:
+            await self._realtime_audio_queue.put(audio_data)
+            buffered_ms = self._realtime_audio_queue.get_buffer_info()[
+                "current_duration_ms"
+            ]
+            self.logger.debug(
+                "Buffered realtime audio chunk (%s samples, %.1fms queued)",
+                len(audio_data.samples),
+                buffered_ms,
+            )
+            self._ensure_realtime_audio_playback_task()
+            self._realtime_audio_update_event.set()
+
+    async def _flush_realtime_audio_output(self) -> None:
+        """Flush buffered realtime audio to the call track and reset state."""
+        async with self._realtime_audio_lock:
+            self._realtime_audio_done = True
+            buffered_ms = self._realtime_audio_queue.get_buffer_info()[
+                "current_duration_ms"
+            ]
+            self.logger.debug(
+                "Realtime audio output marked done with %.1fms buffered",
+                buffered_ms,
+            )
+            self._ensure_realtime_audio_playback_task()
+            self._realtime_audio_update_event.set()
+
+    def _ensure_realtime_audio_playback_task(self) -> None:
+        """Start the realtime playback loop if needed."""
+        if (
+            self._realtime_audio_playback_task is None
+            or self._realtime_audio_playback_task.done()
+        ):
+            self._realtime_audio_playback_task = asyncio.create_task(
+                self._realtime_audio_playback_loop()
+            )
+
+    async def _realtime_audio_playback_loop(self) -> None:
+        """Pace realtime audio from the jitter buffer into the outbound track."""
+        waiting_for_audio = False
+        try:
+            while True:
+                async with self._realtime_audio_lock:
+                    if self._audio_track is None:
+                        self._reset_realtime_audio_state()
+                        return
+
+                    buffered_ms = self._realtime_audio_queue.get_buffer_info()[
+                        "current_duration_ms"
+                    ]
+                    if not self._realtime_audio_started:
+                        if buffered_ms >= self._realtime_audio_prebuffer_ms or (
+                            self._realtime_audio_done and buffered_ms > 0
+                        ):
+                            self._realtime_audio_started = True
+                            self.logger.debug(
+                                "Starting realtime audio playback with %.1fms buffered",
+                                buffered_ms,
+                            )
+
+                    if self._realtime_audio_started and buffered_ms > 0:
+                        duration_ms = min(buffered_ms, self._realtime_audio_chunk_ms)
+                        self._realtime_audio_update_event.clear()
+                    elif self._realtime_audio_done:
+                        self._reset_realtime_audio_state()
+                        return
+                    else:
+                        self._realtime_audio_update_event.clear()
+                        duration_ms = None
+
+                if duration_ms is None:
+                    if self._realtime_audio_started and not waiting_for_audio:
+                        waiting_for_audio = True
+                        self.logger.debug(
+                            "Realtime audio buffer underrun, waiting for more data"
+                        )
+                    await self._realtime_audio_update_event.wait()
+                    continue
+
+                waiting_for_audio = False
+                pcm = await self._realtime_audio_queue.get_duration(duration_ms)
+                if self._audio_track is None:
+                    async with self._realtime_audio_lock:
+                        self._reset_realtime_audio_state()
+                    return
+
+                write_started = time.perf_counter()
+                await self._audio_track.write(pcm)
+                remaining_sleep = (duration_ms / 1000) - (
+                    time.perf_counter() - write_started
+                )
+                if remaining_sleep > 0:
+                    await asyncio.sleep(remaining_sleep)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            async with self._realtime_audio_lock:
+                self._realtime_audio_playback_task = None
+
+    def _reset_realtime_audio_state(self) -> None:
+        """Reset buffered realtime playback state for the next utterance."""
+        self._realtime_audio_queue = AudioQueue(
+            buffer_limit_ms=self._audio_buffer_limit_ms
+        )
+        self._realtime_audio_started = False
+        self._realtime_audio_done = False
+        self._realtime_audio_update_event = asyncio.Event()
+
+    async def _cancel_realtime_audio_playback(self) -> None:
+        """Cancel the realtime playback loop if it is active."""
+        task = self._realtime_audio_playback_task
+        if task is not None:
+            self._realtime_audio_playback_task = None
+            task.cancel()
+            await cancel_and_wait(task)
+
+        async with self._realtime_audio_lock:
+            self._reset_realtime_audio_state()
 
     def _sanitize_text(self, text: str) -> str:
         """Remove markdown and special characters that don't speak well."""
@@ -1574,6 +1714,7 @@ class Agent:
                 self.logger.info(
                     '👉 Turn started - participant "%s" is speaking', user_id
                 )
+            await self._cancel_realtime_audio_playback()
             if self._audio_track is not None:
                 await self._audio_track.flush()
         else:

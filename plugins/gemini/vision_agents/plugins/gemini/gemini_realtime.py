@@ -381,6 +381,7 @@ class GeminiRealtime(realtime.Realtime):
         """
         async for response in self._session.receive():
             server_message: LiveServerMessage = response
+            handled = False
 
             is_input_transcript = (
                 server_message
@@ -399,6 +400,7 @@ class GeminiRealtime(realtime.Realtime):
             )
 
             if is_input_transcript:
+                handled = True
                 if (
                     server_message.server_content
                     and server_message.server_content.input_transcription
@@ -410,7 +412,8 @@ class GeminiRealtime(realtime.Realtime):
                             mode="delta",
                             original=server_message,
                         )
-            elif is_output_transcript:
+            if is_output_transcript:
+                handled = True
                 if (
                     server_message.server_content
                     and server_message.server_content.output_transcription
@@ -422,7 +425,8 @@ class GeminiRealtime(realtime.Realtime):
                             mode="delta",
                             original=server_message,
                         )
-            elif is_response:
+            if is_response:
+                handled = True
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
                     update = server_message.session_resumption_update
@@ -447,16 +451,26 @@ class GeminiRealtime(realtime.Realtime):
                             # Handle function calls from Gemini Live
                             await self._handle_function_call(part.function_call)
 
-            elif (
+            if (
                 server_message.server_content
                 and server_message.server_content.turn_complete
             ):
+                handled = True
+                # Gemini streams output transcripts as deltas, so emit a
+                # matching final event when the turn completes to let
+                # downstream consumers flush their buffers.
+                self._emit_agent_speech_transcription(
+                    text="",
+                    mode="final",
+                    original=server_message,
+                )
                 self._emit_audio_output_done_event()
 
-            elif server_message.tool_call:
+            if server_message.tool_call:
+                handled = True
                 # Handle tool calls from Gemini Live
                 await self._handle_tool_calls(server_message.tool_call)
-            else:
+            if not handled:
                 logger.debug(
                     "Unrecognized event structure from Gemini %s", server_message
                 )
