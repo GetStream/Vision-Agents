@@ -79,7 +79,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "rate(container_cpu_usage_seconds_total{pod=~\".*vision-agent.*\", container!=\"POD\", container!=\"\"}[5m])",
+            "expr": "rate(container_cpu_usage_seconds_total{pod=~\"{{ include "vision-agent.fullname" . }}.*\", container!=\"POD\", container!=\"\"}[5m])",
             "legendFormat": "{{`{{`}} pod {{`}}`}}",
             "refId": "A"
           }]
@@ -93,7 +93,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "container_memory_working_set_bytes{pod=~\".*vision-agent.*\", container!=\"POD\", container!=\"\"}",
+            "expr": "container_memory_working_set_bytes{pod=~\"{{ include "vision-agent.fullname" . }}.*\", container!=\"POD\", container!=\"\"}",
             "legendFormat": "{{`{{`}} pod {{`}}`}}",
             "refId": "A"
           }]
@@ -132,6 +132,6 @@ data:
       "templating": { "list": [] },
       "time": { "from": "now-1h", "to": "now" },
       "title": "Vision Agent Overview",
-      "uid": "vision-agent-overview"
+      "uid": "{{ .Release.Name }}-vision-agent-overview"
     }
 {{- end }}
