@@ -55,7 +55,7 @@ _SUM_METRICS = [
 
 
 def _collect(launcher: AgentLauncher) -> None:
-    sessions = launcher._sessions  # noqa: SLF001
+    sessions = dict(launcher._sessions)  # noqa: SLF001
     ACTIVE_SESSIONS.set(len(sessions))
 
     for key, gauge in _AVG_METRICS:

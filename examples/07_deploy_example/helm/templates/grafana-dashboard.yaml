@@ -24,7 +24,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "sum(ai_demo_active_sessions)",
+            "expr": "sum(ai_demo_active_sessions{namespace=\"{{ .Release.Namespace }}\"})",
             "legendFormat": "Active Sessions",
             "refId": "A"
           }]
@@ -38,9 +38,9 @@ data:
             "overrides": []
           },
           "targets": [
-            { "expr": "avg(ai_demo_stt_latency_seconds)", "legendFormat": "STT", "refId": "A" },
-            { "expr": "avg(ai_demo_llm_latency_seconds)", "legendFormat": "LLM", "refId": "B" },
-            { "expr": "avg(ai_demo_tts_latency_seconds)", "legendFormat": "TTS", "refId": "C" }
+            { "expr": "avg(ai_demo_stt_latency_seconds{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "STT", "refId": "A" },
+            { "expr": "avg(ai_demo_llm_latency_seconds{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "LLM", "refId": "B" },
+            { "expr": "avg(ai_demo_tts_latency_seconds{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "TTS", "refId": "C" }
           ]
         },
         {
@@ -52,8 +52,8 @@ data:
             "overrides": []
           },
           "targets": [
-            { "expr": "sum(ai_demo_llm_input_tokens)", "legendFormat": "Input", "refId": "A" },
-            { "expr": "sum(ai_demo_llm_output_tokens)", "legendFormat": "Output", "refId": "B" }
+            { "expr": "sum(ai_demo_llm_input_tokens{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Input", "refId": "A" },
+            { "expr": "sum(ai_demo_llm_output_tokens{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Output", "refId": "B" }
           ]
         },
         {
@@ -65,7 +65,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "sum(ai_demo_tts_characters)",
+            "expr": "sum(ai_demo_tts_characters{namespace=\"{{ .Release.Namespace }}\"})",
             "legendFormat": "Characters",
             "refId": "A"
           }]
@@ -79,7 +79,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{pod=~\"{{ include "vision-agent.fullname" . }}.*\"}[5m]))",
+            "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"{{ .Release.Namespace }}\", pod=~\"{{ include "vision-agent.fullname" . }}.*\"}[5m]))",
             "legendFormat": "{{`{{`}} pod {{`}}`}}",
             "refId": "A"
           }]
@@ -93,7 +93,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "sum by (pod) (container_memory_working_set_bytes{pod=~\"{{ include "vision-agent.fullname" . }}.*\"})",
+            "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"{{ .Release.Namespace }}\", pod=~\"{{ include "vision-agent.fullname" . }}.*\"})",
             "legendFormat": "{{`{{`}} pod {{`}}`}}",
             "refId": "A"
           }]
@@ -107,7 +107,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "avg(ai_demo_llm_ttft_seconds)",
+            "expr": "avg(ai_demo_llm_ttft_seconds{namespace=\"{{ .Release.Namespace }}\"})",
             "legendFormat": "TTFT",
             "refId": "A"
           }]
@@ -121,7 +121,7 @@ data:
             "overrides": []
           },
           "targets": [{
-            "expr": "avg(ai_demo_turn_duration_seconds)",
+            "expr": "avg(ai_demo_turn_duration_seconds{namespace=\"{{ .Release.Namespace }}\"})",
             "legendFormat": "Turn Duration",
             "refId": "A"
           }]
@@ -132,6 +132,6 @@ data:
       "templating": { "list": [] },
       "time": { "from": "now-1h", "to": "now" },
       "title": "Vision Agent Overview",
-      "uid": "{{ .Release.Name }}-vision-agent-overview"
+      "uid": "{{ printf "%s-va" .Release.Name | trunc 40 }}"
     }
 {{- end }}
