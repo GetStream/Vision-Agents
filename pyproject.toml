@@ -36,6 +36,7 @@ vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
 vision-agents-plugins-mistral = { workspace = true }
 vision-agents-plugins-assemblyai = { workspace = true }
+vision-agents-plugins-minimax = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -79,6 +80,7 @@ members = [
     "plugins/nvidia",
     "plugins/mistral",
     "plugins/assemblyai",
+    "plugins/minimax",
 ]
 exclude = [
     "**/__pycache__",
