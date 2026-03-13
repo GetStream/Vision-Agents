@@ -1,5 +1,6 @@
 import abc
 import logging
+import time
 import uuid
 from typing import Optional
 
@@ -41,6 +42,7 @@ class STT(abc.ABC):
         self.events.register(TurnEndedEvent)
         self.events.register(TurnStartedEvent)
         self.events.register_events_from_module(events, ignore_not_compatible=True)
+        self._turn_start_time: Optional[float] = None
 
     def _emit_transcript_event(
         self,
@@ -74,6 +76,10 @@ class STT(abc.ABC):
     ):
         if confidence is None:
             confidence = 0.5
+        duration_ms: Optional[float] = None
+        if self._turn_start_time is not None:
+            duration_ms = (time.perf_counter() - self._turn_start_time) * 1000
+            self._turn_start_time = None
         self.events.send(
             TurnEndedEvent(
                 session_id=self.session_id,
@@ -81,6 +87,7 @@ class STT(abc.ABC):
                 participant=participant,
                 eager_end_of_turn=eager_end_of_turn,
                 confidence=confidence,
+                duration_ms=duration_ms,
             )
         )
 
@@ -91,6 +98,7 @@ class STT(abc.ABC):
     ):
         if confidence is None:
             confidence = 0.5
+        self._turn_start_time = time.perf_counter()
         event = TurnStartedEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
