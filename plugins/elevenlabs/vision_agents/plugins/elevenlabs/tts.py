@@ -13,7 +13,7 @@ class TTS(tts.TTS):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        voice_id: str = "EXAVITQu4vr4xnSDxMaL",  # Sarah - Mature, Reassuring, Confident
+        voice_id: str = "VR6AewLTigWG4xSOukaG",  # Default ElevenLabs voice
         model_id: str = "eleven_multilingual_v2",
         client: Optional[AsyncElevenLabs] = None,
     ):
