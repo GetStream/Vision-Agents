@@ -111,20 +111,6 @@ data:
             "legendFormat": "TTFT",
             "refId": "A"
           }]
-        },
-        {
-          "title": "Turn Duration (seconds)",
-          "type": "timeseries",
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
-          "fieldConfig": {
-            "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
-            "overrides": []
-          },
-          "targets": [{
-            "expr": "rate(turn_duration_ms_milliseconds_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(turn_duration_ms_milliseconds_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000",
-            "legendFormat": "Turn Duration",
-            "refId": "A"
-          }]
         }
       ],
       "schemaVersion": 39,
