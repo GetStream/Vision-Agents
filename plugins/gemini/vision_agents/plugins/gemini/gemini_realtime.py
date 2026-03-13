@@ -443,13 +443,15 @@ class GeminiRealtime(realtime.Realtime):
                             # Emit partial LLM response event
                             event = LLMResponseChunkEvent(delta=part.text)
                             self.events.send(event)
-                        elif part.inline_data:
+                        if part.inline_data:
                             # Emit audio output event
                             pcm = PcmData.from_bytes(part.inline_data.data, 24000)
                             self._emit_audio_output_event(audio_data=pcm)
-                        elif part.function_call:
-                            # Handle function calls from Gemini Live
-                            await self._handle_function_call(part.function_call)
+                        if part.function_call:
+                            # Handle function calls without blocking the receive loop
+                            asyncio.create_task(
+                                self._handle_function_call(part.function_call)
+                            )
 
             if (
                 server_message.server_content
