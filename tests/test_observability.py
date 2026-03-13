@@ -132,7 +132,7 @@ async def agent(event_manager):
     agent.turn_detection = MagicMock()
     agent.turn_detection.events = event_manager
     agent.metrics = AgentMetrics()
-    agent.events = EventManager()
+    agent.events = event_manager
     return agent
 
 
