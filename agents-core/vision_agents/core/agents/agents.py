@@ -188,10 +188,17 @@ class Agent:
 
         # Per-participant audio queues keyed by participant.id
         self._participant_queues: dict[str, tuple[Participant, AudioQueue]] = {}
+
+        # WIP: Playing with the ideal buffer limit
+        # Original values:
         # self._audio_buffer_limit_ms = 8000
+        # self._realtime_audio_chunk_ms = 20
+
+        # New values:
         self._audio_buffer_limit_ms = 15000
-        self._realtime_audio_prebuffer_ms = 250
         self._realtime_audio_chunk_ms = 40
+
+        self._realtime_audio_prebuffer_ms = 250
         self._realtime_audio_queue = AudioQueue(
             buffer_limit_ms=self._audio_buffer_limit_ms
         )
