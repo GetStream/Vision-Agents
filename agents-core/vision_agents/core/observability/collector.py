@@ -167,12 +167,16 @@ class MetricsCollector:
 
     def _subscribe_to_turn_detection_events(self) -> None:
         """Subscribe to turn detection events."""
-        if not self.agent.turn_detection:
-            return
+        if self.agent.turn_detection:
 
-        @self.agent.turn_detection.events.subscribe
-        async def on_turn_ended(event: TurnEndedEvent):
-            self._on_turn_ended(event)
+            @self.agent.turn_detection.events.subscribe
+            async def on_turn_ended(event: TurnEndedEvent):
+                self._on_turn_ended(event)
+        elif self.agent.stt and self.agent.stt.turn_detection:
+
+            @self.agent.stt.events.subscribe
+            async def on_stt_turn_ended(event: TurnEndedEvent):
+                self._on_turn_ended(event)
 
     # =========================================================================
     # LLM Event Handlers
