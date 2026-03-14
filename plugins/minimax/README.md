@@ -20,20 +20,13 @@ uv add vision-agents-plugins-minimax
 ## Usage
 
 ```python
-from vision_agents.core import User, Agent
-from vision_agents.plugins import minimax, getstream, elevenlabs, deepgram, smart_turn
+from vision_agents.plugins import minimax
 
-agent = Agent(
-    edge=getstream.Edge(),
-    agent_user=User(name="MiniMax AI"),
-    instructions="Be helpful and friendly to the user",
-    llm=minimax.LLM(
-        model="MiniMax-M2.5",
-    ),
-    tts=elevenlabs.TTS(),
-    stt=deepgram.STT(),
-    turn_detection=smart_turn.TurnDetection(),
+llm = minimax.LLM(model="MiniMax-M2.5")
+response = await llm.create_response(
+    messages=[{"role": "user", "content": "Hello!"}],
 )
+print(response.text)
 ```
 
 ## Configuration

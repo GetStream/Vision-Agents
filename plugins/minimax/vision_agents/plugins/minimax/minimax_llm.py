@@ -8,9 +8,17 @@ import json
 import logging
 import os
 import time
+import traceback
 from typing import Any, Dict, List, Optional, cast
 
-from openai import AsyncOpenAI, AsyncStream
+from openai import (
+    APIConnectionError,
+    APIError,
+    APIStatusError,
+    AsyncOpenAI,
+    AsyncStream,
+    RateLimitError,
+)
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core.edge.types import Participant
@@ -161,13 +169,17 @@ class MiniMaxLLM(LLM):
 
         try:
             response = await self._client.chat.completions.create(**request_kwargs)
-        except Exception as e:
+        except (APIError, APIConnectionError, APIStatusError, RateLimitError) as e:
             logger.exception(f'Failed to get a response from MiniMax model "{self.model}"')
             self.events.send(
                 events.LLMErrorEvent(
                     plugin_name=PLUGIN_NAME,
                     error_message=str(e),
-                    event_data=e,
+                    event_data={
+                        "type": type(e).__name__,
+                        "message": str(e),
+                        "traceback": traceback.format_exc(),
+                    },
                 )
             )
             return LLMResponseEvent(original=None, text="")
@@ -275,6 +287,8 @@ class MiniMaxLLM(LLM):
     ) -> LLMResponseEvent:
         """Process a non-streaming response, handling tool calls if present."""
         latency_ms = (time.perf_counter() - request_start_time) * 1000
+        if not response.choices:
+            return LLMResponseEvent(original=response, text="")
         text = response.choices[0].message.content or ""
         llm_response = LLMResponseEvent(original=response, text=text)
 
@@ -518,13 +532,17 @@ class MiniMaxLLM(LLM):
 
             try:
                 follow_up = await self._client.chat.completions.create(**request_kwargs)
-            except Exception as e:
+            except (APIError, APIConnectionError, APIStatusError, RateLimitError) as e:
                 logger.exception("Failed to get follow-up response from MiniMax")
                 self.events.send(
                     events.LLMErrorEvent(
                         plugin_name=PLUGIN_NAME,
                         error_message=str(e),
-                        event_data=e,
+                        event_data={
+                            "type": type(e).__name__,
+                            "message": str(e),
+                            "traceback": traceback.format_exc(),
+                        },
                     )
                 )
                 return llm_response
