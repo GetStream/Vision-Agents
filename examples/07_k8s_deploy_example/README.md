@@ -7,7 +7,7 @@
 * US-east. Services like Stream run a global edge network. But many providers default to US-east. So you typically want
   to run in US-east for optimal latency
 * CPU build is quick to get up and running. GPU/CUDA takes hours.
-* This guide uses Nebius, but you could do this with other K8 enabled clouds quite easily
+* This guide is cloud-agnostic. You can use any Kubernetes provider (GKE, EKS, AKS, etc.)
 * GPU setup needs more checks/testing
 
 # Secrets
@@ -26,14 +26,7 @@ uv run deploy_example.py run
 
 # Requirements
 
-[Nebius CLI](https://docs.nebius.com/cli/configure)
-
-```
-curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-source ~/.zshrc # or similar
-nebius version
-nebius profile create # for auth
-```
+[kubectl](https://kubernetes.io/docs/tasks/tools/)
 
 [HELM](https://helm.sh/docs/intro/install/)
 
@@ -41,85 +34,37 @@ nebius profile create # for auth
 brew install helm
 ```
 
-# 0. Create a new k8s cluster with Nebius CLI
+# 0. Create a Kubernetes cluster
 
-Lookup your parent-id and subnet for Nebius:
+Create a Kubernetes cluster using your cloud provider of choice:
 
-```
-nebius vpc subnet list
-nebius config list | grep parent-id
-```
+- **GKE:** `gcloud container clusters create vision-agents ...`
+- **EKS:** `eksctl create cluster --name vision-agents ...`
+- **AKS:** `az aks create --name vision-agents ...`
 
-Create the cluster (replace parent-id and subnet):
-
-```
-nebius mk8s cluster create \
-  --parent-id mk8scluster-<youridhere> \
-  --name vision-agents \
-  --control-plane-subnet-id <your-subnet-id> \
-  --control-plane-version 1.32 \
-  --control-plane-endpoints-public-endpoint
-```
+Refer to your provider's documentation for cluster creation details.
 
 ## Add a Node Group
 
-Lookup your template service account id
-
-```
-nebius iam service-account list
-```
-
-Choose **one** of the following:
-
 ### Option A: CPU Node (cheaper, for testing)
 
-```
-nebius mk8s node-group create \
-  --parent-id <cluster-id-from-above> \
-  --name cpu \
-  --template-resources-platform cpu-d3 \
-  --template-resources-preset 4vcpu-16gb \
-  --template-boot-disk-size-gibibytes 64 \
-  --template-service-account-id <your-service-account-id> \
-  --fixed-node-count 1
-```
+Create a node group with at least 4 vCPUs and 16GB RAM.
 
-### Option B: GPU Node (H200, if you need to run models locally)
+### Option B: GPU Node (for running models locally)
 
 GPUs are expensive. You typically don't want to run your voice agents on a server with a GPU.
-Even from a load balancing perspective you typically want to spin the GPU related work into it's own cluster.
-That being said, in case you want/need to run on a GPU do the following:
+Even from a load balancing perspective you typically want to spin the GPU related work into its own cluster.
 
-**Important:** You must include `--template-gpu-settings-drivers-preset cuda12` to install NVIDIA drivers!
-
-```
-nebius mk8s node-group create \
-  --parent-id <cluster-id-from-above> \
-  --name gpu \
-  --template-resources-platform gpu-h200-sxm \
-  --template-resources-preset 1gpu-16vcpu-200gb \
-  --template-boot-disk-size-gibibytes 300 \
-  --template-service-account-id <your-service-account-id> \
-  --template-metadata-labels nebius.com/gpu=true \
-  --template-gpu-settings-drivers-preset cuda12 \
-  --fixed-node-count 1
-```
-
-Available GPU presets:
-
-- `1gpu-16vcpu-200gb` - 1x H200, 16 vCPU, 200GB RAM
-- `8gpu-128vcpu-1600gb` - 8x H200, 128 vCPU, 1.6TB RAM
-
-Available driver presets (see [Nebius GPU docs](https://docs.nebius.com/kubernetes/gpu/set-up)):
-
-- `cuda12` - CUDA 12.4 (default)
-- `cuda12.4` - CUDA 12.4
-- `cuda12.8` - CUDA 12.8
+If you need GPU support, create a node group with an NVIDIA GPU and ensure the appropriate drivers (e.g. CUDA 12) are installed.
 
 ### Get kubectl credentials
 
 ```
-nebius mk8s cluster get-credentials --id <cluster-id> --external --force
+# Use your provider's CLI to configure kubectl access, e.g.:
+# gcloud container clusters get-credentials vision-agents
+# aws eks update-kubeconfig --name vision-agents
+# az aks get-credentials --name vision-agents
+
 kubectl get nodes  # verify connection
 ```
 
@@ -133,14 +78,14 @@ There are two Dockerfiles:
 ### CPU build
 
 ```
-cd examples/05_deploy_example
+cd examples/07_k8s_deploy_example
 docker buildx build --platform linux/amd64 -t vision-agent-deploy .
 ```
 
 ### GPU build (takes a long time)
 
 ```
-cd examples/05_deploy_example
+cd examples/07_k8s_deploy_example
 docker buildx build --platform linux/amd64 -f Dockerfile.gpu -t vision-agent-deploy:gpu .
 ```
 
@@ -148,17 +93,16 @@ docker buildx build --platform linux/amd64 -f Dockerfile.gpu -t vision-agent-dep
 
 # 2. Push to registry
 
+Tag and push to your container registry:
+
 ```
-# Lookup your registry id
-nebius registry list
+# CPU
+docker tag vision-agent-deploy <your-registry>/vision-agent-deploy:latest
+docker push <your-registry>/vision-agent-deploy:latest
 
-# Tag and push (CPU)
-docker tag vision-agent-deploy cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:latest
-docker push cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:latest
-
-# Or for GPU
-docker tag vision-agent-deploy:gpu cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:gpu
-docker push cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:gpu
+# GPU
+docker tag vision-agent-deploy:gpu <your-registry>/vision-agent-deploy:gpu
+docker push <your-registry>/vision-agent-deploy:gpu
 ```
 
 # 3. Deploy with Helm
@@ -167,7 +111,7 @@ docker push cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy:gpu
 
 ```
 helm upgrade --install vision-agent ./helm \
-  --set image.repository="cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy" \
+  --set image.repository="<your-registry>/vision-agent-deploy" \
   --set image.tag=latest \
   --set image.pullPolicy=Always \
   --set cache.enabled=true \
@@ -179,7 +123,7 @@ helm upgrade --install vision-agent ./helm \
 
 ```
 helm upgrade --install vision-agent ./helm \
-  --set image.repository="cr.eu-west1.nebius.cloud/<registry-id>/vision-agent-deploy" \
+  --set image.repository="<your-registry>/vision-agent-deploy" \
   --set image.tag=gpu \
   --set image.pullPolicy=Always \
   --set cache.enabled=true \
@@ -213,18 +157,7 @@ kubectl logs -l app.kubernetes.io/name=vision-agent -f --tail=100
 
 ## Pause cluster (stop paying for compute)
 
-```
-# List node groups
-nebius mk8s node-group list --parent-id <cluster-id>
-
-# Scale to 0
-nebius mk8s node-group update --id <node-group-id> --fixed-node-count 0 --async
-
-# Check status
-nebius mk8s node-group get --id <node-group-id>
-```
-
-Resume by setting count back to 1.
+Scale your node group to 0 nodes using your provider's CLI, then scale back up when needed.
 
 ## Switch between CPU and GPU
 
