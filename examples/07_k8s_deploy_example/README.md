@@ -14,6 +14,7 @@ cp .env.example .env
 Run the example locally to verify everything works:
 
 ```bash
+cd examples/07_k8s_deploy_example
 uv run deploy_example.py run
 ```
 
