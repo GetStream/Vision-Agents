@@ -7,13 +7,13 @@ For the full deployment guide (cluster setup, Helm deployment, secrets, monitori
 
 Copy the .env.example and fill in the required variables:
 
-```
+```bash
 cp .env.example .env
 ```
 
 Run the example locally to verify everything works:
 
-```
+```bash
 uv run deploy_example.py run
 ```
 
@@ -26,14 +26,14 @@ There are two Dockerfiles:
 
 ### CPU build
 
-```
+```bash
 cd examples/07_k8s_deploy_example
 docker buildx build --platform linux/amd64 -t vision-agent-deploy .
 ```
 
 ### GPU build (takes a long time)
 
-```
+```bash
 cd examples/07_k8s_deploy_example
 docker buildx build --platform linux/amd64 -f Dockerfile.gpu -t vision-agent-deploy:gpu .
 ```
@@ -44,7 +44,7 @@ docker buildx build --platform linux/amd64 -f Dockerfile.gpu -t vision-agent-dep
 
 Tag and push to your container registry:
 
-```
+```bash
 # CPU
 docker tag vision-agent-deploy <your-registry>/vision-agent-deploy:latest
 docker push <your-registry>/vision-agent-deploy:latest
