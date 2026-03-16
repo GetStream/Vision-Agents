@@ -1,0 +1,42 @@
+name: _notify-slack
+on:
+  workflow_call:
+    inputs:
+      workflow-name:
+        description: 'Display name of the workflow that failed.'
+        required: true
+        type: string
+      summary:
+        description: 'Short summary for the Slack notification.'
+        required: true
+        type: string
+      details:
+        description: 'Additional details to include in the Slack notification.'
+        required: false
+        default: ''
+        type: string
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: true
+
+jobs:
+  notify-slack:
+    name: Notify Slack on failure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure notification
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: "[FAILED] ${{ inputs.workflow-name }} in ${{ github.repository }}"
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: "*GitHub Actions failure*\n*Workflow:* `${{ inputs.workflow-name }}`\n*Repository:* `${{ github.repository }}`\n*Ref:* `${{ github.head_ref || github.ref_name }}`\n*Event:* `${{ github.event_name }}`\n*Summary:* ${{ inputs.summary }}\n*Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: "*Details*\n${{ inputs.details }}"
