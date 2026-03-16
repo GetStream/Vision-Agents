@@ -3,9 +3,9 @@ import collections
 import logging
 import types
 import typing
-import uuid
 from typing import Any, Deque, Dict, Optional, Union, get_args, get_origin
 
+from ..utils.utils import cancel_and_wait
 from .base import BaseEvent, ExceptionEvent
 
 logger = logging.getLogger(__name__)
@@ -134,7 +134,7 @@ class EventManager:
         self._processing_task: Optional[asyncio.Task[Any]] = None
         self._shutdown = False
         self._silent_events: set[str] = set()
-        self._handler_tasks: Dict[uuid.UUID, asyncio.Task[Any]] = {}
+        self._handler_tasks: set[asyncio.Task[Any]] = set()
         self._received_event = asyncio.Event()
 
         self.register(ExceptionEvent)
@@ -492,7 +492,7 @@ class EventManager:
         """
         start_time = asyncio.get_event_loop().time()
         while (asyncio.get_event_loop().time() - start_time) < timeout:
-            if not self._queue and all(t.done() for t in self._handler_tasks.values()):
+            if not self._queue and all(t.done() for t in self._handler_tasks):
                 break
             await asyncio.sleep(0.01)
 
@@ -527,14 +527,6 @@ class EventManager:
             elif cancelled_exc:
                 raise cancelled_exc
             else:
-                cleanup_ids = set(
-                    task_id
-                    for task_id, task in self._handler_tasks.items()
-                    if task.done()
-                )
-                for task_id in cleanup_ids:
-                    self._handler_tasks.pop(task_id)
-
                 await self._received_event.wait()
                 self._received_event.clear()
 
@@ -559,10 +551,13 @@ class EventManager:
 
             loop = asyncio.get_running_loop()
             handler_task = loop.create_task(self._run_handler(handler, event))
-            self._handler_tasks[uuid.uuid4()] = handler_task
+            # Store references to the tasks to prevent GC from destroying them
+            # and clean them up when they are done
+            self._handler_tasks.add(handler_task)
+            handler_task.add_done_callback(self._handler_tasks.discard)
 
     def stop(self):
-        if self._processing_task and not self._processing_task.done():
+        if self._processing_task is not None:
             self._processing_task.cancel()
             self._processing_task = None
 
@@ -576,14 +571,12 @@ class EventManager:
 
         Call this when the agent session is fully done and will not be reused.
         """
-        processing_task = self._processing_task
         self.stop()
-        if processing_task is not None:
-            await asyncio.gather(processing_task, return_exceptions=True)
-
-        handler_tasks = [t for t in self._handler_tasks.values() if not t.done()]
+        # Get the remaining handler tasks and cancel them
+        handler_tasks = [t for t in self._handler_tasks if not t.done()]
         if handler_tasks:
-            await asyncio.gather(*handler_tasks, return_exceptions=True)
+            await cancel_and_wait(*handler_tasks)
+        # Clear the state
         self._handler_tasks.clear()
         self._handlers.clear()
         self._queue.clear()

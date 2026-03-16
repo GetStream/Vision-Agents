@@ -316,25 +316,54 @@ class TestEventManager:
 
         assert manager.has_subscribers(ValidEvent)
 
-    async def test_shutdown_awaits_handler_tasks(self):
-        """shutdown() should await pending handler tasks before clearing state."""
+    async def test_shutdown_cancels_handler_tasks(self):
+        """shutdown() should cancel pending handler tasks before clearing state."""
         manager = EventManager()
         manager.register(ValidEvent)
 
         handler_started = asyncio.Event()
-        handler_completed = asyncio.Event()
+        handler_cancelled = asyncio.Event()
 
         @manager.subscribe
         async def slow_handler(event: ValidEvent):
-            handler_started.set()
-            await asyncio.sleep(0.05)
-            handler_completed.set()
+            try:
+                handler_started.set()
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                handler_cancelled.set()
+                raise
 
         manager.send(ValidEvent(field=1))
         await handler_started.wait()
 
         await manager.shutdown()
 
-        assert handler_completed.is_set()
+        assert handler_cancelled.is_set()
         assert len(manager._handler_tasks) == 0
         assert len(manager._handlers) == 0
+
+    async def test_handler_tasks_removes_ref_when_done(self):
+        """
+        Event handler tasks should remove references to themselves after they're done
+        """
+        manager = EventManager()
+        manager.register(ValidEvent)
+
+        done = asyncio.Event()
+
+        @manager.subscribe
+        async def slow_handler(event: ValidEvent):
+            await done.wait()
+
+        manager.send(ValidEvent(field=1))
+        # Let the internal loop run
+        await asyncio.sleep(0)
+        # The task must be running
+        assert len(manager._handler_tasks) == 1
+
+        done.set()
+        # Wait a little bit because done callbacks are not fired immediately
+        await asyncio.sleep(0.05)
+
+        # The task must remove itself from the set
+        assert len(manager._handler_tasks) == 0
