@@ -292,7 +292,7 @@ class Realtime(realtime.Realtime):
             if item_id and item_id in self._pending_tool_calls:
                 await self._execute_pending_tool_call(item_id)
         elif et == "response.created":
-            pass
+            self._begin_response()
         elif et == "session.created":
             session_event = SessionCreatedEvent(**event)
             self.current_session = session_event.session

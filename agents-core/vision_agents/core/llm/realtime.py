@@ -51,10 +51,15 @@ class Realtime(OmniLLM):
         # Monotonic epoch counter; incremented on interrupt so stale events
         # emitted before the interrupt can be identified and dropped.
         self._epoch: int = 0
+        self._response_epoch: int = 0
 
     @property
     def epoch(self) -> int:
         return self._epoch
+
+    def _begin_response(self) -> None:
+        """Snapshot the current epoch for this response."""
+        self._response_epoch = self._epoch
 
     async def interrupt(self) -> None:
         """Increment epoch so stale audio output events are discarded."""
@@ -119,7 +124,7 @@ class Realtime(OmniLLM):
             plugin_name=self.provider_name,
             data=audio_data,
             response_id=response_id,
-            epoch=self._epoch,
+            epoch=self._response_epoch,
             participant=user_metadata,
         )
         self.events.send(event)

@@ -134,6 +134,7 @@ class TTS(abc.ABC):
         synthesis_id: str,
         text: str,
         participant: Optional[Participant],
+        epoch: int,
     ) -> tuple[int, float]:
         """Emit TTSAudioEvent; return (bytes_len, duration_ms)."""
 
@@ -153,7 +154,7 @@ class TTS(abc.ABC):
                 participant=participant,
                 chunk_index=idx,
                 is_final_chunk=is_final,
-                epoch=self._epoch,
+                epoch=epoch,
             )
         )
         if pcm is not None:
@@ -219,6 +220,7 @@ class TTS(abc.ABC):
 
         start_time = time.perf_counter()
         synthesis_id = str(uuid.uuid4())
+        epoch = self._epoch
 
         logger.debug(
             "Starting text-to-speech synthesis", extra={"text_length": len(text)}
@@ -237,6 +239,8 @@ class TTS(abc.ABC):
         try:
             # Synthesize audio in provider-native format
             response = await self.stream_audio(text, *args, **kwargs)
+            if epoch != self._epoch:
+                return
 
             # Calculate synthesis setup time
             total_audio_bytes = 0
@@ -247,18 +251,20 @@ class TTS(abc.ABC):
             synthesis_time = time.perf_counter() - start_time
             if isinstance(response, (PcmData,)):
                 bytes_len, dur_ms = self._emit_chunk(
-                    response, 0, True, synthesis_id, text, participant
+                    response, 0, True, synthesis_id, text, participant, epoch
                 )
                 total_audio_bytes += bytes_len
                 total_audio_ms += dur_ms
                 chunk_index = 1
             else:
                 async for pcm in self._iter_pcm(response):
+                    if epoch != self._epoch:
+                        return
                     # Register the synthesis time only when we get the first chunk
                     if chunk_index == 0:
                         synthesis_time = time.perf_counter() - start_time
                     bytes_len, dur_ms = self._emit_chunk(
-                        pcm, chunk_index, False, synthesis_id, text, participant
+                        pcm, chunk_index, False, synthesis_id, text, participant, epoch
                     )
                     total_audio_bytes += bytes_len
                     total_audio_ms += dur_ms
@@ -269,7 +275,7 @@ class TTS(abc.ABC):
                 # to e.g. flush the buffer.
                 if chunk_index > 0:
                     self._emit_chunk(
-                        None, chunk_index, True, synthesis_id, text, participant
+                        None, chunk_index, True, synthesis_id, text, participant, epoch
                     )
 
             # Use accumulated PcmData duration for total audio duration

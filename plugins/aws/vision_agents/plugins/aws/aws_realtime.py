@@ -897,6 +897,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                     self._emit_audio_output_done_event()
 
                             elif "completionStart" in json_data["event"]:
+                                self._begin_response()
                                 logger.debug(
                                     "Completion start from AWS Bedrock: %s",
                                     json_data["event"]["completionStart"],

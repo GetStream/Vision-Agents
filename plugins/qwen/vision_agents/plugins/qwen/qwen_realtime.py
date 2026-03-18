@@ -237,6 +237,7 @@ class Qwen3Realtime(Realtime):
                 logger.debug("Qwen3Realtime session initialized successfully")
 
             elif event_type == "response.created":
+                self._begin_response()
                 self._current_response_id = event.get("response", {}).get("id")
                 self._is_responding = True
             elif event_type == "response.output_item.added":
