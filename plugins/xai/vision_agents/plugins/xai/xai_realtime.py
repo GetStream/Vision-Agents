@@ -471,6 +471,7 @@ class XAIRealtime(realtime.Realtime):
                 logger.debug("Audio buffer cleared")
 
             elif event_type == "response.created":
+                self._begin_response()
                 logger.debug("Response generation started")
 
             elif event_type == "response.output_item.added":

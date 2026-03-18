@@ -418,6 +418,7 @@ class GeminiRealtime(realtime.Realtime):
                             original=server_message,
                         )
             elif is_response:
+                self._begin_response()
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
                     update = server_message.session_resumption_update

@@ -363,6 +363,10 @@ class Agent:
                 self._audio_track is not None
                 and event.data is not None
                 and not self.audio_publishers
+                # Skip processing TTS events emitted before
+                # the interruption (epoch helps with tracking that)
+                and self.tts is not None
+                and event.epoch == self.tts.epoch
             ):
                 await self._audio_track.write(event.data)
 
@@ -1457,6 +1461,8 @@ class Agent:
                     self._audio_track is not None
                     and event.data is not None
                     and not self.audio_publishers
+                    and _is_realtime_llm(self.llm)
+                    and event.epoch == self.llm.epoch
                 ):
                     await self._audio_track.write(event.data)
 
@@ -1564,22 +1570,15 @@ class Agent:
 
     async def _on_turn_started(self, event: TurnStartedEvent) -> None:
         """Handle barge-in when a participant starts speaking."""
-        if _is_audio_llm(self.llm):
-            return
-
-        # Interrupt TTS when user starts speaking (barge-in)
         if event.participant and event.participant.user_id != self.agent_user.id:
-            if self.tts:
-                self.logger.info(
-                    f"👉 Turn started - interrupting agent for participant {event.participant.user_id}"
-                )
-                await self.tts.stop_audio()
+            self.logger.info(
+                f"👉 Turn started - interrupting agent for participant {event.participant.user_id}"
+            )
+            if _is_realtime_llm(self.llm):
+                await self.llm.interrupt()
+            elif self.tts:
+                await self.tts.interrupt()
                 self._streaming_tts_buffer = ""
-            else:
-                user_id = event.participant.user_id if event.participant else "unknown"
-                self.logger.info(
-                    '👉 Turn started - participant "%s" is speaking', user_id
-                )
             if self._audio_track is not None:
                 await self._audio_track.flush()
         else:
