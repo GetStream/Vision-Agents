@@ -110,10 +110,9 @@ class TTS(tts.TTS):
                     request_id,
                 )
                 raise
-            except Exception as e:
-                logger.error(
-                    "Error streaming audio from Inworld AI: %s (request_id=%s)",
-                    e,
+            except Exception:
+                logger.exception(
+                    "Error streaming audio from Inworld AI (request_id=%s)",
                     request_id,
                 )
                 raise
