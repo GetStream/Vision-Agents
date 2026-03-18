@@ -21,14 +21,21 @@ class TestMiniMaxLLM:
     """Test suite for MiniMax LLM class."""
 
     def test_default_model(self):
-        """Test that default model is MiniMax-M2.5."""
+        """Test that default model is MiniMax-M2.7."""
         llm = LLM()
-        assert llm.model == "MiniMax-M2.5"
+        assert llm.model == "MiniMax-M2.7"
 
     def test_custom_model(self):
         """Test setting a custom model."""
-        llm = LLM(model="MiniMax-M2.5-highspeed")
-        assert llm.model == "MiniMax-M2.5-highspeed"
+        llm = LLM(model="MiniMax-M2.7-highspeed")
+        assert llm.model == "MiniMax-M2.7-highspeed"
+
+    def test_legacy_model(self):
+        """Test that legacy M2.5 models still work."""
+        llm = LLM(model="MiniMax-M2.5")
+        assert llm.model == "MiniMax-M2.5"
+        llm_hs = LLM(model="MiniMax-M2.5-highspeed")
+        assert llm_hs.model == "MiniMax-M2.5-highspeed"
 
     def test_tool_conversion(self):
         """Test converting ToolSchema to Chat Completions format."""
@@ -101,7 +108,7 @@ class TestMiniMaxLLM:
     async def llm(self) -> LLM:
         """Fixture for MiniMax LLM with conversation."""
         skip_without_api_key()
-        llm = LLM(model="MiniMax-M2.5")
+        llm = LLM(model="MiniMax-M2.7")
         llm.set_conversation(InMemoryConversation("be friendly", []))
         return llm
 

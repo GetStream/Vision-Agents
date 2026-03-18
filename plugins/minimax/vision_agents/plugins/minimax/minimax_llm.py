@@ -1,7 +1,7 @@
 """MiniMax LLM implementation using OpenAI-compatible Chat Completions API.
 
 MiniMax provides an OpenAI-compatible API at https://api.minimax.io/v1.
-Supported models: MiniMax-M2.5, MiniMax-M2.5-highspeed.
+Supported models: MiniMax-M2.7, MiniMax-M2.7-highspeed, MiniMax-M2.5, MiniMax-M2.5-highspeed.
 """
 
 import json
@@ -48,12 +48,12 @@ class MiniMaxLLM(LLM):
     Examples:
 
         from vision_agents.plugins import minimax
-        llm = minimax.LLM(model="MiniMax-M2.5")
+        llm = minimax.LLM(model="MiniMax-M2.7")
     """
 
     def __init__(
         self,
-        model: str = "MiniMax-M2.5",
+        model: str = "MiniMax-M2.7",
         api_key: str | None = None,
         base_url: str | None = None,
         client: AsyncOpenAI | None = None,
@@ -61,7 +61,7 @@ class MiniMaxLLM(LLM):
         """Initialize the MiniMaxLLM class.
 
         Args:
-            model: The MiniMax model to use. Supported: MiniMax-M2.5, MiniMax-M2.5-highspeed.
+            model: The MiniMax model to use. Supported: MiniMax-M2.7, MiniMax-M2.7-highspeed, MiniMax-M2.5, MiniMax-M2.5-highspeed.
             api_key: Optional API key. Defaults to MINIMAX_API_KEY env var.
             base_url: Optional base URL. Defaults to https://api.minimax.io/v1.
             client: Optional AsyncOpenAI client for dependency injection.
