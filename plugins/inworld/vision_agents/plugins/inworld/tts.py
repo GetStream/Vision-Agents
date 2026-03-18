@@ -10,7 +10,6 @@ from typing import AsyncIterator, Literal, Optional
 import av
 import httpx
 from getstream.video.rtc.track_util import PcmData
-
 from vision_agents.core import tts
 
 logger = logging.getLogger(__name__)
@@ -112,7 +111,11 @@ class TTS(tts.TTS):
                 )
                 raise
             except Exception as e:
-                logger.error("Error streaming audio from Inworld AI: %s (request_id=%s)", e, request_id)
+                logger.error(
+                    "Error streaming audio from Inworld AI: %s (request_id=%s)",
+                    e,
+                    request_id,
+                )
                 raise
 
         # Return the async generator
