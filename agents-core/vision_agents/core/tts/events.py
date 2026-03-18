@@ -17,6 +17,7 @@ class TTSAudioEvent(PluginBaseEvent):
     is_final_chunk: bool = True
     text_source: Optional[str] = None
     synthesis_id: Optional[str] = None
+    epoch: int = 0
 
 
 @dataclass

@@ -48,6 +48,18 @@ class Realtime(OmniLLM):
         # Store current participant for user speech transcription events
         self._current_participant: Optional[Participant] = None
 
+        # Monotonic epoch counter; incremented on interrupt so stale events
+        # emitted before the interrupt can be identified and dropped.
+        self._epoch: int = 0
+
+    @property
+    def epoch(self) -> int:
+        return self._epoch
+
+    async def interrupt(self) -> None:
+        """Increment epoch so stale audio output events are discarded."""
+        self._epoch += 1
+
     @abc.abstractmethod
     async def connect(self): ...
 
@@ -107,6 +119,7 @@ class Realtime(OmniLLM):
             plugin_name=self.provider_name,
             data=audio_data,
             response_id=response_id,
+            epoch=self._epoch,
             participant=user_metadata,
         )
         self.events.send(event)

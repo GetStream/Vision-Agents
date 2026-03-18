@@ -45,6 +45,7 @@ class RealtimeAudioOutputEvent(PluginBaseEvent):
     type: str = field(default="plugin.realtime_audio_output", init=False)
     data: Optional[PcmData] = None
     response_id: Optional[str] = None
+    epoch: int = 0
 
 
 @dataclass

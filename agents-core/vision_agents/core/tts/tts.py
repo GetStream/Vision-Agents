@@ -60,6 +60,10 @@ class TTS(abc.ABC):
         self._desired_channels: int = 1
         self._desired_format: AudioFormat = AudioFormat.PCM_S16
 
+        # Monotonic epoch counter; incremented on interrupt so stale events
+        # emitted before the interrupt can be identified and dropped.
+        self._epoch: int = 0
+
         # Persistent resampler to avoid discontinuities between chunks
         self._resampler: Optional[av.AudioResampler] = None
         self._resampler_input_rate: Optional[int] = None
@@ -84,6 +88,15 @@ class TTS(abc.ABC):
         self._desired_sample_rate = int(sample_rate)
         self._desired_channels = int(channels)
         self._desired_format = audio_format
+
+    @property
+    def epoch(self) -> int:
+        return self._epoch
+
+    async def interrupt(self) -> None:
+        """Increment epoch and stop audio. Stale events will be discarded."""
+        self._epoch += 1
+        await self.stop_audio()
 
     async def _iter_pcm(self, resp: Any) -> AsyncGenerator[PcmData, None]:
         """Yield PcmData chunks from a provider response of various shapes."""
@@ -140,6 +153,7 @@ class TTS(abc.ABC):
                 participant=participant,
                 chunk_index=idx,
                 is_final_chunk=is_final,
+                epoch=self._epoch,
             )
         )
         if pcm is not None:

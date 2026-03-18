@@ -448,6 +448,44 @@ class TestAgent:
         async with agent.join(call):
             assert edge.authenticate_call_count == 1
 
+    async def test_stale_tts_epoch_dropped(self):
+        edge = RecordingEdge()
+        tts = DummyTTS()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=tts,
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        pcm = PcmData(
+            samples=np.zeros(160, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+        )
+        await tts.interrupt()
+        agent.events.send(TTSAudioEvent(data=pcm, epoch=0))
+        await agent.events.wait()
+        assert edge.recorded_audio_track.writes == []
+
+    async def test_current_tts_epoch_forwarded(self):
+        edge = RecordingEdge()
+        tts = DummyTTS()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=tts,
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        pcm = PcmData(
+            samples=np.zeros(160, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+        )
+        await tts.interrupt()
+        agent.events.send(TTSAudioEvent(data=pcm, epoch=tts.epoch))
+        await agent.events.wait()
+        assert len(edge.recorded_audio_track.writes) == 1
+
 
 @pytest.fixture
 def participant() -> Participant:
