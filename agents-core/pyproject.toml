@@ -108,6 +108,7 @@ all-plugins = [
     "vision-agents-plugins-turbopuffer",
     "vision-agents-plugins-mistral",
     "vision-agents-plugins-assemblyai",
+    "vision-agents-plugins-local",
 ]
 
 [tool.hatch.metadata]
