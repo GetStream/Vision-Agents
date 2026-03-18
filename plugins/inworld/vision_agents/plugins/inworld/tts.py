@@ -3,6 +3,8 @@ import io
 import json
 import logging
 import os
+import uuid
+from importlib.metadata import PackageNotFoundError, version
 from typing import AsyncIterator, Literal, Optional
 
 import av
@@ -14,6 +16,13 @@ from vision_agents.core import tts
 logger = logging.getLogger(__name__)
 
 INWORLD_API_BASE = "https://api.inworld.ai"
+
+try:
+    _pkg_version = version("vision-agents-plugins-inworld")
+except PackageNotFoundError:
+    _pkg_version = "unknown"
+
+USER_AGENT = f"vision-agents-plugins-inworld/{_pkg_version}"
 
 
 class TTS(tts.TTS):
@@ -70,10 +79,12 @@ class TTS(tts.TTS):
         """
         url = f"{self.base_url}/tts/v1/voice:stream"
 
-        credentials = f"Basic {self.api_key}"
+        request_id = str(uuid.uuid4())
         headers = {
-            "Authorization": credentials,
+            "Authorization": f"Basic {self.api_key}",
             "Content-Type": "application/json",
+            "X-User-Agent": USER_AGENT,
+            "X-Request-Id": request_id,
         }
 
         payload = {
@@ -94,13 +105,14 @@ class TTS(tts.TTS):
                         yield pcm
             except httpx.HTTPStatusError as e:
                 logger.error(
-                    "Inworld AI API HTTP error: %s - %s",
+                    "Inworld AI API HTTP error: %s - %s (request_id=%s)",
                     e.response.status_code,
                     e.response.text,
+                    request_id,
                 )
                 raise
             except Exception as e:
-                logger.error("Error streaming audio from Inworld AI: %s", e)
+                logger.error("Error streaming audio from Inworld AI: %s (request_id=%s)", e, request_id)
                 raise
 
         # Return the async generator
