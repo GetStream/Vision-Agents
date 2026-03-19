@@ -217,7 +217,9 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         config = Config(
             endpoint_uri=f"https://bedrock-runtime.{region_name}.amazonaws.com",
             region=region_name,
-            aws_credentials_identity_resolver=Boto3CredentialsResolver(profile_name=aws_profile),
+            aws_credentials_identity_resolver=Boto3CredentialsResolver(
+                profile_name=aws_profile
+            ),
         )
         self.client = BedrockRuntimeClient(config=config)
         self.logger = logging.getLogger(__name__)
