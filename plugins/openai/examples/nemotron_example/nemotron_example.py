@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
@@ -72,27 +72,6 @@ SUMMARIZE_PROMPT = (
     "Keep all key info about actions taken (frozen card, cancelled charge, replacement card, refund timeline). "
     "Example tone: 'Okay so I've frozen your card and cancelled that charge. The money should be back in a couple of days. Want me to send you a new card?'\n\n"
     "Do not use any special characters that only make sense in writing like brackets.\n"
-
-    "here's the prompt i gave to the llm that generates the text you review:\n\n"
-
-"""    INSTRUCTIONS = (
-    "detailed thinking off\n\n"
-    "You are a bank fraud phone agent on a live phone call. Your output goes directly to TTS.\n\n"
-    "When you spot a suspicious transaction, explain WHY — e.g. 'There's a large charge in Miami but you live in London.' "
-    "Suspicious means: different city from the customer's home, or unusually large compared to their other transactions.\n"
-    "If you flag a transaction, the card should be frozen immediately to prevent further fraud, but only after you have explicitly confirmed with the customer that they did not make the transaction.\n\n"
-    "If you freeze a card due to a transaction, you should also offer to issue a replacement card. If the customer confirms, issue a virtual card immediately and a physical card that arrives in 3-5 business days.\n\n"
-    "If a transaction is fraudulent, you should also cancel the charge to return the money to the customer's account. This typically takes 24-48 hours.\n\n"
-    "The user cannot see what you can see. They are on the phone."
-    "RULES:\n"
-    "- MAXIMUM 15 words per response. One short sentence. Responses over 15 words get cut off.\n"
-    "- NEVER take action (flag, freeze, cancel) without the customer explicitly confirming.\n"
-    "- After taking any action, always tell the customer what you did.\n"
-    "- Work one step at a time: look up info, briefly tell the customer what you found, ask what to do.\n"
-    "- Do NOT list data, read IDs, dates, or dollar amounts aloud.\n"
-    "- Speak casually like a real person. No markdown, no bullet points.\n"
-)
-"""
 )
 
 _summarizer = AsyncOpenAI()
@@ -109,10 +88,29 @@ async def _summarize_for_speech(text: str) -> str:
     result = response.choices[0].message.content or text
     return result.strip().strip('"')
 
+
 MOCK_TRANSACTIONS = [
-    {"id": "tx_001", "amount": 7.50, "merchant": "Greg's Questionable Tacos", "city": "London", "date": "2026-03-12"},
-    {"id": "tx_002", "amount": 42.00, "merchant": "The Existential Bookshop", "city": "London", "date": "2026-03-11"},
-    {"id": "tx_003", "amount": 8900.00, "merchant": "Luxe Diamond Emporium", "city": "Miami", "date": "2026-03-12"},
+    {
+        "id": "tx_001",
+        "amount": 7.50,
+        "merchant": "Greg's Questionable Tacos",
+        "city": "London",
+        "date": "2026-03-12",
+    },
+    {
+        "id": "tx_002",
+        "amount": 42.00,
+        "merchant": "The Existential Bookshop",
+        "city": "London",
+        "date": "2026-03-11",
+    },
+    {
+        "id": "tx_003",
+        "amount": 8900.00,
+        "merchant": "Luxe Diamond Emporium",
+        "city": "Miami",
+        "date": "2026-03-12",
+    },
 ]
 
 MOCK_ACCOUNT = {
@@ -173,7 +171,7 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         request_start_time = time.perf_counter()
         try:
             response = await self._client.chat.completions.create(**request_kwargs)
-        except Exception:
+        except (APIConnectionError, APIStatusError):
             logger.exception("Failed to get a response from Nemotron")
             return LLMResponseEvent(original=None, text="")
 
@@ -204,11 +202,13 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         # Strip everything up to and including </think>
         think_end = full_text.find(THINK_END_TAG)
         if think_end != -1:
-            print(f">>> THINK TAG FOUND at pos {think_end} / {len(full_text)} chars")
+            logger.debug(
+                "THINK TAG FOUND at pos %d / %d chars", think_end, len(full_text)
+            )
             full_text = full_text[think_end + len(THINK_END_TAG) :].lstrip()
-            print(f">>> AFTER STRIP: {full_text[:200]}")
+            logger.debug("AFTER STRIP: %s", full_text[:200])
         else:
-            print(f">>> NO THINK TAG. Raw: {full_text[:300]}")
+            logger.debug("NO THINK TAG. Raw: %s", full_text[:300])
 
         # Check for XML tool calls (max 5 rounds of tool calls per user turn)
         tool_depth = kwargs.get("_tool_depth", 0)
@@ -227,7 +227,9 @@ class NemotronLLM(openai.ChatCompletionsLLM):
 
         # Normal text response — emit events for TTS
         latency_ms = (time.perf_counter() - request_start_time) * 1000
-        ttft_ms = (first_token_time - request_start_time) * 1000 if first_token_time else None
+        ttft_ms = (
+            (first_token_time - request_start_time) * 1000 if first_token_time else None
+        )
         item_id = last_chunk.id if last_chunk else None
 
         if full_text:
@@ -281,10 +283,14 @@ class NemotronLLM(openai.ChatCompletionsLLM):
             output = error if error is not None else result
             results.append(json.dumps({"name": tc["name"], "content": output}))
 
-        current_messages.append({
-            "role": "user",
-            "content": "<tool_response>\n" + "\n".join(results) + "\n</tool_response>",
-        })
+        current_messages.append(
+            {
+                "role": "user",
+                "content": "<tool_response>\n"
+                + "\n".join(results)
+                + "\n</tool_response>",
+            }
+        )
 
         follow_up_kwargs = {**kwargs, "_tool_depth": kwargs.get("_tool_depth", 0) + 1}
         return await self._create_response_internal(
@@ -308,18 +314,19 @@ def _parse_nemotron_tool_calls(text: str) -> list[NormalizedToolCallItem]:
             r"<parameter=(\w+)>\s*(.*?)\s*</parameter>", tc_body, re.DOTALL
         ):
             params[param_match.group(1)] = param_match.group(2).strip()
-        tool_calls.append({
-            "type": "tool_call",
-            "id": str(uuid.uuid4()),
-            "name": fn_match.group(1),
-            "arguments_json": params,
-        })
+        tool_calls.append(
+            {
+                "type": "tool_call",
+                "id": str(uuid.uuid4()),
+                "name": fn_match.group(1),
+                "arguments_json": params,
+            }
+        )
     return tool_calls
 
 
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with NVIDIA Nemotron via Baseten's inference API."""
-    TOOL_CALLS_LOG.write_text("")
     tool_cache: dict[str, Dict[str, Any]] = {}
 
     llm = NemotronLLM(
@@ -337,7 +344,9 @@ async def create_agent(**kwargs) -> Agent:
         stt=deepgram.STT(),
     )
 
-    @llm.register_function(description="Get the customer's account information including name, home city, and card status")
+    @llm.register_function(
+        description="Get the customer's account information including name, home city, and card status"
+    )
     async def get_account_info(account_id: str) -> Dict[str, Any]:
         cache_key = f"get_account_info:{account_id}"
         if cache_key in tool_cache:
@@ -345,32 +354,44 @@ async def create_agent(**kwargs) -> Agent:
             return tool_cache[cache_key]
         logger.info("🔍 Tool call: get_account_info(account_id=%s)", account_id)
         await agent.send_custom_event({"type": "account_info", "data": MOCK_ACCOUNT})
-        logger.info("🔍 Account info: %s (%s)", MOCK_ACCOUNT["name"], MOCK_ACCOUNT["home_city"])
+        logger.info(
+            "🔍 Account info: %s (%s)", MOCK_ACCOUNT["name"], MOCK_ACCOUNT["home_city"]
+        )
         _log_tool_call("get_account_info", {"account_id": account_id}, MOCK_ACCOUNT)
         tool_cache[cache_key] = MOCK_ACCOUNT
         return MOCK_ACCOUNT
 
-    @llm.register_function(description="Get recent transactions for the customer's account")
+    @llm.register_function(
+        description="Get recent transactions for the customer's account"
+    )
     async def get_recent_transactions(account_id: str) -> Dict[str, Any]:
         cache_key = f"get_recent_transactions:{account_id}"
         if cache_key in tool_cache:
-            logger.info("🔍 get_recent_transactions(account_id=%s) — cached", account_id)
+            logger.info(
+                "🔍 get_recent_transactions(account_id=%s) — cached", account_id
+            )
             return tool_cache[cache_key]
         logger.info("🔍 Tool call: get_recent_transactions(account_id=%s)", account_id)
-        await agent.send_custom_event({"type": "transactions", "data": MOCK_TRANSACTIONS})
+        await agent.send_custom_event(
+            {"type": "transactions", "data": MOCK_TRANSACTIONS}
+        )
         logger.info("🔍 Found %d transactions", len(MOCK_TRANSACTIONS))
         result = {"transactions": MOCK_TRANSACTIONS}
         _log_tool_call("get_recent_transactions", {"account_id": account_id}, result)
         tool_cache[cache_key] = result
         return result
 
-    @llm.register_function(description="Flag a transaction as fraudulent and freeze the card")
+    @llm.register_function(
+        description="Flag a transaction as fraudulent and freeze the card"
+    )
     async def flag_transaction(transaction_id: str, reason: str) -> Dict[str, Any]:
         cache_key = f"flag_transaction:{transaction_id}"
         if cache_key in tool_cache:
             logger.info("🚨 flag_transaction(id=%s) — already done", transaction_id)
             return {**tool_cache[cache_key], "status": "already_flagged"}
-        logger.info("🚨 Tool call: flag_transaction(id=%s, reason=%s)", transaction_id, reason)
+        logger.info(
+            "🚨 Tool call: flag_transaction(id=%s, reason=%s)", transaction_id, reason
+        )
         result = {
             "status": "flagged",
             "transaction_id": transaction_id,
@@ -379,15 +400,23 @@ async def create_agent(**kwargs) -> Agent:
         }
         await agent.send_custom_event({"type": "transaction_flagged", "data": result})
         logger.info("🚨 Transaction %s flagged — card frozen", transaction_id)
-        _log_tool_call("flag_transaction", {"transaction_id": transaction_id, "reason": reason}, result)
+        _log_tool_call(
+            "flag_transaction",
+            {"transaction_id": transaction_id, "reason": reason},
+            result,
+        )
         tool_cache[cache_key] = result
         return result
 
-    @llm.register_function(description="Issue a replacement card and return the new card details")
+    @llm.register_function(
+        description="Issue a replacement card and return the new card details"
+    )
     async def issue_replacement_card(account_id: str) -> Dict[str, Any]:
         cache_key = f"issue_replacement_card:{account_id}"
         if cache_key in tool_cache:
-            logger.info("💳 issue_replacement_card(account_id=%s) — already done", account_id)
+            logger.info(
+                "💳 issue_replacement_card(account_id=%s) — already done", account_id
+            )
             return {**tool_cache[cache_key], "status": "already_issued"}
         logger.info("💳 Tool call: issue_replacement_card(account_id=%s)", account_id)
         result = {
@@ -397,13 +426,17 @@ async def create_agent(**kwargs) -> Agent:
             "delivery": "instant",
             "physical_card_eta": "3-5 business days",
         }
-        await agent.send_custom_event({"type": "replacement_card_issued", "data": result})
+        await agent.send_custom_event(
+            {"type": "replacement_card_issued", "data": result}
+        )
         logger.info("💳 Virtual card issued ending in 7821")
         _log_tool_call("issue_replacement_card", {"account_id": account_id}, result)
         tool_cache[cache_key] = result
         return result
 
-    @llm.register_function(description="Cancel a fraudulent charge and return the money to the customer's account")
+    @llm.register_function(
+        description="Cancel a fraudulent charge and return the money to the customer's account"
+    )
     async def cancel_charge(transaction_id: str) -> Dict[str, Any]:
         cache_key = f"cancel_charge:{transaction_id}"
         if cache_key in tool_cache:
@@ -417,7 +450,10 @@ async def create_agent(**kwargs) -> Agent:
             "estimated_credit": "24-48 hours",
         }
         await agent.send_custom_event({"type": "charge_cancelled", "data": result})
-        logger.info("💰 Charge cancelled, $%.2f returning — ETA 24-48 hours", result["refund_amount"])
+        logger.info(
+            "💰 Charge cancelled, $%.2f returning — ETA 24-48 hours",
+            result["refund_amount"],
+        )
         _log_tool_call("cancel_charge", {"transaction_id": transaction_id}, result)
         tool_cache[cache_key] = result
         return result
