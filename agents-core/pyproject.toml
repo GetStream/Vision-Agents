@@ -72,6 +72,7 @@ twilio = ["vision-agents-plugins-twilio"]
 turbopuffer = ["vision-agents-plugins-turbopuffer"]
 mistral = ["vision-agents-plugins-mistral"]
 assemblyai = ["vision-agents-plugins-assemblyai"]
+minimax = ["vision-agents-plugins-minimax"]
 redis = ["redis[hiredis]>=5.0.0"]
 
 all-plugins = [
@@ -107,6 +108,7 @@ all-plugins = [
     "vision-agents-plugins-turbopuffer",
     "vision-agents-plugins-mistral",
     "vision-agents-plugins-assemblyai",
+    "vision-agents-plugins-minimax",
 ]
 
 [tool.hatch.metadata]
