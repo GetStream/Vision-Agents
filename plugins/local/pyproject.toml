@@ -3,18 +3,18 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vision-agents-plugins-turbopuffer"
+name = "vision-agents-plugins-local"
 dynamic = ["version"]
-description = "TurboPuffer RAG integration for Vision Agents with hybrid search"
+description = "Local audio & video integration for Vision Agents"
 readme = "README.md"
-keywords = ["turbopuffer", "RAG", "vector-search", "hybrid-search", "AI", "voice agents", "agents"]
+keywords = ["local", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "turbopuffer>=1.17.0,<1.18",
-    "langchain-google-genai>=4.2.1",
-    "langchain-text-splitters>=1.1.1",
+    "sounddevice>=0.5.0",
+    "aiortc>=1.14.0, <1.15.0",
+    "av>=14.2.0, <17",
 ]
 
 [project.urls]
@@ -32,6 +32,8 @@ packages = ["."]
 [tool.hatch.build.targets.sdist]
 include = ["/vision_agents"]
 
+[tool.uv.sources]
+vision-agents = { workspace = true }
 
 [dependency-groups]
 dev = [
