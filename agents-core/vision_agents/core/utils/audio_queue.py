@@ -42,6 +42,13 @@ class AudioQueue:
         """Get the number of items in the queue."""
         return len(self._buffer)
 
+    def clear(self):
+        """Clear the queue."""
+        self._buffer.clear()
+        self._total_samples = 0
+        self._sample_rate = None
+        self._not_empty.clear()
+
     def _current_duration_ms(self) -> float:
         """Get current buffer duration in milliseconds."""
         if self._sample_rate is None or self._total_samples == 0:
