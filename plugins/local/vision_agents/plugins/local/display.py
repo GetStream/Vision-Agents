@@ -55,6 +55,12 @@ class VideoDisplay:
         height: int = 480,
         fps: int = 30,
     ):
+        if fps <= 0:
+            raise ValueError("fps must be > 0")
+        if width <= 0:
+            raise ValueError("width must be > 0")
+        if height <= 0:
+            raise ValueError("height must be > 0")
         self._title = title
         self._width = width
         self._height = height
