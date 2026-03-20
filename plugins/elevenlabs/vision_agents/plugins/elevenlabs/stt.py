@@ -347,10 +347,14 @@ class STT(stt.STT):
         """
         if self.closed:
             logger.debug(f"ElevenLabs WebSocket error during shutdown: {error}")
+            self._turn_in_progress = False
+            self._current_participant = None
             return
         logger.error(f"ElevenLabs WebSocket error: {error}")
         # Reset audio start time to avoid incorrect metrics on next utterance
         self._audio_start_time = None
+        self._turn_in_progress = False
+        self._current_participant = None
         self._should_reconnect["value"] = True
         self._reconnect_event.set()
 
@@ -362,6 +366,8 @@ class STT(stt.STT):
             logger.warning("ElevenLabs WebSocket connection closed")
         # Reset audio start time to avoid incorrect metrics on next utterance
         self._audio_start_time = None
+        self._turn_in_progress = False
+        self._current_participant = None
         self._connection_ready.clear()
         self._reconnect_event.set()
 
@@ -397,6 +403,10 @@ class STT(stt.STT):
     async def clear(self):
         """No-op: VAD commit strategy handles commits automatically."""
         self._audio_start_time = None
+        self._turn_in_progress = False
+        self._current_participant = None
+        if self._audio_queue is not None:
+            self._audio_queue.clear()
 
     async def close(self):
         """Close the ElevenLabs connection and clean up resources."""
