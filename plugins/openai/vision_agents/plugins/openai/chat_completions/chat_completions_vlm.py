@@ -266,7 +266,9 @@ class ChatCompletionsVLM(VideoLLM):
                     )
                 )
 
-            llm_response = LLMResponseEvent(original=chunk, text=total_text)
+                llm_response = LLMResponseEvent(original=chunk, text=total_text)
+                break
+
             i += 1
 
         return llm_response
