@@ -69,8 +69,8 @@ class VideoDisplay:
     async def start(self, video_track: MediaStreamTrack) -> None:
         """Start displaying frames from the given video track.
 
-        Raises:
-            RuntimeError: If tkinter is not available.
+        If tkinter is not available, emits an ImportWarning and returns
+        without starting.
         """
         if not _TKINTER_AVAILABLE:
             warnings.warn(
