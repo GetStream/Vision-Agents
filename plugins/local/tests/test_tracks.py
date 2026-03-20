@@ -1,7 +1,5 @@
 """Tests for local plugin audio tracks."""
 
-import asyncio
-
 import numpy as np
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.plugins.local.tracks import LocalOutputAudioTrack
@@ -44,7 +42,8 @@ class TestLocalOutputAudioTrack:
         )
 
         await track.write(pcm)
-        assert not track._queue.empty()
+        await output.wait_consumed()
+        assert len(output.written) == 1
 
         track.stop()
 
@@ -59,6 +58,7 @@ class TestLocalOutputAudioTrack:
 
     async def test_audio_track_flush(self) -> None:
         output = _FakeAudioOutput(sample_rate=48000, channels=2)
+        output._write_barrier.clear()
         track = LocalOutputAudioTrack(audio_output=output)
         track.start()
 
@@ -70,11 +70,13 @@ class TestLocalOutputAudioTrack:
             channels=2,
         )
         await track.write(pcm)
+        await track.write(pcm)
         assert not track._queue.empty()
 
         await track.flush()
         assert track._queue.empty()
 
+        output._write_barrier.set()
         track.stop()
 
     async def test_playback_task_processes_queue(self) -> None:
@@ -91,7 +93,7 @@ class TestLocalOutputAudioTrack:
         )
         await track.write(pcm)
 
-        await asyncio.sleep(0.2)
+        await output.wait_consumed()
 
         assert track._queue.empty()
         assert len(output.written) == 1
@@ -117,6 +119,7 @@ class TestLocalOutputAudioTrack:
         )
 
         await track.write(pcm)
-        assert not track._queue.empty()
+        await output.wait_consumed()
+        assert len(output.written) == 1
 
         track.stop()

@@ -1,5 +1,6 @@
 """Shared test helpers for the local plugin."""
 
+import asyncio
 import threading
 
 import numpy as np
@@ -47,12 +48,21 @@ class _FakeAudioOutput(AudioOutputDevice):
         self.started = False
         self.stopped = False
         self.written: list[np.ndarray] = []
+        self._write_barrier = threading.Event()
+        self._write_barrier.set()
+        self._consumed = threading.Event()
 
     def start(self) -> None:
         self.started = True
 
     def write(self, samples: np.ndarray) -> None:
+        self._write_barrier.wait()
         self.written.append(samples.copy())
+        self._consumed.set()
+
+    async def wait_consumed(self) -> None:
+        await asyncio.to_thread(self._consumed.wait)
+        self._consumed.clear()
 
     def flush(self) -> None:
         self.written.clear()
