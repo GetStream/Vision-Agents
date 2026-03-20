@@ -140,7 +140,7 @@ class TestAudioReceivedEvent:
         data = np.array([[100], [200], [300], [400]], dtype=np.int16)
         transport._emit_audio_event(data)
 
-        await asyncio.sleep(0.01)
+        await transport.events.wait(timeout=2.0)
 
         assert len(received_events) == 1
         event = received_events[0]
@@ -155,15 +155,17 @@ class TestAudioReceivedEvent:
         transport = _make_transport(audio_input=fake_input)
 
         received_events: list[AudioReceivedEvent] = []
+        got_event = asyncio.Event()
 
         @transport.events.subscribe
         async def on_audio(event: AudioReceivedEvent) -> None:
             received_events.append(event)
+            got_event.set()
 
         await transport.join(_FakeAgent())
 
         fake_input.enqueue(np.array([100, 200, 300], dtype=np.int16))
-        await asyncio.sleep(0.3)
+        await asyncio.wait_for(got_event.wait(), timeout=2.0)
 
         assert len(received_events) >= 1
         event = received_events[0]
