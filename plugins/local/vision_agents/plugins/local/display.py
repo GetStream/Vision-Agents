@@ -115,25 +115,26 @@ class VideoDisplay:
 
     async def _tk_loop(self) -> None:
         """Pump Tkinter events from the asyncio event loop (main thread)."""
+        root: tkinter.Tk | None = None
         prev_sigint = signal.getsignal(signal.SIGINT)
-        root = tkinter.Tk()
-        # Tk() overrides SIGINT — restore the previous handler (typically
-        # asyncio's) so the first Ctrl+C gracefully cancels the main task
-        # instead of raising KeyboardInterrupt inside this task.
-        signal.signal(signal.SIGINT, prev_sigint)
-        root.title(self._title)
-        root.geometry(f"{self._width}x{self._height}")
-        root.protocol("WM_DELETE_WINDOW", self._on_window_close)
-        self._root = root
-
-        gray = bytes([128] * (self._width * self._height * 3))
-        header = f"P6 {self._width} {self._height} 255 ".encode()
-        self._photo = tkinter.PhotoImage(data=header + gray)
-
-        self._label = tkinter.Label(root, image=self._photo)
-        self._label.pack(fill="both", expand=True)
-
         try:
+            root = tkinter.Tk()
+            # Tk() overrides SIGINT — restore the previous handler (typically
+            # asyncio's) so the first Ctrl+C gracefully cancels the main task
+            # instead of raising KeyboardInterrupt inside this task.
+            signal.signal(signal.SIGINT, prev_sigint)
+            root.title(self._title)
+            root.geometry(f"{self._width}x{self._height}")
+            root.protocol("WM_DELETE_WINDOW", self._on_window_close)
+            self._root = root
+
+            gray = bytes([128] * (self._width * self._height * 3))
+            header = f"P6 {self._width} {self._height} 255 ".encode()
+            self._photo = tkinter.PhotoImage(data=header + gray)
+
+            self._label = tkinter.Label(root, image=self._photo)
+            self._label.pack(fill="both", expand=True)
+
             while self._running:
                 with self._frame_lock:
                     frame = self._latest_frame
@@ -158,8 +159,9 @@ class VideoDisplay:
         except asyncio.CancelledError:
             raise
         finally:
-            with contextlib.suppress(tkinter.TclError, KeyboardInterrupt):
-                root.destroy()
+            if root is not None:
+                with contextlib.suppress(tkinter.TclError, KeyboardInterrupt):
+                    root.destroy()
             self._root = None
 
     def _on_window_close(self) -> None:
