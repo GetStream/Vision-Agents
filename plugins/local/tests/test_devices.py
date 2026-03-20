@@ -1,5 +1,7 @@
 """Tests for local plugin device enumeration."""
 
+import builtins
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from vision_agents.plugins.local.devices import (
@@ -95,31 +97,32 @@ class TestCameraEnumeration:
         assert cameras[1].index == 1
         assert cameras[1].name == "USB Webcam"
 
-    def test_list_cameras_linux(self) -> None:
-        with (
-            patch(
-                "vision_agents.plugins.local.devices.platform.system",
-                return_value="Linux",
-            ),
-            patch(
-                "vision_agents.plugins.local.devices.glob.glob",
-                return_value=["/dev/video0"],
-            ),
-            patch(
-                "builtins.open",
-                MagicMock(
-                    return_value=MagicMock(
-                        __enter__=MagicMock(
-                            return_value=MagicMock(
-                                read=MagicMock(return_value="USB Camera\n")
-                            )
-                        ),
-                        __exit__=MagicMock(return_value=False),
-                    )
-                ),
-            ),
-        ):
-            cameras = list_cameras()
+    def test_list_cameras_linux(self, tmp_path: Path, monkeypatch: object) -> None:
+        sysfs_dir = tmp_path / "sysfs" / "video0"
+        sysfs_dir.mkdir(parents=True)
+        (sysfs_dir / "name").write_text("USB Camera\n")
+
+        monkeypatch.setattr(
+            "vision_agents.plugins.local.devices.platform.system", lambda: "Linux"
+        )
+        monkeypatch.setattr(
+            "vision_agents.plugins.local.devices.glob.glob",
+            lambda _pattern: ["/dev/video0"],
+        )
+
+        _real_open = builtins.open
+
+        def _open_stub(path: str, *args: object, **kwargs: object) -> object:
+            if str(path).startswith("/sys/class/video4linux/"):
+                basename = Path(path).parent.name
+                return _real_open(
+                    str(tmp_path / "sysfs" / basename / "name"), *args, **kwargs
+                )
+            return _real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", _open_stub)
+
+        cameras = list_cameras()
 
         assert len(cameras) == 1
         assert cameras[0].name == "USB Camera"
