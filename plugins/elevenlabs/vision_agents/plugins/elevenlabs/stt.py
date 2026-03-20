@@ -287,6 +287,15 @@ class STT(stt.STT):
         Args:
             transcription_data: The committed transcription result from ElevenLabs (dict)
         """
+
+        # Use the participant from the most recent process_audio call
+        participant = self._current_participant
+
+        if participant is None:
+            raise ValueError(
+                "No participant set - audio must be processed with a participant"
+            )
+
         # Extract transcript text from dict
         if isinstance(transcription_data, dict):
             transcript_text = transcription_data.get("text", "").strip()
@@ -300,6 +309,10 @@ class STT(stt.STT):
             )
 
         if not transcript_text:
+            # Signal turn ended (VAD committed the transcript)
+            self._turn_in_progress = False
+            self._audio_start_time = None
+            self._emit_turn_ended_event(participant)
             return
 
         # Build response metadata with word timestamps if available
@@ -319,14 +332,6 @@ class STT(stt.STT):
             other=other,
             processing_time_ms=processing_time_ms,
         )
-
-        # Use the participant from the most recent process_audio call
-        participant = self._current_participant
-
-        if participant is None:
-            raise ValueError(
-                "No participant set - audio must be processed with a participant"
-            )
 
         # Emit final transcript
         self._emit_transcript_event(transcript_text, participant, response_metadata)

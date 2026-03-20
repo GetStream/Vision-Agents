@@ -577,18 +577,15 @@ class TestAudioQueue:
         assert 0 not in remaining_values  # oldest was dropped
 
     async def test_audio_queue_clear_empty(self):
-        """Test basic put and get operations."""
+        """Test clear() on an empty AudioQueue."""
         queue = AudioQueue(buffer_limit_ms=1000)
         queue.clear()
         assert queue.qsize() == 0
         assert queue.empty()
 
     async def test_audio_queue_clear_non_empty(self):
-        """Test basic put and get operations."""
+        """Test clear() removes existing data from AudioQueue."""
         queue = AudioQueue(buffer_limit_ms=1000)
-        queue.clear()
-        assert queue.qsize() == 0
-        assert queue.empty()
 
         # Create test audio data
         samples = np.array([1, 2, 3, 4, 5], dtype=np.int16)
@@ -597,4 +594,8 @@ class TestAudioQueue:
         )
 
         await queue.put(pcm)
-        await queue.get_samples(1)
+        assert queue.qsize() > 0
+
+        queue.clear()
+        assert queue.qsize() == 0
+        assert queue.empty()
