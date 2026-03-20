@@ -309,10 +309,10 @@ class STT(stt.STT):
             )
 
         if not transcript_text:
-            # Signal turn ended (VAD committed the transcript)
-            self._turn_in_progress = False
-            self._audio_start_time = None
-            self._emit_turn_ended_event(participant)
+            if self._turn_in_progress:
+                self._turn_in_progress = False
+                self._audio_start_time = None
+                self._emit_turn_ended_event(participant)
             return
 
         # Build response metadata with word timestamps if available
