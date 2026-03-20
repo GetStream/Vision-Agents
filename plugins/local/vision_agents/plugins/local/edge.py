@@ -36,9 +36,11 @@ class LocalCall:
 class LocalEdge(EdgeTransport):
     """EdgeTransport implementation for local audio/video I/O.
 
-    Uses AudioInputDevice / AudioOutputDevice for microphone capture and
-    speaker playback (defaults to sounddevice). Subclass these device
-    classes to use alternative hardware (e.g. GStreamer).
+    Captures microphone audio via AudioInputDevice and plays agent audio
+    through AudioOutputDevice (both default to sounddevice). Optionally
+    captures camera video via CameraDevice and displays agent video output
+    in a tkinter window. Subclass the device classes to use alternative
+    backends (e.g. GStreamer).
     """
 
     def __init__(
@@ -50,6 +52,16 @@ class LocalEdge(EdgeTransport):
         video_height: int = 480,
         video_fps: int = 30,
     ):
+        """Create a local edge transport.
+
+        Args:
+            audio_input: Microphone device for capturing user audio.
+            audio_output: Speaker device for playing agent audio.
+            video_input: Camera device for capturing user video. None disables video.
+            video_width: Width of the video frame in pixels.
+            video_height: Height of the video frame in pixels.
+            video_fps: Video frame rate.
+        """
         super().__init__()
 
         self._audio_input = audio_input
