@@ -9,10 +9,8 @@ edge infrastructure.
 import asyncio
 import logging
 import platform
-import queue
 import threading
 import time
-from collections import deque
 from fractions import Fraction
 from typing import Any
 
@@ -40,104 +38,24 @@ def _get_camera_input_format() -> str:
         raise RuntimeError(f"Unsupported platform for camera capture: {system}")
 
 
-class PlaybackBuffer:
-    """Thread-safe audio buffer with duration-based limits.
-
-    Drops oldest samples when the buffer exceeds the configured duration,
-    keeping playback close to real-time. Uses threading primitives so the
-    consumer can block on ``get`` from a plain thread.
-    """
-
-    def __init__(self, sample_rate: int, channels: int, buffer_limit_ms: int = 2000):
-        self._sample_rate = sample_rate
-        self._channels = channels
-        self._buffer_limit_ms = buffer_limit_ms
-        self._deque: deque[np.ndarray] = deque()
-        self._total_samples = 0
-        self._lock = threading.Lock()
-        self._not_empty = threading.Event()
-
-    def _max_samples(self) -> int:
-        return int((self._buffer_limit_ms / 1000) * self._sample_rate * self._channels)
-
-    def put(self, samples: np.ndarray) -> None:
-        """Append samples, dropping oldest data if the buffer would exceed the limit."""
-        with self._lock:
-            self._deque.append(samples)
-            self._total_samples += len(samples)
-
-            limit = self._max_samples()
-            dropped = 0
-            while self._total_samples > limit and self._deque:
-                oldest = self._deque.popleft()
-                self._total_samples -= len(oldest)
-                dropped += len(oldest)
-
-            if dropped:
-                dropped_ms = (dropped / self._channels / self._sample_rate) * 1000
-                logger.warning(
-                    "Playback buffer over %.0fms limit, dropped %.1fms of audio",
-                    self._buffer_limit_ms,
-                    dropped_ms,
-                )
-
-            self._not_empty.set()
-
-    def get(self, timeout: float = 0.1) -> np.ndarray:
-        """Block until data is available or *timeout* expires.
-
-        Raises:
-            queue.Empty: If no data arrives within the timeout.
-        """
-        if not self._not_empty.wait(timeout=timeout):
-            raise queue.Empty()
-
-        with self._lock:
-            if not self._deque:
-                self._not_empty.clear()
-                raise queue.Empty()
-
-            chunk = self._deque.popleft()
-            self._total_samples -= len(chunk)
-
-            if not self._deque:
-                self._not_empty.clear()
-
-            return chunk
-
-    def flush(self) -> None:
-        """Discard all buffered audio."""
-        with self._lock:
-            self._deque.clear()
-            self._total_samples = 0
-            self._not_empty.clear()
-
-    def empty(self) -> bool:
-        return self._total_samples == 0
-
-
 class LocalOutputAudioTrack(AudioStreamTrack):
     """Audio track that plays PcmData through an AudioOutputDevice.
 
-    Handles PcmData-to-numpy conversion, resampling, and queued playback
-    on a dedicated thread.
+    Uses an asyncio.Queue for backpressure: when the queue is full,
+    ``write`` awaits until the playback task drains an item. The playback
+    task offloads blocking device writes via ``asyncio.to_thread``.
 
     Extends AudioStreamTrack so it satisfies the MediaStreamTrack interface
     required by EdgeTransport.publish_tracks. Since this is a write-only
     (playback) track, recv() is not supported.
     """
 
-    def __init__(self, audio_output: AudioOutputDevice, buffer_limit_ms: int = 30_000):
+    def __init__(self, audio_output: AudioOutputDevice, buffer_limit: int = 20):
         super().__init__()
         self._audio_output = audio_output
-        self._buffer = PlaybackBuffer(
-            sample_rate=audio_output.sample_rate,
-            channels=audio_output.channels,
-            buffer_limit_ms=buffer_limit_ms,
-        )
+        self._queue: asyncio.Queue[np.ndarray] = asyncio.Queue(maxsize=buffer_limit)
         self._running = False
-        self._stopped = False
-        self._playback_thread: threading.Thread | None = None
+        self._playback_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
 
     async def recv(self) -> av.AudioFrame:
@@ -148,61 +66,65 @@ class LocalOutputAudioTrack(AudioStreamTrack):
 
     def start(self) -> None:
         """Start the audio output stream."""
-        if self._running or self._stopped:
+        if self._running:
             return
 
         self._audio_output.start()
         self._running = True
-        self._playback_thread = threading.Thread(
-            target=self._playback_loop, daemon=True
-        )
-        self._playback_thread.start()
+        self._playback_task = asyncio.create_task(self._playback_loop())
 
     async def write(self, data: PcmData) -> None:
         """Write PCM data to be played on the speaker."""
-        if self._stopped:
+        if not self._running:
             return
 
         async with self._write_lock:
             samples = self._process_audio(data)
-            self._buffer.put(samples)
+            await self._queue.put(samples)
 
     async def flush(self) -> None:
         """Clear any pending audio data and abort OS-level playback."""
         async with self._write_lock:
-            self._buffer.flush()
+            while not self._queue.empty():
+                try:
+                    self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
             self._audio_output.flush()
 
     def stop(self) -> None:
         """Stop the audio output stream."""
         super().stop()
-        self._stopped = True
         self._running = False
 
-        if self._playback_thread is not None:
-            self._playback_thread.join(timeout=1.0)
-            self._playback_thread = None
+        if self._playback_task is not None:
+            self._playback_task.cancel()
+            self._playback_task = None
+
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
         self._audio_output.stop()
 
-    def _playback_loop(self) -> None:
-        """Dedicated thread that drains the buffer into the AudioOutput backend."""
+    async def _playback_loop(self) -> None:
+        """Async task that drains the queue into the AudioOutput backend."""
         try:
-            while self._running:
+            while True:
+                data = await self._queue.get()
                 try:
-                    data = self._buffer.get(timeout=0.1)
-                    self._audio_output.write(data)
-                except queue.Empty:
-                    continue
+                    await asyncio.to_thread(self._audio_output.write, data)
                 except sd.PortAudioError as err:
                     logger.debug("PortAudio playback error: %s", err)
-                    continue
+        except asyncio.CancelledError:
+            logger.debug("Playback loop cancelled")
+            raise
         except ValueError:
             logger.exception("Audio data processing error")
         except OSError:
             logger.exception("Audio playback device error")
-        finally:
-            logger.info("Stopped audio output")
 
     def _process_audio(self, data: PcmData) -> np.ndarray:
         """Resample and convert PcmData to flat int16 numpy for the backend."""
@@ -244,7 +166,6 @@ class LocalVideoTrack(VideoStreamTrack):
         self._stopped = False
         self._frame_count = 0
         self._start_time: float | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = threading.Lock()
 
     def _open_camera(self) -> None:
@@ -283,21 +204,28 @@ class LocalVideoTrack(VideoStreamTrack):
             self._fps,
         )
 
-    def _read_frame(self) -> Any:
+    def _read_frame(self, max_retries: int = 20, retry_timeout: float = 0.02) -> Any:
         """Read a single frame from the camera (blocking)."""
         if self._container is None:
             return None
 
-        try:
-            for packet in self._container.demux(self._stream):
-                for frame in packet.decode():
-                    return frame
-        except OSError:
-            logger.warning("Error reading camera frame")
-            return None
+        for attempt in range(max_retries):
+            try:
+                for packet in self._container.demux(self._stream):
+                    for frame in packet.decode():
+                        return frame
+            except BlockingIOError:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_timeout)
+                    continue
+                logger.debug("Camera not ready after %d retries", max_retries)
+                return None
+            except OSError:
+                logger.warning("Error reading camera frame", exc_info=True)
+                return None
         return None
 
-    async def recv(self) -> Any:
+    async def recv(self) -> av.VideoFrame:
         """Receive the next video frame."""
         if self._stopped:
             raise RuntimeError("Track has been stopped")
@@ -305,11 +233,10 @@ class LocalVideoTrack(VideoStreamTrack):
         if not self._started:
             self._started = True
             self._start_time = time.time()
-            self._loop = asyncio.get_running_loop()
-            await self._loop.run_in_executor(None, self._open_camera)
 
-        assert self._loop is not None
-        frame = await self._loop.run_in_executor(None, self._read_frame)
+            await asyncio.to_thread(self._open_camera)
+
+        frame = await asyncio.to_thread(self._read_frame)
 
         if frame is None:
             frame = av.VideoFrame(

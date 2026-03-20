@@ -1,16 +1,20 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import aiortc
+import av
 import numpy as np
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.edge.edge_transport import EdgeTransport
 from vision_agents.core.edge.events import AudioReceivedEvent, TrackAddedEvent
 from vision_agents.core.edge.types import Connection, Participant, TrackType, User
+from vision_agents.core.utils.utils import cancel_and_wait
+from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 from .devices import AudioInputDevice, AudioOutputDevice, CameraDevice
+from .display import VideoDisplay
 from .tracks import LocalOutputAudioTrack, LocalVideoTrack
 
 if TYPE_CHECKING:
@@ -27,10 +31,6 @@ class LocalCall:
     """Minimal Call-compatible object for local transport."""
 
     id: str
-
-
-# TODO: How to make screencapture work?
-# TODO: Use Tkinter to display video output?
 
 
 class LocalEdge(EdgeTransport):
@@ -67,11 +67,16 @@ class LocalEdge(EdgeTransport):
         )
 
         self._mic_task: asyncio.Task[None] | None = None
-        self._running = False
+        self._video_forward_task: asyncio.Task[None] | None = None
         self._audio_track: LocalOutputAudioTrack | None = None
-        self._video_track: LocalVideoTrack | None = None
+        self._input_video_track: LocalVideoTrack | None = None
+        self._output_video_track = QueuedVideoTrack(
+            width=video_width,
+            height=video_height,
+            fps=video_fps,
+        )
+        self._video_display: VideoDisplay | None = None
         self._connection: LocalConnection | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def publish_tracks(
         self,
@@ -83,8 +88,11 @@ class LocalEdge(EdgeTransport):
             audio_track.start()
             logger.info("Audio track published and started")
 
-        if video_track is not None and isinstance(video_track, LocalVideoTrack):
-            logger.info("Video track published")
+        if video_track is not None:
+            self._video_forward_task = asyncio.create_task(
+                self._forward_video(video_track)
+            )
+            logger.info("Video output track published")
 
     def create_audio_track(
         self, sample_rate: int = 48000, stereo: bool = True
@@ -101,18 +109,18 @@ class LocalEdge(EdgeTransport):
             logger.debug("No video device configured, skipping video track creation")
             return None
 
-        self._video_track = LocalVideoTrack(
+        self._input_video_track = LocalVideoTrack(
             device=self._video_input,
             width=self._video_width,
             height=self._video_height,
             fps=self._video_fps,
         )
-        return self._video_track
+        return self._input_video_track
 
     def add_track_subscriber(self, track_id: str) -> LocalVideoTrack | None:
         """Return the local camera video track if available."""
-        if track_id == LOCAL_VIDEO_TRACK_ID and self._video_track is not None:
-            return self._video_track
+        if track_id == LOCAL_VIDEO_TRACK_ID and self._input_video_track is not None:
+            return self._input_video_track
         return None
 
     async def join(
@@ -139,6 +147,16 @@ class LocalEdge(EdgeTransport):
 
     async def close(self) -> None:
         """Stop audio/video and release all resources."""
+        if self._video_forward_task is not None:
+            await cancel_and_wait(self._video_forward_task)
+            self._video_forward_task = None
+
+        self._output_video_track.stop()
+
+        if self._video_display is not None:
+            await self._video_display.stop()
+            self._video_display = None
+
         await self._stop_audio()
         self._connection = None
 
@@ -146,12 +164,30 @@ class LocalEdge(EdgeTransport):
         # Local transport does not require any auth
         return
 
-    def open_demo(self, *args: Any, **kwargs: Any) -> None:
-        """Not supported for local transport."""
-        logger.warning(
-            "LocalEdge does not have a demo UI. "
-            "Audio is captured from the microphone and played on the speakers."
-        )
+    def open_demo(self, *args: Any, **kwargs: Any) -> None: ...
+
+    async def open_demo_for_agent(
+        self, agent: "Agent", call_type: str, call_id: str
+    ) -> None:
+        """Open a tkinter window showing the agent's video output."""
+        if not agent.publish_video:
+            logger.info("Agent has no video output, skipping video display")
+            return
+
+        try:
+            self._video_display = VideoDisplay(
+                title="Agent Video Output",
+                width=self._video_width,
+                height=self._video_height,
+                fps=self._video_fps,
+            )
+            await self._video_display.start(self._output_video_track)
+            logger.info("Opened video display")
+        except RuntimeError:
+            logger.warning(
+                "Cannot open video display: tkinter is not available. "
+                "Install python3-tk or equivalent for your platform."
+            )
 
     async def create_call(self, call_id: str, **kwargs: Any) -> LocalCall:
         return LocalCall(id=call_id)
@@ -184,42 +220,43 @@ class LocalEdge(EdgeTransport):
             )
         )
 
-    async def _mic_polling_loop(self) -> None:
-        """Read from the mic on a background thread and dispatch events to the event loop."""
-        assert self._loop is not None
-        loop = self._loop
-
-        def _read_loop() -> None:
-            while self._running:
-                data = self._audio_input.read()
-                if data is not None:
-                    loop.call_soon_threadsafe(self._emit_audio_event, data)
-
+    async def _forward_video(self, source: aiortc.MediaStreamTrack) -> None:
+        """Read frames from source track and push them to the output track."""
         try:
-            await asyncio.to_thread(_read_loop)
+            while True:
+                frame = cast(av.VideoFrame, await source.recv())
+                await self._output_video_track.add_frame(frame)
         except asyncio.CancelledError:
-            logger.debug("Mic polling loop cancelled")
+            raise
+        except aiortc.MediaStreamError:
+            logger.debug("Source video track ended")
+
+    async def _mic_loop(self) -> None:
+        """Read mic data via asyncio.to_thread and emit audio events."""
+        try:
+            while True:
+                data = await asyncio.to_thread(self._audio_input.read)
+                if data is not None:
+                    self._emit_audio_event(data)
+        except asyncio.CancelledError:
+            logger.debug("Mic loop cancelled")
             raise
 
     async def _start_audio(self) -> None:
         """Start microphone capture via the audio input backend."""
-        if self._running:
+        if self._mic_task is not None:
             return
 
-        self._running = True
-        self._loop = asyncio.get_running_loop()
         self._audio_input.start()
         logger.info(
             "Started microphone: %dHz, %d channels",
             self._audio_input.sample_rate,
             self._audio_input.channels,
         )
-        self._mic_task = asyncio.create_task(self._mic_polling_loop())
+        self._mic_task = asyncio.create_task(self._mic_loop())
 
     async def _stop_audio(self) -> None:
         """Stop all audio and video streams."""
-        self._running = False
-
         if self._mic_task is not None:
             self._mic_task.cancel()
             try:
@@ -234,9 +271,9 @@ class LocalEdge(EdgeTransport):
         if self._audio_track is not None:
             self._audio_track.stop()
 
-        if self._video_track is not None:
-            self._video_track.stop()
-            self._video_track = None
+        if self._input_video_track is not None:
+            self._input_video_track.stop()
+            self._input_video_track = None
 
 
 class LocalConnection(Connection):

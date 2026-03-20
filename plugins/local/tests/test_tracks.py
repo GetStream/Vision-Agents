@@ -17,7 +17,7 @@ class TestLocalOutputAudioTrack:
         track = LocalOutputAudioTrack(audio_output=output)
         assert output.sample_rate == 48000
         assert output.channels == 2
-        assert not track._stopped
+        assert not track._running
 
     async def test_audio_track_start(self) -> None:
         output = _FakeAudioOutput(sample_rate=48000, channels=2)
@@ -25,8 +25,7 @@ class TestLocalOutputAudioTrack:
         track.start()
 
         assert track._running
-        assert track._playback_thread is not None
-        assert track._playback_thread.is_alive()
+        assert track._playback_task is not None
         assert output.started
 
         track.stop()
@@ -45,7 +44,9 @@ class TestLocalOutputAudioTrack:
         )
 
         await track.write(pcm)
-        assert not track._buffer.empty()
+        assert not track._queue.empty()
+
+        track.stop()
 
     async def test_audio_track_stop(self) -> None:
         output = _FakeAudioOutput(sample_rate=48000, channels=2)
@@ -53,7 +54,6 @@ class TestLocalOutputAudioTrack:
         track.start()
         track.stop()
 
-        assert track._stopped
         assert not track._running
         assert output.stopped
 
@@ -70,30 +70,38 @@ class TestLocalOutputAudioTrack:
             channels=2,
         )
         await track.write(pcm)
-        assert not track._buffer.empty()
+        assert not track._queue.empty()
 
         await track.flush()
-        assert track._buffer.empty()
+        assert track._queue.empty()
 
-    async def test_playback_thread_processes_queue(self) -> None:
+        track.stop()
+
+    async def test_playback_task_processes_queue(self) -> None:
         output = _FakeAudioOutput(sample_rate=48000, channels=2)
         track = LocalOutputAudioTrack(audio_output=output)
         track.start()
 
-        test_data = np.array([100, 200, 300, 400, 500, 600, 700, 800], dtype=np.int16)
-        track._buffer.put(test_data)
+        samples = np.array([100, 200, 300, 400], dtype=np.int16)
+        pcm = PcmData(
+            samples=samples,
+            sample_rate=48000,
+            format=AudioFormat.S16,
+            channels=2,
+        )
+        await track.write(pcm)
 
         await asyncio.sleep(0.2)
 
-        assert track._buffer.empty()
+        assert track._queue.empty()
         assert len(output.written) == 1
 
         track.stop()
 
-    async def test_buffer_has_duration_limit(self) -> None:
+    async def test_buffer_limit_configurable(self) -> None:
         output = _FakeAudioOutput(sample_rate=48000, channels=2)
-        track = LocalOutputAudioTrack(audio_output=output, buffer_limit_ms=2000)
-        assert track._buffer._buffer_limit_ms == 2000
+        track = LocalOutputAudioTrack(audio_output=output, buffer_limit=5)
+        assert track._queue.maxsize == 5
 
     async def test_resampling(self) -> None:
         output = _FakeAudioOutput(sample_rate=48000, channels=2)
@@ -109,4 +117,6 @@ class TestLocalOutputAudioTrack:
         )
 
         await track.write(pcm)
-        assert not track._buffer.empty()
+        assert not track._queue.empty()
+
+        track.stop()

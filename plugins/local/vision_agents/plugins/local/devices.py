@@ -39,14 +39,16 @@ class AudioInputDevice:
         sample_rate: int = 48000,
         channels: int = 1,
         is_default: bool = False,
-        blocksize: int = 1024,
+        blocksize: int | None = None,
     ):
         self.index = index
         self.name = name
         self._sample_rate = sample_rate
         self._channels = channels
         self.is_default = is_default
-        self._blocksize = blocksize
+        self._blocksize = (
+            blocksize if blocksize is not None else int(sample_rate * 0.02)
+        )
         self._stream: sd.InputStream | None = None
         self._buffer: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
 

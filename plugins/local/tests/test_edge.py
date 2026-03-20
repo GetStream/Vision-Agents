@@ -3,8 +3,10 @@
 import asyncio
 
 import numpy as np
+from aiortc import VideoStreamTrack
 from vision_agents.core.edge.events import AudioReceivedEvent
 from vision_agents.core.edge.types import Participant, User
+from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.plugins.local.devices import CameraDevice
 from vision_agents.plugins.local.edge import LocalCall, LocalConnection, LocalEdge
 
@@ -40,7 +42,7 @@ class TestLocalEdge:
 
         connection = await transport.join(_FakeAgent())
 
-        assert transport._running
+        assert transport._mic_task is not None
         assert connection is not None
         assert fake_input.started
 
@@ -53,7 +55,7 @@ class TestLocalEdge:
         await transport.join(_FakeAgent())
         await transport.close()
 
-        assert not transport._running
+        assert transport._mic_task is None
         assert fake_input.stopped
 
     async def test_publish_tracks_starts_output(self) -> None:
@@ -63,7 +65,7 @@ class TestLocalEdge:
         await transport.publish_tracks(track, None)
 
         assert track._running
-        assert track._playback_thread is not None
+        assert track._playback_task is not None
 
         track.stop()
 
@@ -120,7 +122,7 @@ class TestLocalConnection:
         connection = await transport.join(_FakeAgent())
 
         await connection.close()
-        assert not transport._running
+        assert transport._mic_task is None
 
 
 class TestAudioReceivedEvent:
@@ -201,3 +203,37 @@ class TestLocalEdgeVideo:
 
         assert track is not None
         assert track._device == "0"
+
+    async def test_publish_tracks_starts_video_forwarding(self) -> None:
+        transport = _make_transport()
+        video_track = VideoStreamTrack()
+
+        await transport.publish_tracks(None, video_track)
+
+        assert transport._video_forward_task is not None
+        await cancel_and_wait(transport._video_forward_task)
+
+    async def test_open_demo_for_agent_exists(self) -> None:
+        transport = _make_transport()
+        assert hasattr(transport, "open_demo_for_agent")
+
+    async def test_output_video_track_is_always_available(self) -> None:
+        transport = _make_transport()
+        assert transport._output_video_track is not None
+
+    async def test_close_cleans_up_video_display(self) -> None:
+        transport = _make_transport()
+        await transport.join(_FakeAgent())
+
+        stopped = False
+
+        class _FakeDisplay:
+            async def stop(self) -> None:
+                nonlocal stopped
+                stopped = True
+
+        transport._video_display = _FakeDisplay()  # type: ignore[assignment]
+        await transport.close()
+
+        assert stopped
+        assert transport._video_display is None
