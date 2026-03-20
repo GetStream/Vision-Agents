@@ -106,9 +106,7 @@ class LocalEdge(EdgeTransport):
             )
             logger.info("Video output track published")
 
-    def create_audio_track(
-        self, sample_rate: int = 48000, stereo: bool = True
-    ) -> "LocalOutputAudioTrack":
+    def create_audio_track(self) -> "LocalOutputAudioTrack":
         """Create an audio track that plays through the audio output backend."""
         self._audio_track = LocalOutputAudioTrack(
             audio_output=self._audio_output,

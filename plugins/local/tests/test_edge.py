@@ -31,7 +31,7 @@ class TestLocalEdge:
 
     async def test_create_audio_track(self) -> None:
         transport = _make_transport()
-        track = transport.create_audio_track(sample_rate=48000, stereo=True)
+        track = transport.create_audio_track()
 
         assert track is not None
         assert track._audio_output is transport._audio_output
