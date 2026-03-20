@@ -11,43 +11,22 @@ The LocalEdge provides:
 - **Camera input**: Captures video from your camera (optional)
 - **No cloud dependencies**: Media runs locally (except for the LLM, TTS, and STT services)
 
-## Examples
+## Running
 
-There are two example scripts:
-
-### 1. Basic Voice Agent (`local_transport_example.py`)
-
-Uses Gemini LLM with Deepgram STT and ElevenLabs TTS for a voice-only experience.
+Uses Gemini LLM with ElevenLabs STT and Deepgram TTS for a voice experience with optional camera input.
 
 ```bash
 uv run python local_transport_example.py
 ```
 
-### 2. Vision Agent with Gemini Realtime (`local_transport_realtime_example.py`)
-
-Uses Gemini Realtime for native audio/video understanding. This lets Gemini see through your camera!
-
-```bash
-uv run python local_transport_realtime_example.py
-```
-
-Try asking: "What do you see?" or "Describe what's in front of you"
-
 ## Prerequisites
 
 1. A working microphone and speakers
-2. A camera (optional for basic example, recommended for realtime example)
+2. A camera (optional, for video input)
 3. API keys:
-
-### For basic example:
-
-- Google AI (for Gemini LLM)
-- Deepgram (for STT)
-- ElevenLabs (for TTS)
-
-### For realtime example:
-
-- Google AI (for Gemini Realtime) - handles audio/video natively
+   - Google AI (for Gemini LLM)
+   - Deepgram (for TTS)
+   - ElevenLabs (for STT)
 
 ## Setup
 
@@ -68,7 +47,7 @@ uv sync
 
 ## Device Selection
 
-Both examples will prompt you to select:
+The example will prompt you to select:
 
 1. **Input device** (microphone)
 2. **Output device** (speakers)

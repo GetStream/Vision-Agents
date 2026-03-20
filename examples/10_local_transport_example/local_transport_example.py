@@ -20,7 +20,7 @@ from typing import Any
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import deepgram, gemini
+from vision_agents.plugins import deepgram, elevenlabs, gemini
 from vision_agents.plugins.local import LocalEdge
 from vision_agents.plugins.local.devices import (
     select_audio_input_device,
@@ -75,7 +75,7 @@ async def create_agent() -> Agent:
         processors=[],
         llm=llm,
         tts=deepgram.TTS(),
-        stt=deepgram.STT(eager_turn_detection=True),
+        stt=elevenlabs.STT(),
     )
 
     return agent
