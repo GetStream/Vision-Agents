@@ -6537,7 +6537,7 @@ wheels = [
 
 [[package]]
 name = "turbopuffer"
-version = "1.19.0"
+version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -6550,9 +6550,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/7d/9081fd2c0146196546954c895b467986681d0e6fdcc42810a0780ee459a8/turbopuffer-1.19.0.tar.gz", hash = "sha256:6b7ba70dae2769dd21892b4535ed63fe1e4482a650f4d0f5239d1a8f2c101660", size = 326319, upload-time = "2026-03-18T23:26:57.44Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/af/ef0fb14e0b8715dcd7658ac97dce6d08faa7dba57956cc0b17f98606fefd/turbopuffer-1.17.0.tar.gz", hash = "sha256:89c18dd535e88545e75ebfef98bbd06e8bb8c3b02abf853a550319d1ca1698f7", size = 154867, upload-time = "2026-03-03T04:27:15.734Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/8b/509e5fc117eaeb7387709a8cedf471fbb943a8c0672608e2eddf317f4b02/turbopuffer-1.19.0-py3-none-any.whl", hash = "sha256:b0ad5eac6075ff2fe0d1a85bf5eb3013b4cbffc7f696b67121584ad33467a726", size = 117105, upload-time = "2026-03-18T23:26:58.726Z" },
+    { url = "https://files.pythonhosted.org/packages/70/08/f442616e4e4ecf098f03f69a8354e2db51a277742e0ca3317997fd143dea/turbopuffer-1.17.0-py3-none-any.whl", hash = "sha256:49236d9b2f40035057fa377065ede581fbd52ee36a232a69407f11bdb521a892", size = 116628, upload-time = "2026-03-03T04:27:14.261Z" },
 ]
 
 [[package]]
@@ -7851,7 +7851,7 @@ dev = [
 requires-dist = [
     { name = "langchain-google-genai", specifier = ">=4.2.1" },
     { name = "langchain-text-splitters", specifier = ">=1.1.1" },
-    { name = "turbopuffer", specifier = ">=1.17.0" },
+    { name = "turbopuffer", specifier = ">=1.17.0,<1.18" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
