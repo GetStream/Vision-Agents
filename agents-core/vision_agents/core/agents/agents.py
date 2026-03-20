@@ -1433,6 +1433,12 @@ class Agent:
                     "The Realtime model handles both speech-to-text, text-to-speech and turn detection internally."
                 )
         else:
+            if self.turn_detection and self.stt and self.stt.turn_detection:
+                self.logger.warning(
+                    "STT already provides turn detection; ignoring the TurnDetector plugin."
+                )
+                self.turn_detection = None
+
             # Traditional mode - check if we have audio processing or just video processing
             has_audio_processing = bool(self.stt or self.tts or self.turn_detection)
             has_video_processing = bool(self.video_processors)

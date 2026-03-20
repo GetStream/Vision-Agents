@@ -18,9 +18,30 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
+from vision_agents.core.stt import STT as BaseSTT
 from vision_agents.core.tts import TTS
 from vision_agents.core.tts.events import TTSAudioEvent
+from vision_agents.core.turn_detection import TurnDetector
 from vision_agents.core.warmup import Warmable
+
+
+class DummySTT(BaseSTT):
+    turn_detection: bool = False
+
+    async def process_audio(self, pcm_data, participant):
+        pass
+
+
+class DummySTTWithTurnDetection(BaseSTT):
+    turn_detection: bool = True
+
+    async def process_audio(self, pcm_data, participant):
+        pass
+
+
+class DummyTurnDetector(TurnDetector):
+    async def process_audio(self, audio_data, participant, conversation=None):
+        pass
 
 
 class DummyTTS(TTS):
@@ -485,6 +506,45 @@ class TestAgent:
         agent.events.send(TTSAudioEvent(data=pcm, epoch=tts.epoch))
         await agent.events.wait()
         assert len(edge.recorded_audio_track.writes) == 1
+
+    async def test_stt_turn_detection_ignores_external_turn_detector(self):
+        """When STT provides turn detection, the external TurnDetector is ignored."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=DummySTTWithTurnDetection(),
+            turn_detection=DummyTurnDetector(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        assert agent.turn_detection is None
+        assert agent.turn_detection_enabled is True
+
+    async def test_stt_without_turn_detection_keeps_external_turn_detector(self):
+        """When STT does not provide turn detection, the external TurnDetector is kept."""
+        detector = DummyTurnDetector()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=DummySTT(),
+            turn_detection=detector,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        assert agent.turn_detection is detector
+        assert agent.turn_detection_enabled is True
+
+    async def test_stt_turn_detection_without_external_detector(self):
+        """STT with turn detection works without an external TurnDetector."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=DummySTTWithTurnDetection(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        assert agent.turn_detection is None
+        assert agent.turn_detection_enabled is True
 
 
 @pytest.fixture
