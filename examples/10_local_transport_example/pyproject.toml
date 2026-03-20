@@ -7,14 +7,12 @@ requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.0",
     "vision-agents-plugins-deepgram",
-    "vision-agents-plugins-elevenlabs",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-local",
 ]
 
 [tool.uv.sources]
 "vision-agents-plugins-deepgram" = { path = "../../plugins/deepgram", editable = true }
-"vision-agents-plugins-elevenlabs" = { path = "../../plugins/elevenlabs", editable = true }
 "vision-agents-plugins-gemini" = { path = "../../plugins/gemini", editable = true }
 "vision-agents-plugins-local" = { path = "../../plugins/local", editable = true }
 "vision-agents" = { path = "../../agents-core", editable = true }

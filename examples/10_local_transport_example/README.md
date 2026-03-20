@@ -13,7 +13,7 @@ The LocalEdge provides:
 
 ## Running
 
-Uses Gemini LLM with ElevenLabs STT and Deepgram TTS for a voice experience with optional camera input.
+Uses Gemini LLM with Deepgram STT and TTS for a voice experience with optional camera input.
 
 ```bash
 uv run python local_transport_example.py
@@ -25,8 +25,7 @@ uv run python local_transport_example.py
 2. A camera (optional, for video input)
 3. API keys:
    - Google AI (for Gemini LLM)
-   - Deepgram (for TTS)
-   - ElevenLabs (for STT)
+   - Deepgram (for STT and TTS)
 
 ## Setup
 
@@ -35,7 +34,6 @@ uv run python local_transport_example.py
 ```bash
 GOOGLE_API_KEY=your_google_api_key
 DEEPGRAM_API_KEY=your_deepgram_api_key
-ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ```
 
 2. Install dependencies:
