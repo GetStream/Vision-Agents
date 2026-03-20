@@ -1,5 +1,7 @@
 """Shared test helpers for the local plugin."""
 
+import threading
+
 import numpy as np
 from vision_agents.core.edge.types import User
 from vision_agents.plugins.local.devices import AudioInputDevice, AudioOutputDevice
@@ -16,6 +18,7 @@ class _FakeAudioInput(AudioInputDevice):
         self.started = False
         self.stopped = False
         self._data: list[np.ndarray] = []
+        self._stop_event = threading.Event()
 
     def enqueue(self, data: np.ndarray) -> None:
         self._data.append(data)
@@ -26,10 +29,12 @@ class _FakeAudioInput(AudioInputDevice):
     def read(self) -> np.ndarray | None:
         if self._data:
             return self._data.pop(0)
-        return None
+        self._stop_event.wait(timeout=0.1)
+        return self._data.pop(0) if self._data else None
 
     def stop(self) -> None:
         self.stopped = True
+        self._stop_event.set()
 
 
 class _FakeAudioOutput(AudioOutputDevice):
