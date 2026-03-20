@@ -4,6 +4,7 @@ import asyncio
 
 import numpy as np
 from aiortc import VideoStreamTrack
+from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.events import AudioReceivedEvent
 from vision_agents.core.edge.types import Participant, User
 from vision_agents.core.utils.utils import cancel_and_wait
@@ -90,14 +91,16 @@ class TestLocalEdge:
         assert result is not None
         assert result._device == "0"
 
-    async def test_create_conversation_returns_none(self) -> None:
+    async def test_create_conversation_returns_in_memory(self) -> None:
         transport = _make_transport()
         user = User(id="test", name="Test")
 
         result = await transport.create_conversation(
             LocalCall(id="test"), user, "instructions"
         )
-        assert result is None
+        assert isinstance(result, InMemoryConversation)
+        assert result.instructions == "instructions"
+        assert result.messages == []
 
 
 class TestLocalConnection:

@@ -7,6 +7,7 @@ import aiortc
 import av
 import numpy as np
 from getstream.video.rtc.track_util import AudioFormat, PcmData
+from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.edge_transport import EdgeTransport
 from vision_agents.core.edge.events import AudioReceivedEvent, TrackAddedEvent
 from vision_agents.core.edge.types import Connection, Participant, TrackType, User
@@ -207,9 +208,8 @@ class LocalEdge(EdgeTransport):
 
     async def create_conversation(
         self, call: Any, user: User, instructions: str
-    ) -> None:
-        #
-        return None
+    ) -> InMemoryConversation:
+        return InMemoryConversation(instructions=instructions, messages=[])
 
     def _emit_audio_event(self, data: np.ndarray) -> None:
         """Convert raw numpy audio to PcmData and emit AudioReceivedEvent."""
