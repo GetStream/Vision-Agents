@@ -393,6 +393,8 @@ class GeminiRealtime(realtime.Realtime):
                 and server_message.server_content.model_turn
             )
 
+            handled = False
+
             if is_input_transcript:
                 if (
                     server_message.server_content
@@ -405,7 +407,8 @@ class GeminiRealtime(realtime.Realtime):
                             mode="delta",
                             original=server_message,
                         )
-            elif is_output_transcript:
+                        handled = True
+            if is_output_transcript:
                 if (
                     server_message.server_content
                     and server_message.server_content.output_transcription
@@ -417,7 +420,8 @@ class GeminiRealtime(realtime.Realtime):
                             mode="delta",
                             original=server_message,
                         )
-            elif is_response:
+                        handled = True
+            if is_response:
                 self._begin_response()
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
@@ -435,24 +439,30 @@ class GeminiRealtime(realtime.Realtime):
                             # Emit partial LLM response event
                             event = LLMResponseChunkEvent(delta=part.text)
                             self.events.send(event)
+                            handled = True
                         elif part.inline_data:
                             # Emit audio output event
                             pcm = PcmData.from_bytes(part.inline_data.data, 24000)
                             self._emit_audio_output_event(audio_data=pcm)
+                            handled = True
                         elif part.function_call:
                             # Handle function calls from Gemini Live
                             await self._handle_function_call(part.function_call)
+                            handled = True
 
-            elif (
+            if (
                 server_message.server_content
                 and server_message.server_content.turn_complete
             ):
                 self._emit_audio_output_done_event()
+                handled = True
 
-            elif server_message.tool_call:
+            if server_message.tool_call:
                 # Handle tool calls from Gemini Live
                 await self._handle_tool_calls(server_message.tool_call)
-            else:
+                handled = True
+
+            if not handled:
                 logger.debug(
                     "Unrecognized event structure from Gemini %s", server_message
                 )
