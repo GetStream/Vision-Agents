@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vision-agents-plugins-grok-tts"
+version = "0.1.0"
+description = "Grok (xAI) TTS integration for Vision Agents — expressive text-to-speech with five voices"
+readme = "README.md"
+keywords = ["grok", "xai", "TTS", "text-to-speech", "AI", "voice agents", "agents", "vision-agents"]
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "vision-agents",
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+mp3 = ["pydub>=0.25"]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vision_agents"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/vision_agents"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "aioresponses>=0.7",
+]
