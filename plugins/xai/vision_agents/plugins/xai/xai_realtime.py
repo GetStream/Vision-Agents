@@ -16,6 +16,7 @@ import json
 import logging
 import os
 from asyncio import CancelledError
+from collections.abc import Coroutine
 from typing import Any, Optional
 
 import websockets
@@ -152,6 +153,7 @@ class XAIRealtime(realtime.Realtime):
 
         self._ws: Optional[ClientConnection] = None
         self._processing_task: Optional[asyncio.Task] = None
+        self._tool_tasks: set[asyncio.Task[None]] = set()
         self._exit_stack = contextlib.AsyncExitStack()
         self._ephemeral_token: Optional[str] = None
 
@@ -298,6 +300,10 @@ class XAIRealtime(realtime.Realtime):
         """Close the connection and clean up resources."""
         self.connected = False
         self._emit_disconnected_event(reason="close requested", was_clean=True)
+
+        if self._tool_tasks:
+            await asyncio.gather(*self._tool_tasks, return_exceptions=True)
+            self._tool_tasks.clear()
 
         if self._processing_task is not None:
             self._processing_task.cancel()
@@ -512,7 +518,7 @@ class XAIRealtime(realtime.Realtime):
 
             elif event_type == "response.function_call_arguments.done":
                 # Function call from the model
-                await self._handle_function_call(data)
+                self._run_tool_in_background(self._handle_function_call(data))
 
             elif event_type == "error":
                 error_info = data.get("error", {})
@@ -558,6 +564,12 @@ class XAIRealtime(realtime.Realtime):
                         if text:
                             event = LLMResponseChunkEvent(delta=text)
                             self.events.send(event)
+
+    def _run_tool_in_background(self, coro: Coroutine[None, None, None]) -> None:
+        """Run a tool coroutine as a background task without blocking the WS reader."""
+        task = asyncio.create_task(coro)
+        self._tool_tasks.add(task)
+        task.add_done_callback(self._tool_tasks.discard)
 
     async def _handle_function_call(self, data: dict[str, Any]) -> None:
         """Handle function calls from xAI realtime."""
