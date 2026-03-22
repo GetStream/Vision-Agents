@@ -14,6 +14,7 @@ vision-agents-plugins-fish = { workspace = true }
 vision-agents-plugins-gemini = { workspace = true }
 vision-agents-plugins-kokoro = { workspace = true }
 vision-agents-plugins-openai = { workspace = true }
+vision-agents-plugins-novita = { workspace = true }
 vision-agents-plugins-openrouter = { workspace = true }
 vision-agents-plugins-pocket = { workspace = true }
 vision-agents-plugins-qwen = { workspace = true }
@@ -58,6 +59,7 @@ members = [
     "plugins/gemini",
     "plugins/kokoro",
     "plugins/openai",
+    "plugins/novita",
     "plugins/openrouter",
     "plugins/pocket",
     "plugins/qwen",

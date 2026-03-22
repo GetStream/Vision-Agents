@@ -62,6 +62,7 @@ vogent = ["vision-agents-plugins-vogent"]
 huggingface = ["vision-agents-plugins-huggingface"]
 moondream = ["vision-agents-plugins-moondream"]
 aws = ["vision-agents-plugins-aws"]
+novita = ["vision-agents-plugins-novita"]
 openrouter = ["vision-agents-plugins-openrouter"]
 pocket = ["vision-agents-plugins-pocket"]
 qwen = ["vision-agents-plugins-qwen"]
@@ -97,6 +98,7 @@ all-plugins = [
     "vision-agents-plugins-huggingface",
     "vision-agents-plugins-moondream",
     "vision-agents-plugins-aws",
+    "vision-agents-plugins-novita",
     "vision-agents-plugins-openrouter",
     "vision-agents-plugins-pocket",
     "vision-agents-plugins-fish",
