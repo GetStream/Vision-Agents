@@ -4,7 +4,6 @@ import copy
 import logging
 from asyncio import CancelledError
 from concurrent.futures import ThreadPoolExecutor
-from collections.abc import Coroutine
 from typing import Any, Optional, cast
 
 import aiortc
@@ -173,7 +172,6 @@ class GeminiRealtime(realtime.Realtime):
         self._video_forwarder: Optional[VideoForwarder] = None
         self._real_session: Optional[AsyncSession] = None
         self._processing_task: Optional[asyncio.Task] = None
-        self._tool_tasks: set[asyncio.Task[None]] = set()
         self._exit_stack = contextlib.AsyncExitStack()
         self._executor = ThreadPoolExecutor(max_workers=1)
 
@@ -325,9 +323,7 @@ class GeminiRealtime(realtime.Realtime):
         # Do not wait for threads to complete to avoid blocking the loop
         self._executor.shutdown(wait=False)
 
-        if self._tool_tasks:
-            await asyncio.gather(*self._tool_tasks, return_exceptions=True)
-            self._tool_tasks.clear()
+        await self._await_pending_tools()
 
         if self._processing_task is not None:
             self._processing_task.cancel()
@@ -502,12 +498,6 @@ class GeminiRealtime(realtime.Realtime):
 
         # Return as dict with function_declarations (similar to regular Gemini format)
         return [{"function_declarations": function_declarations}]
-
-    def _run_tool_in_background(self, coro: Coroutine[None, None, None]) -> None:
-        """Run a tool coroutine as a background task without blocking the WS reader."""
-        task = asyncio.create_task(coro)
-        self._tool_tasks.add(task)
-        task.add_done_callback(self._tool_tasks.discard)
 
     async def _handle_tool_calls(self, tool_call: LiveServerToolCall) -> None:
         """
