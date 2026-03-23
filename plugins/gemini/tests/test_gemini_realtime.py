@@ -481,6 +481,8 @@ class TestGeminiRealtimeProcessEvents:
 
         rt._handle_function_call = slow_handle
 
-        finished = await asyncio.wait_for(rt._process_events(), timeout=2.0)
-
-        assert finished is False
+        try:
+            finished = await asyncio.wait_for(rt._process_events(), timeout=2.0)
+            assert finished is False
+        finally:
+            await rt.close()
