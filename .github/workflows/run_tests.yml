@@ -94,6 +94,6 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       - name: Run core tests
-        run: uv run pytest -m "${{ inputs.marker }}" tests/ ${{ pytest_params }}
+        run: uv run pytest -m "${{ inputs.marker }}" tests/ ${{ inputs.pytest_params }}
       - name: Run plugin tests
-        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py ${{ pytest_params }}
+        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py ${{ inputs.pytest_params }}
