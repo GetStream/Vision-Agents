@@ -1,13 +1,12 @@
 import pytest
 from dotenv import load_dotenv
-
 from vision_agents.core.agents.conversation import Message
-from vision_agents.plugins.openai.openai_llm import OpenAILLM
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
 from vision_agents.plugins.openai import events
+from vision_agents.plugins.openai.openai_llm import OpenAILLM
 
 load_dotenv()
 
@@ -38,9 +37,10 @@ class TestOpenAILLM:
         assert messages2[0].original is not None
 
     @pytest.fixture
-    async def llm(self) -> OpenAILLM:
+    async def llm(self):
         llm = OpenAILLM(model="gpt-4o")
-        return llm
+        yield llm
+        await llm.close()
 
     @pytest.mark.integration
     async def test_simple(self, llm: OpenAILLM):

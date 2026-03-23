@@ -8,10 +8,11 @@ load_dotenv()
 
 
 @pytest.fixture
-async def llm() -> ClaudeLLM:
+async def llm():
     llm = ClaudeLLM(model="claude-sonnet-4-6")
     llm.set_conversation(InMemoryConversation("be friendly", []))
-    return llm
+    yield llm
+    await llm.close()
 
 
 class TestClaudeLLM:

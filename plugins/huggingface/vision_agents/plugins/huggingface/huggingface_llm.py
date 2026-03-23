@@ -13,6 +13,7 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
+
 from . import events
 
 logger = logging.getLogger(__name__)
@@ -601,3 +602,6 @@ class HuggingFaceLLM(LLM):
             return llm_response
 
         return llm_response
+
+    async def close(self) -> None:
+        await self._client.close()

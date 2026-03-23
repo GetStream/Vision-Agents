@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 from av import VideoFrame
-from conftest import skip_blockbuster
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
@@ -16,6 +15,8 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.plugins.huggingface import LLM, VLM
 from vision_agents.plugins.huggingface.events import LLMErrorEvent
+
+from conftest import skip_blockbuster
 
 
 @pytest.fixture()
@@ -36,14 +37,16 @@ async def conversation():
 async def llm(huggingface_client_mock, conversation):
     llm_ = LLM(client=huggingface_client_mock, model="test")
     llm_.set_conversation(conversation)
-    return llm_
+    yield llm_
+    await llm_.close()
 
 
 @pytest.fixture()
 async def vlm(huggingface_client_mock, conversation):
     vlm_ = VLM(client=huggingface_client_mock, model="test")
     vlm_.set_conversation(conversation)
-    return vlm_
+    yield vlm_
+    await vlm_.close()
 
 
 class ChatCompletionChunkMock:

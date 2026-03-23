@@ -143,6 +143,9 @@ class ChatCompletionsLLM(LLM):
             **kwargs,
         )
 
+    async def close(self) -> None:
+        await self._client.close()
+
     async def _create_response_internal(
         self,
         messages: List[Dict[str, Any]],

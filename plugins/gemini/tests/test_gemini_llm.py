@@ -25,10 +25,11 @@ class TestGeminiLLM:
         assert messages2[0].original is not None
 
     @pytest.fixture
-    async def llm(self) -> GeminiLLM:
+    async def llm(self):
         llm = GeminiLLM()
         llm.set_conversation(InMemoryConversation("be friendly", []))
-        return llm
+        yield llm
+        await llm.close()
 
     @pytest.mark.integration
     async def test_simple(self, llm: GeminiLLM):
