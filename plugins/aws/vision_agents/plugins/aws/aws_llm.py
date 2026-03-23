@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import time
 from typing import Optional, List, TYPE_CHECKING, Any, Dict, cast
 import json
@@ -76,9 +75,6 @@ class BedrockLLM(LLM):
             session_kwargs["aws_secret_access_key"] = aws_secret_access_key
         if aws_session_token:
             session_kwargs["aws_session_token"] = aws_session_token
-
-        if os.environ.get("AWS_BEDROCK_API_KEY"):
-            session_kwargs["aws_session_token"] = os.environ["AWS_BEDROCK_API_KEY"]
 
         self._client = None
         self._session_kwargs = session_kwargs
