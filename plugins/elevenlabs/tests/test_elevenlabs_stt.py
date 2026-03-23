@@ -2,11 +2,11 @@ import asyncio
 
 import pytest
 from dotenv import load_dotenv
-
-from conftest import STTSession
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import TurnEndedEvent, TurnStartedEvent
 from vision_agents.plugins import elevenlabs
+
+from conftest import STTSession
 
 # Load environment variables
 load_dotenv()
@@ -85,7 +85,7 @@ class TestElevenLabsSTT:
 
     @pytest.mark.integration
     async def test_transcribe_chunked_audio(
-        self, stt, mia_audio_48khz_chunked, participant
+        self, stt, mia_audio_48khz_chunked, silence_2s_48khz, participant
     ):
         """Test transcription with chunked audio stream"""
         session = STTSession(stt)
@@ -94,7 +94,10 @@ class TestElevenLabsSTT:
             await stt.process_audio(chunk, participant=participant)
             await asyncio.sleep(0.02)  # 20ms delay between chunks
 
-        await session.wait_for_result(timeout=30.0)
+        # Send some silence to trigger VAD
+        await stt.process_audio(silence_2s_48khz, participant=participant)
+
+        await session.wait_for_result(timeout=10.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
         assert len(session.transcripts) > 0 or len(session.partial_transcripts) > 0
