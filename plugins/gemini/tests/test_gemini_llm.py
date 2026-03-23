@@ -45,19 +45,19 @@ class TestGeminiLLM:
 
     @pytest.mark.integration
     async def test_stream(self, llm: GeminiLLM):
-        streamingWorks = False
+        streaming_works = False
 
         @llm.events.subscribe
         async def passed(event: LLMResponseChunkEvent):
-            nonlocal streamingWorks
-            streamingWorks = True
+            nonlocal streaming_works
+            streaming_works = True
 
         await llm.simple_response("Greet the user")
 
         # Wait for all events in queue to be processed
         await llm.events.wait()
 
-        assert streamingWorks
+        assert streaming_works
 
     @pytest.mark.integration
     async def test_memory(self, llm: GeminiLLM):
