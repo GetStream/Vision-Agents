@@ -775,6 +775,10 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if not self.connected:
             return
 
+        if self._tool_tasks:
+            await asyncio.gather(*self._tool_tasks, return_exceptions=True)
+            self._tool_tasks.clear()
+
         if self.connection:
             prompt_end = {
                 "event": {
@@ -789,10 +793,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
             await self.connection.send_event(session_end)
 
             await self.connection.close()
-
-        if self._tool_tasks:
-            await asyncio.gather(*self._tool_tasks, return_exceptions=True)
-            self._tool_tasks.clear()
 
         if self._handle_event_task:
             self._handle_event_task.cancel()
