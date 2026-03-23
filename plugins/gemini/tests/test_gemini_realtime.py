@@ -457,3 +457,32 @@ class TestGeminiRealtimeProcessEvents:
         await rt._process_events()
 
         assert rt._response_epoch == 5
+
+    async def test_function_call_does_not_block_event_loop(self):
+        """_process_events must not block while a function call executes."""
+        rt = _make_realtime()
+        msg = LiveServerMessage(
+            server_content=LiveServerContent(
+                model_turn=Content(
+                    parts=[
+                        Part(
+                            function_call=FunctionCall(
+                                id="call_1", name="slow_tool", args={}
+                            )
+                        )
+                    ],
+                ),
+            ),
+        )
+        rt._real_session = _make_session([msg])
+
+        async def slow_handle(function_call: FunctionCall, timeout: float = 30.0):
+            await asyncio.sleep(10)
+
+        rt._handle_function_call = slow_handle
+
+        try:
+            finished = await asyncio.wait_for(rt._process_events(), timeout=2.0)
+            assert finished is False
+        finally:
+            await rt.close()
