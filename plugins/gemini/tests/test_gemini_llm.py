@@ -32,7 +32,7 @@ class TestGeminiLLM:
 
     @pytest.mark.integration
     async def test_simple(self, llm: GeminiLLM):
-        response = await llm.simple_response("Explain quantum computing in 1 paragraph")
+        response = await llm.simple_response("Greet the user")
         assert response.text
 
     @pytest.mark.integration
@@ -52,7 +52,7 @@ class TestGeminiLLM:
             nonlocal streamingWorks
             streamingWorks = True
 
-        await llm.simple_response("Explain magma to a 5 year old")
+        await llm.simple_response("Greet the user")
 
         # Wait for all events in queue to be processed
         await llm.events.wait()
