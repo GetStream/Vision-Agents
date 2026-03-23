@@ -50,6 +50,7 @@ class OpenRouterLLM(OpenAILLM):
         api_key: str | None = None,
         base_url: str = "https://openrouter.ai/api/v1",
         model: str = "openrouter/andromeda-alpha",
+        max_tokens: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize OpenRouter LLM.
@@ -58,6 +59,9 @@ class OpenRouterLLM(OpenAILLM):
             api_key: OpenRouter API key. Defaults to OPENROUTER_API_KEY env var.
             base_url: OpenRouter API base URL.
             model: Model to use (e.g., 'openai/gpt-4o-mini', 'google/gemini-2.5-flash').
+            max_tokens: This sets the upper limit for the number of tokens the model can generate in response.
+                It won’t produce more than this limit.
+                The maximum value is the context length minus the prompt length.
             **kwargs: Additional arguments passed to OpenAI LLM.
         """
         if api_key is None:
@@ -70,6 +74,7 @@ class OpenRouterLLM(OpenAILLM):
         )
         # For tracking streaming tool calls in Chat Completions mode
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
+        self._max_tokens = max_tokens
 
     def _is_auto_model(self, model: Optional[str] = None) -> bool:
         """Check if the model is a meta/auto model that may not support tools."""
@@ -124,6 +129,7 @@ class OpenRouterLLM(OpenAILLM):
             tools=tools_param,
             model=kwargs.get("model", self.model),
             stream=kwargs.get("stream", True),
+            max_tokens=kwargs.get("max_tokens", self._max_tokens),
         )
 
         # Update conversation history with the exchange
@@ -236,6 +242,7 @@ class OpenRouterLLM(OpenAILLM):
         tools: Optional[List[Dict[str, Any]]] = None,
         model: Optional[str] = None,
         stream: bool = True,
+        max_tokens: Optional[int] = None,
     ) -> LLMResponseEvent:
         """Internal Chat Completions implementation with tool handling."""
         effective_model = model or self.model
@@ -243,6 +250,7 @@ class OpenRouterLLM(OpenAILLM):
             "messages": messages,
             "model": effective_model,
             "stream": stream,
+            "max_tokens": max_tokens,
         }
         if tools:
             request_kwargs["tools"] = tools
@@ -333,9 +341,7 @@ class OpenRouterLLM(OpenAILLM):
                     )
                     i += 1
 
-            if finish_reason == "tool_calls":
-                accumulated_tool_calls = self._finalize_chat_tool_calls()
-            elif finish_reason == "stop":
+            if finish_reason == "stop":
                 total_text = "".join(text_chunks)
                 latency_ms = (time.perf_counter() - request_start_time) * 1000
                 ttft_ms_final = None
@@ -355,6 +361,7 @@ class OpenRouterLLM(OpenAILLM):
                 llm_response = LLMResponseEvent(original=chunk, text=total_text)
 
         # Handle tool calls - the text before tool calls was narration, discard it
+        accumulated_tool_calls = self._finalize_chat_tool_calls()
         if accumulated_tool_calls:
             return await self._handle_chat_tool_calls(
                 accumulated_tool_calls, messages, tools, model

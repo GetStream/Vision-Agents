@@ -350,3 +350,6 @@ class HuggingFaceVLM(VideoLLM):
                 }
             )
         return messages
+
+    async def close(self) -> None:
+        await self._client.close()

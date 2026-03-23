@@ -60,6 +60,11 @@ class LLM(abc.ABC):
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]: ...
 
+    async def close(self) -> None:
+        """
+        Close the LLM and release the resources.
+        """
+
     def _get_tools_for_provider(self) -> List[Dict[str, Any]]:
         """
         Get tools in provider-specific format.

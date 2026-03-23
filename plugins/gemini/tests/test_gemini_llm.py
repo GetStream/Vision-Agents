@@ -25,14 +25,15 @@ class TestGeminiLLM:
         assert messages2[0].original is not None
 
     @pytest.fixture
-    async def llm(self) -> GeminiLLM:
+    async def llm(self):
         llm = GeminiLLM()
         llm.set_conversation(InMemoryConversation("be friendly", []))
-        return llm
+        yield llm
+        await llm.close()
 
     @pytest.mark.integration
     async def test_simple(self, llm: GeminiLLM):
-        response = await llm.simple_response("Explain quantum computing in 1 paragraph")
+        response = await llm.simple_response("Greet the user")
         assert response.text
 
     @pytest.mark.integration
@@ -45,19 +46,19 @@ class TestGeminiLLM:
 
     @pytest.mark.integration
     async def test_stream(self, llm: GeminiLLM):
-        streamingWorks = False
+        streaming_works = False
 
         @llm.events.subscribe
         async def passed(event: LLMResponseChunkEvent):
-            nonlocal streamingWorks
-            streamingWorks = True
+            nonlocal streaming_works
+            streaming_works = True
 
-        await llm.simple_response("Explain magma to a 5 year old")
+        await llm.simple_response("Greet the user")
 
         # Wait for all events in queue to be processed
         await llm.events.wait()
 
-        assert streamingWorks
+        assert streaming_works
 
     @pytest.mark.integration
     async def test_memory(self, llm: GeminiLLM):

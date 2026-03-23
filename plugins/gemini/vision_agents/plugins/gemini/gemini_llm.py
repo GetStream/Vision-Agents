@@ -107,6 +107,9 @@ class GeminiLLM(LLM):
         else:
             self.client = Client(api_key=api_key).aio
 
+    async def close(self) -> None:
+        await self.client.aclose()
+
     def _build_config(
         self,
         system_instruction: Optional[str] = None,

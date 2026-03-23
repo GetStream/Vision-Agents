@@ -449,6 +449,9 @@ class ClaudeLLM(LLM):
 
         return llm_response
 
+    async def close(self) -> None:
+        await self.client.close()
+
     def _emit_completion_event(
         self,
         response: Any,

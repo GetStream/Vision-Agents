@@ -383,4 +383,5 @@ class ChatCompletionsVLM(VideoLLM):
         return messages
 
     async def close(self) -> None:
+        await self._client.close()
         self._executor.shutdown(wait=False)
