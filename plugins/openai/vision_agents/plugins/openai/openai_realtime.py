@@ -1,7 +1,5 @@
-import asyncio
 import json
 import logging
-from collections.abc import Coroutine
 from typing import Any, Dict, Optional, Union
 
 import aiortc
@@ -105,7 +103,6 @@ class Realtime(realtime.Realtime):
         # Track pending tool calls: item_id -> {call_id, name, argument_parts: []}
         # We accumulate argument deltas until response.output_item.done
         self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}
-        self._tool_tasks: set[asyncio.Task[None]] = set()
 
         # Store current session and rate limits
         self.current_session: Optional[
@@ -195,9 +192,7 @@ class Realtime(realtime.Realtime):
         await self.rtc.send_audio_pcm(audio)
 
     async def close(self):
-        if self._tool_tasks:
-            await asyncio.gather(*self._tool_tasks, return_exceptions=True)
-            self._tool_tasks.clear()
+        await self._await_pending_tools()
         await self.rtc.close()
 
     async def _handle_openai_event(self, event: dict) -> None:
@@ -376,12 +371,6 @@ class Realtime(realtime.Realtime):
     async def stop_watching_video_track(self) -> None:
         """Stop forwarding video frames to OpenAI."""
         await self.rtc.stop_video_sender()
-
-    def _run_tool_in_background(self, coro: Coroutine[None, None, None]) -> None:
-        """Run a tool coroutine as a background task without blocking the WS reader."""
-        task = asyncio.create_task(coro)
-        self._tool_tasks.add(task)
-        task.add_done_callback(self._tool_tasks.discard)
 
     async def _execute_pending_tool_call(self, item_id: str) -> None:
         """Execute a pending tool call after arguments are complete.

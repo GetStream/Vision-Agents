@@ -192,7 +192,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         self._pending_tool_calls: Dict[
             str, Dict[str, Any]
         ] = {}  # Store tool calls until contentEnd: key=toolUseId
-        self._tool_tasks: set[asyncio.Task[None]] = set()
 
         # Track current content role for transcription events
         self.role: Optional[str] = None
@@ -775,9 +774,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if not self.connected:
             return
 
-        if self._tool_tasks:
-            await asyncio.gather(*self._tool_tasks, return_exceptions=True)
-            self._tool_tasks.clear()
+        await self._await_pending_tools()
 
         if self.connection:
             prompt_end = {
@@ -966,7 +963,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         tool_call_info = self._pending_tool_calls.pop(
                                             tool_use_id
                                         )
-                                        task = asyncio.create_task(
+                                        self._run_tool_in_background(
                                             self._handle_tool_call(
                                                 tool_name=tool_call_info["toolName"],
                                                 tool_use_id=tool_call_info["toolUseId"],
@@ -975,8 +972,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                                 ],
                                             )
                                         )
-                                        self._tool_tasks.add(task)
-                                        task.add_done_callback(self._tool_tasks.discard)
 
                                 logger.debug(
                                     f"Content end from AWS Bedrock {stop_reason}: {content_end_data}"
