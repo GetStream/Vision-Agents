@@ -16,6 +16,7 @@ Requirements:
 - ROBOFLOW_API_KEY and ROBOFLOW_API_URL environment variables
 """
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -38,7 +39,9 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Replace with your Roboflow model trained on offensive gesture detection.
-MODEL_ID = "the-finger-dataset-b5ewr/3"
+# This uses a NAS (Neural Architecture Search) model — the slug format differs
+# from the standard "project/version" pattern.
+MODEL_ID = "stream-playground/the-finger-dataset-b5ewr-3-nas-gpu-6aa2ba"
 
 
 def censor_regions(image: np.ndarray, detections: sv.Detections) -> np.ndarray:
@@ -68,8 +71,9 @@ def censor_regions(image: np.ndarray, detections: sv.Detections) -> np.ndarray:
 class ModerationProcessor(RoboflowCloudDetectionProcessor):
     """Cloud detection processor that censors detections instead of annotating them.
 
-    Replaces the default bounding-box annotation with a heavy Gaussian blur
-    so that offensive content is hidden in the output video stream.
+    Frames are forwarded immediately so the video stream stays smooth.
+    Inference runs in the background; the blur holds at the last known
+    detection position until the next result arrives.
     """
 
     name = "roboflow_moderation"
@@ -79,34 +83,56 @@ class ModerationProcessor(RoboflowCloudDetectionProcessor):
         # serverless.roboflow.com isn't in the SDK's known URL list, so it
         # defaults to the v1 API which doesn't work for serverless. Force v0.
         self._client.select_api_v0()
+        self._latest_detections: Optional[sv.Detections] = None
+        self._latest_classes: dict[int, str] = {}
+        self._inference_task: Optional[asyncio.Task[None]] = None
+
+    async def close(self) -> None:
+        if self._inference_task is not None and not self._inference_task.done():
+            self._inference_task.cancel()
+        await super().close()
 
     async def _process_frame(self, frame: av.VideoFrame) -> None:
         if self._closed:
             return
 
         image = frame.to_ndarray(format="rgb24")
+
+        # Apply blur at last known detection positions and forward immediately
+        if (
+            self._latest_detections is not None
+            and self._latest_detections.class_id is not None
+            and self._latest_detections.class_id.size
+        ):
+            censored_image = censor_regions(image, self._latest_detections)
+            output_frame = av.VideoFrame.from_ndarray(censored_image)
+            output_frame.pts = frame.pts
+            output_frame.time_base = frame.time_base
+            await self._video_track.add_frame(output_frame)
+        else:
+            await self._video_track.add_frame(frame)
+
+        # Kick off inference in the background if none is in-flight
+        if self._inference_task is None or self._inference_task.done():
+            self._inference_task = asyncio.create_task(
+                self._run_background_inference(image)
+            )
+
+    async def _run_background_inference(self, image: np.ndarray) -> None:
         start_time = time.perf_counter()
         try:
             detections, classes = await self._run_inference(image)
         except Exception:
-            logger.exception("Frame processing failed")
-            await self._video_track.add_frame(frame)
+            logger.exception("Background inference failed")
             return
 
         inference_time_ms = (time.perf_counter() - start_time) * 1000
+        self._latest_detections = detections
+        self._latest_classes = classes
 
         if detections.class_id is None or not detections.class_id.size:
-            await self._video_track.add_frame(frame)
             return
 
-        # Censor detected regions instead of drawing labeled boxes
-        censored_image = censor_regions(image, detections)
-        censored_frame = av.VideoFrame.from_ndarray(censored_image)
-        censored_frame.pts = frame.pts
-        censored_frame.time_base = frame.time_base
-        await self._video_track.add_frame(censored_frame)
-
-        # Publish detection event so the LLM and other listeners can react
         img_height, img_width = image.shape[0:2]
         detected_objects = [
             DetectedObject(label=classes[class_id], x1=x1, y1=y1, x2=x2, y2=y2)
@@ -145,7 +171,7 @@ async def create_agent(**kwargs) -> Agent:
     """Create a moderation agent with Roboflow gesture detection."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Moderator", id="moderator"),
+        agent_user=User(name="Moderator", id="agent"),
         instructions=INSTRUCTIONS,
         processors=[
             ModerationProcessor(
@@ -158,15 +184,38 @@ async def create_agent(**kwargs) -> Agent:
         llm=openai.Realtime(),
     )
 
+    gesture_active = False
+    escalation_count = 0
+
     @agent.events.subscribe
     async def on_detection(event: roboflow.DetectionCompletedEvent) -> None:
-        if event.objects:
-            labels = [obj["label"] for obj in event.objects]
-            logger.warning(
-                "Offensive gesture detected: %s (%.0fms)",
-                ", ".join(labels),
-                event.inference_time_ms,
-            )
+        nonlocal gesture_active, escalation_count
+        if not event.objects:
+            if gesture_active:
+                gesture_active = False
+                logger.info("Offensive gesture no longer detected")
+            return
+
+        labels = [obj["label"] for obj in event.objects]
+        logger.warning(
+            "Offensive gesture detected: %s (%.0fms)",
+            ", ".join(labels),
+            event.inference_time_ms,
+        )
+
+        if not gesture_active:
+            gesture_active = True
+            escalation_count += 1
+            if escalation_count == 1:
+                await agent.simple_response(
+                    "ALERT: An offensive gesture was just detected. "
+                    "Please issue a calm but firm verbal warning."
+                )
+            else:
+                await agent.simple_response(
+                    f"ALERT: An offensive gesture has been detected again "
+                    f"(occurrence #{escalation_count}). Escalate your warning tone."
+                )
 
     return agent
 

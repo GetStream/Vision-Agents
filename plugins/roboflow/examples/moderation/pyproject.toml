@@ -5,6 +5,7 @@ requires-python = ">=3.10"
 
 dependencies = [
   "python-dotenv>=1.0",
+  "inference-sdk>=1.1.0",
   "vision-agents-plugins-roboflow",
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-openai",
