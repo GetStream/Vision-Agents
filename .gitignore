@@ -96,3 +96,6 @@ profile.html
 .claude/
 
 .uv-cache/
+
+# pytest json report
+.report.json

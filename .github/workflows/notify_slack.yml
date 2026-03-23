@@ -6,14 +6,13 @@ on:
         description: 'Display name of the workflow that failed.'
         required: true
         type: string
+      report-file:
+        description: 'JSON file with the test report.'
+        required: true
+        type: string
       summary:
         description: 'Short summary for the Slack notification.'
         required: true
-        type: string
-      details:
-        description: 'Additional details to include in the Slack notification.'
-        required: false
-        default: ''
         type: string
     secrets:
       SLACK_WEBHOOK_URL:
@@ -24,6 +23,8 @@ jobs:
     name: Notify Slack on failure
     runs-on: ubuntu-latest
     steps:
+      - name: Generate pytest summary from JSON report
+        run: uv run --frozen dev.py parse-pytest-report --file .report.json > details.md
       - name: Post failure notification
         uses: slackapi/slack-github-action@v2.1.1
         with:
@@ -39,4 +40,4 @@ jobs:
               - type: section
                 text:
                   type: mrkdwn
-                  text: "*Details*\n${{ inputs.details }}"
+                  text: "*Details*\n$(cat details.md)""

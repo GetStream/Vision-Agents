@@ -3,23 +3,22 @@ on:
   schedule:
     # Runs at 03:00 UTC daily — adjust as needed
     - cron: '0 3 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch: { }
 
 jobs:
   integration:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'integration'
+      additional_params: "--json-report --json-report-file=.report.json"
     secrets: inherit
 
   notify-slack:
-    needs: [integration]
+    needs: [ integration ]
     if: ${{ always() && needs.integration.result == 'failure' }}
     uses: ./.github/workflows/notify_slack.yml
     with:
       workflow-name: ${{ github.workflow }}
+      report-file: ".report.json"
       summary: Daily integration workflow failed.
-      details: |
-        Marker: integration
-        Result: integration=${{ needs.integration.result }}
     secrets: inherit

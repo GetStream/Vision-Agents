@@ -39,7 +39,7 @@ Website = "https://visionagents.ai/"
 Source = "https://github.com/GetStream/Vision-Agents"
 
 [project.optional-dependencies]
-dev = ["pytest", "mypy", "ruff", "click"]
+dev = ["pytest", "pytest-json-report", "mypy", "ruff", "click"]
 anthropic = ["vision-agents-plugins-anthropic"]
 cartesia = ["vision-agents-plugins-cartesia"]
 deepgram = ["vision-agents-plugins-deepgram"]

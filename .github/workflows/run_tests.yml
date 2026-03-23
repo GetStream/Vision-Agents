@@ -6,6 +6,11 @@ on:
         description: 'pytest -m expression (e.g., `not integration` or `integration`)'
         required: true
         type: string
+      pytest_params:
+        description: 'additional pytest params'
+        required: false
+        default: ""
+        type: string
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -89,6 +94,6 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       - name: Run core tests
-        run: uv run pytest -m "${{ inputs.marker }}" tests/
+        run: uv run pytest -m "${{ inputs.marker }}" tests/ ${{ pytest_params }}
       - name: Run plugin tests
-        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py
+        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py ${{ pytest_params }}
