@@ -21,7 +21,7 @@ from conftest import skip_blockbuster
 
 @pytest.fixture()
 def huggingface_client_mock():
-    mock = MagicMock()
+    mock = AsyncMock()
     mock.chat = MagicMock()
     mock.chat.completions = MagicMock()
     mock.chat.completions.create = AsyncMock()
