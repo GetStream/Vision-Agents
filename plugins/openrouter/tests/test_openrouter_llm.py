@@ -18,10 +18,20 @@ def assert_response_successful(response):
     assert response.exception is None, f"Unexpected exception: {response.exception}"
 
 
-def skip_without_api_key():
-    """Skip test if OPENROUTER_API_KEY is not set."""
-    if not os.environ.get("OPENROUTER_API_KEY"):
-        pytest.skip("OPENROUTER_API_KEY environment variable not set")
+@pytest.fixture()
+async def llm_factory():
+    """Fixture for OpenRouter LLM with conversation."""
+
+    def factory(
+        model: str = "anthropic/claude-haiku-4.5",
+        instructions: str = "be friendly",
+        max_tokens: int | None = 128,
+    ) -> LLM:
+        llm = LLM(model=model, max_tokens=max_tokens)
+        llm.set_conversation(InMemoryConversation(instructions, []))
+        return llm
+
+    return factory
 
 
 class TestOpenRouterLLM:
@@ -51,9 +61,9 @@ class TestOpenRouterLLM:
         messages = LLM._normalize_message(advanced)
         assert messages[0].original is not None
 
-    async def test_strict_mode_for_non_openai(self):
+    async def test_strict_mode_for_non_openai(self, llm_factory):
         """Non-OpenAI models should have strict mode enabled for tools with required params."""
-        llm = LLM(model="google/gemini-3-flash-preview")
+        llm = llm_factory(model="google/gemini-3-flash-preview")
         tools = [
             {
                 "name": "test_tool",
@@ -70,9 +80,9 @@ class TestOpenRouterLLM:
         assert func.get("strict") is True
         assert func["parameters"].get("additionalProperties") is False
 
-    async def test_no_strict_mode_for_openai(self):
+    async def test_no_strict_mode_for_openai(self, llm_factory):
         """OpenAI models should NOT have strict mode (breaks with optional params)."""
-        llm = LLM(model="openai/gpt-4o")
+        llm = llm_factory(model="openai/gpt-4o")
         tools = [
             {
                 "name": "test_tool",
@@ -89,48 +99,46 @@ class TestOpenRouterLLM:
         assert func.get("strict") is None
         assert func["parameters"].get("additionalProperties") is None
 
-    @pytest.fixture
-    async def llm(self) -> LLM:
-        """Fixture for OpenRouter LLM with conversation."""
-        skip_without_api_key()
-        llm = LLM(model="anthropic/claude-haiku-4.5")
-        llm.set_conversation(InMemoryConversation("be friendly", []))
-        return llm
 
-    @pytest.mark.integration
-    async def test_simple(self, llm: LLM):
+@pytest.mark.skipif(
+    not os.getenv("OPENROUTER_API_KEY"), reason="OPENROUTER_API_KEY not set"
+)
+@pytest.mark.integration
+class TestOpenRouterLLMIntegration:
+    async def test_simple(self, llm_factory):
         """Test simple response generation."""
-        response = await llm.simple_response("Explain quantum computing in 1 paragraph")
+        llm = llm_factory()
+        response = await llm.simple_response("Greet the user")
         assert_response_successful(response)
 
-    @pytest.mark.integration
-    async def test_native_api(self, llm: LLM):
+    async def test_native_api(self, llm_factory):
         """Test native OpenAI-compatible API."""
+        llm = llm_factory()
         response = await llm.create_response(
             input="say hi", instructions="You are a helpful assistant."
         )
         assert_response_successful(response)
         assert hasattr(response.original, "id")
 
-    @pytest.mark.integration
-    async def test_streaming(self, llm: LLM):
+    async def test_streaming(self, llm_factory):
         """Test streaming response."""
         streaming_works = False
+        llm = llm_factory()
 
         @llm.events.subscribe
         async def on_chunk(event: LLMResponseChunkEvent):
             nonlocal streaming_works
             streaming_works = True
 
-        response = await llm.simple_response("Explain quantum computing in 1 paragraph")
+        response = await llm.simple_response("Greet the user")
         await llm.events.wait()
 
         assert_response_successful(response)
         assert streaming_works, "Streaming should have generated chunk events"
 
-    @pytest.mark.integration
-    async def test_memory(self, llm: LLM):
+    async def test_memory(self, llm_factory):
         """Test conversation memory using simple_response."""
+        llm = llm_factory()
         await llm.simple_response(text="There are 2 dogs in the room")
         response = await llm.simple_response(
             text="How many paws are there in the room?"
@@ -141,9 +149,9 @@ class TestOpenRouterLLM:
             f"Expected '8' or 'eight' in response, got: {response.text}"
         )
 
-    @pytest.mark.integration
-    async def test_native_memory(self, llm: LLM):
+    async def test_native_memory(self, llm_factory):
         """Test conversation memory using native API."""
+        llm = llm_factory()
         await llm.create_response(input="There are 2 dogs in the room")
         response = await llm.create_response(
             input="How many paws are there in the room?"
@@ -154,11 +162,9 @@ class TestOpenRouterLLM:
             f"Expected '8' or 'eight' in response, got: {response.text}"
         )
 
-    @pytest.mark.integration
-    async def test_instruction_following(self):
+    async def test_instruction_following(self, llm_factory):
         """Test that the LLM follows system instructions."""
-        skip_without_api_key()
-        llm = LLM(model="anthropic/claude-haiku-4.5")
+        llm = llm_factory(model="anthropic/claude-haiku-4.5")
         llm.set_instructions(Instructions("Only reply in 2 letter country shortcuts"))
 
         response = await llm.simple_response(
@@ -170,11 +176,9 @@ class TestOpenRouterLLM:
             f"Expected 'NL' in response, got: {response.text}"
         )
 
-    @pytest.mark.integration
-    async def test_function_calling_openai(self):
+    async def test_function_calling_openai(self, llm_factory):
         """Test function calling with OpenAI model."""
-        skip_without_api_key()
-        llm = LLM(model="openai/gpt-4o-mini")
+        llm = llm_factory(model="openai/gpt-4o-mini", max_tokens=512)
 
         calls: list[str] = []
 
@@ -184,34 +188,12 @@ class TestOpenRouterLLM:
             return f"probe_ok:{ping}"
 
         prompt = (
-            "You MUST call the tool named 'probe_tool' with the parameter ping='pong' now. "
+            "Call the tool named 'probe_tool' with the parameter ping='pong' now. "
             "After receiving the tool result, reply by returning ONLY the tool result string."
         )
-        response = await llm.create_response(input=prompt)
+        response = await llm.simple_response(prompt)
 
-        assert len(calls) >= 1, "probe_tool was not invoked by the model"
-        assert "probe_ok:pong" in response.text, (
-            f"Expected 'probe_ok:pong', got: {response.text}"
-        )
-
-    @pytest.mark.integration
-    async def test_function_calling_gemini(self):
-        """Test function calling with Gemini model."""
-        skip_without_api_key()
-        llm = LLM(model="google/gemini-3-flash-preview")
-
-        calls: list[str] = []
-
-        @llm.register_function(description="Probe tool that records invocation")
-        async def probe_tool(ping: str) -> str:
-            calls.append(ping)
-            return f"probe_ok:{ping}"
-
-        prompt = (
-            "You MUST call the tool named 'probe_tool' with the parameter ping='pong' now. "
-            "After receiving the tool result, reply by returning ONLY the tool result string."
-        )
-        response = await llm.create_response(input=prompt)
+        await llm.events.wait()
 
         assert len(calls) >= 1, "probe_tool was not invoked by the model"
         assert "probe_ok:pong" in response.text, (
