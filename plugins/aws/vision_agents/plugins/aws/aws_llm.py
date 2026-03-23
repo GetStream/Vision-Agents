@@ -1,5 +1,4 @@
 import asyncio
-import os
 import logging
 import time
 from typing import Optional, List, TYPE_CHECKING, Any, Dict, cast
@@ -48,6 +47,7 @@ class BedrockLLM(LLM):
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         aws_session_token: Optional[str] = None,
+        aws_profile: Optional[str] = None,
     ):
         """
         Initialize the BedrockLLM class.
@@ -58,23 +58,23 @@ class BedrockLLM(LLM):
             aws_access_key_id: Optional AWS access key ID
             aws_secret_access_key: Optional AWS secret access key
             aws_session_token: Optional AWS session token
+            aws_profile: Optional AWS profile name (from ~/.aws/credentials or ~/.aws/config)
         """
         super().__init__()
         self.events.register_events_from_module(events)
         self.model = model
         self._pending_tool_uses_by_index: Dict[int, Dict[str, Any]] = {}
 
-        # Initialize boto3 bedrock-runtime client
-        session_kwargs = {"region_name": region_name}
+        # Build boto3 Session kwargs
+        session_kwargs: Dict[str, Any] = {"region_name": region_name}
+        if aws_profile:
+            session_kwargs["profile_name"] = aws_profile
         if aws_access_key_id:
             session_kwargs["aws_access_key_id"] = aws_access_key_id
         if aws_secret_access_key:
             session_kwargs["aws_secret_access_key"] = aws_secret_access_key
         if aws_session_token:
             session_kwargs["aws_session_token"] = aws_session_token
-
-        if os.environ.get("AWS_BEDROCK_API_KEY"):
-            session_kwargs["aws_session_token"] = os.environ["AWS_BEDROCK_API_KEY"]
 
         self._client = None
         self._session_kwargs = session_kwargs
@@ -86,7 +86,8 @@ class BedrockLLM(LLM):
         if self._client is None:
 
             def _create_client():
-                self._client = boto3.client("bedrock-runtime", **self._session_kwargs)
+                session = boto3.Session(**self._session_kwargs)
+                self._client = session.client("bedrock-runtime")
 
             await asyncio.to_thread(_create_client)
         return self._client
