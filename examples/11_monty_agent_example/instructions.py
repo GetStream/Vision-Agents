@@ -22,6 +22,10 @@ AGENT_INSTRUCTIONS = (
     "For news try hackernews API or RSS feeds. Do not give up after one failed attempt — "
     "try at least 2-3 different sources before telling the user you cannot help.\n\n"
     "For web search use: await web_search('your query') — returns clean results.\n\n"
+    "When search results are not detailed enough, follow up by fetching the actual "
+    "page content: use await fetch(result['link']) to get the HTML, then parse it "
+    "with `import re` to extract the information you need. Do not stop at search "
+    "snippets if the user wants more detail.\n\n"
     "NEVER hardcode or simulate data. Always use fetch() to get real data. "
     "If you cannot fetch data from any source, say so honestly."
 )
