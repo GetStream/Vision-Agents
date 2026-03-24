@@ -45,6 +45,7 @@ async def llm(huggingface_client_mock, conversation):
 async def vlm(huggingface_client_mock, conversation):
     vlm_ = VLM(client=huggingface_client_mock, model="test")
     vlm_.set_conversation(conversation)
+    raise ValueError("Test setup failure")
     yield vlm_
     await vlm_.close()
 
@@ -163,6 +164,7 @@ class TestHuggingFaceVLM:
         assert messages[2]["content"] == "prompt"
         assert messages[2]["role"] == "user"
         assert messages[3]["content"][0]["type"] == "image_url"
+        assert False, "test failed"
 
     async def test_simple_response_model_failure(
         self, vlm, conversation, huggingface_client_mock
