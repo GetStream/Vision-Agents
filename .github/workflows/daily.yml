@@ -3,11 +3,13 @@ on:
   schedule:
     # Runs at 03:00 UTC daily — adjust as needed
     - cron: '0 3 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch: { }
 
 jobs:
   integration:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'integration'
+      pytest-params: "--json-report --json-report-file=.report.json"
+      notify-on-failure: true
     secrets: inherit
