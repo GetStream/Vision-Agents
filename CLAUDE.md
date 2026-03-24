@@ -69,6 +69,10 @@ uv run --no-sync mypy
 module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, `info` for notable events, `error` for failures without a traceback,
 `exception` for errors with traceback.
 
+- **Never use f-strings in log calls.** Use `%s` lazy formatting: `logger.debug("event %s", name)` not `logger.debug(f"event {name}")`.
+  f-strings are evaluated before the log level check, so even suppressed debug lines pay the full cost of formatting.
+  This caused a production memory leak: numpy arrays inside audio events were stringified millions of times per call for nothing.
+
 **Constructor validation**:
 
 - raise `ValueError` with a descriptive message for invalid args. Prefer custom domain exceptions over generic ones.

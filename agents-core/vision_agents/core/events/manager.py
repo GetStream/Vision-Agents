@@ -11,41 +11,6 @@ from .base import BaseEvent, ExceptionEvent
 logger = logging.getLogger(__name__)
 
 
-def _truncate_event_for_logging(event, max_length=200):
-    """
-    Truncate event data for logging to prevent log spam.
-
-    Args:
-        event: The event object to truncate
-        max_length: Maximum length of the string representation
-
-    Returns:
-        Truncated string representation of the event
-    """
-    event_str = str(event)
-
-    # Special handling for audio data arrays
-    if hasattr(event, "pcm_data") and hasattr(event.pcm_data, "samples"):
-        # Replace the full array with a summary
-        samples = event.pcm_data.samples
-        array_summary = f"array([{samples[0]}, {samples[1]}, ..., {samples[-1]}], dtype={samples.dtype}, size={len(samples)})"
-        event_str = event_str.replace(str(samples), array_summary)
-
-    # If the event is still too long, truncate it
-    if len(event_str) > max_length:
-        # Find a good truncation point (end of a field)
-        truncate_at = max_length - 20  # Leave room for "... (truncated)"
-        while truncate_at > 0 and event_str[truncate_at] not in [",", ")", "}"]:
-            truncate_at -= 1
-
-        if truncate_at > 0:
-            event_str = event_str[:truncate_at] + "... (truncated)"
-        else:
-            event_str = event_str[: max_length - 20] + "... (truncated)"
-
-    return event_str
-
-
 class EventManager:
     """
     A comprehensive event management system for handling asynchronous event-driven communication.
@@ -415,13 +380,14 @@ class EventManager:
 
         # Validate event is registered (handles both BaseEvent and generated protobuf events)
         if hasattr(event, "type") and event.type in self._events:
-            logger.debug(f"Received event {_truncate_event_for_logging(event)}")
+            logger.debug("Received event type=%s", type(event).__name__)
             return event
         elif self._ignore_unknown_events:
             logger.warning(
-                f"Event not registered {_truncate_event_for_logging(event)}. "
+                "Event not registered type=%s. "
                 "Use self.register(EventClass) to register it. "
-                "Or self.register_events_from_module(module) to register all events from a module."
+                "Or self.register_events_from_module(module) to register all events from a module.",
+                type(event).__name__,
             )
         else:
             raise RuntimeError(f"Event not registered {event}")
