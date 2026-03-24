@@ -283,11 +283,11 @@ def parse_pytest_report(report_file):
 
     # Summary
     click.echo("*Summary:*")
-    click.echo(f"- Total: {total}")
-    click.echo(f"- Passed: {passed}")
-    click.echo(f"- Failed: {failed}")
-    click.echo(f"- Error: {error}")
-    click.echo(f"- Skipped: {skipped}")
+    click.echo(f"* *Total:* {total}")
+    click.echo(f"* *Passed:* {passed}")
+    click.echo(f"* *Failed:* {failed}")
+    click.echo(f"* *Error:* {error}")
+    click.echo(f"* *Skipped:* {skipped}")
     click.echo()
 
     # Failure details
@@ -295,14 +295,14 @@ def parse_pytest_report(report_file):
         nodeid, phase, message = _extract_first_failure(report.get("tests", []))
 
         click.echo("*Failure Details:*")
-        click.echo(f"- Exit code: `{exit_code}`")
+        click.echo(f"* *Exit code:* `{exit_code}`")
 
         if nodeid:
-            click.echo(f"- First failed test: `{nodeid}`")
+            click.echo(f"* *First failed test:* `{nodeid}`")
         if phase:
-            click.echo(f"- Phase: `{phase}`")
+            click.echo(f"* *Phase:* `{phase}`")
         if message:
-            click.echo(f"- Error:\n\n```\n{message}\n```")
+            click.echo(f"* *Error:*\n\n```\n{message}\n```")
 
 
 if __name__ == "__main__":
