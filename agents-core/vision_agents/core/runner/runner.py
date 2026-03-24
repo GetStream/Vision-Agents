@@ -10,6 +10,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from vision_agents.core import AgentLauncher
+from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.core.utils.logging import (
     configure_fastapi_loggers,
     configure_sdk_logger,
@@ -27,6 +28,24 @@ from .http.options import ServeOptions
 logger = logging.getLogger(__name__)
 
 asyncio_logger = logging.getLogger("asyncio")
+
+_SPLASH = """\
+░█░█░▀█▀░█▀▀░▀█▀░█▀█░█▀█░░░█▀█░█▀▀░█▀▀░█▀█░▀█▀░█▀▀
+░▀▄▀░░█░░▀▀█░░█░░█░█░█░█░░░█▀█░█░█░█▀▀░█░█░░█░░▀▀█
+░░▀░░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░░░▀░▀░▀▀▀░▀▀▀░▀░▀░░▀░░▀▀▀"""
+
+
+def _print_splash() -> None:
+    """
+    Print a splash screen.
+    """
+    banner_width = len(_SPLASH.splitlines()[0])
+    click.echo()  # newline before the splash
+    click.echo(click.style(_SPLASH, fg="cyan", bold=True))
+    # Align the version to the right side of the splash
+    version = f"v{get_vision_agents_version()}".rjust(banner_width)
+    click.echo(click.style(version, fg="white", dim=True))
+    click.echo()
 
 
 class Runner:
@@ -240,7 +259,8 @@ class Runner:
 
         @click.group()
         @click.pass_context
-        def cli_(ctx): ...
+        def cli_(ctx):
+            _print_splash()
 
         @cli_.command()
         @click.option(
