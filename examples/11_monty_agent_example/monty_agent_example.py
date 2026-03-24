@@ -135,7 +135,21 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs: Any) -
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
-        await agent.llm.simple_response("Say hi and ask what the user needs help with.")
+        # Get the user's name from the first participant that joins
+        user_name = None
+        if agent._connection is not None:
+            participants = agent._connection.participants.get_participants()
+            for p in participants:
+                if p.user_id != agent.agent_user.id:
+                    user_name = p.name or p.user_id.replace("-", " ").title()
+                    break
+
+        if user_name:
+            greeting = f"Say hi to {user_name} by name and ask what they need help with."
+        else:
+            greeting = "Say hi and ask what the user needs help with."
+
+        await agent.llm.simple_response(greeting)
         await agent.finish()
 
 
