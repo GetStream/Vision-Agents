@@ -70,10 +70,31 @@ class TranscriptAccumulator:
     def __init__(self, role: str) -> None:
         self._role = role
         self._parts: list[str] = []
+        self._live: Live | None = None
+
+    def _start_listening(self) -> None:
+        """Show animated indicator while collecting transcript."""
+        if not _HAS_RICH or self._live is not None:
+            return
+        emoji = "🗣️ " if self._role == "User" else "🤖"
+        self._live = Live(
+            Spinner("dots", text=f"[bold yellow] {emoji} {self._role} is speaking...[/bold yellow]"),
+            console=_console,
+            transient=True,
+        )
+        self._live.start()
+
+    def _stop_listening(self) -> None:
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
 
     def push(self, text: str, mode: str) -> None:
+        if not self._parts:
+            self._start_listening()
         self._parts.append(text)
         if mode == "final" or text.endswith((".", "?", "!")):
+            self._stop_listening()
             full = "".join(self._parts).strip()
             if full:
                 log_transcript(self._role, full)
