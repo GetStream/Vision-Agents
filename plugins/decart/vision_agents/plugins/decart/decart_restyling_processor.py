@@ -62,7 +62,7 @@ class RestylingProcessor(VideoProcessorPublisher):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: RealTimeModels = "mirage_v2",
+        model: RealTimeModels = "lucy_2_rt",
         initial_prompt: str = "Cyberpunk city",
         enrich: bool = True,
         mirror: bool = True,
@@ -114,7 +114,13 @@ class RestylingProcessor(VideoProcessorPublisher):
             f"Decart RestylingProcessor initialized (model: {self.model_name}, prompt: {self.initial_prompt[:50]}...)"
         )
 
-    async def process_video(self, incoming_track: aiortc.VideoStreamTrack, *_):
+    async def process_video(
+        self,
+        incoming_track: aiortc.VideoStreamTrack,
+        participant_id: Optional[str],
+        shared_forwarder: object | None = None,
+    ) -> None:
+        del participant_id, shared_forwarder
         logger.info("Processing video track, connecting to Decart")
         self._current_track = incoming_track
         if not self._connected and not self._connecting:

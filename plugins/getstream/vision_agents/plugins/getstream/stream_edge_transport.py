@@ -167,7 +167,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         # track_type_int is from TrackType enum (e.g., TrackType.TRACK_TYPE_AUDIO)
         self._track_map: dict = {}
         # Temporary storage for tracks before SFU confirms their type
-        # track_id -> (user_id, session_id, webrtc_type_string)
+        # track_id -> (user_id|None, session_id|None, webrtc_type_string)
         self._pending_tracks: dict = {}
 
         self._real_connection: Optional[ConnectionManager] = None
@@ -263,6 +263,21 @@ class StreamEdge(EdgeTransport[StreamCall]):
                     track_id = tid
                     del self._pending_tracks[tid]
                     break
+
+            # Fallback: some video track_added callbacks can arrive with user=None.
+            # In that case we can still match by WebRTC kind.
+            if track_id is None:
+                for tid, (pending_user, pending_session, pending_kind) in list(
+                    self._pending_tracks.items()
+                ):
+                    if (
+                        pending_user is None
+                        and pending_session is None
+                        and pending_kind == webrtc_track_kind
+                    ):
+                        track_id = tid
+                        del self._pending_tracks[tid]
+                        break
 
             if track_id:
                 break
@@ -422,7 +437,13 @@ class StreamEdge(EdgeTransport[StreamCall]):
         @connection.on("track_added")
         async def on_track(track_id, track_type, user):
             # Store track in pending map - wait for SFU to confirm type before spawning TrackAddedEvent
-            self._pending_tracks[track_id] = (user.user_id, user.session_id, track_type)
+            pending_user_id = user.user_id if user else None
+            pending_session_id = user.session_id if user else None
+            self._pending_tracks[track_id] = (
+                pending_user_id,
+                pending_session_id,
+                track_type,
+            )
 
         self.events.silent(events.AudioReceivedEvent)
 
