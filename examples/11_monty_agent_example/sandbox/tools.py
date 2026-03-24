@@ -52,7 +52,9 @@ def json_dumps(obj: dict[str, Any] | list[Any]) -> str:
 async def web_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
     """Search the web and return parsed results."""
     if _search_engine is None:
-        raise RuntimeError("No search engine configured. Call set_search_engine() first.")
+        raise RuntimeError(
+            "No search engine configured. Call set_search_engine() first."
+        )
     logger.info(f"web_search: {query}")
     results = await _search_engine.search(query, max_results)
     logger.info(f"web_search: {len(results)} results")
