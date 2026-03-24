@@ -261,7 +261,7 @@ def parse_pytest_report(report_file):
     report = json.load(report_file)
 
     summary = report.get("summary", {})
-    duration = str(datetime.timedelta(report.get("duration", 0) / 1000))
+    duration = str(datetime.timedelta(seconds=report.get("duration", 0)))
     exit_code = report.get("exitcode", 0)
 
     failed = summary.get("failed", 0)
