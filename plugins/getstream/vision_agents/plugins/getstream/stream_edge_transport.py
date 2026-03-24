@@ -559,10 +559,10 @@ class StreamEdge(EdgeTransport[StreamCall]):
         base_url = (
             f"{os.getenv('EXAMPLE_BASE_URL', 'https://getstream.io/video/demos')}/join/"
         )
-        params = {
+        skip_lobby = os.getenv("STREAM_SKIP_LOBBY", "true").lower() != "false"
+        params: dict[str, str | int] = {
             "api_key": client.api_key,
             "token": token,
-            "skip_lobby": "true",
             "user_name": name,
             "video_encoder": "h264",  # Use H.264 instead of VP8 for better compatibility
             "bitrate": 12000000,
@@ -570,6 +570,8 @@ class StreamEdge(EdgeTransport[StreamCall]):
             "h": 1080,
             "channel_type": self.channel_type,
         }
+        if skip_lobby:
+            params["skip_lobby"] = "true"
 
         url = f"{base_url}{call.id}?{urlencode(params)}"
         logger.info(f"🌐 Opening browser to: {url}")
