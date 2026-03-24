@@ -274,15 +274,15 @@ def parse_pytest_report(report_file):
     status = (
         "❌ Test Results - Failed" if failed or error else "✅ Test Results - Success"
     )
-    click.echo(f"**{status}**")
+    click.echo(f"*{status}*")
     click.echo()
 
     # Duration
-    click.echo(f"**Duration:** {duration}")
+    click.echo(f"*Duration:* {duration}")
     click.echo()
 
     # Summary
-    click.echo("**Summary:**")
+    click.echo("*Summary:*")
     click.echo(f"- Total: {total}")
     click.echo(f"- Passed: {passed}")
     click.echo(f"- Failed: {failed}")
@@ -294,7 +294,7 @@ def parse_pytest_report(report_file):
     if failed or error:
         nodeid, phase, message = _extract_first_failure(report.get("tests", []))
 
-        click.echo("**Failure Details:**")
+        click.echo("*Failure Details:*")
         click.echo(f"- Exit code: `{exit_code}`")
 
         if nodeid:

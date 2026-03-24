@@ -21,11 +21,10 @@ runs:
       id: report
       shell: bash
       run: |
-        {
-          echo 'details<<EOF'
-          uv run --frozen dev.py parse-pytest-report --file ${{ inputs.report-file }}
-          echo 'EOF'
-        } >> "$GITHUB_OUTPUT"
+        DETAILS=$(uv run --frozen dev.py parse-pytest-report --file ${{ inputs.report-file }})
+        # Escape newlines so the value can be safely embedded in a YAML double-quoted string
+        DETAILS="${DETAILS//$'\n'/\\n}"
+        echo "details=$DETAILS" >> "$GITHUB_OUTPUT"
     - name: Post failure notification
       uses: slackapi/slack-github-action@v2.1.1
       with:
@@ -41,4 +40,4 @@ runs:
             - type: section
               text:
                 type: mrkdwn
-                text: "**Details**\n\n${{ steps.report.outputs.details }}"
+                text: "*Details:*\n\n${{ steps.report.outputs.details }}"
