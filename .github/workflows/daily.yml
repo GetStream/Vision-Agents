@@ -10,7 +10,7 @@ jobs:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'integration'
-      additional_params: "--json-report --json-report-file=.report.json"
+      pytest_params: "--json-report --json-report-file=.report.json"
     secrets: inherit
 
   notify-slack:
