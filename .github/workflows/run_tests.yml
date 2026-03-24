@@ -6,11 +6,16 @@ on:
         description: 'pytest -m expression (e.g., `not integration` or `integration`)'
         required: true
         type: string
-      pytest_params:
+      pytest-params:
         description: 'additional pytest params'
         required: false
         default: ""
         type: string
+      notify-on-failure:
+        description: 'Post to Slack on test failure'
+        required: false
+        default: false
+        type: boolean
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -94,6 +99,14 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       - name: Run core tests
-        run: uv run pytest -m "${{ inputs.marker }}" tests/ ${{ inputs.pytest_params }}
+        run: uv run pytest -m "${{ inputs.marker }}" tests/ ${{ inputs.pytest-params }}
       - name: Run plugin tests
-        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py ${{ inputs.pytest_params }}
+        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py ${{ inputs.pytest-params }}
+      - name: Notify Slack on failure
+        if: failure() && inputs.notify-on-failure
+        uses: ./.github/actions/notify-slack
+        with:
+          workflow-name: ${{ github.workflow }}
+          report-file: .report.json
+          summary: "${{ github.workflow }} failed"
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}

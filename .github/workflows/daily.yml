@@ -10,15 +10,6 @@ jobs:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'integration'
-      pytest_params: "--json-report --json-report-file=.report.json"
-    secrets: inherit
-
-  notify-slack:
-    needs: [ integration ]
-    if: ${{ always() && needs.integration.result == 'failure' }}
-    uses: ./.github/workflows/notify_slack.yml
-    with:
-      workflow-name: ${{ github.workflow }}
-      report-file: ".report.json"
-      summary: Daily integration workflow failed.
+      pytest-params: "--json-report --json-report-file=.report.json"
+      notify-on-failure: true
     secrets: inherit

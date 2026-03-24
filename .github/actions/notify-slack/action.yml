@@ -1,0 +1,38 @@
+name: Notify Slack on failure
+description: Parse pytest JSON report and post failure notification to Slack
+inputs:
+  workflow-name:
+    description: 'Display name of the workflow that failed.'
+    required: true
+  report-file:
+    description: 'Path to pytest JSON report file.'
+    required: false
+    default: '.report.json'
+  summary:
+    description: 'Short summary for the Slack notification.'
+    required: true
+  slack-webhook-url:
+    description: 'Slack incoming webhook URL.'
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Generate pytest summary from JSON report
+      shell: bash
+      run: uv run --frozen dev.py parse-pytest-report --file ${{ inputs.report-file }} > details.md
+    - name: Post failure notification
+      uses: slackapi/slack-github-action@v2.1.1
+      with:
+        webhook: ${{ inputs.slack-webhook-url }}
+        webhook-type: incoming-webhook
+        payload: |
+          text: "[FAILED] ${{ inputs.workflow-name }} in ${{ github.repository }}"
+          blocks:
+            - type: section
+              text:
+                type: mrkdwn
+                text: "*GitHub Actions failure*\n*Workflow:* `${{ inputs.workflow-name }}`\n*Repository:* `${{ github.repository }}`\n*Ref:* `${{ github.head_ref || github.ref_name }}`\n*Event:* `${{ github.event_name }}`\n*Summary:* ${{ inputs.summary }}\n*Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            - type: section
+              text:
+                type: mrkdwn
+                text: "*Details*\n$(cat details.md)"
