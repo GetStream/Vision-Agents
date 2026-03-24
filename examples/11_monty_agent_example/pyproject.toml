@@ -10,6 +10,7 @@ dependencies = [
   "vision-agents",
   "pydantic-monty>=0.0.8",
   "aiohttp>=3.9",
+  "rich>=13.0",
 ]
 
 [tool.uv.sources]

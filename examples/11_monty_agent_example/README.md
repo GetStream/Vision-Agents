@@ -71,6 +71,17 @@ set_search_engine(SearXNG(base_url="http://my-searxng:8080"))
 | Speed | Fast | Fast (local) |
 | Privacy | DuckDuckGo servers | Fully local |
 
+## Verbose mode
+
+By default, noisy loggers are silenced for a clean demo output. Use `-v` flags to increase verbosity for debugging:
+
+```bash
+uv run python monty_agent_example.py run        # clean demo output
+uv run python monty_agent_example.py -v run      # INFO logs, noisy loggers silenced
+uv run python monty_agent_example.py -vv run     # INFO everywhere
+uv run python monty_agent_example.py -vvv run    # DEBUG everywhere
+```
+
 ## Project structure
 
 ```
