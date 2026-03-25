@@ -25,17 +25,6 @@ import time
 import warnings
 from typing import Optional
 
-# Suppress warnings for inference model backends we don't use.
-# Must be set before importing the inference package.
-os.environ.setdefault("CORE_MODEL_SAM_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_SAM3_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_GAZE_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_YOLO_WORLD_ENABLED", "False")
-
-# Silence noisy warnings from inference's transitive dependencies
-warnings.filterwarnings("ignore", message="Importing from timm.models.layers")
-warnings.filterwarnings("ignore", category=SyntaxWarning, module="inference")
-
 import av
 import cv2
 import numpy as np
@@ -45,13 +34,13 @@ from inference import get_model
 
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
+from vision_agents.core.tts.events import TTSSynthesisCompleteEvent
 from vision_agents.core.turn_detection.events import TurnStartedEvent
 from vision_agents.core.warmup import Warmable
 import vision_agents.plugins.deepgram as deepgram
 import vision_agents.plugins.gemini as gemini
 import vision_agents.plugins.getstream as getstream
 import vision_agents.plugins.roboflow as roboflow
-from vision_agents.core.tts.events import TTSSynthesisCompleteEvent
 from vision_agents.plugins.roboflow.events import (
     DetectedObject,
     DetectionCompletedEvent,
@@ -59,6 +48,16 @@ from vision_agents.plugins.roboflow.events import (
 from vision_agents.plugins.roboflow.roboflow_cloud_processor import (
     RoboflowCloudDetectionProcessor,
 )
+
+# Suppress warnings for inference model backends we don't use.
+os.environ.setdefault("CORE_MODEL_SAM_ENABLED", "False")
+os.environ.setdefault("CORE_MODEL_SAM3_ENABLED", "False")
+os.environ.setdefault("CORE_MODEL_GAZE_ENABLED", "False")
+os.environ.setdefault("CORE_MODEL_YOLO_WORLD_ENABLED", "False")
+
+# Silence noisy warnings from inference's transitive dependencies
+warnings.filterwarnings("ignore", message="Importing from timm.models.layers")
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="inference")
 
 load_dotenv()
 
