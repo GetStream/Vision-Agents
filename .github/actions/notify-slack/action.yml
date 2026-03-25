@@ -55,12 +55,11 @@ runs:
                 }
               },
               {
-                type: "actions",
+                type: "context",
                 elements: [
                   {
-                    type: "button",
-                    text: { type: "plain_text", text: "View Run" },
-                    url: $run_url
+                    type: "mrkdwn",
+                    text: ":link: <\($run_url)|View Run>"
                   }
                 ]
               }
