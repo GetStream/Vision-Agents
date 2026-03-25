@@ -28,7 +28,7 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.plugins import gemini, getstream
 
-from display import TranscriptAccumulator, log_code, log_result, thinking_spinner
+from display import TranscriptAccumulator, log_code, log_result, show_banner, thinking_spinner
 from instructions import AGENT_INSTRUCTIONS, TOOL_DESCRIPTION
 from sandbox import EXTERNAL_FUNCTIONS, TYPE_STUBS, SearXNG, set_search_engine
 
@@ -155,6 +155,8 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs: Any) -
 
 if __name__ == "__main__":
     import sys
+
+    show_banner()
 
     # Parse -v flags before Runner takes over
     verbosity = sys.argv.count("-v") + sys.argv.count("-vv") * 2 + sys.argv.count("-vvv") * 3

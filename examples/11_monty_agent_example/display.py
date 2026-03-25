@@ -13,10 +13,30 @@ try:
     from rich.spinner import Spinner
     from rich.syntax import Syntax
 
+    from rich.text import Text
+
     _console = Console()
     _HAS_RICH = True
 except ImportError:
     _HAS_RICH = False
+
+
+def show_banner() -> None:
+    """Show an intro banner explaining what this demo does."""
+    if _HAS_RICH:
+        banner = Text.from_markup(
+            "[bold cyan]Monty Agent[/bold cyan] — Voice AI with Code Execution\n\n"
+            "[dim]This agent uses [bold]Gemini Realtime[/bold] for voice conversation\n"
+            "and [bold]Monty sandbox[/bold] to write & execute Python code.\n\n"
+            "Available sandbox tools:\n"
+            "  [green]fetch(url)[/green]        → HTTP requests\n"
+            "  [green]json_parse(s)[/green]     → parse JSON\n"
+            "  [green]web_search(q)[/green]     → search the web\n"
+            "  [green]import math, re[/green]   → standard modules[/dim]"
+        )
+        _console.print(Panel(banner, border_style="cyan", padding=(1, 2)))
+    else:
+        print("Monty Agent — Voice AI with Code Execution")
 
 
 @contextlib.contextmanager
