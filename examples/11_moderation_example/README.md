@@ -1,14 +1,13 @@
 # Roboflow Video Moderation Example
 
-Real-time content moderation that detects offensive gestures using a custom Roboflow model and censors them with a Gaussian blur in the video stream.
+Real-time content moderation that detects offensive gestures using a custom Roboflow model running **locally** via the Roboflow `inference` package. Detected regions are censored with a Gaussian blur in the video stream.
 
 ## Setup
 
 1. Install dependencies:
 
 ```bash
-cd plugins/roboflow/examples/moderation
-uv sync
+uv run --directory examples/11_moderation_example moderation_example.py --help
 ```
 
 2. Create a `.env` file with your API keys:
@@ -23,20 +22,24 @@ cp env.example .env
 ## Running the Example
 
 ```bash
-uv run moderation_example.py run
+# From the repo root:
+uv run --directory examples/11_moderation_example moderation_example.py run
 ```
 
 The agent will:
 
 1. Connect to GetStream and join a video call
-2. Process video frames at 5 FPS using your Roboflow cloud model
-3. Censor any detected offensive gestures with a heavy Gaussian blur
-4. Issue verbal warnings via the LLM when gestures are detected
+2. Download and load the Roboflow model locally (first run only)
+3. Process video frames at 5 FPS using local inference
+4. Censor any detected offensive gestures with a heavy Gaussian blur
+5. Issue verbal warnings via the LLM when gestures are detected
 
 ## How It Works
 
-The `ModerationProcessor` extends the Roboflow cloud detection processor but replaces the standard bounding-box annotation with censoring:
+The `LocalModerationProcessor` extends the Roboflow cloud detection processor but replaces cloud inference with local inference:
 
+- Uses `inference.get_model()` to download model weights once and run detection on your machine
+- No cloud round-trip per frame — significantly lower latency
 - Detected regions are covered with a heavy Gaussian blur so they are not visible to other participants
 - A red border is drawn around censored areas for visibility
 - Detection events are still emitted so the LLM can issue verbal warnings
@@ -57,7 +60,7 @@ MODEL_ID = "your-workspace/your-project/version"
 Adjust sensitivity — lower values catch more but may produce false positives:
 
 ```python
-ModerationProcessor(
+LocalModerationProcessor(
     model_id=MODEL_ID,
     conf_threshold=0.3,  # More sensitive
     fps=5,
