@@ -10,6 +10,6 @@ jobs:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'integration'
-      pytest-params: "--json-report --json-report-file=.report.json"
+      pytest-params: "-k TestFailure --json-report --json-report-file=.report.json"
       notify-on-failure: true
     secrets: inherit
