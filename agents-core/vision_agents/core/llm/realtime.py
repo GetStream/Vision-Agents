@@ -1,9 +1,10 @@
-from __future__ import annotations
-
 import abc
+import asyncio
 import logging
 import uuid
+from collections.abc import Coroutine
 from typing import (
+    Any,
     Optional,
 )
 
@@ -48,6 +49,44 @@ class Realtime(OmniLLM):
         self.fps = fps
         # Store current participant for user speech transcription events
         self._current_participant: Optional[Participant] = None
+
+        # Background tool tasks — tracked to prevent GC and awaited on close
+        self._tool_tasks: set[asyncio.Task[None]] = set()
+
+        # Monotonic epoch counter; incremented on interrupt so stale events
+        # emitted before the interrupt can be identified and dropped.
+        self._epoch: int = 0
+        self._response_epoch: int = 0
+
+    @property
+    def epoch(self) -> int:
+        return self._epoch
+
+    def _begin_response(self) -> None:
+        """Snapshot the current epoch for this response."""
+        self._response_epoch = self._epoch
+
+    async def interrupt(self) -> None:
+        """Increment epoch so stale audio output events are discarded."""
+        self._epoch += 1
+
+    def _run_tool_in_background(self, coro: Coroutine[None, None, None]) -> None:
+        """Run a tool coroutine as a background task without blocking the WS reader."""
+        task = asyncio.create_task(coro)
+        self._tool_tasks.add(task)
+        task.add_done_callback(self._on_tool_task_done)
+
+    def _on_tool_task_done(self, task: asyncio.Task[None]) -> None:
+        """Callback for completed tool tasks — log exceptions and clean up."""
+        self._tool_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.exception("Background tool task failed", exc_info=task.exception())
+
+    async def _await_pending_tools(self) -> None:
+        """Await all in-flight tool tasks. Call this in close() before closing the connection."""
+        if self._tool_tasks:
+            await asyncio.gather(*self._tool_tasks, return_exceptions=True)
+            self._tool_tasks.clear()
 
     @abc.abstractmethod
     async def connect(self): ...
@@ -108,6 +147,7 @@ class Realtime(OmniLLM):
             plugin_name=self.provider_name,
             data=audio_data,
             response_id=response_id,
+            epoch=self._response_epoch,
             participant=user_metadata,
         )
         self.events.send(event)
@@ -175,23 +215,37 @@ class Realtime(OmniLLM):
     async def close(self):
         raise NotImplementedError("llm.close isn't implemented")
 
-    def _emit_user_speech_transcription(self, text: str, original=None):
+    def _emit_user_speech_transcription(
+        self,
+        text: str,
+        *,
+        mode: events.TranscriptMode,
+        original: Any = None,
+    ):
         """Emit a user speech transcription event with participant info."""
         event = events.RealtimeUserSpeechTranscriptionEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
+            mode=mode,
             original=original,
             participant=self._current_participant,
         )
         self.events.send(event)
 
-    def _emit_agent_speech_transcription(self, text: str, original=None):
+    def _emit_agent_speech_transcription(
+        self,
+        text: str,
+        *,
+        mode: events.TranscriptMode,
+        original: Any = None,
+    ):
         """Emit an agent speech transcription event."""
         event = events.RealtimeAgentSpeechTranscriptionEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             text=text,
+            mode=mode,
             original=original,
         )
         self.events.send(event)

@@ -35,11 +35,9 @@ class STT(stt.STT):
 
     Docs:
     - https://elevenlabs.io/docs/models#scribe-v2-realtime
-
-    Note: This model does NOT support turn detection.
     """
 
-    turn_detection: bool = False  # Scribe v2 does not support turn detection
+    turn_detection: bool = True
     connection: Optional[RealtimeConnection] = None
 
     def __init__(
@@ -90,7 +88,7 @@ class STT(stt.STT):
         self._audio_queue: Optional[AudioQueue] = None
         self._should_reconnect = {"value": False}
         self._reconnect_event = asyncio.Event()
-        self._commit_received = asyncio.Event()
+        self._turn_in_progress = False
         # Track when audio processing started for latency measurement
         self._audio_start_time: Optional[float] = None
 
@@ -151,7 +149,7 @@ class STT(stt.STT):
             "language_code": self.language_code,
             "audio_format": AudioFormat.PCM_16000,
             "sample_rate": 16000,
-            "commit_strategy": CommitStrategy.MANUAL,  # manual works best
+            "commit_strategy": CommitStrategy.VAD,
             "vad_silence_threshold_secs": self.vad_silence_threshold_secs,
             "vad_threshold": self.vad_threshold,
             "min_speech_duration_ms": self.min_speech_duration_ms,
@@ -272,6 +270,11 @@ class STT(stt.STT):
                 "No participant set - audio must be processed with a participant"
             )
 
+        # Signal turn start on the first partial of a new utterance
+        if not self._turn_in_progress:
+            self._turn_in_progress = True
+            self._emit_turn_started_event(participant)
+
         # Emit partial transcript
         self._emit_partial_transcript_event(
             transcript_text, participant, response_metadata
@@ -284,6 +287,15 @@ class STT(stt.STT):
         Args:
             transcription_data: The committed transcription result from ElevenLabs (dict)
         """
+
+        # Use the participant from the most recent process_audio call
+        participant = self._current_participant
+
+        if participant is None:
+            raise ValueError(
+                "No participant set - audio must be processed with a participant"
+            )
+
         # Extract transcript text from dict
         if isinstance(transcription_data, dict):
             transcript_text = transcription_data.get("text", "").strip()
@@ -297,6 +309,10 @@ class STT(stt.STT):
             )
 
         if not transcript_text:
+            if self._turn_in_progress:
+                self._turn_in_progress = False
+                self._audio_start_time = None
+                self._emit_turn_ended_event(participant)
             return
 
         # Build response metadata with word timestamps if available
@@ -317,22 +333,15 @@ class STT(stt.STT):
             processing_time_ms=processing_time_ms,
         )
 
-        # Use the participant from the most recent process_audio call
-        participant = self._current_participant
-
-        if participant is None:
-            raise ValueError(
-                "No participant set - audio must be processed with a participant"
-            )
-
         # Emit final transcript
         self._emit_transcript_event(transcript_text, participant, response_metadata)
 
         # Reset audio start time for next utterance
         self._audio_start_time = None
 
-        # Signal that commit was received
-        self._commit_received.set()
+        # Signal turn ended (VAD committed the transcript)
+        self._turn_in_progress = False
+        self._emit_turn_ended_event(participant)
 
     def _on_error(self, error: Any):
         """
@@ -341,9 +350,16 @@ class STT(stt.STT):
         Args:
             error: The error from ElevenLabs
         """
+        if self.closed:
+            logger.debug(f"ElevenLabs WebSocket error during shutdown: {error}")
+            self._turn_in_progress = False
+            self._current_participant = None
+            return
         logger.error(f"ElevenLabs WebSocket error: {error}")
         # Reset audio start time to avoid incorrect metrics on next utterance
         self._audio_start_time = None
+        self._turn_in_progress = False
+        self._current_participant = None
         self._should_reconnect["value"] = True
         self._reconnect_event.set()
 
@@ -351,9 +367,12 @@ class STT(stt.STT):
         """
         Event handler for connection close.
         """
-        logger.warning("ElevenLabs WebSocket connection closed")
+        if not self.closed:
+            logger.warning("ElevenLabs WebSocket connection closed")
         # Reset audio start time to avoid incorrect metrics on next utterance
         self._audio_start_time = None
+        self._turn_in_progress = False
+        self._current_participant = None
         self._connection_ready.clear()
         self._reconnect_event.set()
 
@@ -386,30 +405,13 @@ class STT(stt.STT):
 
         logger.error("Failed to reconnect after 3 attempts")
 
-    async def clear(self, timeout: float = 10.0):
-        """
-        Commit any pending audio and wait for the final transcript.
-
-        Args:
-            timeout: Maximum time to wait for the committed transcript in seconds.
-        """
-        if not self.connection:
-            # Reset audio start time even if no connection
-            self._audio_start_time = None
-            return
-
-        # Clear the event before committing
-        self._commit_received.clear()
-
-        await self.connection.commit()
-
-        # Wait for the committed transcript event
-        try:
-            await asyncio.wait_for(self._commit_received.wait(), timeout=timeout)
-        except TimeoutError:
-            logger.warning("Timeout waiting for committed transcript after clear()")
-            # Reset audio start time on timeout to avoid incorrect metrics
-            self._audio_start_time = None
+    async def clear(self):
+        """No-op: VAD commit strategy handles commits automatically."""
+        self._audio_start_time = None
+        self._turn_in_progress = False
+        self._current_participant = None
+        if self._audio_queue is not None:
+            self._audio_queue.clear()
 
     async def close(self):
         """Close the ElevenLabs connection and clean up resources."""

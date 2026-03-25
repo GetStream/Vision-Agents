@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
-from vision_agents.core.processors import Processor
 
 from ..utils.video_forwarder import VideoForwarder
 from .function_registry import FunctionRegistry
@@ -43,19 +42,10 @@ class LLMResponseEvent(Generic[T]):
         self.exception = exception
 
 
-BeforeCb = Callable[[List[Any]], None]
-AfterCb = Callable[[LLMResponseEvent], None]
-
-
 class LLM(abc.ABC):
-    before_response_listener: BeforeCb
-    after_response_listener: AfterCb
-    agent: Optional["Agent"]
-    function_registry: FunctionRegistry
-
     def __init__(self):
         super().__init__()
-        self.agent = None
+        self.agent: Agent | None = None
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.function_registry = FunctionRegistry()
@@ -63,13 +53,17 @@ class LLM(abc.ABC):
         self._instructions: str = ""
         self._conversation: Optional[Conversation] = None
 
+    @abc.abstractmethod
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]:
-        raise NotImplementedError
+    ) -> LLMResponseEvent[Any]: ...
+
+    async def close(self) -> None:
+        """
+        Close the LLM and release the resources.
+        """
 
     def _get_tools_for_provider(self) -> List[Dict[str, Any]]:
         """

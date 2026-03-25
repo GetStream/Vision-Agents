@@ -1,0 +1,36 @@
+[project]
+name = "roboflow-moderation-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+  "python-dotenv>=1.0",
+  "inference>=1.1.0",
+  "vision-agents-plugins-roboflow",
+  "vision-agents-plugins-getstream",
+  "vision-agents-plugins-gemini",
+  "vision-agents-plugins-deepgram",
+  "vision-agents",
+]
+
+# inference pins tight upper bounds on many shared deps that conflict with
+# vision-agents. Override until upstream relaxes the constraints.
+[tool.uv]
+override-dependencies = [
+  "python-dotenv>=1.1.1",
+  "fastapi>=0.135.1",
+  "pydantic-settings>=2.9.1",
+  "click>=8.1.0",
+  "openai>=1.12.0",
+  "typing_extensions>=4.8.0",
+  "filelock>=3.12.0",
+  "structlog>=24.1.0",
+  "python-doctr>=1.0.1",
+]
+
+[tool.uv.sources]
+"vision-agents-plugins-roboflow" = {path = "../../plugins/roboflow", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
+"vision-agents-plugins-gemini" = {path = "../../plugins/gemini", editable=true}
+"vision-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
+"vision-agents" = {path = "../../agents-core", editable=true}

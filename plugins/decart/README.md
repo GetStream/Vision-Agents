@@ -3,6 +3,7 @@
 Decart integration for Vision Agents framework, enabling real-time video restyling capabilities.
 
 It enables features such as:
+
 - Real-time video transformation using generative AI models
 - Dynamic style changing via prompts
 - Seamless integration with Vision Agents video pipeline
@@ -10,7 +11,9 @@ It enables features such as:
 ## Installation
 
 ```bash
-uv add vision-agents[decart]
+uv add "vision-agents[decart]"
+# or directly
+uv add vision-agents-plugins-decart
 ```
 
 ## Usage
@@ -58,5 +61,6 @@ The plugin requires a Decart API key. You can provide it in two ways:
 2. Pass it directly to the constructor: `RestylingProcessor(api_key="...")`
 
 ## Links
+
 - [Documentation](https://visionagents.ai/)
 - [GitHub](https://github.com/GetStream/Vision-Agents)

@@ -14,7 +14,6 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-from vision_agents.core.processors import Processor
 
 from .. import events
 
@@ -71,7 +70,6 @@ class ChatCompletionsLLM(LLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent:
         """
@@ -81,7 +79,6 @@ class ChatCompletionsLLM(LLM):
 
         Args:
             text: The text to respond to.
-            processors: list of processors (which contain state) about the video/voice AI.
             participant: the Participant object, optional. If not provided, the message will be sent with the "user" role.
 
         Examples:
@@ -145,6 +142,9 @@ class ChatCompletionsLLM(LLM):
             stream=stream,
             **kwargs,
         )
+
+    async def close(self) -> None:
+        await self._client.close()
 
     async def _create_response_internal(
         self,

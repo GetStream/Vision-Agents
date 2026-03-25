@@ -3,22 +3,22 @@ import logging
 import time
 import uuid
 from collections import deque
-from typing import Iterator, Optional, cast
+from typing import Any, Iterator, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
+from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
-    VLMInferenceStartEvent,
-    VLMInferenceCompletedEvent,
     VLMErrorEvent,
+    VLMInferenceCompletedEvent,
+    VLMInferenceStartEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
@@ -53,7 +53,8 @@ class HuggingFaceVLM(VideoLLM):
         self,
         model: str,
         api_key: Optional[str] = None,
-        provider: Optional[str] = None,
+        provider: Optional[PROVIDER_OR_POLICY_T] = None,
+        base_url: Optional[str] = None,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
         client: Optional[AsyncInferenceClient] = None,
@@ -65,6 +66,8 @@ class HuggingFaceVLM(VideoLLM):
             model: The HuggingFace model ID to use.
             api_key: HuggingFace API token. Defaults to HF_TOKEN environment variable.
             provider: Inference provider (e.g., "hf-inference"). Auto-selects if omitted.
+            base_url: Custom API base URL for OpenAI-compatible endpoints (e.g., Baseten).
+                Mutually exclusive with provider.
             fps: Number of video frames per second to handle.
             frame_buffer_seconds: Number of seconds to buffer for the model's input.
             client: Optional AsyncInferenceClient instance for dependency injection.
@@ -74,12 +77,21 @@ class HuggingFaceVLM(VideoLLM):
         self.provider = provider
         self.events.register_events_from_module(events)
 
+        if base_url and provider:
+            raise ValueError("`base_url` and `provider` are mutually exclusive.")
+
         if client is not None:
             self._client = client
+        elif base_url:
+            self._client = AsyncInferenceClient(
+                base_url=base_url,
+                api_key=api_key,
+            )
         else:
             self._client = AsyncInferenceClient(
                 token=api_key,
                 model=model,
+                provider=provider,
             )
 
         self._fps = fps
@@ -93,9 +105,8 @@ class HuggingFaceVLM(VideoLLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent:
+    ) -> LLMResponseEvent[Any]:
         """
         Create an LLM response from text input with video context.
 
@@ -103,7 +114,6 @@ class HuggingFaceVLM(VideoLLM):
 
         Args:
             text: The text to respond to.
-            processors: List of processors with video/voice AI state.
             participant: The participant object. If not provided, uses "user" role.
         """
         if self._conversation is None:
@@ -340,3 +350,6 @@ class HuggingFaceVLM(VideoLLM):
                 }
             )
         return messages
+
+    async def close(self) -> None:
+        await self._client.close()

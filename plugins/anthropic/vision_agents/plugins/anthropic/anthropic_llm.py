@@ -23,7 +23,6 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-from vision_agents.core.processors import Processor
 
 from . import events
 
@@ -75,7 +74,6 @@ class ClaudeLLM(LLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ):
         """
@@ -83,7 +81,6 @@ class ClaudeLLM(LLM):
 
         Args:
             text: The text to respond to
-            processors: list of processors (which contain state) about the video/voice AI
             participant: optionally the participant object
 
         Examples:
@@ -451,6 +448,9 @@ class ClaudeLLM(LLM):
             )
 
         return llm_response
+
+    async def close(self) -> None:
+        await self.client.close()
 
     def _emit_completion_event(
         self,

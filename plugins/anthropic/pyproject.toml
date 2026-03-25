@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "anthropic",
+    "anthropic>=0.7.0,<1",
 ]
 
 [project.urls]

@@ -1,0 +1,73 @@
+name: Notify Slack on failure
+description: Parse pytest JSON report and post failure notification to Slack
+inputs:
+  workflow-name:
+    description: 'Display name of the workflow that failed.'
+    required: true
+  report-file:
+    description: 'Path to pytest JSON report file.'
+    required: false
+    default: '.report.json'
+  summary:
+    description: 'Short summary for the Slack notification.'
+    required: true
+  slack-webhook-url:
+    description: 'Slack incoming webhook URL.'
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Build Slack payload
+      shell: bash
+      env:
+        SUMMARY: ${{ inputs.summary }}
+        WORKFLOW: ${{ inputs.workflow-name }}
+        REPO: ${{ github.repository }}
+        REF: ${{ github.head_ref || github.ref_name }}
+        EVENT: ${{ github.event_name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        DETAILS=$(uv run --frozen dev.py parse-pytest-report --file ${{ inputs.report-file }})
+
+        jq -n \
+          --arg details "$DETAILS" \
+          --arg summary "$SUMMARY" \
+          --arg workflow "$WORKFLOW" \
+          --arg repo "$REPO" \
+          --arg ref "$REF" \
+          --arg event "$EVENT" \
+          --arg run_url "$RUN_URL" \
+          '{
+            text: "[FAILED] \($workflow) in \($repo)",
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: "*GitHub Actions failure*\n*Workflow:* `\($workflow)`\n*Repository:* `\($repo)`\n*Ref:* `\($ref)`\n*Event:* `\($event)`\n*Summary:* \($summary)\n*Run:* \($run_url)"
+                }
+              },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: "*Details:*\n\n\($details)"
+                }
+              },
+              {
+                type: "context",
+                elements: [
+                  {
+                    type: "mrkdwn",
+                    text: ":link: <\($run_url)|View Run>"
+                  }
+                ]
+              }
+            ]
+          }' > /tmp/slack-payload.json
+    - name: Post failure notification
+      uses: slackapi/slack-github-action@v2.1.1
+      with:
+        webhook: ${{ inputs.slack-webhook-url }}
+        webhook-type: incoming-webhook
+        payload-file-path: /tmp/slack-payload.json

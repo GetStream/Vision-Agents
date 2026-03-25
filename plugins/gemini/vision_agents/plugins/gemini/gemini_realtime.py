@@ -15,8 +15,10 @@ from google import genai
 from google.genai.live import AsyncSession
 from google.genai.types import (
     AudioTranscriptionConfigDict,
+    AutomaticActivityDetectionDict,
     Blob,
     ContextWindowCompressionConfigDict,
+    EndSensitivity,
     FunctionCall,
     FunctionResponse,
     HttpOptions,
@@ -28,6 +30,7 @@ from google.genai.types import (
     RealtimeInputConfigDict,
     SlidingWindowDict,
     SpeechConfigDict,
+    StartSensitivity,
     TurnCoverage,
     VoiceConfigDict,
 )
@@ -38,7 +41,6 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLMResponseEvent
 from vision_agents.core.llm.llm_types import ToolSchema
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_png_bytes
 
@@ -60,7 +62,14 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
         language_code="en-US",
     ),
     realtime_input_config=RealtimeInputConfigDict(
-        turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
+        turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+        # VAD config optimized for lower latency
+        automatic_activity_detection=AutomaticActivityDetectionDict(
+            start_of_speech_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
+            end_of_speech_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
+            silence_duration_ms=500,
+            prefix_padding_ms=50,
+        ),
     ),
     enable_affective_dialog=False,
     context_window_compression=ContextWindowCompressionConfigDict(
@@ -175,7 +184,6 @@ class GeminiRealtime(realtime.Realtime):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
         """
@@ -269,7 +277,7 @@ class GeminiRealtime(realtime.Realtime):
 
         blob = Blob(data=png_bytes, mime_type="image/png")
         try:
-            await self._session.send_realtime_input(media=blob)
+            await self._session.send_realtime_input(video=blob)
         except Exception:
             logger.exception("Failed to send a video frame to Gemini Live API")
 
@@ -314,6 +322,8 @@ class GeminiRealtime(realtime.Realtime):
 
         # Do not wait for threads to complete to avoid blocking the loop
         self._executor.shutdown(wait=False)
+
+        await self._await_pending_tools()
 
         if self._processing_task is not None:
             self._processing_task.cancel()
@@ -378,78 +388,63 @@ class GeminiRealtime(realtime.Realtime):
         """
         async for response in self._session.receive():
             server_message: LiveServerMessage = response
+            server_content = server_message.server_content
 
-            is_input_transcript = (
-                server_message
-                and server_message.server_content
-                and server_message.server_content.input_transcription
-            )
-            is_output_transcript = (
-                server_message
-                and server_message.server_content
-                and server_message.server_content.output_transcription
-            )
-            is_response = (
-                server_message
-                and server_message.server_content
-                and server_message.server_content.model_turn
-            )
+            handled = False
 
-            if is_input_transcript:
-                if (
-                    server_message.server_content
-                    and server_message.server_content.input_transcription
-                ):
-                    text = server_message.server_content.input_transcription.text
-                    if text:
-                        self._emit_user_speech_transcription(
-                            text=text, original=server_message
-                        )
-            elif is_output_transcript:
-                if (
-                    server_message.server_content
-                    and server_message.server_content.output_transcription
-                ):
-                    text = server_message.server_content.output_transcription.text
-                    if text:
-                        self._emit_agent_speech_transcription(
-                            text=text, original=server_message
-                        )
-            elif is_response:
+            if server_content and server_content.input_transcription:
+                text = server_content.input_transcription.text
+                if text:
+                    self._emit_user_speech_transcription(
+                        text=text,
+                        mode="delta",
+                        original=server_message,
+                    )
+                    handled = True
+
+            if server_content and server_content.output_transcription:
+                text = server_content.output_transcription.text
+                if text:
+                    self._emit_agent_speech_transcription(
+                        text=text,
+                        mode="delta",
+                        original=server_message,
+                    )
+                    handled = True
+
+            if server_content and server_content.model_turn:
+                self._begin_response()
+                handled = True
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
                     update = server_message.session_resumption_update
                     if update.resumable and update.new_handle:
                         self._session_resumption_id = update.new_handle
 
-                if (
-                    server_message.server_content
-                    and server_message.server_content.model_turn
-                ):
-                    parts = server_message.server_content.model_turn.parts or []
-                    for part in parts:
-                        if part.text and not part.thought:
-                            # Emit partial LLM response event
-                            event = LLMResponseChunkEvent(delta=part.text)
-                            self.events.send(event)
-                        elif part.inline_data:
-                            # Emit audio output event
-                            pcm = PcmData.from_bytes(part.inline_data.data, 24000)
-                            self._emit_audio_output_event(audio_data=pcm)
-                        elif part.function_call:
-                            # Handle function calls from Gemini Live
-                            await self._handle_function_call(part.function_call)
+                parts = server_content.model_turn.parts or []
+                for part in parts:
+                    if part.text and not part.thought:
+                        event = LLMResponseChunkEvent(delta=part.text)
+                        self.events.send(event)
+                    if part.inline_data:
+                        pcm = PcmData.from_bytes(part.inline_data.data, 24000)
+                        self._emit_audio_output_event(audio_data=pcm)
+                    if part.function_call:
+                        self._run_tool_in_background(
+                            self._handle_function_call(part.function_call)
+                        )
 
-            elif (
-                server_message.server_content
-                and server_message.server_content.turn_complete
-            ):
+            if server_content and server_content.turn_complete:
                 self._emit_audio_output_done_event()
+                handled = True
 
-            elif server_message.tool_call:
-                # Handle tool calls from Gemini Live
-                await self._handle_tool_calls(server_message.tool_call)
-            else:
+            if server_message.tool_call:
+                self._run_tool_in_background(
+                    self._handle_tool_calls(server_message.tool_call)
+                )
+                handled = True
+
+            if not handled:
                 logger.debug(
                     "Unrecognized event structure from Gemini %s", server_message
                 )

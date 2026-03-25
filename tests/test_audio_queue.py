@@ -3,13 +3,11 @@ import logging
 
 import numpy as np
 import pytest
-
-from getstream.video.rtc.track_util import PcmData, AudioFormat
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.utils.audio_queue import AudioQueue
-from tests.base_test import BaseTest
 
 
-class TestAudioQueue(BaseTest):
+class TestAudioQueue:
     def test_audio_queue_initialization(self):
         """Test that AudioQueue initializes correctly."""
         queue = AudioQueue(buffer_limit_ms=1000)
@@ -429,4 +427,175 @@ class TestAudioQueue(BaseTest):
         result3 = await queue.get_samples(2)
         assert np.array_equal(result3.samples, [700, 800])
 
+        assert queue.empty()
+
+    async def test_put_drops_oldest_when_limit_exceeded(self):
+        """Test that put() drops oldest chunks when the buffer limit would be exceeded."""
+        queue = AudioQueue(buffer_limit_ms=100)  # 100ms = 1600 samples at 16kHz
+
+        # Fill queue with 5 chunks of 20ms each (320 samples) = exactly 100ms
+        chunks = []
+        for i in range(5):
+            samples = np.full(320, i, dtype=np.int16)
+            pcm = PcmData(
+                samples=samples, sample_rate=16000, format=AudioFormat.S16, channels=1
+            )
+            chunks.append(pcm)
+            await queue.put(pcm)
+
+        assert queue._total_samples == 1600  # 100ms worth
+
+        # Adding one more 20ms chunk should trigger dropping the oldest
+        overflow = PcmData(
+            samples=np.full(320, 99, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+            channels=1,
+        )
+        await queue.put(overflow)
+
+        # Buffer should still be at or under the limit
+        duration_ms = (queue._total_samples / 16000) * 1000
+        assert duration_ms <= 100.0
+
+        # The oldest chunk (value=0) should have been dropped; newest (value=99) is present
+        first = await queue.get()
+        assert first.samples[0] != 0  # oldest was dropped
+
+    async def test_put_nowait_drops_oldest_when_limit_exceeded(self):
+        """Test that put_nowait() drops oldest chunks when the buffer limit would be exceeded."""
+        queue = AudioQueue(buffer_limit_ms=100)
+
+        for i in range(5):
+            samples = np.full(320, i, dtype=np.int16)
+            pcm = PcmData(
+                samples=samples, sample_rate=16000, format=AudioFormat.S16, channels=1
+            )
+            queue.put_nowait(pcm)
+
+        assert queue._total_samples == 1600
+
+        overflow = PcmData(
+            samples=np.full(320, 99, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+            channels=1,
+        )
+        queue.put_nowait(overflow)
+
+        duration_ms = (queue._total_samples / 16000) * 1000
+        assert duration_ms <= 100.0
+
+        first = queue.get_nowait()
+        assert first.samples[0] != 0
+
+    async def test_drop_logs_dropped_count_and_duration(self, caplog):
+        """Test that the drop warning includes chunk count and duration."""
+        queue = AudioQueue(buffer_limit_ms=100)
+
+        # Fill to capacity: 5 * 320 = 1600 samples = 100ms
+        for _ in range(5):
+            samples = np.zeros(320, dtype=np.int16)
+            pcm = PcmData(
+                samples=samples, sample_rate=16000, format=AudioFormat.S16, channels=1
+            )
+            await queue.put(pcm)
+
+        with caplog.at_level(logging.WARNING):
+            overflow = PcmData(
+                samples=np.zeros(320, dtype=np.int16),
+                sample_rate=16000,
+                format=AudioFormat.S16,
+                channels=1,
+            )
+            await queue.put(overflow)
+
+        assert "dropped 1 chunks" in caplog.text
+        assert "20.0ms" in caplog.text
+
+    async def test_drop_clears_not_empty_when_buffer_emptied(self):
+        """Test that _not_empty is cleared if all chunks are dropped."""
+        # Use a very tight limit: 10ms = 160 samples at 16kHz
+        queue = AudioQueue(buffer_limit_ms=10)
+
+        # Add a small chunk (10ms)
+        small = PcmData(
+            samples=np.zeros(160, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+            channels=1,
+        )
+        await queue.put(small)
+        assert queue._not_empty.is_set()
+
+        # Add a chunk larger than the limit — existing chunk must be dropped
+        big = PcmData(
+            samples=np.zeros(160, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+            channels=1,
+        )
+        await queue.put(big)
+
+        # The new item was appended so _not_empty should be set again
+        assert queue._not_empty.is_set()
+        assert queue.qsize() == 1
+
+    async def test_massive_overflow_drops_multiple_chunks(self):
+        """Test that a large overflow drops enough chunks to fit within the limit."""
+        queue = AudioQueue(buffer_limit_ms=100)  # 1600 samples at 16kHz
+
+        # Fill with 10 chunks of 10ms each (160 samples) = 100ms total
+        for i in range(10):
+            samples = np.full(160, i, dtype=np.int16)
+            pcm = PcmData(
+                samples=samples, sample_rate=16000, format=AudioFormat.S16, channels=1
+            )
+            await queue.put(pcm)
+
+        assert queue._total_samples == 1600
+
+        # Add a 50ms chunk (800 samples) — need to drop at least 50ms of old data
+        big_chunk = PcmData(
+            samples=np.full(800, 99, dtype=np.int16),
+            sample_rate=16000,
+            format=AudioFormat.S16,
+            channels=1,
+        )
+        await queue.put(big_chunk)
+
+        duration_ms = (queue._total_samples / 16000) * 1000
+        assert duration_ms <= 100.0
+
+        # Verify oldest chunks were the ones dropped (values 0-4 gone)
+        remaining_values = []
+        while not queue.empty():
+            item = await queue.get()
+            remaining_values.append(item.samples[0])
+
+        assert 99 in remaining_values  # new chunk is present
+        assert 0 not in remaining_values  # oldest was dropped
+
+    async def test_audio_queue_clear_empty(self):
+        """Test clear() on an empty AudioQueue."""
+        queue = AudioQueue(buffer_limit_ms=1000)
+        queue.clear()
+        assert queue.qsize() == 0
+        assert queue.empty()
+
+    async def test_audio_queue_clear_non_empty(self):
+        """Test clear() removes existing data from AudioQueue."""
+        queue = AudioQueue(buffer_limit_ms=1000)
+
+        # Create test audio data
+        samples = np.array([1, 2, 3, 4, 5], dtype=np.int16)
+        pcm = PcmData(
+            samples=samples, sample_rate=16000, format=AudioFormat.S16, channels=1
+        )
+
+        await queue.put(pcm)
+        assert queue.qsize() > 0
+
+        queue.clear()
+        assert queue.qsize() == 0
         assert queue.empty()

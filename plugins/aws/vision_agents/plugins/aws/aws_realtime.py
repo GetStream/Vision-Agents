@@ -18,11 +18,15 @@ from aws_sdk_bedrock_runtime.models import (
 )
 from getstream.video.rtc import PcmData
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
+import boto3
+from smithy_aws_core.identity.components import (
+    AWSCredentialsIdentity,
+    AWSIdentityProperties,
+)
+from smithy_core.aio.interfaces.identity import IdentityResolver
 from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
 from vision_agents.core.warmup import Warmable
@@ -33,6 +37,44 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "amazon.nova-2-sonic-v1:0"
 # Reconnect after 5 seconds if there is silence. If there is no break in speech reconnect after 7 seconds
 FORCE_RECONNECT_IN_MINUTES = 7.0
+
+
+class Boto3CredentialsResolver(
+    IdentityResolver[AWSCredentialsIdentity, AWSIdentityProperties]
+):
+    """IdentityResolver that delegates to boto3.Session for credential resolution.
+
+    Supports the full boto3 credential chain: env vars, shared credentials files,
+    AWS profiles, SSO, EC2 instance profiles, etc.
+    """
+
+    def __init__(self, profile_name: Optional[str] = None) -> None:
+        self._session = boto3.Session(profile_name=profile_name)
+        self._cached: Optional[AWSCredentialsIdentity] = None
+
+    async def get_identity(
+        self, *, properties: AWSIdentityProperties, **kwargs: Any
+    ) -> AWSCredentialsIdentity:
+        if self._cached is not None:
+            return self._cached
+
+        credentials = self._session.get_credentials()
+        if not credentials:
+            raise ValueError("Unable to load AWS credentials via boto3")
+
+        creds = credentials.get_frozen_credentials()
+        if not creds.access_key or not creds.secret_key:
+            raise ValueError("AWS credentials are incomplete")
+
+        expiry = getattr(credentials, "_expiry_time", None)
+
+        self._cached = AWSCredentialsIdentity(
+            access_key_id=creds.access_key,
+            secret_access_key=creds.secret_key,
+            session_token=creds.token or None,
+            expiration=expiry,
+        )
+        return self._cached
 
 
 class RealtimeConnection:
@@ -155,6 +197,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         region_name: str = "us-east-1",
         voice_id: str = "matthew",
         reconnect_after_minutes=5.0,  # Attempt to reconnect during silence after 5 minutes. Reconnect is forced after 7 minutes
+        aws_profile: Optional[str] = None,
         **kwargs,
     ) -> None:
         """ """
@@ -174,7 +217,9 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         config = Config(
             endpoint_uri=f"https://bedrock-runtime.{region_name}.amazonaws.com",
             region=region_name,
-            aws_credentials_identity_resolver=EnvironmentCredentialsResolver(),
+            aws_credentials_identity_resolver=Boto3CredentialsResolver(
+                profile_name=aws_profile
+            ),
         )
         self.client = BedrockRuntimeClient(config=config)
         self.logger = logging.getLogger(__name__)
@@ -193,6 +238,13 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         self._pending_tool_calls: Dict[
             str, Dict[str, Any]
         ] = {}  # Store tool calls until contentEnd: key=toolUseId
+
+        # Track current content role for transcription events
+        self.role: Optional[str] = None
+        self.display_assistant_text: bool = False
+        # Whether we've already emitted text in the current turn so we
+        # know to insert a space between consecutive chunks.
+        self._emitted_text_in_turn: bool = False
 
     async def on_warmup(self) -> SileroVADSessionPool:
         return await SileroVADSessionPool.load(self.options.model_dir)
@@ -393,6 +445,10 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if self._vad_session is None:
             raise ValueError("The VAD model has not been initialized.")
 
+        # Track current participant so user speech transcription events
+        # carry the participant info required by the agent event handler.
+        self._current_participant = participant
+
         # Resample to 24kHz if needed, as required by AWS Nova
         pcm = pcm.resample(24000)
         is_talking = self._vad_session.predict_speech(pcm) > 0.5
@@ -413,7 +469,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[List[Processor]] = None,
         participant: Optional[Participant] = None,
     ):
         """
@@ -765,6 +820,8 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if not self.connected:
             return
 
+        await self._await_pending_tools()
+
         if self.connection:
             prompt_end = {
                 "event": {
@@ -818,6 +875,8 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 )
                                 # set role
                                 self.role = content_start["role"]
+                                # Reset per-turn text tracking
+                                self._emitted_text_in_turn = False
                                 # Check for speculative content
                                 if "additionalModelFields" in content_start:
                                     try:
@@ -841,7 +900,52 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 logger.debug(
                                     f"Text output from AWS Bedrock: {text_content}"
                                 )
+
+                                # Nova sends '{ "interrupted" : true }' as
+                                # a textOutput event when the user barges
+                                # in.  Skip it so it doesn't appear as a
+                                # transcript.  The actual barge-in handling
+                                # happens in contentEnd with
+                                # stopReason == "INTERRUPTED".
+                                barge_in = '{ "interrupted" : true }' in text_content
+                                if not barge_in:
+                                    # Emit as delta so text appears
+                                    # immediately in the UI.  Prepend a
+                                    # space between consecutive chunks to
+                                    # avoid words running together.
+                                    _delta = text_content
+                                    if (
+                                        self._emitted_text_in_turn
+                                        and _delta
+                                        and not _delta[0].isspace()
+                                    ):
+                                        _delta = " " + _delta
+                                    self._emitted_text_in_turn = True
+
+                                    if self.role == "USER":
+                                        self._emit_user_speech_transcription(
+                                            text=_delta,
+                                            mode="delta",
+                                            original=json_data,
+                                        )
+                                    elif (
+                                        self.role == "ASSISTANT"
+                                        and self.display_assistant_text
+                                    ):
+                                        self._emit_agent_speech_transcription(
+                                            text=_delta,
+                                            mode="delta",
+                                            original=json_data,
+                                        )
+                                else:
+                                    logger.info(
+                                        "Barge-in detected — emitting audio "
+                                        "output done to flush playback buffer"
+                                    )
+                                    self._emit_audio_output_done_event()
+
                             elif "completionStart" in json_data["event"]:
+                                self._begin_response()
                                 logger.debug(
                                     "Completion start from AWS Bedrock: %s",
                                     json_data["event"]["completionStart"],
@@ -905,7 +1009,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         tool_call_info = self._pending_tool_calls.pop(
                                             tool_use_id
                                         )
-                                        asyncio.create_task(
+                                        self._run_tool_in_background(
                                             self._handle_tool_call(
                                                 tool_name=tool_call_info["toolName"],
                                                 tool_use_id=tool_call_info["toolUseId"],
@@ -915,8 +1019,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                             )
                                         )
 
-                                if stop_reason == "INTERRUPTED":
-                                    logger.debug("TODO: should flush audio buffer")
                                 logger.debug(
                                     f"Content end from AWS Bedrock {stop_reason}: {content_end_data}"
                                 )

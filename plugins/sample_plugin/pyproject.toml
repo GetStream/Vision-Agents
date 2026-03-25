@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "elevenlabs>=2.5.0",
+    "elevenlabs>=2.38.1",
 ]
 
 [project.urls]

@@ -21,7 +21,6 @@ from vision_agents.core.llm.events import (
     VLMErrorEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
-from vision_agents.core.processors import Processor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
@@ -106,7 +105,6 @@ class ChatCompletionsVLM(VideoLLM):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent:
         """
@@ -116,7 +114,6 @@ class ChatCompletionsVLM(VideoLLM):
 
         Args:
             text: The text to respond to.
-            processors: list of processors (which contain state) about the video/voice AI.
             participant: the Participant object, optional. If not provided, the message will be sent with the "user" role.
 
         Examples:
@@ -269,7 +266,9 @@ class ChatCompletionsVLM(VideoLLM):
                     )
                 )
 
-            llm_response = LLMResponseEvent(original=chunk, text=total_text)
+                llm_response = LLMResponseEvent(original=chunk, text=total_text)
+                break
+
             i += 1
 
         return llm_response
@@ -384,4 +383,5 @@ class ChatCompletionsVLM(VideoLLM):
         return messages
 
     async def close(self) -> None:
+        await self._client.close()
         self._executor.shutdown(wait=False)

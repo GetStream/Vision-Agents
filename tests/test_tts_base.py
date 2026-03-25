@@ -304,3 +304,25 @@ class TestTTS:
         assert len(audio_events) == 0
         assert len(complete_events) == 1
         assert complete_events[0].chunk_count == 0
+
+    async def test_emit_chunk_stamps_current_epoch(self):
+        chunks = [_make_pcm(160, sample_rate=16000)]
+        tts = DummyTTSAsyncIter(chunks)
+        audio_events = _collect_audio_events(tts)
+
+        await tts.send("epoch-0")
+        await tts.events.wait(timeout=1.0)
+        assert audio_events[0].epoch == 0
+
+    async def test_interrupt_increments_epoch(self):
+        chunks = [_make_pcm(160, sample_rate=16000)]
+        tts = DummyTTSAsyncIter(chunks)
+
+        assert tts.epoch == 0
+        await tts.interrupt()
+        assert tts.epoch == 1
+
+        audio_events = _collect_audio_events(tts)
+        await tts.send("epoch-1")
+        await tts.events.wait(timeout=1.0)
+        assert audio_events[0].epoch == 1

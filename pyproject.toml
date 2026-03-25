@@ -36,15 +36,15 @@ vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
 vision-agents-plugins-mistral = { workspace = true }
 vision-agents-plugins-assemblyai = { workspace = true }
-vision-agents-plugins-tencent = { workspace = true }
-liteav = { path = "../tencent_rtc_sdk/python/python_x86_64", editable = true }
+vision-agents-plugins-local = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
 # vogent-turn requires numpy<2.0, so we override to use 1.26.x
-override-dependencies = [
-    "numpy>=1.26.0,<2.0"
-]
+override-dependencies = ["numpy>=1.26.0,<2.0"]
+
+# Store uv cache in project directory for better sandboxing
+cache-dir = ".uv-cache"
 
 [tool.uv.workspace]
 members = [
@@ -80,7 +80,7 @@ members = [
     "plugins/nvidia",
     "plugins/mistral",
     "plugins/assemblyai",
-    "plugins/tencent",
+    "plugins/local",
 ]
 exclude = [
     "**/__pycache__",
@@ -119,6 +119,7 @@ dev = [
     "mistralai[realtime]>=1.12.0",
     "testcontainers[redis]>=4.0.0",
     "redis[hiredis]>=5.0.0",
+    "types-aiofiles>=25.1.0.20251011",
 ]
 
 [tool.mypy]

@@ -1,0 +1,123 @@
+{{- if .Values.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vision-agent.fullname" . }}-grafana-dashboard
+  labels:
+    {{- include "vision-agent.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  vision-agent.json: |-
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "Active Sessions",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10 } },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "sum(ai_demo_active_sessions{namespace=\"{{ .Release.Namespace }}\"})",
+            "legendFormat": "Active Sessions",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "Pipeline Latency (seconds)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "rate(stt_latency_ms_milliseconds_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(stt_latency_ms_milliseconds_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000", "legendFormat": "STT", "refId": "A" },
+            { "expr": "rate(llm_latency_ms_milliseconds_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(llm_latency_ms_milliseconds_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000", "legendFormat": "LLM", "refId": "B" },
+            { "expr": "rate(tts_latency_ms_milliseconds_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(tts_latency_ms_milliseconds_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000", "legendFormat": "TTS", "refId": "C" }
+          ]
+        },
+        {
+          "title": "LLM Tokens",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" } },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(llm_tokens_input_total{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Input", "refId": "A" },
+            { "expr": "sum(llm_tokens_output_total{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Output", "refId": "B" }
+          ]
+        },
+        {
+          "title": "TTS Characters",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" } },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "sum(tts_characters_total{namespace=\"{{ .Release.Namespace }}\"})",
+            "legendFormat": "Characters",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "Pod CPU Usage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"{{ .Release.Namespace }}\", pod=~\"{{ include "vision-agent.fullname" . }}.*\"}[5m]))",
+            "legendFormat": "{{`{{`}} pod {{`}}`}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "Pod Memory Usage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "bytes" },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"{{ .Release.Namespace }}\", pod=~\"{{ include "vision-agent.fullname" . }}.*\"})",
+            "legendFormat": "{{`{{`}} pod {{`}}`}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "title": "LLM Time to First Token (seconds)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
+            "overrides": []
+          },
+          "targets": [{
+            "expr": "rate(llm_time_to_first_token_ms_milliseconds_sum{namespace=\"{{ .Release.Namespace }}\"}[5m]) / rate(llm_time_to_first_token_ms_milliseconds_count{namespace=\"{{ .Release.Namespace }}\"}[5m]) / 1000",
+            "legendFormat": "TTFT",
+            "refId": "A"
+          }]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["vision-agents"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "title": "Vision Agent Overview",
+      "uid": "{{ printf "%s-va" .Release.Name | trunc 40 }}"
+    }
+{{- end }}

@@ -24,7 +24,7 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Fast Whisper AI", id="agent"),
         instructions="Be helpful and respond naturally to the user's speech.",
-        llm=gemini.LLM("gemini-2.5-flash-lite"),
+        llm=gemini.LLM("gemini-3.1-flash-lite-preview"),
         tts=elevenlabs.TTS(),
         stt=fast_whisper.STT(
             model_size="tiny",  # Use base for good balance of speed and accuracy

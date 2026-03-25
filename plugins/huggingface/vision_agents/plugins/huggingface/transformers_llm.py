@@ -15,8 +15,6 @@ Example:
     )
 """
 
-from __future__ import annotations
-
 import asyncio
 import gc
 import json
@@ -25,7 +23,7 @@ import re
 import time
 import uuid
 from threading import Thread
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, cast
 
 import jinja2
 import torch
@@ -37,7 +35,6 @@ from transformers import (
     PreTrainedTokenizerBase,
     TextStreamer,
 )
-
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
@@ -48,9 +45,6 @@ from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.warmup import Warmable
 
 from . import events
-
-if TYPE_CHECKING:
-    from vision_agents.core.processors import Processor
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +194,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         model = AutoModelForCausalLM.from_pretrained(self.model_id, **load_kwargs)
 
         if self._device_config == "mps":
-            model = model.to(torch.device("mps"))  # type: ignore[arg-type]
+            cast(torch.nn.Module, model).to(torch.device("mps"))
 
         model.eval()
 
@@ -222,7 +216,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
     async def simple_response(
         self,
         text: str,
-        processors: Optional[list[Processor]] = None,
         participant: Optional[Any] = None,
     ) -> LLMResponseEvent:
         if self._conversation is None:
@@ -350,7 +343,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                     loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
         streamer = _AsyncBridgeStreamer(
-            tokenizer,  # type: ignore[arg-type]
+            cast(AutoTokenizer, tokenizer),
             skip_prompt=True,
             skip_special_tokens=True,
         )
@@ -375,7 +368,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             nonlocal generation_error
             try:
                 with torch.no_grad():
-                    model.generate(**generate_kwargs)  # type: ignore[operator]
+                    cast(Callable[..., torch.Tensor], model.generate)(**generate_kwargs)
             except RuntimeError as e:
                 generation_error = e
                 logger.exception("Generation failed")
@@ -467,7 +460,9 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         def _do_generate() -> Any:
             with torch.no_grad():
-                return model.generate(**generate_kwargs)  # type: ignore[operator]
+                return cast(Callable[..., torch.Tensor], model.generate)(
+                    **generate_kwargs
+                )
 
         try:
             outputs = await asyncio.to_thread(_do_generate)

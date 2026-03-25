@@ -1,0 +1,12 @@
+apiVersion: v2
+name: vision-agent
+description: Vision Agent deployment
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: redis
+    version: "~25.3.0"
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: redis.deploy.enabled

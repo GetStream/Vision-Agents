@@ -94,3 +94,8 @@ profile.html
 /opencode.json
 .ralph-tui/
 .claude/
+
+.uv-cache/
+
+# pytest json report
+.report.json
