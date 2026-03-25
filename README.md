@@ -123,8 +123,6 @@ See [DEVELOPMENT.md](DEVELOPMENT.md)
 
 Want to add your platform or provider? See [Create Your Own Plugin](https://visionagents.ai/integrations/create-your-own-plugin) or reach out to **nash@getstream.io**.
 
-See the full [ROADMAP.md](ROADMAP.md) for details and past releases.
-
 ## Current Limitations
 
 - Video AI struggles with small text — models may hallucinate scores, signs, etc.
