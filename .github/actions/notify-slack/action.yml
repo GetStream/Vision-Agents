@@ -17,27 +17,51 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Generate pytest summary from JSON report
-      id: report
+    - name: Build Slack payload
       shell: bash
       run: |
         DETAILS=$(uv run --frozen dev.py parse-pytest-report --file ${{ inputs.report-file }})
-        # Escape newlines so the value can be safely embedded in a YAML double-quoted string
-        DETAILS="${DETAILS//$'\n'/\\n}"
-        echo "details=$DETAILS" >> "$GITHUB_OUTPUT"
+
+        jq -n \
+          --arg details "$DETAILS" \
+          --arg summary '${{ inputs.summary }}' \
+          --arg workflow '${{ inputs.workflow-name }}' \
+          --arg repo '${{ github.repository }}' \
+          --arg ref '${{ github.head_ref || github.ref_name }}' \
+          --arg event '${{ github.event_name }}' \
+          --arg run_url '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+          '{
+            text: "[FAILED] \($workflow) in \($repo)",
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: "*GitHub Actions failure*\n*Workflow:* `\($workflow)`\n*Repository:* `\($repo)`\n*Ref:* `\($ref)`\n*Event:* `\($event)`\n*Summary:* \($summary)\n*Run:* \($run_url)"
+                }
+              },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: "*Details:*\n\n\($details)"
+                }
+              },
+              {
+                type: "actions",
+                elements: [
+                  {
+                    type: "button",
+                    text: { type: "plain_text", text: "View Run" },
+                    url: $run_url
+                  }
+                ]
+              }
+            ]
+          }' > /tmp/slack-payload.json
     - name: Post failure notification
       uses: slackapi/slack-github-action@v2.1.1
       with:
         webhook: ${{ inputs.slack-webhook-url }}
         webhook-type: incoming-webhook
-        payload: |
-          text: "[FAILED] ${{ inputs.workflow-name }} in ${{ github.repository }}"
-          blocks:
-            - type: section
-              text:
-                type: mrkdwn
-                text: "*GitHub Actions failure*\n*Workflow:* `${{ inputs.workflow-name }}`\n*Repository:* `${{ github.repository }}`\n*Ref:* `${{ github.head_ref || github.ref_name }}`\n*Event:* `${{ github.event_name }}`\n*Summary:* ${{ inputs.summary }}\n*Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            - type: section
-              text:
-                type: mrkdwn
-                text: "*Details:*\n\n${{ steps.report.outputs.details }}"
+        payload-file-path: /tmp/slack-payload.json
