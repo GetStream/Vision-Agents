@@ -260,7 +260,7 @@ class Runner:
         @click.group()
         @click.pass_context
         def cli_(ctx):
-            _print_splash()
+            pass
 
         @cli_.command()
         @click.option(
@@ -302,6 +302,12 @@ class Runner:
             help="Optional local video track override for debugging. "
             "This track will play instead of any incoming video track.",
         )
+        @click.option(
+            "--no-splash",
+            is_flag=True,
+            default=False,
+            help="Disable the splash screen",
+        )
         def run_cmd(
             call_type: str,
             call_id: Optional[str],
@@ -309,10 +315,13 @@ class Runner:
             log_level: str,
             no_demo: bool,
             video_track_override: Optional[str],
+            no_splash: bool,
         ) -> None:
             """
             Run a single agent in the console.
             """
+            if not no_splash:
+                _print_splash()
             return self.run(
                 call_type=call_type,
                 call_id=call_id,
@@ -357,16 +366,25 @@ class Runner:
             default=False,
             help="Enable asyncio debug mode",
         )
+        @click.option(
+            "--no-splash",
+            is_flag=True,
+            default=False,
+            help="Disable the splash screen",
+        )
         def serve_cmd(
             host: str,
             port: int,
             agents_log_level: str,
             http_log_level: str,
             debug: bool,
+            no_splash: bool,
         ) -> None:
             """
             Start the HTTP server that spawns agents to the calls.
             """
+            if not no_splash:
+                _print_splash()
             return self.serve(
                 host=host,
                 port=port,
