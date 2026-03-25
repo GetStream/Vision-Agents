@@ -52,7 +52,10 @@ import vision_agents.plugins.gemini as gemini
 import vision_agents.plugins.getstream as getstream
 import vision_agents.plugins.roboflow as roboflow
 from vision_agents.core.tts.events import TTSSynthesisCompleteEvent
-from vision_agents.plugins.roboflow.events import DetectedObject, DetectionCompletedEvent
+from vision_agents.plugins.roboflow.events import (
+    DetectedObject,
+    DetectionCompletedEvent,
+)
 from vision_agents.plugins.roboflow.roboflow_cloud_processor import (
     RoboflowCloudDetectionProcessor,
 )
@@ -111,7 +114,9 @@ class LocalModerationProcessor(RoboflowCloudDetectionProcessor, Warmable[object]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._api_key = str(kwargs.get("api_key") or os.getenv("ROBOFLOW_API_KEY") or "")
+        self._api_key = str(
+            kwargs.get("api_key") or os.getenv("ROBOFLOW_API_KEY") or ""
+        )
         self._local_model: object | None = None
         self._latest_detections: Optional[sv.Detections] = None
         self._latest_classes: dict[int, str] = {}
@@ -119,7 +124,9 @@ class LocalModerationProcessor(RoboflowCloudDetectionProcessor, Warmable[object]
 
     async def on_warmup(self) -> object:
         """Pre-load the Roboflow model during agent startup."""
-        logger.info("⏳ Warming up moderation model %s (downloading weights)...", self.model_id)
+        logger.info(
+            "⏳ Warming up moderation model %s (downloading weights)...", self.model_id
+        )
         model = await asyncio.to_thread(
             get_model, model_id=self.model_id, api_key=self._api_key
         )
@@ -253,9 +260,7 @@ class LocalModerationProcessor(RoboflowCloudDetectionProcessor, Warmable[object]
 
             if class_ids:
                 detections_obj = sv.Detections(
-                    xyxy=np.array(
-                        list(zip(x1_list, y1_list, x2_list, y2_list))
-                    ),
+                    xyxy=np.array(list(zip(x1_list, y1_list, x2_list, y2_list))),
                     confidence=np.array(confidences),
                     class_id=np.array(class_ids),
                 )
@@ -387,10 +392,12 @@ async def create_agent(**kwargs: object) -> Agent:
             if escalation_count >= 3 and participant_user_id:
                 logger.info(
                     "Kicking user %s after %d offences",
-                    participant_user_id, escalation_count,
+                    participant_user_id,
+                    escalation_count,
                 )
                 await agent.call.kick_user(
-                    user_id=participant_user_id, block=True,
+                    user_id=participant_user_id,
+                    block=True,
                 )
 
     return agent
