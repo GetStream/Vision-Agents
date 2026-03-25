@@ -79,8 +79,3 @@ class TestCancelAndWait:
 
     async def test_cancel_no_futures(self):
         await cancel_and_wait()
-
-
-class TestFailure:
-    def test_failure_fails(self):
-        assert False, "test failed"
