@@ -8,10 +8,12 @@ a heavy Gaussian blur so they are hidden from view.
 The agent uses:
 - Roboflow local inference for gesture detection (custom-trained model)
 - Stream's edge network for video/audio transport
-- OpenAI for LLM (verbal warnings)
+- Gemini Flash Lite for LLM (verbal warnings)
+- Deepgram for STT and TTS
 
 Requirements:
-- OPENAI_API_KEY environment variable
+- GOOGLE_API_KEY environment variable
+- DEEPGRAM_API_KEY environment variable
 - ROBOFLOW_API_KEY environment variable (for model download)
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
 """
