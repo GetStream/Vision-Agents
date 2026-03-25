@@ -33,10 +33,6 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
 
     Sends TTS audio to Anam and receives synchronized
     avatar video and audio back.
-
-    # TODO: Docstrings, docs, readme, tests
-    # TODO: Leave the call when Avatar leaves it? That requires us to treat avatars as special plugins (e.g. they could emit special events)
-
     """
 
     name = "anam_avatar"
@@ -56,6 +52,11 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         Args:
             avatar_id: Anam avatar ID. Uses ANAM_AVATAR_ID env var if not provided.
             api_key: Anam API key. Uses ANAM_API_KEY env var if not provided.
+            client_options: Optional Anam client configuration options.
+            connect_timeout: Seconds to wait for the connection to be established.
+                None means wait indefinitely.
+            session_ready_timeout: Seconds to wait for the session to become ready.
+                None means wait indefinitely.
             width: Output video width in pixels.
             height: Output video height in pixels.
         """
@@ -100,9 +101,11 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         self._video_receiver_task: asyncio.Task | None = None
 
     def publish_video_track(self) -> QueuedVideoTrack:
+        """Return the video track that receives avatar video frames."""
         return self._video_track
 
     def publish_audio_track(self) -> audio_track.AudioStreamTrack:
+        """Return the audio track that receives avatar audio frames."""
         return self._audio_track
 
     def attach_agent(self, agent: Agent) -> None:
