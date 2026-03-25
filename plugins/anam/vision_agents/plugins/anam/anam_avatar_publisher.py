@@ -125,7 +125,6 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         Close the Anam avatar publisher, cancel audio & video processing tasks
         and release resources.
         """
-        self._video_track.stop()
         if self._audio_receiver_task is not None:
             await cancel_and_wait(self._audio_receiver_task)
         if self._video_receiver_task is not None:
