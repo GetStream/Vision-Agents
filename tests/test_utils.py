@@ -81,7 +81,6 @@ class TestCancelAndWait:
         await cancel_and_wait()
 
 
-@pytest.mark.integration
 class TestFailure:
     def test_failure_fails(self):
         assert False, "test failed"
