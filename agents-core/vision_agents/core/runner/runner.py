@@ -41,7 +41,7 @@ def _print_splash() -> None:
     """
     banner_width = len(_SPLASH.splitlines()[0])
     click.echo()  # newline before the splash
-    click.echo(click.style(_SPLASH, fg="cyan", bold=True))
+    click.echo(click.style(_SPLASH, fg=(0, 95, 215), bold=True))
     # Align the version to the right side of the splash
     version = f"v{get_vision_agents_version()}".rjust(banner_width)
     click.echo(click.style(version, fg="white", dim=True))
