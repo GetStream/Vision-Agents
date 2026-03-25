@@ -47,6 +47,8 @@ class TestAnamAvatarPublisher:
         pub = _make_publisher(width=640, height=480)
         track = pub.publish_video_track()
         assert isinstance(track, QueuedVideoTrack)
+        assert track.width == 640
+        assert track.height == 480
 
     def test_publish_video_track(self):
         pub = _make_publisher()
