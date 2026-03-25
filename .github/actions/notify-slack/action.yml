@@ -19,17 +19,24 @@ runs:
   steps:
     - name: Build Slack payload
       shell: bash
+      env:
+        SUMMARY: ${{ inputs.summary }}
+        WORKFLOW: ${{ inputs.workflow-name }}
+        REPO: ${{ github.repository }}
+        REF: ${{ github.head_ref || github.ref_name }}
+        EVENT: ${{ github.event_name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         DETAILS=$(uv run --frozen dev.py parse-pytest-report --file ${{ inputs.report-file }})
 
         jq -n \
           --arg details "$DETAILS" \
-          --arg summary '${{ inputs.summary }}' \
-          --arg workflow '${{ inputs.workflow-name }}' \
-          --arg repo '${{ github.repository }}' \
-          --arg ref '${{ github.head_ref || github.ref_name }}' \
-          --arg event '${{ github.event_name }}' \
-          --arg run_url '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+          --arg summary "$SUMMARY" \
+          --arg workflow "$WORKFLOW" \
+          --arg repo "$REPO" \
+          --arg ref "$REF" \
+          --arg event "$EVENT" \
+          --arg run_url "$RUN_URL" \
           '{
             text: "[FAILED] \($workflow) in \($repo)",
             blocks: [
