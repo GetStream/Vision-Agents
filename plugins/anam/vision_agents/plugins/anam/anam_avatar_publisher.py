@@ -235,8 +235,6 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         else:
             logger.debug("Closing Anam connection")
 
-        await self.close()
-
     async def _on_session_ready(self) -> None:
         """
         Called when the Anam session is ready to receive audio.
