@@ -1,5 +1,4 @@
 import logging
-from typing import Any, Dict
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
@@ -19,7 +18,7 @@ def setup_llm(model: str = "gemini-3.1-flash-lite-preview") -> gemini.LLM:
     llm = gemini.LLM(model)
 
     @llm.register_function(description="Get current weather for a location")
-    async def get_weather(location: str) -> Dict[str, Any]:
+    async def get_weather(location: str) -> dict[str, object]:
         return await get_weather_by_location(location)
 
     return llm
