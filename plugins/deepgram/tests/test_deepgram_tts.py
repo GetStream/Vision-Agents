@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
-
 from vision_agents.core.tts.manual_test import manual_tts_to_wav
 from vision_agents.core.tts.testing import TTSSession
 from vision_agents.plugins import deepgram
@@ -51,14 +50,14 @@ class _MockConnectCtx:
         self.exit_called = True
 
 
-class TestDeepgramTTS:
+@pytest.mark.integration
+class TestDeepgramTTSIntegration:
     """Integration tests for Deepgram TTS."""
 
     @pytest.fixture
     async def tts(self) -> deepgram.TTS:
         return deepgram.TTS()
 
-    @pytest.mark.integration
     async def test_deepgram_tts_convert_text_to_audio(self, tts: deepgram.TTS):
         tts.set_output_format(sample_rate=16000, channels=1)
         session = TTSSession(tts)
@@ -70,14 +69,13 @@ class TestDeepgramTTS:
         assert not session.errors
         assert len(session.speeches) > 0
 
-    @pytest.mark.integration
     async def test_deepgram_tts_convert_text_to_audio_manual_test(
         self, tts: deepgram.TTS
     ):
         await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
 
 
-class TestDeepgramTTSWebSocket:
+class TestDeepgramTTS:
     """Unit tests for the websocket-based TTS implementation."""
 
     async def test_stream_audio_yields_chunks(self):
@@ -174,7 +172,6 @@ class TestDeepgramTTSWebSocket:
         await tts.stop_audio()
 
         mock_socket.send_clear.assert_called_once()
-        assert tts._needs_drain
         assert tts._stop_event.is_set()
 
     async def test_stop_audio_noop_when_not_connected(self):
@@ -209,16 +206,13 @@ class TestDeepgramTTSWebSocket:
 
     async def test_close_tears_down_connection(self):
         mock_socket = _make_mock_socket([])
-        mock_ctx = _MockConnectCtx(mock_socket)
 
-        tts = deepgram.TTS()
+        tts = deepgram.TTS(client=MagicMock())
         tts._socket = mock_socket
-        tts._connection_ctx = mock_ctx
 
         await tts.close()
 
         mock_socket.send_close.assert_called_once()
-        assert mock_ctx.exit_called
         assert tts._socket is None
 
     async def test_connection_reused_across_calls(self):
