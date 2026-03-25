@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 import warnings
 from typing import Optional
 from uuid import uuid4
@@ -320,7 +321,7 @@ class Runner:
             """
             Run a single agent in the console.
             """
-            if not no_splash:
+            if not no_splash and sys.stdout.isatty():
                 _print_splash()
             return self.run(
                 call_type=call_type,
@@ -383,7 +384,7 @@ class Runner:
             """
             Start the HTTP server that spawns agents to the calls.
             """
-            if not no_splash:
+            if not no_splash and sys.stdout.isatty():
                 _print_splash()
             return self.serve(
                 host=host,
