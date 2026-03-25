@@ -7,7 +7,7 @@ This example demonstrates how to use the Roboflow plugin for real-time object de
 1. Install dependencies:
 
 ```bash
-cd plugins/roboflow/example
+cd plugins/roboflow/examples/detection
 uv sync
 ```
 
