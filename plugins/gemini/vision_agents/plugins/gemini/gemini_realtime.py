@@ -224,6 +224,9 @@ class GeminiRealtime(realtime.Realtime):
 
         self._current_participant = participant
 
+        if not self.connected:
+            return
+
         # Build blob and send directly
         audio_bytes = pcm.resample(
             target_sample_rate=16000, target_channels=1
@@ -275,11 +278,14 @@ class GeminiRealtime(realtime.Realtime):
             self._executor, frame_to_png_bytes, frame
         )
 
+        if not self.connected:
+            return
+
         blob = Blob(data=png_bytes, mime_type="image/png")
         try:
             await self._session.send_realtime_input(video=blob)
         except Exception:
-            logger.exception("Failed to send a video frame to Gemini Live API")
+            logger.debug("Failed to send a video frame to Gemini Live API")
 
     async def stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
@@ -467,6 +473,7 @@ class GeminiRealtime(realtime.Realtime):
                         raise e
                     reason = e.rcvd.reason if e.rcvd and e.rcvd.reason else ""
                     is_memory_overflow = "memory usage" in reason.lower()
+                    self.connected = False
                     if is_memory_overflow:
                         logger.warning(
                             "Gemini context memory exceeded, starting fresh session"
@@ -482,6 +489,7 @@ class GeminiRealtime(realtime.Realtime):
                 except Exception as e:
                     error_msg = str(e).lower()
                     if "memory usage" in error_msg and "exceeds limit" in error_msg:
+                        self.connected = False
                         logger.warning(
                             "Gemini context memory exceeded, starting fresh session"
                         )
