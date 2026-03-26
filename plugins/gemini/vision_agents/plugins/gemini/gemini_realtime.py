@@ -479,10 +479,19 @@ class GeminiRealtime(realtime.Realtime):
                             reason or "unknown reason",
                         )
                     await self.connect()
-                except Exception:
-                    logger.exception(
-                        "Error while processing events from Gemini Live API"
-                    )
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if "memory usage" in error_msg and "exceeds limit" in error_msg:
+                        logger.warning(
+                            "Gemini context memory exceeded, starting fresh session"
+                        )
+                        self._session_resumption_id = None
+                        await self.connect()
+                    else:
+                        logger.exception(
+                            "Error while processing events from Gemini Live API"
+                        )
+                        await asyncio.sleep(1)
 
         except CancelledError:
             logger.debug("Processing loop has been cancelled")
