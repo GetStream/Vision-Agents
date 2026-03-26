@@ -465,7 +465,19 @@ class GeminiRealtime(realtime.Realtime):
                 except websockets.ConnectionClosedError as e:
                     if not _should_reconnect(e):
                         raise e
-                    # Reconnect here for some errors
+                    reason = e.rcvd.reason if e.rcvd and e.rcvd.reason else ""
+                    is_memory_overflow = "memory usage" in reason.lower()
+                    if is_memory_overflow:
+                        logger.warning(
+                            "Gemini context memory exceeded, starting fresh session"
+                        )
+                        self._session_resumption_id = None
+                    else:
+                        logger.warning(
+                            "Gemini connection lost (code %s), reconnecting: %s",
+                            e.rcvd.code if e.rcvd else "unknown",
+                            reason or "unknown reason",
+                        )
                     await self.connect()
                 except Exception:
                     logger.exception(
