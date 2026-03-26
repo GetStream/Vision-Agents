@@ -30,7 +30,7 @@ from vision_agents.plugins import gemini, getstream
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),  # use stream for edge video transport
-        agent_user=User(name="AI  coach"),
+        agent_user=User(name="AI coach"),
         instructions="Read @coaching.md",  # read the coach markdown instructions
         llm=gemini.Realtime(model="gemini-3.1-flash-live-preview")
     )
