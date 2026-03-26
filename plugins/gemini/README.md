@@ -33,7 +33,6 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="AI  coach"),
         instructions="Read @coaching.md",  # read the coach markdown instructions
         llm=gemini.Realtime(model="gemini-3.1-flash-live-preview")
-        processors=[]
     )
     return agent
 
