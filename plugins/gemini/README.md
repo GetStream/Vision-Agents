@@ -21,40 +21,39 @@ uv add vision-agents-plugins-gemini
 Below is a minimal example that attaches the Gemini Live output audio track to a Stream call and streams microphone audio into Gemini. The assistant will speak back into the call, and you can also send text messages to the assistant.
 
 ```python
-import asyncio
-import os
-
-from getstream import Stream
-from getstream.plugins.gemini.live import GeminiLive
-from getstream.video import rtc
-from getstream.video.rtc.track_util import PcmData
+from dotenv import load_dotenv
+from vision_agents.core import Agent, Runner, User
+from vision_agents.core.agents import AgentLauncher
+from vision_agents.plugins import gemini, getstream
 
 
-async def main():
-    # Ensure your key is set: export GOOGLE_API_KEY=... (or GEMINI_API_KEY)
-    gemini = GeminiLive(
-        api_key=os.getenv("GOOGLE_API_KEY"),
-        model="gemini-live-2.5-flash-preview",
+async def create_agent(**kwargs) -> Agent:
+    agent = Agent(
+        edge=getstream.Edge(),  # use stream for edge video transport
+        agent_user=User(name="AI  coach"),
+        instructions="Read @coaching.md",  # read the coach markdown instructions
+        llm=gemini.Realtime(model="gemini-3.1-flash-live-preview")
+        processors=[]
     )
+    return agent
 
-    client = Stream.from_env()
-    call = client.video.call("default", "your-call-id")
 
-    async with await rtc.join(call, user_id="assistant-bot") as connection:
-        # Route Gemini's synthesized speech back into the call
-        await connection.add_tracks(audio=gemini.output_track)
+async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+    call = await agent.create_call(call_type, call_id)
 
-        # Forward microphone PCM frames to Gemini in realtime
-        @connection.on("audio")
-        async def on_audio(pcm: PcmData):
-            await gemini.send_audio_pcm(pcm, target_rate=48000)
+    # join the call and open a demo env
+    async with agent.join(call):
+        # all LLMs support a simple_response method and a more advanced native method (so you can always use the latest LLM features)
+        await agent.llm.simple_response(
+            text="Say hi. After the user joins and ask them about their day"
+        )
+        # Gemini's native API is available here
+        # agent.llm.send_realtime_input(text="Hello world")
+        await agent.finish()  # run till the call ends
 
-        # Optionally send a kick-off text message
-        await gemini.send_text("Give a short greeting to the participants.")
 
-        # Keep the session running
-        while True:
-            await asyncio.sleep(1)
+if __name__ == "__main__":
+    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
 
 
 if __name__ == "__main__":
@@ -141,11 +140,6 @@ Key configuration knobs for `GeminiVLM`: `fps`, `frame_buffer_seconds`,
 - **`GOOGLE_API_KEY` / `GEMINI_API_KEY`**: Gemini API key. One must be set.
 - **`GEMINI_LIVE_MODEL`**: Optional override for the model name if you need a different variant.
 
-### Notes on Interruptions
-
-- **How it works
-  **: The plugin detects user speech activity in incoming PCM and interrupts any ongoing playback. After a short period of silence, playback is enabled again so the assistant can speak.
-- **Why it matters**: This enables natural barge-in experiences, where users can cut off the assistant mid-sentence and ask follow-up questions.
 
 ### Troubleshooting
 
