@@ -10,7 +10,6 @@ import logging
 import os
 import threading
 import time
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Optional
 
 import TLSSigAPIv2
@@ -28,7 +27,6 @@ from vision_agents.plugins.tencent.tracks import (
     TencentOutgoingVideoTrack,
     _DEFAULT_VIDEO_FPS,
 )
-from vision_agents.plugins.tencent.video_utils import yuv420p_to_av_frame
 
 if TYPE_CHECKING:
     from vision_agents.core import Agent
@@ -63,6 +61,12 @@ except ImportError as e:
 else:
     _LITEAV_IMPORT_ERROR = None
 
+try:
+    from liteav import TRTC_SCENE_CALL, TRTC_SCENE_VIDEOCALL
+except ImportError:
+    TRTC_SCENE_VIDEOCALL = None  # type: ignore[assignment]
+    TRTC_SCENE_CALL = None  # type: ignore[assignment]
+
 
 def _require_liteav() -> None:
     if _LITEAV_IMPORT_ERROR is not None:
@@ -73,7 +77,31 @@ def _require_liteav() -> None:
         ) from _LITEAV_IMPORT_ERROR
 
 
-_WARMUP_FRAMES = 5
+def _resolve_room_scene() -> tuple[int, str]:
+    configured_scene = os.getenv("TENCENT_TRTC_SCENE", "auto").strip().lower()
+    scene_map = {
+        "record": TRTC_SCENE_RECORD,
+        "videocall": TRTC_SCENE_VIDEOCALL,
+        "call": TRTC_SCENE_CALL,
+    }
+    if configured_scene == "auto":
+        for candidate in ("videocall", "call"):
+            scene = scene_map[candidate]
+            if scene is not None:
+                return scene, candidate
+        return TRTC_SCENE_RECORD, "record"
+
+    if configured_scene in scene_map:
+        scene = scene_map[configured_scene]
+        if scene is None:
+            raise ValueError(
+                f"TENCENT_TRTC_SCENE={configured_scene} is not supported by this liteav binding."
+            )
+        return scene, configured_scene
+
+    raise ValueError(
+        "TENCENT_TRTC_SCENE must be one of: auto, videocall, call, record."
+    )
 
 
 def _extract_pcm(frame: Any) -> bytes:
@@ -190,6 +218,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         self._outgoing_video_track: Optional[TencentOutgoingVideoTrack] = None
         self._incoming_video_tracks: dict[str, TencentIncomingVideoTrack] = {}
         self._delegate = None
+        self._room_scene, self._room_scene_name = _resolve_room_scene()
 
     async def authenticate(self, user: User) -> None:
         self._agent_user_id = user.id
@@ -277,7 +306,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         room_param.room.user_id = TrtcString(self._agent_user_id or "")
         room_param.room.user_sig = TrtcString(user_sig)
         room_param.role = TRTC_ROLE_ANCHOR
-        room_param.scene = TRTC_SCENE_RECORD
+        room_param.scene = self._room_scene
         room_param.use_pixel_frame_input = True
         room_param.use_pixel_frame_output = True
         room_param.audio_obtain_params.audio_obtain_method = (
@@ -289,6 +318,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         room_param.audio_obtain_params.output_audio_codec_type = AUDIO_CODEC_TYPE_PCM
 
         assert self._cloud is not None
+        logger.info("Tencent TRTC scene selected: %s", self._room_scene_name)
         self._cloud.EnterRoom(room_param)
         return self._connection
 
@@ -318,17 +348,18 @@ class TencentEdge(EdgeTransport[TencentCall]):
         raw = str(data).encode("utf-8")[: 5 * 1024]
         self._cloud.SendCustomCmdMsg(1, bytearray(raw), True, True)
 
-    def _emit_audio_received(
-        self, user_id: str, pcm_bytes: bytes, sample_rate: int, channels: int
-    ) -> None:
+    def _emit_audio_received(self, user_id: str, pcm_bytes: bytes) -> None:
         if not self._loop or not pcm_bytes:
             return
-        sr = sample_rate if sample_rate and sample_rate > 0 else SAMPLE_RATE
-        ch = channels if channels and channels > 0 else CHANNELS
+        self._loop.call_soon_threadsafe(
+            self._process_audio_on_loop, user_id, pcm_bytes
+        )
+
+    def _process_audio_on_loop(self, user_id: str, pcm_bytes: bytes) -> None:
         pcm = PcmData.from_bytes(
             pcm_bytes,
-            sample_rate=sr,
-            channels=ch,
+            sample_rate=SAMPLE_RATE,
+            channels=CHANNELS,
             format=AudioFormat.S16,
         )
         participant = Participant(original=None, user_id=user_id, id=user_id)
@@ -337,7 +368,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
             pcm_data=pcm,
             participant=participant,
         )
-        self._loop.call_soon_threadsafe(self.events.send, event)
+        self.events.send(event)
 
     def _emit_track_added(self, user_id: str) -> None:
         if self._loop:
@@ -402,10 +433,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         track = self._incoming_video_tracks.get(track_id)
         if track is None:
             return
-        frame = yuv420p_to_av_frame(yuv_bytes, width, height)
-        frame.pts = pts
-        frame.time_base = Fraction(1, 1000)
-        track.push_frame(frame)
+        track.push_frame(yuv_bytes, width, height, pts)
 
 
 _TencentDelegate: Any = None
@@ -429,7 +457,6 @@ if TRTCCloudDelegate is not None:
             self._edge = edge
             self._connection = connection
             self._agent_user_id = edge._agent_user_id or ""
-            self._remote_audio_frame_count: dict[str, int] = {}
 
         def OnError(self, error: int) -> None:
             try:
@@ -605,48 +632,16 @@ if TRTCCloudDelegate is not None:
             try:
                 if not user_id or user_id == self._agent_user_id:
                     return
-                count = self._remote_audio_frame_count.get(user_id, 0)
-                self._remote_audio_frame_count[user_id] = count + 1
-                if count < _WARMUP_FRAMES:
-                    if count == 0:
-                        logger.info(
-                            "Skipping first %d audio frames from %s (SDK buffer warmup)",
-                            _WARMUP_FRAMES,
-                            user_id,
-                        )
-                    return
-                sr = (
-                    frame.sample_rate
-                    if frame.sample_rate and frame.sample_rate > 0
-                    else SAMPLE_RATE
-                )
-                ch = (
-                    frame.channels
-                    if frame.channels and frame.channels > 0
-                    else CHANNELS
-                )
                 data = _extract_pcm(frame)
                 if data:
-                    self._edge._emit_audio_received(user_id, data, sr, ch)
+                    self._edge._emit_audio_received(user_id, data)
             except BaseException:
                 logger.exception("OnRemoteAudioReceived failed")
 
         def OnRemoteMixedAudioReceived(self, frame: Any) -> None:
-            try:
-                sr = (
-                    frame.sample_rate
-                    if frame.sample_rate and frame.sample_rate > 0
-                    else SAMPLE_RATE
-                )
-                ch = (
-                    frame.channels
-                    if frame.channels and frame.channels > 0
-                    else CHANNELS
-                )
-                data = _extract_pcm(frame)
-                if data:
-                    self._edge._emit_audio_received("mixed", data, sr, ch)
-            except BaseException:
-                logger.exception("OnRemoteMixedAudioReceived failed")
+            # Skip mixed audio — per-user callbacks already deliver individual
+            # streams and processing both doubles GIL / buffer pressure with
+            # no benefit for single-speaker scenarios.
+            pass
 
     _TencentDelegate = _TencentDelegateCls
