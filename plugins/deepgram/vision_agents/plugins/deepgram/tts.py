@@ -73,10 +73,8 @@ class TTS(tts.TTS):
 
         if client is not None:
             self.client = client
-        elif api_key:
-            self.client = AsyncDeepgramClient(api_key=api_key)
         else:
-            self.client = AsyncDeepgramClient()
+            self.client = AsyncDeepgramClient(api_key=api_key)
 
         self.model = model
         self.sample_rate = sample_rate
