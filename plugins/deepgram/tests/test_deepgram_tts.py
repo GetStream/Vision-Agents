@@ -88,15 +88,13 @@ class TestDeepgramTTS:
         )
         mock_ctx = _MockConnectCtx(mock_socket)
 
-        tts = deepgram.TTS()
-        tts.client = MagicMock()
+        tts = deepgram.TTS(client=MagicMock())
         tts.client.speak.v1.connect.return_value = mock_ctx
 
         result = await tts.stream_audio("Hello")
         chunks = [chunk async for chunk in result]
 
-        # silence head + 2 audio chunks + silence tail/pause
-        assert len(chunks) == 4
+        assert len(chunks) == 2
         assert all(isinstance(c, PcmData) for c in chunks)
         mock_socket.send_text.assert_called_once()
         mock_socket.send_flush.assert_called_once()
@@ -112,15 +110,13 @@ class TestDeepgramTTS:
         )
         mock_ctx = _MockConnectCtx(mock_socket)
 
-        tts = deepgram.TTS()
-        tts.client = MagicMock()
+        tts = deepgram.TTS(client=MagicMock())
         tts.client.speak.v1.connect.return_value = mock_ctx
 
         result = await tts.stream_audio("Hello")
         chunks = [chunk async for chunk in result]
 
-        # silence head + 2 audio chunks + silence tail/pause
-        assert len(chunks) == 4
+        assert len(chunks) == 2
 
     async def test_stale_cleared_before_audio(self):
         mock_socket = _make_mock_socket(
@@ -132,16 +128,14 @@ class TestDeepgramTTS:
         )
         mock_ctx = _MockConnectCtx(mock_socket)
 
-        tts = deepgram.TTS()
-        tts.client = MagicMock()
+        tts = deepgram.TTS(client=MagicMock())
         tts.client.speak.v1.connect.return_value = mock_ctx
 
         result = await tts.stream_audio("Hello")
         chunks = [chunk async for chunk in result]
 
-        # silence head + audio chunk + silence tail/pause
-        assert len(chunks) == 3
-        assert chunks[1].samples.size == 800
+        assert len(chunks) == 1
+        assert chunks[0].samples.size == 800
 
     async def test_stream_audio_skips_warnings(self):
         mock_socket = _make_mock_socket(
@@ -154,19 +148,17 @@ class TestDeepgramTTS:
         )
         mock_ctx = _MockConnectCtx(mock_socket)
 
-        tts = deepgram.TTS()
-        tts.client = MagicMock()
+        tts = deepgram.TTS(client=MagicMock())
         tts.client.speak.v1.connect.return_value = mock_ctx
 
         result = await tts.stream_audio("Hello")
         chunks = [chunk async for chunk in result]
 
-        # silence head + 2 audio chunks + silence tail/pause
-        assert len(chunks) == 4
+        assert len(chunks) == 2
 
     async def test_stop_audio_sends_clear(self):
         mock_socket = _make_mock_socket([])
-        tts = deepgram.TTS()
+        tts = deepgram.TTS(client=MagicMock())
         tts._socket = mock_socket
 
         await tts.stop_audio()
@@ -175,7 +167,7 @@ class TestDeepgramTTS:
         assert tts._stop_event.is_set()
 
     async def test_stop_audio_noop_when_not_connected(self):
-        tts = deepgram.TTS()
+        tts = deepgram.TTS(client=MagicMock())
         await tts.stop_audio()
 
     async def test_stop_event_terminates_receive(self):
@@ -190,19 +182,14 @@ class TestDeepgramTTS:
         socket.__aiter__ = _aiter
         mock_ctx = _MockConnectCtx(socket)
 
-        tts = deepgram.TTS()
-        tts.client = MagicMock()
+        tts = deepgram.TTS(client=MagicMock())
         tts.client.speak.v1.connect.return_value = mock_ctx
 
         result = await tts.stream_audio("Hello")
         tts._stop_event.set()
 
-        chunks = []
-        async for chunk in result:
-            chunks.append(chunk)
-            if len(chunks) > 10:
-                break
-        assert len(chunks) >= 1
+        chunks = [chunk async for chunk in result]
+        assert len(chunks) == 0
 
     async def test_close_tears_down_connection(self):
         mock_socket = _make_mock_socket([])
@@ -235,8 +222,7 @@ class TestDeepgramTTS:
         socket.__aiter__ = _aiter
         mock_ctx = _MockConnectCtx(socket)
 
-        tts = deepgram.TTS()
-        tts.client = MagicMock()
+        tts = deepgram.TTS(client=MagicMock())
         tts.client.speak.v1.connect.return_value = mock_ctx
 
         result = await tts.stream_audio("Hello")

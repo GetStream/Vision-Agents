@@ -4,7 +4,6 @@ import os
 from contextlib import AsyncExitStack
 from typing import AsyncIterator
 
-import numpy as np
 import websockets.exceptions
 from deepgram import AsyncDeepgramClient
 from deepgram.speak.v1.socket_client import AsyncV1SocketClient
@@ -19,25 +18,9 @@ from vision_agents.core import tts
 
 logger = logging.getLogger(__name__)
 
-# Silence padding before/after audio keeps the audio track active
-# across idle↔active transitions, preventing codec pops.
-_SILENCE_PAD_MS = 150
-
-# Pause between consecutive utterances to mimic natural sentence spacing.
-_INTER_UTTERANCE_PAUSE_MS = 200
 
 # Sample rates supported by Deepgram TTS websocket API.
 _SUPPORTED_RATES = {8000, 16000, 24000, 48000}
-
-
-def _make_silence(ms: int, rate: int) -> PcmData:
-    """Create a silent PcmData chunk of the given duration."""
-    return PcmData(
-        sample_rate=rate,
-        format=AudioFormat.S16,
-        samples=np.zeros(int(rate * ms / 1000), dtype=np.int16),
-        channels=1,
-    )
 
 
 class TTS(tts.TTS):
@@ -85,11 +68,6 @@ class TTS(tts.TTS):
         self._generation = 0
         self._stop_event = asyncio.Event()
         self._effective_rate = sample_rate
-        self._silence_pad = _make_silence(_SILENCE_PAD_MS, self._effective_rate)
-        self._silence_tail = _make_silence(
-            _SILENCE_PAD_MS + _INTER_UTTERANCE_PAUSE_MS,
-            self._effective_rate,
-        )
 
     async def start(self):
         await self._ensure_connection()
@@ -155,12 +133,6 @@ class TTS(tts.TTS):
         else:
             self._effective_rate = self.sample_rate
 
-        self._silence_pad = _make_silence(_SILENCE_PAD_MS, self._effective_rate)
-        self._silence_tail = _make_silence(
-            _SILENCE_PAD_MS + _INTER_UTTERANCE_PAUSE_MS,
-            self._effective_rate,
-        )
-
         socket = await self._exit_stack.enter_async_context(
             self.client.speak.v1.connect(
                 model=self.model,
@@ -200,21 +172,14 @@ class TTS(tts.TTS):
     async def _receive_audio(
         self, socket: AsyncV1SocketClient, generation: int
     ) -> AsyncIterator[PcmData]:
-        """Yield PcmData for each websocket message until flushed.
-
-        Silence padding before the first and after the last audio chunk
-        keeps the audio track active across transitions, preventing
-        codec startup/shutdown pops.
+        """
+        Yield PcmData for each websocket message until flushed.
         """
         rate = self._effective_rate
-        is_first = True
         async for message in socket:
             if self._stop_event.is_set() or self._generation != generation:
                 break
             if isinstance(message, bytes):
-                if is_first:
-                    yield self._silence_pad
-                    is_first = False
                 yield PcmData.from_bytes(
                     message,
                     sample_rate=rate,
@@ -227,4 +192,3 @@ class TTS(tts.TTS):
                 continue
             elif isinstance(message, SpeakV1Warning):
                 logger.warning("Deepgram TTS warning: %s", message)
-        yield self._silence_tail
