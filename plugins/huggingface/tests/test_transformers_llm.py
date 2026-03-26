@@ -16,6 +16,7 @@ from vision_agents.plugins.huggingface.events import LLMErrorEvent
 from vision_agents.plugins.huggingface.transformers_llm import (
     ModelResources,
     TransformersLLM,
+    extract_tool_calls_from_text,
 )
 
 
@@ -171,28 +172,23 @@ class TestTransformersLLM:
 
 class TestToolCallParsing:
     async def test_hermes_format(self):
-        llm = TransformersLLM(model="test")
         text = '<tool_call>{"name": "get_weather", "arguments": {"city": "SF"}}</tool_call>'
-        calls = llm._extract_tool_calls_from_text(text)
+        calls = extract_tool_calls_from_text(text)
         assert len(calls) == 1
         assert calls[0]["name"] == "get_weather"
         assert calls[0]["arguments_json"] == {"city": "SF"}
         assert calls[0]["id"]
 
     async def test_generic_json_format(self):
-        llm = TransformersLLM(model="test")
         text = 'Sure: {"name": "get_weather", "arguments": {"city": "NY"}}'
-        calls = llm._extract_tool_calls_from_text(text)
+        calls = extract_tool_calls_from_text(text)
         assert len(calls) == 1
         assert calls[0]["name"] == "get_weather"
 
     async def test_no_tool_calls_in_plain_text(self):
-        llm = TransformersLLM(model="test")
-        assert llm._extract_tool_calls_from_text("Hello! How can I help?") == []
+        assert extract_tool_calls_from_text("Hello! How can I help?") == []
         assert (
-            llm._extract_tool_calls_from_text(
-                '<tool_call>{"name": not json}</tool_call>'
-            )
+            extract_tool_calls_from_text('<tool_call>{"name": not json}</tool_call>')
             == []
         )
 
@@ -217,7 +213,7 @@ class TestToolCallExecution:
         ]
 
         result = await llm._handle_tool_calls(
-            tool_calls, [{"role": "user", "content": "weather?"}], [], {}
+            tool_calls, [{"role": "user", "content": "weather?"}], {}
         )
 
         assert calls_received == ["SF"]

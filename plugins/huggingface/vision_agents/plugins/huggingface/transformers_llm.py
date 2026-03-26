@@ -100,6 +100,83 @@ def get_quantization_config(quantization: QuantizationType) -> Optional[Any]:
     return None
 
 
+def convert_tools_to_transformers_format(
+    tools: List[ToolSchema],
+) -> List[Dict[str, Any]]:
+    """Convert ToolSchema objects to the Chat Completions tool format.
+
+    This format is understood by the ``tools`` kwarg of HuggingFace
+    tokenizer / processor ``apply_chat_template`` methods.
+    """
+    result: List[Dict[str, Any]] = []
+    for t in tools or []:
+        name = t.get("name", "unnamed_tool")
+        description = t.get("description", "") or ""
+        params = t.get("parameters_schema") or t.get("parameters") or {}
+        if not isinstance(params, dict):
+            params = {}
+        params.setdefault("type", "object")
+        params.setdefault("properties", {})
+
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": params,
+                },
+            }
+        )
+    return result
+
+
+def extract_tool_calls_from_text(text: str) -> List[NormalizedToolCallItem]:
+    """Parse tool calls from raw model output text.
+
+    Supports:
+    - Hermes format: ``<tool_call>{"name": ..., "arguments": ...}</tool_call>``
+    - Generic JSON: ``{"name": ..., "arguments": ...}``
+    """
+    tool_calls: List[NormalizedToolCallItem] = []
+
+    hermes_pattern = r"<tool_call>\s*(\{.*?\})\s*</tool_call>"
+    for match in re.finditer(hermes_pattern, text, re.DOTALL):
+        try:
+            data = json.loads(match.group(1))
+            tool_calls.append(
+                {
+                    "type": "tool_call",
+                    "id": data.get("id", str(uuid.uuid4())),
+                    "name": data.get("name", ""),
+                    "arguments_json": data.get("arguments", {}),
+                }
+            )
+        except json.JSONDecodeError:
+            continue
+
+    if tool_calls:
+        return tool_calls
+
+    json_pattern = r"\{[^{}]*\"name\"\s*:[^{}]*\"arguments\"\s*:\s*\{[^{}]*\}[^{}]*\}"
+    for match in re.finditer(json_pattern, text):
+        try:
+            data = json.loads(match.group(0))
+            if "name" in data and "arguments" in data:
+                tool_calls.append(
+                    {
+                        "type": "tool_call",
+                        "id": str(uuid.uuid4()),
+                        "name": data["name"],
+                        "arguments_json": data["arguments"],
+                    }
+                )
+        except json.JSONDecodeError:
+            continue
+
+    return tool_calls
+
+
 # ---------------------------------------------------------------------------
 # Resource container
 # ---------------------------------------------------------------------------
@@ -253,13 +330,11 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         tokenizer = self._resources.tokenizer
         device = self._resources.device
 
-        # Prepare tools if any are registered
         tools_param: Optional[List[Dict[str, Any]]] = None
         tools_spec = self.get_available_functions()
         if tools_spec:
-            tools_param = self._convert_tools_to_provider_format(tools_spec)
+            tools_param = convert_tools_to_transformers_format(tools_spec)
 
-        # Apply chat template
         template_kwargs: Dict[str, Any] = {
             "add_generation_prompt": True,
             "return_dict": True,
@@ -308,13 +383,10 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 model, tokenizer, inputs, max_tokens, temperature, do_sample
             )
 
-        # Check for tool calls in generated text
         if tools_param and result.text:
-            tool_calls = self._extract_tool_calls_from_text(result.text)
+            tool_calls = extract_tool_calls_from_text(result.text)
             if tool_calls:
-                return await self._handle_tool_calls(
-                    tool_calls, messages, tools_param, kwargs
-                )
+                return await self._handle_tool_calls(tool_calls, messages, kwargs)
 
         return result
 
@@ -373,7 +445,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 generation_error = e
                 logger.exception("Generation failed")
             finally:
-                # Unblock the async consumer so it doesn't hang forever
                 loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
         thread = Thread(target=run_generation, daemon=True)
@@ -516,89 +587,15 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
     def _convert_tools_to_provider_format(
         self, tools: List[ToolSchema]
     ) -> List[Dict[str, Any]]:
-        result: List[Dict[str, Any]] = []
-        for t in tools or []:
-            name = t.get("name", "unnamed_tool")
-            description = t.get("description", "") or ""
-            params = t.get("parameters_schema") or t.get("parameters") or {}
-            if not isinstance(params, dict):
-                params = {}
-            params.setdefault("type", "object")
-            params.setdefault("properties", {})
-
-            result.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": description,
-                        "parameters": params,
-                    },
-                }
-            )
-        return result
-
-    def _extract_tool_calls_from_text(self, text: str) -> List[NormalizedToolCallItem]:
-        """Parse tool calls from raw model output text.
-
-        Supports:
-        - Hermes format: ``<tool_call>{"name": ..., "arguments": ...}</tool_call>``
-        - Generic JSON: ``{"name": ..., "arguments": ...}``
-        """
-        tool_calls: List[NormalizedToolCallItem] = []
-
-        # Pattern 1: Hermes / NousResearch XML tags
-        hermes_pattern = r"<tool_call>\s*(\{.*?\})\s*</tool_call>"
-        for match in re.finditer(hermes_pattern, text, re.DOTALL):
-            try:
-                data = json.loads(match.group(1))
-                tool_calls.append(
-                    {
-                        "type": "tool_call",
-                        "id": data.get("id", str(uuid.uuid4())),
-                        "name": data.get("name", ""),
-                        "arguments_json": data.get("arguments", {}),
-                    }
-                )
-            except json.JSONDecodeError:
-                continue
-
-        if tool_calls:
-            return tool_calls
-
-        # Pattern 2: generic JSON objects with name + arguments keys
-        json_pattern = (
-            r"\{[^{}]*\"name\"\s*:[^{}]*\"arguments\"\s*:\s*\{[^{}]*\}[^{}]*\}"
-        )
-        for match in re.finditer(json_pattern, text):
-            try:
-                data = json.loads(match.group(0))
-                if "name" in data and "arguments" in data:
-                    tool_calls.append(
-                        {
-                            "type": "tool_call",
-                            "id": str(uuid.uuid4()),
-                            "name": data["name"],
-                            "arguments_json": data["arguments"],
-                        }
-                    )
-            except json.JSONDecodeError:
-                continue
-
-        return tool_calls
+        return convert_tools_to_transformers_format(tools)
 
     async def _handle_tool_calls(
         self,
         tool_calls: List[NormalizedToolCallItem],
         messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
         kwargs: Dict[str, Any],
     ) -> LLMResponseEvent:
-        """Execute tool calls and generate follow-up responses.
-
-        Mirrors ``HuggingFaceLLM._handle_tool_calls`` using the base class
-        ``_dedup_and_execute`` infrastructure.
-        """
+        """Execute tool calls and generate follow-up responses."""
         llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
         max_rounds = 3
         current_tool_calls = tool_calls
@@ -655,14 +652,13 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             )
             current_messages.extend(tool_results)
 
-            # Follow-up generation (non-streaming during tool loops)
             follow_up = await self.create_response(
                 messages=current_messages,
                 stream=False,
                 **kwargs,
             )
 
-            next_tool_calls = self._extract_tool_calls_from_text(follow_up.text)
+            next_tool_calls = extract_tool_calls_from_text(follow_up.text)
             if next_tool_calls and round_num < max_rounds - 1:
                 current_tool_calls = next_tool_calls
                 llm_response = follow_up

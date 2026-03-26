@@ -154,7 +154,8 @@ class TestTransformersVLM:
             "attention_mask": torch.ones_like(input_ids),
         }
 
-        result = vlm._build_vlm_inputs("describe this", [])
+        messages = [{"role": "user", "content": "describe this"}]
+        result = vlm._build_processor_inputs(messages, [])
         assert "input_ids" in result
 
         call_kwargs = processor.call_args.kwargs
