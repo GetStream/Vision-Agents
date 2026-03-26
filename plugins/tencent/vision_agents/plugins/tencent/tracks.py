@@ -1,14 +1,18 @@
 """Tencent TRTC media track implementations."""
 
 import asyncio
+import concurrent.futures
 import logging
+import queue
 import threading
 import time
+from collections import deque
+from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Optional
 
 import av
 from getstream.video.rtc.track_util import PcmData
-from vision_agents.plugins.tencent.video_utils import av_frame_to_yuv420p
+from vision_agents.plugins.tencent.video_utils import av_frame_to_yuv420p, yuv420p_to_av_frame
 
 if TYPE_CHECKING:
     import aiortc
@@ -35,18 +39,36 @@ BYTES_PER_20MS = 640
 _DEFAULT_VIDEO_FPS = 15
 
 
+_SILENCE_FRAME = b"\x00" * BYTES_PER_20MS
+
+
 class TencentAudioTrack:
     """Duck-typed audio track that sends PCM via Tencent SendAudioFrame.
 
     Frames are paced at 20 ms intervals using wall-clock time to match the
     real-time playback rate expected by the TRTC SDK.
+
+    Incoming PCM is pre-chunked into 20 ms frames (640 bytes) in a deque so
+    both enqueue and dequeue are O(1).
+
+    The sender thread runs continuously at 20 ms cadence, sending silence when
+    no real audio is queued.  This keeps the remote receiver's jitter buffer
+    synchronised so the start of each speech segment is never clipped.
+
+    The queue is intentionally unbounded: TTS engines produce audio in bursts
+    (faster than real-time) and the sender thread drains at exactly real-time.
     """
 
     _FRAME_INTERVAL_S = FRAME_MS / 1000.0
     _TAIL_FLUSH_S = _FRAME_INTERVAL_S * 2
 
+    _write_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="trtc-audio-write"
+    )
+
     def __init__(self) -> None:
-        self._buffer = bytearray()
+        self._queue: deque[bytes] = deque()
+        self._remainder = bytearray()
         self._lock = threading.Lock()
         self._cloud: Any = None
         self._running = True
@@ -63,39 +85,73 @@ class TencentAudioTrack:
     async def write(self, pcm: PcmData) -> None:
         if not self._running or pcm is None:
             return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._write_executor, self._write_sync, pcm)
+
+    def _write_sync(self, pcm: PcmData) -> None:
         if pcm.sample_rate != SAMPLE_RATE or pcm.channels != CHANNELS:
             pcm = pcm.resample(target_sample_rate=SAMPLE_RATE, target_channels=CHANNELS)
         if pcm.samples is not None and pcm.samples.size > 0:
             data = pcm.samples.tobytes()
         else:
             data = pcm.to_bytes()
-        if data:
-            with self._lock:
-                self._buffer.extend(data)
-                self._last_write_at = time.monotonic()
+        if not data:
+            return
+        with self._lock:
+            if self._remainder:
+                data = bytes(self._remainder) + data
+                self._remainder.clear()
+            offset = 0
+            while offset + BYTES_PER_20MS <= len(data):
+                self._queue.append(data[offset:offset + BYTES_PER_20MS])
+                offset += BYTES_PER_20MS
+            if offset < len(data):
+                self._remainder.extend(data[offset:])
+            self._last_write_at = time.monotonic()
 
     def stop(self) -> None:
         self._running = False
 
     async def flush(self) -> None:
-        with self._lock:
-            self._buffer.clear()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._flush_sync)
 
-    def _pop_frame(self) -> bytes | None:
+    def _flush_sync(self) -> None:
         with self._lock:
-            buf_len = len(self._buffer)
-            if buf_len >= BYTES_PER_20MS:
-                frame_data = bytes(self._buffer[:BYTES_PER_20MS])
-                del self._buffer[:BYTES_PER_20MS]
-                return frame_data
+            self._queue.clear()
+            self._remainder.clear()
+
+    def _pop_one(self) -> bytes:
+        with self._lock:
+            if self._queue:
+                return self._queue.popleft()
             if (
-                buf_len > 0
+                self._remainder
                 and (time.monotonic() - self._last_write_at) > self._TAIL_FLUSH_S
             ):
-                frame_data = bytes(self._buffer) + b"\x00" * (BYTES_PER_20MS - buf_len)
-                self._buffer.clear()
-                return frame_data
-            return None
+                padded = (
+                    bytes(self._remainder)
+                    + b"\x00" * (BYTES_PER_20MS - len(self._remainder))
+                )
+                self._remainder.clear()
+                return padded
+            return _SILENCE_FRAME
+
+    def _send_one(self, frame_bytes: bytes) -> bool:
+        frame = AudioFrame()
+        frame.sample_rate = SAMPLE_RATE
+        frame.channels = CHANNELS
+        frame.bits_per_sample = 16
+        frame.codec = AUDIO_CODEC_TYPE_PCM
+        frame.pts = self._pts
+        self._pts += FRAME_MS
+        frame.SetData(frame_bytes)
+        try:
+            self._cloud.SendAudioFrame(frame)
+            return True
+        except Exception:
+            logger.exception("Tencent SendAudioFrame failed")
+            return False
 
     def _send_loop(self) -> None:
         next_frame_at = time.monotonic()
@@ -104,39 +160,31 @@ class TencentAudioTrack:
             now = time.monotonic()
 
             if now < next_frame_at:
-                time.sleep(min(next_frame_at - now, 0.005))
-                continue
+                time.sleep(next_frame_at - now)
 
-            frame_bytes = self._pop_frame()
-            if frame_bytes is None:
-                time.sleep(0.005)
-                continue
-
-            frame = AudioFrame()
-            frame.sample_rate = SAMPLE_RATE
-            frame.channels = CHANNELS
-            frame.bits_per_sample = 16
-            frame.codec = AUDIO_CODEC_TYPE_PCM
-            frame.pts = self._pts
-            self._pts += FRAME_MS
-            frame.SetData(frame_bytes)
-            self._cloud.SendAudioFrame(frame)
+            if not self._send_one(self._pop_one()):
+                return
 
             next_frame_at += self._FRAME_INTERVAL_S
-            if next_frame_at < now:
-                next_frame_at = now + self._FRAME_INTERVAL_S
+            # If we fell behind (GIL contention, etc.), skip to now instead
+            # of bursting catch-up frames — the SDK drops bursts as
+            # "same timestamp" packets.
+            if next_frame_at < time.monotonic():
+                next_frame_at = time.monotonic() + self._FRAME_INTERVAL_S
 
 
 class TencentIncomingVideoTrack:
     """Duck-typed VideoStreamTrack fed by TRTC OnRemotePixelFrameReceived.
 
     The core VideoForwarder reads frames via ``await track.recv()``.
-    Frames are pushed from the TRTC delegate thread through the event loop.
+    Raw YUV bytes are pushed from the TRTC delegate thread into a stdlib
+    thread-safe queue.  Conversion to av.VideoFrame happens lazily in recv()
+    to avoid holding the GIL on the callback thread.
     """
 
     def __init__(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
-        self._queue: asyncio.Queue[av.VideoFrame] = asyncio.Queue(maxsize=4)
+        self._queue: queue.Queue[tuple[bytes, int, int, int]] = queue.Queue(maxsize=4)
         self._last_frame: av.VideoFrame | None = None
         self._state = "live"
 
@@ -145,27 +193,35 @@ class TencentIncomingVideoTrack:
         return self._state
 
     async def recv(self) -> av.VideoFrame:
+        loop = asyncio.get_running_loop()
         try:
-            frame = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+            frame = await loop.run_in_executor(None, self._recv_sync)
             self._last_frame = frame
             return frame
-        except asyncio.TimeoutError:
+        except queue.Empty:
             if self._last_frame is not None:
                 return self._last_frame
             return av.VideoFrame(width=640, height=480, format="yuv420p")
 
-    def push_frame(self, frame: av.VideoFrame) -> None:
+    def _recv_sync(self) -> av.VideoFrame:
+        yuv_bytes, width, height, pts = self._queue.get(True, 1.0)
+        frame = yuv420p_to_av_frame(yuv_bytes, width, height)
+        frame.pts = pts
+        frame.time_base = Fraction(1, 1000)
+        return frame
+
+    def push_frame(self, yuv_bytes: bytes, width: int, height: int, pts: int) -> None:
         """Thread-safe push from the TRTC callback thread."""
         try:
-            self._queue.put_nowait(frame)
-        except asyncio.QueueFull:
+            self._queue.put_nowait((yuv_bytes, width, height, pts))
+        except queue.Full:
             try:
                 self._queue.get_nowait()
-            except asyncio.QueueEmpty:
+            except queue.Empty:
                 pass
             try:
-                self._queue.put_nowait(frame)
-            except asyncio.QueueFull:
+                self._queue.put_nowait((yuv_bytes, width, height, pts))
+            except queue.Full:
                 pass
 
     def stop(self) -> None:
@@ -176,8 +232,13 @@ class TencentOutgoingVideoTrack:
     """Reads av.VideoFrames from an aiortc track and sends them via TRTC SendPixelFrame.
 
     The send loop runs as an asyncio task that calls ``recv()`` on the source
-    track and converts each frame to YUV420p before handing it to the C SDK.
+    track, then offloads YUV420p conversion and SDK send to a background thread
+    to avoid blocking the event loop.
     """
+
+    _video_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="trtc-video-send"
+    )
 
     def __init__(
         self, source: "aiortc.MediaStreamTrack", fps: int = _DEFAULT_VIDEO_FPS
@@ -201,10 +262,28 @@ class TencentOutgoingVideoTrack:
         if self._task is None:
             self._task = loop.create_task(self._send_loop())
 
+    def _send_frame(self, frame: "av.VideoFrame") -> None:
+        yuv_bytes, width, height = av_frame_to_yuv420p(frame)
+
+        pf = PixelFrame()
+        pf.width = width
+        pf.height = height
+        pf.format = VIDEO_PIXEL_FORMAT_YUV420p
+        pf.rotation = VIDEO_ROTATION_0
+        assert self._pts_start_time is not None
+        elapsed_ms = int((time.monotonic() - self._pts_start_time) * 1000)
+        wall_clock_pts = 10 + elapsed_ms
+        pts = max(self._pts + 1, wall_clock_pts)
+        pf.pts = pts
+        self._pts = pts
+        pf.SetData(yuv_bytes)
+        self._cloud.SendPixelFrame(STREAM_TYPE_VIDEO_HIGH, pf)
+
     async def _send_loop(self) -> None:
-        next_send = asyncio.get_event_loop().time()
+        loop = asyncio.get_running_loop()
         if self._pts_start_time is None:
             self._pts_start_time = time.monotonic()
+        next_send = loop.time()
         while self._running and self._cloud is not None:
             try:
                 frame = await self._source.recv()
@@ -212,22 +291,9 @@ class TencentOutgoingVideoTrack:
                 logger.exception("Outgoing video recv failed")
                 break
 
-            yuv_bytes, width, height = av_frame_to_yuv420p(frame)
+            await loop.run_in_executor(self._video_executor, self._send_frame, frame)
 
-            pf = PixelFrame()
-            pf.width = width
-            pf.height = height
-            pf.format = VIDEO_PIXEL_FORMAT_YUV420p
-            pf.rotation = VIDEO_ROTATION_0
-            elapsed_ms = int((time.monotonic() - self._pts_start_time) * 1000)
-            wall_clock_pts = 10 + elapsed_ms
-            pts = max(self._pts + 1, wall_clock_pts)
-            pf.pts = pts
-            self._pts = pts
-            pf.SetData(yuv_bytes)
-            self._cloud.SendPixelFrame(STREAM_TYPE_VIDEO_HIGH, pf)
-
-            now = asyncio.get_event_loop().time()
+            now = loop.time()
             next_send += self._frame_interval
             if next_send < now:
                 next_send = now + self._frame_interval
