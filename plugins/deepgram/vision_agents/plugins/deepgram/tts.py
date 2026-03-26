@@ -69,7 +69,7 @@ class TTS(tts.TTS):
         self._stop_event = asyncio.Event()
         self._effective_rate = sample_rate
 
-    async def start(self):
+    async def start(self) -> None:
         await self._ensure_connection()
 
     async def close(self) -> None:
