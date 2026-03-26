@@ -26,13 +26,16 @@ from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import gemini, getstream
 
+load_dotenv()
+
 
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
-        edge=getstream.Edge(),  # use stream for edge video transport
+        edge=getstream.Edge(),
         agent_user=User(name="AI coach"),
-        instructions="Read @coaching.md",  # read the coach markdown instructions
+        instructions="Read @coaching.md",
         llm=gemini.Realtime(model="gemini-3.1-flash-live-preview"),
+        processors=[],
     )
     return agent
 
@@ -40,36 +43,25 @@ async def create_agent(**kwargs) -> Agent:
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     call = await agent.create_call(call_type, call_id)
 
-    # join the call and open a demo env
     async with agent.join(call):
-        # all LLMs support a simple_response method and a more advanced native method (so you can always use the latest LLM features)
         await agent.llm.simple_response(
-            text="Say hi. After the user joins and ask them about their day"
+            text="Say hi. After the user joins ask them about their day"
         )
-        await agent.finish()  # run till the call ends
+        await agent.finish()
 
 
 if __name__ == "__main__":
     Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
 ```
 
-Optional: forward remote participant video frames to Gemini for multimodal context:
+Video frames from remote participants are forwarded to Gemini automatically when `fps` is set and the model supports it:
 
 ```python
-# Forward remote video frames to Gemini (optional)
-@connection.on("track_added")
-async def _on_track_added(track_id, kind, user):
-    if kind == "video" and connection.subscriber_pc:
-        track = connection.subscriber_pc.add_track_subscriber(track_id)
-        if track:
-            await gemini.watch_video_track(track)
+llm=gemini.Realtime(fps=3)  # forward video at 3 frames per second
 ```
 
-For a full runnable example, see `examples/gemini_live/main.py`.
+The `Agent` subscribes to track events internally, so no manual wiring is needed.
+For a full runnable example, see `examples/02_golf_coach_example/golf_coach_example.py`.
 
 ### Gemini Vision (VLM)
 
