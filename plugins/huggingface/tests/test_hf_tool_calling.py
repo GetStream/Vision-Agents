@@ -1,12 +1,16 @@
-"""Tests for the shared _hf_tool_calling helpers."""
+"""Tests for the shared _hf_tool_calling helpers and tool call loop."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 from vision_agents.plugins.huggingface._hf_tool_calling import (
     accumulate_tool_call_chunk,
     convert_tools_to_hf_format,
     extract_tool_calls_from_hf_response,
     finalize_pending_tool_calls,
+)
+from vision_agents.plugins.huggingface._tool_call_loop import (
+    run_tool_call_loop,
 )
 
 
@@ -121,3 +125,117 @@ class TestExtractToolCallsFromHFResponse:
     async def test_empty_choices(self):
         response = SimpleNamespace(choices=[])
         assert extract_tool_calls_from_hf_response(response) == []
+
+
+class TestRunToolCallLoop:
+    async def test_multi_round_tool_calls(self):
+        """Follow-up that returns more tool calls triggers another round."""
+        executed = []
+
+        async def fake_call_function(name: str, arguments: dict) -> str:
+            executed.append(name)
+            return f"{name}_result"
+
+        llm = MagicMock()
+        llm._dedup_and_execute = AsyncMock(
+            side_effect=[
+                (
+                    [
+                        (
+                            {"id": "c1", "name": "tool_a", "arguments_json": {}},
+                            "tool_a_result",
+                            None,
+                        )
+                    ],
+                    {("c1", "tool_a", "{}")},
+                ),
+                (
+                    [
+                        (
+                            {"id": "c2", "name": "tool_b", "arguments_json": {}},
+                            "tool_b_result",
+                            None,
+                        )
+                    ],
+                    {("c1", "tool_a", "{}"), ("c2", "tool_b", "{}")},
+                ),
+            ]
+        )
+        llm._sanitize_tool_output = MagicMock(side_effect=lambda v: str(v))
+
+        from vision_agents.core.llm.llm import LLMResponseEvent
+
+        round1_response = LLMResponseEvent(original=None, text="round1")
+        round2_response = LLMResponseEvent(original=None, text="final answer")
+
+        call_count = 0
+
+        async def generate_followup(messages):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                next_calls = [
+                    {
+                        "type": "tool_call",
+                        "id": "c2",
+                        "name": "tool_b",
+                        "arguments_json": {},
+                    }
+                ]
+                return round1_response, next_calls
+            return round2_response, []
+
+        initial_tool_calls = [
+            {
+                "type": "tool_call",
+                "id": "c1",
+                "name": "tool_a",
+                "arguments_json": {},
+            }
+        ]
+
+        result = await run_tool_call_loop(
+            llm,
+            initial_tool_calls,
+            [{"role": "user", "content": "test"}],
+            generate_followup,
+        )
+
+        assert result.text == "final answer"
+        assert call_count == 2
+        assert llm._dedup_and_execute.call_count == 2
+
+    async def test_stops_when_no_tool_calls_in_followup(self):
+        """Loop stops after first round when follow-up has no tool calls."""
+        llm = MagicMock()
+        llm._dedup_and_execute = AsyncMock(
+            return_value=(
+                [
+                    (
+                        {"id": "c1", "name": "fn", "arguments_json": {}},
+                        "ok",
+                        None,
+                    )
+                ],
+                {("c1", "fn", "{}")},
+            )
+        )
+        llm._sanitize_tool_output = MagicMock(side_effect=lambda v: str(v))
+
+        from vision_agents.core.llm.llm import LLMResponseEvent
+
+        final = LLMResponseEvent(original=None, text="done")
+
+        async def generate_followup(messages):
+            return final, []
+
+        initial = [
+            {"type": "tool_call", "id": "c1", "name": "fn", "arguments_json": {}}
+        ]
+
+        result = await run_tool_call_loop(
+            llm, initial, [{"role": "user", "content": "q"}], generate_followup
+        )
+
+        assert result.text == "done"
+        assert llm._dedup_and_execute.call_count == 1

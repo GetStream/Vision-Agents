@@ -173,7 +173,7 @@ class TestHuggingFaceVLM:
         self, vlm, conversation, huggingface_client_mock
     ):
         huggingface_client_mock.chat.completions.create = AsyncMock(
-            side_effect=ValueError("test")
+            side_effect=OSError("test")
         )
 
         events = []
@@ -237,7 +237,7 @@ class TestHuggingFaceLLM:
         self, llm, conversation, huggingface_client_mock
     ):
         huggingface_client_mock.chat.completions.create = AsyncMock(
-            side_effect=ValueError("test")
+            side_effect=OSError("test")
         )
 
         events = []

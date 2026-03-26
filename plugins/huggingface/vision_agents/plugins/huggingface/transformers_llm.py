@@ -23,7 +23,7 @@ import re
 import time
 import uuid
 from threading import Thread
-from typing import Any, Callable, Dict, List, Literal, Optional, cast
+from typing import Any, Callable, Literal, Optional, cast
 
 import jinja2
 import torch
@@ -45,14 +45,14 @@ from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.warmup import Warmable
 
 from . import events
+from ._tool_call_loop import (
+    convert_tools_to_chat_completions_format,
+    run_tool_call_loop,
+)
 
 logger = logging.getLogger(__name__)
 
 PLUGIN_NAME = "transformers_llm"
-
-# ---------------------------------------------------------------------------
-# Shared helpers (imported by transformers_vlm.py)
-# ---------------------------------------------------------------------------
 
 DeviceType = Literal["auto", "cuda", "mps", "cpu"]
 QuantizationType = Literal["none", "4bit", "8bit"]
@@ -100,45 +100,17 @@ def get_quantization_config(quantization: QuantizationType) -> Optional[Any]:
     return None
 
 
-def convert_tools_to_transformers_format(
-    tools: List[ToolSchema],
-) -> List[Dict[str, Any]]:
-    """Convert ToolSchema objects to the Chat Completions tool format.
-
-    This format is understood by the ``tools`` kwarg of HuggingFace
-    tokenizer / processor ``apply_chat_template`` methods.
-    """
-    result: List[Dict[str, Any]] = []
-    for t in tools or []:
-        name = t.get("name", "unnamed_tool")
-        description = t.get("description", "") or ""
-        params = t.get("parameters_schema") or t.get("parameters") or {}
-        if not isinstance(params, dict):
-            params = {}
-        params.setdefault("type", "object")
-        params.setdefault("properties", {})
-
-        result.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": params,
-                },
-            }
-        )
-    return result
+convert_tools_to_transformers_format = convert_tools_to_chat_completions_format
 
 
-def extract_tool_calls_from_text(text: str) -> List[NormalizedToolCallItem]:
+def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
     """Parse tool calls from raw model output text.
 
     Supports:
     - Hermes format: ``<tool_call>{"name": ..., "arguments": ...}</tool_call>``
     - Generic JSON: ``{"name": ..., "arguments": ...}``
     """
-    tool_calls: List[NormalizedToolCallItem] = []
+    tool_calls: list[NormalizedToolCallItem] = []
 
     hermes_pattern = r"<tool_call>\s*(\{.*?\})\s*</tool_call>"
     for match in re.finditer(hermes_pattern, text, re.DOTALL):
@@ -177,11 +149,6 @@ def extract_tool_calls_from_text(text: str) -> List[NormalizedToolCallItem]:
     return tool_calls
 
 
-# ---------------------------------------------------------------------------
-# Resource container
-# ---------------------------------------------------------------------------
-
-
 class ModelResources:
     """Container for a loaded model, tokenizer, and target device."""
 
@@ -194,11 +161,6 @@ class ModelResources:
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
-
-
-# ---------------------------------------------------------------------------
-# TransformersLLM
-# ---------------------------------------------------------------------------
 
 
 class TransformersLLM(LLM, Warmable[ModelResources]):
@@ -238,10 +200,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         self.events.register_events_from_module(events)
 
-    # ------------------------------------------------------------------
-    # Warmable interface
-    # ------------------------------------------------------------------
-
     async def on_warmup(self) -> ModelResources:
         logger.info(f"Loading model: {self.model_id}")
         resources = await asyncio.to_thread(self._load_model_sync)
@@ -254,7 +212,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
     def _load_model_sync(self) -> ModelResources:
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
 
-        load_kwargs: Dict[str, Any] = {
+        load_kwargs: dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
             "torch_dtype": torch_dtype,
         }
@@ -286,10 +244,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         device = next(model.parameters()).device
         return ModelResources(model=model, tokenizer=tokenizer, device=device)
 
-    # ------------------------------------------------------------------
-    # LLM interface
-    # ------------------------------------------------------------------
-
     async def simple_response(
         self,
         text: str,
@@ -311,7 +265,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
     async def create_response(
         self,
-        messages: Optional[List[Dict[str, Any]]] = None,
+        messages: Optional[list[dict[str, Any]]] = None,
         *,
         stream: bool = True,
         max_new_tokens: Optional[int] = None,
@@ -330,12 +284,12 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         tokenizer = self._resources.tokenizer
         device = self._resources.device
 
-        tools_param: Optional[List[Dict[str, Any]]] = None
+        tools_param: Optional[list[dict[str, Any]]] = None
         tools_spec = self.get_available_functions()
         if tools_spec:
             tools_param = convert_tools_to_transformers_format(tools_spec)
 
-        template_kwargs: Dict[str, Any] = {
+        template_kwargs: dict[str, Any] = {
             "add_generation_prompt": True,
             "return_dict": True,
             "return_tensors": "pt",
@@ -345,7 +299,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         try:
             inputs = cast(
-                Dict[str, Any],
+                dict[str, Any],
                 tokenizer.apply_chat_template(messages, **template_kwargs),
             )
         except (jinja2.TemplateError, TypeError, ValueError) as e:
@@ -355,7 +309,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 )
                 template_kwargs.pop("tools", None)
                 inputs = cast(
-                    Dict[str, Any],
+                    dict[str, Any],
                     tokenizer.apply_chat_template(messages, **template_kwargs),
                 )
                 tools_param = None
@@ -390,15 +344,11 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         return result
 
-    # ------------------------------------------------------------------
-    # Generation
-    # ------------------------------------------------------------------
-
     async def _generate_streaming(
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerBase,
-        inputs: Dict[str, Any],
+        inputs: dict[str, Any],
         max_new_tokens: int,
         temperature: float,
         do_sample: bool,
@@ -513,7 +463,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerBase,
-        inputs: Dict[str, Any],
+        inputs: dict[str, Any],
         max_new_tokens: int,
         temperature: float,
         do_sample: bool,
@@ -567,12 +517,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         return LLMResponseEvent(original=outputs, text=text)
 
-    # ------------------------------------------------------------------
-    # Message building
-    # ------------------------------------------------------------------
-
-    def _build_messages(self) -> List[Dict[str, Any]]:
-        messages: List[Dict[str, Any]] = []
+    def _build_messages(self) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
         if self._conversation:
@@ -580,97 +526,29 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 messages.append({"role": msg.role, "content": msg.content})
         return messages
 
-    # ------------------------------------------------------------------
-    # Tool calling
-    # ------------------------------------------------------------------
-
     def _convert_tools_to_provider_format(
-        self, tools: List[ToolSchema]
-    ) -> List[Dict[str, Any]]:
+        self, tools: list[ToolSchema]
+    ) -> list[dict[str, Any]]:
         return convert_tools_to_transformers_format(tools)
 
     async def _handle_tool_calls(
         self,
-        tool_calls: List[NormalizedToolCallItem],
-        messages: List[Dict[str, Any]],
-        kwargs: Dict[str, Any],
+        tool_calls: list[NormalizedToolCallItem],
+        messages: list[dict[str, Any]],
+        kwargs: dict[str, Any],
     ) -> LLMResponseEvent:
         """Execute tool calls and generate follow-up responses."""
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-        max_rounds = 3
-        current_tool_calls = tool_calls
-        seen: set[tuple] = set()
-        current_messages = list(messages)
 
-        for round_num in range(max_rounds):
-            triples, seen = await self._dedup_and_execute(
-                current_tool_calls,
-                max_concurrency=8,
-                timeout_s=30,
-                seen=seen,
+        async def _generate_followup(
+            current_messages: list[dict[str, Any]],
+        ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
+            result = await self.create_response(
+                messages=current_messages, stream=False, **kwargs
             )
+            next_calls = extract_tool_calls_from_text(result.text)
+            return result, next_calls
 
-            if not triples:
-                break
-
-            assistant_tool_calls = []
-            tool_results = []
-            for tc, res, err in triples:
-                cid = tc.get("id")
-                if not cid:
-                    continue
-
-                assistant_tool_calls.append(
-                    {
-                        "id": cid,
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": json.dumps(tc.get("arguments_json", {})),
-                        },
-                    }
-                )
-                tool_results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": cid,
-                        "content": self._sanitize_tool_output(
-                            err if err is not None else res
-                        ),
-                    }
-                )
-
-            if not tool_results:
-                return llm_response
-
-            current_messages.append(
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": assistant_tool_calls,
-                }
-            )
-            current_messages.extend(tool_results)
-
-            follow_up = await self.create_response(
-                messages=current_messages,
-                stream=False,
-                **kwargs,
-            )
-
-            next_tool_calls = extract_tool_calls_from_text(follow_up.text)
-            if next_tool_calls and round_num < max_rounds - 1:
-                current_tool_calls = next_tool_calls
-                llm_response = follow_up
-                continue
-
-            return follow_up
-
-        return llm_response
-
-    # ------------------------------------------------------------------
-    # Memory management
-    # ------------------------------------------------------------------
+        return await run_tool_call_loop(self, tool_calls, messages, _generate_followup)
 
     def unload(self) -> None:
         logger.info(f"Unloading model: {self.model_id}")

@@ -17,12 +17,11 @@ Example:
 
 import asyncio
 import gc
-import json
 import logging
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 import av
 import jinja2
@@ -42,11 +41,14 @@ from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.warmup import Warmable
 
 from . import events
+from ._tool_call_loop import (
+    convert_tools_to_chat_completions_format,
+    run_tool_call_loop,
+)
 from .transformers_llm import (
     DeviceType,
     QuantizationType,
     TorchDtypeType,
-    convert_tools_to_transformers_format,
     extract_tool_calls_from_text,
     get_quantization_config,
     resolve_torch_dtype,
@@ -55,11 +57,6 @@ from .transformers_llm import (
 logger = logging.getLogger(__name__)
 
 PLUGIN_NAME = "transformers_vlm"
-
-
-# ---------------------------------------------------------------------------
-# Resource container
-# ---------------------------------------------------------------------------
 
 
 class VLMResources:
@@ -74,11 +71,6 @@ class VLMResources:
         self.model = model
         self.processor = processor
         self.device = device
-
-
-# ---------------------------------------------------------------------------
-# TransformersVLM
-# ---------------------------------------------------------------------------
 
 
 class TransformersVLM(VideoLLM, Warmable[VLMResources]):
@@ -131,10 +123,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         self.events.register_events_from_module(events)
 
-    # ------------------------------------------------------------------
-    # Warmable interface
-    # ------------------------------------------------------------------
-
     async def on_warmup(self) -> VLMResources:
         logger.info(f"Loading VLM: {self.model_id}")
         resources = await asyncio.to_thread(self._load_model_sync)
@@ -147,7 +135,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
     def _load_model_sync(self) -> VLMResources:
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
 
-        load_kwargs: Dict[str, Any] = {
+        load_kwargs: dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
             "torch_dtype": torch_dtype,
         }
@@ -176,10 +164,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         device = next(model.parameters()).device
         return VLMResources(model=model, processor=processor, device=device)
-
-    # ------------------------------------------------------------------
-    # VideoLLM interface
-    # ------------------------------------------------------------------
 
     async def watch_video_track(
         self,
@@ -214,10 +198,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             self._video_forwarder = None
             logger.info(f"Stopped video forwarding to {PLUGIN_NAME}")
 
-    # ------------------------------------------------------------------
-    # LLM interface
-    # ------------------------------------------------------------------
-
     async def simple_response(
         self,
         text: str,
@@ -242,7 +222,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         image_count = min(len(frames_snapshot), self._max_frames)
 
         messages = self._build_messages()
-        image_content: List[Dict[str, Any]] = [
+        image_content: list[dict[str, Any]] = [
             {"type": "image"} for _ in range(image_count)
         ]
         image_content.append({"type": "text", "text": text or "Describe what you see."})
@@ -288,7 +268,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
     async def create_response(
         self,
-        messages: Optional[List[Dict[str, Any]]] = None,
+        messages: Optional[list[dict[str, Any]]] = None,
         *,
         frames: Optional[list[av.VideoFrame]] = None,
         max_new_tokens: Optional[int] = None,
@@ -314,10 +294,10 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         if frames is None:
             frames = list(self._frame_buffer)
 
-        tools_param: Optional[List[Dict[str, Any]]] = None
+        tools_param: Optional[list[dict[str, Any]]] = None
         tools_spec = self.get_available_functions()
         if tools_spec:
-            tools_param = convert_tools_to_transformers_format(tools_spec)
+            tools_param = convert_tools_to_chat_completions_format(tools_spec)
 
         try:
             inputs = await asyncio.to_thread(
@@ -349,7 +329,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         request_start = time.perf_counter()
 
         def _do_generate() -> Any:
-            gen_kwargs: Dict[str, Any] = {
+            gen_kwargs: dict[str, Any] = {
                 **inputs,
                 "max_new_tokens": max_tokens,
                 "do_sample": do_sample,
@@ -400,12 +380,8 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         return LLMResponseEvent(original=outputs, text=output_text)
 
-    # ------------------------------------------------------------------
-    # Message building
-    # ------------------------------------------------------------------
-
-    def _build_messages(self) -> List[Dict[str, Any]]:
-        messages: List[Dict[str, Any]] = []
+    def _build_messages(self) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
         if self._conversation:
@@ -415,10 +391,10 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
     def _build_processor_inputs(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         frames: list[av.VideoFrame],
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        tools: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
         """Build processor inputs from messages, video frames, and optional tools.
 
         Samples frames evenly to stay within ``max_frames``, converts them to
@@ -434,7 +410,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         images = [frame.to_image() for frame in all_frames]
 
-        template_kwargs: Dict[str, Any] = {
+        template_kwargs: dict[str, Any] = {
             "add_generation_prompt": True,
             "return_dict": True,
             "return_tensors": "pt",
@@ -494,98 +470,30 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                 padding=True,
             )
 
-    # ------------------------------------------------------------------
-    # Tool calling
-    # ------------------------------------------------------------------
-
     def _convert_tools_to_provider_format(
-        self, tools: List[ToolSchema]
-    ) -> List[Dict[str, Any]]:
-        return convert_tools_to_transformers_format(tools)
+        self, tools: list[ToolSchema]
+    ) -> list[dict[str, Any]]:
+        return convert_tools_to_chat_completions_format(tools)
 
     async def _handle_tool_calls(
         self,
-        tool_calls: List[NormalizedToolCallItem],
-        messages: List[Dict[str, Any]],
+        tool_calls: list[NormalizedToolCallItem],
+        messages: list[dict[str, Any]],
         frames: list[av.VideoFrame],
-        kwargs: Dict[str, Any],
+        kwargs: dict[str, Any],
     ) -> LLMResponseEvent:
         """Execute tool calls and generate follow-up responses with the same frames."""
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-        max_rounds = 3
-        current_tool_calls = tool_calls
-        seen: set[tuple] = set()
-        current_messages = list(messages)
 
-        for round_num in range(max_rounds):
-            triples, seen = await self._dedup_and_execute(
-                current_tool_calls,
-                max_concurrency=8,
-                timeout_s=30,
-                seen=seen,
+        async def _generate_followup(
+            current_messages: list[dict[str, Any]],
+        ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
+            result = await self.create_response(
+                messages=current_messages, frames=frames, **kwargs
             )
+            next_calls = extract_tool_calls_from_text(result.text)
+            return result, next_calls
 
-            if not triples:
-                break
-
-            assistant_tool_calls = []
-            tool_results = []
-            for tc, res, err in triples:
-                cid = tc.get("id")
-                if not cid:
-                    continue
-
-                assistant_tool_calls.append(
-                    {
-                        "id": cid,
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": json.dumps(tc.get("arguments_json", {})),
-                        },
-                    }
-                )
-                tool_results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": cid,
-                        "content": self._sanitize_tool_output(
-                            err if err is not None else res
-                        ),
-                    }
-                )
-
-            if not tool_results:
-                return llm_response
-
-            current_messages.append(
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": assistant_tool_calls,
-                }
-            )
-            current_messages.extend(tool_results)
-
-            follow_up = await self.create_response(
-                messages=current_messages,
-                frames=frames,
-                **kwargs,
-            )
-
-            next_tool_calls = extract_tool_calls_from_text(follow_up.text)
-            if next_tool_calls and round_num < max_rounds - 1:
-                current_tool_calls = next_tool_calls
-                llm_response = follow_up
-                continue
-
-            return follow_up
-
-        return llm_response
-
-    # ------------------------------------------------------------------
-    # Memory management
-    # ------------------------------------------------------------------
+        return await run_tool_call_loop(self, tool_calls, messages, _generate_followup)
 
     def unload(self) -> None:
         logger.info(f"Unloading VLM: {self.model_id}")

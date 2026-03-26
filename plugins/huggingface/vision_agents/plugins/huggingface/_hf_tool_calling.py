@@ -9,42 +9,25 @@ import logging
 import time
 from typing import Any, Optional
 
-from huggingface_hub import AsyncInferenceClient
+from huggingface_hub import AsyncInferenceClient, InferenceTimeoutError
+from huggingface_hub.errors import HfHubHTTPError
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem
 
 from . import events
+from ._tool_call_loop import (
+    convert_tools_to_chat_completions_format,
+    run_tool_call_loop,
+)
 
 logger = logging.getLogger(__name__)
 
-
-def convert_tools_to_hf_format(tools: list[ToolSchema]) -> list[dict[str, Any]]:
-    """Convert ToolSchema objects to the Chat Completions API tool format."""
-    result: list[dict[str, Any]] = []
-    for t in tools or []:
-        name = t.get("name", "unnamed_tool")
-        description = t.get("description", "") or ""
-        params = t.get("parameters_schema") or t.get("parameters") or {}
-        if not isinstance(params, dict):
-            params = {}
-        params.setdefault("type", "object")
-        params.setdefault("properties", {})
-        result.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": params,
-                },
-            }
-        )
-    return result
+convert_tools_to_hf_format = convert_tools_to_chat_completions_format
 
 
 def accumulate_tool_call_chunk(
@@ -150,7 +133,7 @@ async def create_hf_response(
 
     try:
         response = await client.chat.completions.create(**request_kwargs)
-    except Exception as e:
+    except (HfHubHTTPError, InferenceTimeoutError, OSError) as e:
         logger.exception(f'Failed to get a response from the LLM "{model_id}"')
         llm.events.send(
             events.LLMErrorEvent(
@@ -338,62 +321,10 @@ async def _handle_tool_calls(
     kwargs: dict[str, Any],
 ) -> LLMResponseEvent:
     """Execute tool calls and stream follow-up responses (up to 3 rounds)."""
-    llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-    max_rounds = 3
-    current_tool_calls = tool_calls
-    seen: set[tuple] = set()
-    current_messages = list(messages)
 
-    for round_num in range(max_rounds):
-        triples, seen = await llm._dedup_and_execute(
-            current_tool_calls,
-            max_concurrency=8,
-            timeout_s=30,
-            seen=seen,
-        )
-
-        if not triples:
-            break
-
-        assistant_tool_calls = []
-        tool_results = []
-        for tc, res, err in triples:
-            cid = tc.get("id")
-            if not cid:
-                continue
-
-            assistant_tool_calls.append(
-                {
-                    "id": cid,
-                    "type": "function",
-                    "function": {
-                        "name": tc["name"],
-                        "arguments": json.dumps(tc.get("arguments_json", {})),
-                    },
-                }
-            )
-            tool_results.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": cid,
-                    "content": llm._sanitize_tool_output(
-                        err if err is not None else res
-                    ),
-                }
-            )
-
-        if not tool_results:
-            return llm_response
-
-        current_messages.append(
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": assistant_tool_calls,
-            }
-        )
-        current_messages.extend(tool_results)
-
+    async def _generate_followup(
+        current_messages: list[dict[str, Any]],
+    ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
         request_kwargs: dict[str, Any] = {
             "messages": current_messages,
             "model": kwargs.get("model", model_id),
@@ -404,7 +335,7 @@ async def _handle_tool_calls(
 
         try:
             follow_up = await client.chat.completions.create(**request_kwargs)
-        except Exception as e:
+        except (HfHubHTTPError, InferenceTimeoutError, OSError) as e:
             logger.exception("Failed to get follow-up response after tool execution")
             llm.events.send(
                 events.LLMErrorEvent(
@@ -413,13 +344,14 @@ async def _handle_tool_calls(
                     event_data=e,
                 )
             )
-            return llm_response
+            return LLMResponseEvent(original=None, text=""), []
 
         text_chunks: list[str] = []
         pending: dict[int, dict[str, Any]] = {}
         next_tool_calls: list[NormalizedToolCallItem] = []
         i = 0
         chunk_id = ""
+        llm_response = LLMResponseEvent(original=None, text="")
 
         async for chunk in follow_up:
             if not chunk.choices:
@@ -464,10 +396,6 @@ async def _handle_tool_calls(
 
             i += 1
 
-        if next_tool_calls and round_num < max_rounds - 1:
-            current_tool_calls = next_tool_calls
-            continue
+        return llm_response, next_tool_calls
 
-        return llm_response
-
-    return llm_response
+    return await run_tool_call_loop(llm, tool_calls, messages, _generate_followup)

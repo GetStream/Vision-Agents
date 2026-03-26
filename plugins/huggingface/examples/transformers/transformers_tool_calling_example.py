@@ -44,15 +44,14 @@ async def main() -> None:
 
     # Set up conversation
     conversation = InMemoryConversation(
-        system_prompt="",
+        instructions="",
         messages=[],
     )
     llm.set_conversation(conversation)
     llm.set_instructions(
-        "You are a helpful assistant with access to tools. "
-        "When a user asks about the weather, use the get_weather tool. "
-        "When a user asks about the time, use the get_time tool. "
-        "After receiving tool results, summarize the answer for the user."
+        "You are a helpful assistant. You MUST use your tools to answer questions. "
+        "NEVER guess or make up information. "
+        "Use get_weather for any weather question. Use get_time for any time question."
     )
 
     # Register tools
@@ -74,7 +73,7 @@ async def main() -> None:
     # Run a conversation that should trigger tool calling
     prompts = [
         "What's the weather like in Paris?",
-        "And what time is it in Tokyo?",
+        "What time is it in New York right now?",
     ]
 
     for prompt in prompts:
@@ -82,6 +81,12 @@ async def main() -> None:
         response = await llm.simple_response(text=prompt)
         await llm.events.wait(1)
         logger.info(f"Assistant: {response.text}")
+
+        # Record the assistant reply so the next turn has full context.
+        # (In production the Agent framework handles this automatically.)
+        await conversation.send_message(
+            role="assistant", user_id="agent", content=response.text
+        )
 
     llm.unload()
     logger.info("\nDone!")
