@@ -496,6 +496,8 @@ class StreamEdge(EdgeTransport[StreamCall]):
         )
 
     async def close(self):
+        if self.client:
+            await self.client.aclose()
         self._call = None
 
     async def send_custom_event(self, data: dict) -> None:
