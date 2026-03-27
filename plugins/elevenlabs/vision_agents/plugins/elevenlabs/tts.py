@@ -64,8 +64,11 @@ class TTS(tts.TTS):
         )
 
     async def close(self) -> None:
-        if hasattr(self.client, "_client"):
-            await self.client._client.aclose()
+        try:
+            if hasattr(self.client, "_client"):
+                await self.client._client.aclose()
+        except Exception:
+            logger.exception("Error closing ElevenLabs HTTP client")
 
     async def stop_audio(self) -> None:
         """
