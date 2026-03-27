@@ -314,8 +314,5 @@ class STT(stt.STT):
                 self._connection_ready.clear()
 
         # Close the underlying HTTP client
-        try:
-            if hasattr(self.client, "_client"):
-                await self.client._client.aclose()
-        except Exception:
-            logger.exception("Error closing Deepgram HTTP client")
+        if hasattr(self.client, "_client"):
+            await self.client._client.aclose()

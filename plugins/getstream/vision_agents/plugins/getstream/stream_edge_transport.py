@@ -501,13 +501,10 @@ class StreamEdge(EdgeTransport[StreamCall]):
             try:
                 await self._real_connection.leave()
             except Exception:
-                logger.exception("Error during connection leave in StreamEdge.close()")
+                logger.exception("Error during connection leave")
             self._real_connection = None
-        try:
-            if self.client:
-                await self.client.aclose()
-        except Exception:
-            logger.exception("Error closing AsyncStream client")
+        if self.client:
+            await self.client.aclose()
         self._call = None
 
     async def send_custom_event(self, data: dict) -> None:
