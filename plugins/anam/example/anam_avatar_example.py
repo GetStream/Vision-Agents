@@ -3,7 +3,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
+from vision_agents.plugins import deepgram, gemini, getstream
 from vision_agents.plugins.anam import AnamAvatarPublisher
 
 logger = logging.getLogger(__name__)
@@ -11,7 +11,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
-INSTRUCTIONS = "You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful."
+INSTRUCTIONS = (
+    "You're a voice AI assistant. Keep responses short and conversational. "
+    "Don't use special characters or formatting. Be friendly and helpful."
+)
 
 
 def setup_llm(model: str = "gemini-3.1-flash-lite-preview") -> gemini.LLM:
@@ -27,13 +30,14 @@ def setup_llm(model: str = "gemini-3.1-flash-lite-preview") -> gemini.LLM:
 async def create_agent(**kwargs) -> Agent:
     llm = setup_llm()
 
+    avatar = AnamAvatarPublisher()
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="My happy AI friend", id="agent"),
         instructions=INSTRUCTIONS,
-        processors=[AnamAvatarPublisher()],
+        processors=[avatar],
         llm=llm,
-        tts=elevenlabs.TTS(model_id="eleven_flash_v2_5"),
+        tts=deepgram.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),
     )
 
