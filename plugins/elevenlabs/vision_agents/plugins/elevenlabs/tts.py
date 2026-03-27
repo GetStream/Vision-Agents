@@ -63,6 +63,10 @@ class TTS(tts.TTS):
             audio_stream, sample_rate=16000, channels=1, format=AudioFormat.S16
         )
 
+    async def close(self) -> None:
+        if hasattr(self.client, "_client"):
+            await self.client._client.aclose()
+
     async def stop_audio(self) -> None:
         """
         Clears the queue and stops playing audio.

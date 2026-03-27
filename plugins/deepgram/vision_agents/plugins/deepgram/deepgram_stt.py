@@ -312,3 +312,7 @@ class STT(stt.STT):
                 self.connection = None
                 self._connection_context = None
                 self._connection_ready.clear()
+
+        # Close the underlying HTTP client
+        if hasattr(self.client, "_client"):
+            await self.client._client.aclose()
