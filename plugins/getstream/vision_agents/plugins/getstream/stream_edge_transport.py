@@ -501,7 +501,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
             try:
                 await self._real_connection.leave()
             except Exception:
-                pass
+                logger.exception("Error during connection leave in StreamEdge.close()")
             self._real_connection = None
         if self.client:
             await self.client.aclose()
