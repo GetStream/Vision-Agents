@@ -314,5 +314,12 @@ class STT(stt.STT):
                 self._connection_ready.clear()
 
         # Close the underlying HTTP client
-        if hasattr(self.client, "_client"):
-            await self.client._client.aclose()
+        httpx_client = getattr(
+            getattr(
+                getattr(self.client, "_client_wrapper", None), "httpx_client", None
+            ),
+            "httpx_client",
+            None,
+        )
+        if httpx_client is not None:
+            await httpx_client.aclose()

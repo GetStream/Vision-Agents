@@ -64,8 +64,15 @@ class TTS(tts.TTS):
         )
 
     async def close(self) -> None:
-        if hasattr(self.client, "_client"):
-            await self.client._client.aclose()
+        httpx_client = getattr(
+            getattr(
+                getattr(self.client, "_client_wrapper", None), "httpx_client", None
+            ),
+            "httpx_client",
+            None,
+        )
+        if httpx_client is not None:
+            await httpx_client.aclose()
 
     async def stop_audio(self) -> None:
         """
