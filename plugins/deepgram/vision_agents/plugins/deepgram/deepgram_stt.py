@@ -313,13 +313,9 @@ class STT(stt.STT):
                 self._connection_context = None
                 self._connection_ready.clear()
 
-        # Close the underlying HTTP client
-        httpx_client = getattr(
-            getattr(
-                getattr(self.client, "_client_wrapper", None), "httpx_client", None
-            ),
-            "httpx_client",
-            None,
-        )
+        # SDK doesn't expose a public aclose() - workaround using internals
+        wrapper = getattr(self.client, "_client_wrapper", None)
+        http_client = getattr(wrapper, "httpx_client", None)
+        httpx_client = getattr(http_client, "httpx_client", None)
         if httpx_client is not None:
             await httpx_client.aclose()
