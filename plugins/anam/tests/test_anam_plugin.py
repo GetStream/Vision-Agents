@@ -50,6 +50,14 @@ class TestAnamAvatarPublisher:
         assert track.width == 640
         assert track.height == 480
 
+    def test_init_odd_width_raises(self):
+        with pytest.raises(ValueError, match="width must be a positive even integer"):
+            _make_publisher(width=641, height=480)
+
+    def test_init_odd_height_raises(self):
+        with pytest.raises(ValueError, match="height must be a positive even integer"):
+            _make_publisher(width=640, height=481)
+
     def test_publish_video_track(self):
         pub = _make_publisher()
         assert isinstance(pub.publish_video_track(), QueuedVideoTrack)

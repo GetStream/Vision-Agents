@@ -78,6 +78,11 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         if not avatar_id:
             raise ValueError("Anam avatar ID not provided")
 
+        if width <= 0 or width % 2 != 0:
+            raise ValueError("width must be a positive even integer")
+        if height <= 0 or height % 2 != 0:
+            raise ValueError("height must be a positive even integer")
+
         self._client = AnamClient(
             api_key=api_key,
             persona_config=PersonaConfig(
