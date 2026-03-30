@@ -152,9 +152,10 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
     client: AsyncStream
 
-    def __init__(self, **kwargs):
+    def __init__(self, video_buffered: bool = True, **kwargs):
         # Initialize Stream client
         super().__init__()
+        self._video_buffered = video_buffered
         version = get_vision_agents_version()
         self.client = AsyncStream(user_agent=f"stream-vision-agents-{version}")
         # self.events is inherited from EdgeTransport (with required events already registered)
@@ -416,7 +417,10 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         # Open RTC connection and keep it alive for the duration of the returned context manager
         connection = await rtc.join(
-            call, agent.agent_user.id, subscription_config=subscription_config
+            call,
+            agent.agent_user.id,
+            subscription_config=subscription_config,
+            video_buffered=self._video_buffered,
         )
         # Store immediately so close() can clean up if join is interrupted
         self._real_connection = connection
