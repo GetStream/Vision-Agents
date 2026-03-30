@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import inspect
 import logging
 import types
 import typing
@@ -334,12 +335,12 @@ class EventManager:
             k: v for k, v in typing.get_type_hints(function).items() if k != "return"
         }
 
-        if not asyncio.iscoroutinefunction(function):
+        if not inspect.iscoroutinefunction(function):
             raise RuntimeError(
                 "Handlers must be coroutines. Use async def handler(event: EventType):"
             )
 
-        for name, event_class in params_annotations.items():
+        for _, event_class in params_annotations.items():
             origin = get_origin(event_class)
             events: typing.List[type] = []
 
