@@ -919,11 +919,7 @@ class Agent:
 
         # Close RTC connection
         if self._connection:
-            self.logger.warning("🔍 DEBUG: closing RTC connection")
             await self._connection.close()
-            self.logger.warning("🔍 DEBUG: RTC connection closed")
-        else:
-            self.logger.warning("🔍 DEBUG: no RTC connection to close")
         self._connection = None
 
         # Stop audio track
