@@ -8,11 +8,13 @@ import aiortc
 import av
 import websockets
 from aiortc import MediaStreamTrack, VideoStreamTrack
+from aiortc.mediastreams import MediaStreamError
 from decart import DecartClient, DecartSDKError, models
 from decart.models import RealTimeModels
 from decart.realtime import RealtimeClient, RealtimeConnectOptions
 from decart.types import ModelState, Prompt
 from vision_agents.core.processors.base_processor import VideoProcessorPublisher
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from .decart_video_track import DecartVideoTrack
 
@@ -51,7 +53,7 @@ class RestylingProcessor(VideoProcessorPublisher):
             processors=[
                 decart.RestylingProcessor(
                     initial_prompt="Studio Ghibli animation style",
-                    model="mirage_v2"
+                    model="lucy_2_rt"
                 )
             ]
         )
@@ -74,7 +76,7 @@ class RestylingProcessor(VideoProcessorPublisher):
 
         Args:
             api_key: Decart API key. Uses DECART_API_KEY env var if not provided.
-            model: Decart model name (default: "mirage_v2").
+            model: Decart model name (default: "lucy_2_rt").
             initial_prompt: Initial style prompt text.
             enrich: Whether to enrich prompt (default: True).
             mirror: Mirror mode for front camera (default: True).
@@ -105,8 +107,10 @@ class RestylingProcessor(VideoProcessorPublisher):
 
         self._connected = False
         self._connecting = False
-        self._processing_task: Optional[asyncio.Task] = None
-        self._frame_receiving_task: Optional[asyncio.Task] = None
+        self._connect_lock = asyncio.Lock()
+        self._processing_task: Optional[asyncio.Task[None]] = None
+        self._frame_receiving_task: Optional[asyncio.Task[None]] = None
+        self._reconnect_task: Optional[asyncio.Task[None]] = None
         self._current_track: Optional[MediaStreamTrack] = None
         self._on_connection_change_callback = None
 
@@ -118,9 +122,8 @@ class RestylingProcessor(VideoProcessorPublisher):
         self,
         incoming_track: aiortc.VideoStreamTrack,
         participant_id: Optional[str],
-        shared_forwarder: object | None = None,
+        shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
-        del participant_id, shared_forwarder
         logger.info("Processing video track, connecting to Decart")
         self._current_track = incoming_track
         if not self._connected and not self._connecting:
@@ -170,51 +173,52 @@ class RestylingProcessor(VideoProcessorPublisher):
         logger.debug(f"Updated Decart mirror mode: {enabled}")
 
     async def _connect_to_decart(self, local_track: MediaStreamTrack) -> None:
-        if self._connecting:
-            logger.debug("Already connecting to Decart, skipping")
-            return
+        async with self._connect_lock:
+            if self._connecting:
+                logger.debug("Already connecting to Decart, skipping")
+                return
 
-        logger.info(f"Connecting to Decart Realtime API (model: {self.model_name})")
-        self._connecting = True
+            logger.info(f"Connecting to Decart Realtime API (model: {self.model_name})")
+            self._connecting = True
 
-        try:
-            if self._realtime_client:
-                await self._disconnect_from_decart()
+            try:
+                if self._realtime_client:
+                    await self._disconnect_from_decart()
 
-            initial_state = ModelState(
-                prompt=Prompt(
-                    text=self.initial_prompt,
-                    enrich=self.enrich,
-                ),
-                mirror=self.mirror,
-            )
+                initial_state = ModelState(
+                    prompt=Prompt(
+                        text=self.initial_prompt,
+                        enrich=self.enrich,
+                    ),
+                    mirror=self.mirror,
+                )
 
-            self._realtime_client = await RealtimeClient.connect(
-                base_url=self._decart_client.base_url,
-                api_key=self._decart_client.api_key,
-                local_track=local_track,
-                options=RealtimeConnectOptions(
-                    model=self.model,
-                    on_remote_stream=self._on_remote_stream,
-                    initial_state=initial_state,
-                ),
-            )
+                self._realtime_client = await RealtimeClient.connect(
+                    base_url=self._decart_client.base_url,
+                    api_key=self._decart_client.api_key,
+                    local_track=local_track,
+                    options=RealtimeConnectOptions(
+                        model=self.model,
+                        on_remote_stream=self._on_remote_stream,
+                        initial_state=initial_state,
+                    ),
+                )
 
-            self._realtime_client.on("connection_change", self._on_connection_change)
-            self._realtime_client.on("error", self._on_error)
+                self._realtime_client.on("connection_change", self._on_connection_change)
+                self._realtime_client.on("error", self._on_error)
 
-            self._connected = True
-            logger.info("Connected to Decart Realtime API")
+                self._connected = True
+                logger.info("Connected to Decart Realtime API")
 
-            if self._processing_task is None or self._processing_task.done():
-                self._processing_task = asyncio.create_task(self._processing_loop())
+                if self._processing_task is None or self._processing_task.done():
+                    self._processing_task = asyncio.create_task(self._processing_loop())
 
-        except Exception as e:
-            self._connected = False
-            logger.error(f"Failed to connect to Decart: {e}")
-            raise
-        finally:
-            self._connecting = False
+            except (DecartSDKError, websockets.ConnectionClosedError, OSError) as e:
+                self._connected = False
+                logger.error(f"Failed to connect to Decart: {e}")
+                raise
+            finally:
+                self._connecting = False
 
     def _on_remote_stream(self, transformed_stream: MediaStreamTrack) -> None:
         if self._frame_receiving_task and not self._frame_receiving_task.done():
@@ -234,10 +238,16 @@ class RestylingProcessor(VideoProcessorPublisher):
                 await self._video_track.add_frame(cast(av.VideoFrame, frame))
         except asyncio.CancelledError:
             logger.debug("Frame receiving from Decart cancelled")
+        except MediaStreamError:
+            logger.debug("Decart media stream ended")
+            self._connected = False
+        except (DecartSDKError, websockets.ConnectionClosedError, OSError):
+            logger.exception("Error receiving frames from Decart")
+            self._connected = False
 
     def _on_connection_change(self, state: str) -> None:
         logger.info(f"Decart connection state changed: {state}")
-        if state in ("connected", "connecting"):
+        if state == "connected":
             self._connected = True
         elif state in ("disconnected", "error"):
             self._connected = False
@@ -253,7 +263,9 @@ class RestylingProcessor(VideoProcessorPublisher):
         logger.error(f"Decart error: {error}")
         if _should_reconnect(error) and self._current_track:
             logger.info("Attempting to reconnect to Decart...")
-            asyncio.create_task(self._connect_to_decart(self._current_track))
+            self._reconnect_task = asyncio.create_task(
+                self._connect_to_decart(self._current_track)
+            )
 
     # Reconnect to Decart if the connection is dropped
     async def _processing_loop(self) -> None:
@@ -292,6 +304,9 @@ class RestylingProcessor(VideoProcessorPublisher):
 
         if self._processing_task and not self._processing_task.done():
             self._processing_task.cancel()
+
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
 
         if self._decart_client:
             await self._decart_client.close()
