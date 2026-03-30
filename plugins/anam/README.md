@@ -1,6 +1,6 @@
 # Anam Avatar Plugin for Vision Agents
 
-Add real-time interactive avatar video to your AI agents using Anam's avatar API.
+Add real-time interactive avatar video to your AI agents using [Anam's avatar API](https://anam.ai/).
 
 ## Features
 

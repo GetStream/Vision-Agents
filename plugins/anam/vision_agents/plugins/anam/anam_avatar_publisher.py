@@ -38,6 +38,10 @@ def _task_done_callback(task: asyncio.Task[None]) -> None:
 class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
     """Anam avatar video and audio publisher.
 
+    References:
+    - https://anam.ai/
+    - https://github.com/anam-org/python-sdk
+
     Sends TTS audio to Anam and receives synchronized
     avatar video and audio back.
     """
