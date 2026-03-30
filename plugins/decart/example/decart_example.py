@@ -12,7 +12,7 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     processor = decart.RestylingProcessor(
-        initial_prompt="A cute animated movie with vibrant colours", model="mirage_v2"
+        initial_prompt="A cute animated movie with vibrant colours", model="lucy_2_rt"
     )
     llm = openai.LLM(model="gpt-4o-mini")
 
