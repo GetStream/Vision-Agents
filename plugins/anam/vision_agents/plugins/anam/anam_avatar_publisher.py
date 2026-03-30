@@ -28,6 +28,13 @@ from vision_agents.core.utils.video_track import QueuedVideoTrack
 logger = logging.getLogger(__name__)
 
 
+def _task_done_callback(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error(
+            "Background task %s failed", task.get_name(), exc_info=task.exception()
+        )
+
+
 class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
     """Anam avatar video and audio publisher.
 
@@ -155,11 +162,19 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
 
     async def _video_receiver(self) -> None:
         async for frame in self._session.video_frames():
-            await self._video_track.add_frame(frame)
+            try:
+                await self._video_track.add_frame(frame)
+            except Exception:
+                logger.warning(
+                    "Failed to send video frame to video track", exc_info=True
+                )
 
     async def _audio_receiver(self) -> None:
         async for frame in self._session.audio_frames():
-            await self._audio_track.write(pcm=PcmData.from_av_frame(frame))
+            try:
+                await self._audio_track.write(pcm=PcmData.from_av_frame(frame))
+            except Exception:
+                logger.warning("Failed to send audio frame", exc_info=True)
 
     async def _send_audio(self, pcm: PcmData) -> None:
         if self._audio_input_stream is None:
@@ -219,8 +234,10 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
 
         if self._audio_receiver_task is None:
             self._audio_receiver_task = asyncio.create_task(self._audio_receiver())
+            self._audio_receiver_task.add_done_callback(_task_done_callback)
         if self._video_receiver_task is None:
             self._video_receiver_task = asyncio.create_task(self._video_receiver())
+            self._video_receiver_task.add_done_callback(_task_done_callback)
 
     async def _on_connection_established(self):
         """
