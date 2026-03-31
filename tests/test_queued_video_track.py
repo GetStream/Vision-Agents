@@ -177,6 +177,22 @@ class TestQueuedVideoTrack(BaseTest):
         # Track should still be functional
         assert track._stopped is False
 
+    def test_odd_width_raises(self):
+        with pytest.raises(ValueError, match="width must be a positive even integer"):
+            QueuedVideoTrack(width=641, height=480)
+
+    def test_odd_height_raises(self):
+        with pytest.raises(ValueError, match="height must be a positive even integer"):
+            QueuedVideoTrack(width=640, height=481)
+
+    def test_zero_width_raises(self):
+        with pytest.raises(ValueError, match="width must be a positive even integer"):
+            QueuedVideoTrack(width=0, height=480)
+
+    def test_negative_height_raises(self):
+        with pytest.raises(ValueError, match="height must be a positive even integer"):
+            QueuedVideoTrack(width=640, height=-2)
+
     async def test_queued_video_track_with_real_video(self, bunny_video_track):
         """Test QueuedVideoTrack with frames from actual video."""
         queued_track = QueuedVideoTrack(width=640, height=480, fps=15)
