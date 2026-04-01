@@ -75,7 +75,7 @@ The AI assistant has access to:
 
 - Python 3.13+
 - Webcam/camera access
-- [GetStream](https://getstream.io) account for video transport
+- [GetStream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) account for video transport
 - API keys for [Gemini](https://ai.google.dev), [Deepgram](https://deepgram.com),
   and [ElevenLabs](https://elevenlabs.io)
 - (Optional) [X Developer API](https://developer.x.com) credentials for posting wanted posters
@@ -229,7 +229,7 @@ The processor emits events that the agent subscribes to:
 - [Ultralytics YOLOv11](https://docs.ultralytics.com/models/yolo11/): Object detection model
 - [Roboflow](https://roboflow.com): Dataset management, labeling, and model training
 - [SAM 3 (Segment Anything 3)](https://blog.roboflow.com/sam3/): Foundation model for assisted labeling
-- [GetStream](https://getstream.io): Video transport infrastructure
+- [GetStream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents): Video transport infrastructure
 - [Deepgram](https://deepgram.com): Speech-to-text API
 - [ElevenLabs](https://elevenlabs.io): Text-to-speech API
 - [Google Gemini](https://ai.google.dev): LLM API

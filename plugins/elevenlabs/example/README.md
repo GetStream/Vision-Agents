@@ -123,7 +123,7 @@ User Hears Response
 - [ElevenLabs Documentation](https://elevenlabs.io/docs)
 - [ElevenLabs Voice Library](https://elevenlabs.io/voice-library)
 - [Vision Agents Documentation](https://visionagents.ai)
-- [GetStream Documentation](https://getstream.io)
+- [GetStream Documentation](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents)
 
 ## Troubleshooting
 

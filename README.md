@@ -7,8 +7,6 @@
 [![Discord](https://img.shields.io/discord/1108586339550638090)](https://discord.gg/RkhX9PxMS6)
 [![X (Twitter)](https://img.shields.io/badge/X-@visionagents__ai-000000?logo=x&logoColor=white)](https://x.com/visionagents_ai)
 
-https://github.com/user-attachments/assets/d9778ab9-938d-4101-8605-ff879c29b0e4
-
 ### Multi-modal AI agents that watch, listen, and understand video.
 
 [Vision Agents](https://visionagents.ai/) give you the building blocks to create intelligent, low-latency video experiences powered by your models,
@@ -40,7 +38,7 @@ your infrastructure, and your use cases.
 Get a free API key from [Stream](https://getstream.io/try-for-free/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents). Developers receive **333,000 participant minutes** per month,
 plus extra credits via the Maker Program.
 
-Follow the [quickstart guide](https://visionagents.ai/introduction/overview) to build your first agent.
+Follow the [quickstart guide](https://visionagents.ai/introduction/quickstart) to build your first agent.
 
 ## See It In Action
 
