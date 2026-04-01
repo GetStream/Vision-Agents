@@ -152,10 +152,9 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
     client: AsyncStream
 
-    def __init__(self, drain_video_frames: bool = False, **kwargs):
+    def __init__(self, **kwargs):
         # Initialize Stream client
         super().__init__()
-        self._drain_video_frames = drain_video_frames
         version = get_vision_agents_version()
         self.client = AsyncStream(user_agent=f"stream-vision-agents-{version}")
         # self.events is inherited from EdgeTransport (with required events already registered)
@@ -420,7 +419,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
             call,
             agent.agent_user.id,
             subscription_config=subscription_config,
-            drain_video_frames=self._drain_video_frames,
+            drain_video_frames=not agent._needs_video(),
         )
         # Store immediately so close() can clean up if join is interrupted
         self._real_connection = connection
