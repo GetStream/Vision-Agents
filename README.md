@@ -18,7 +18,7 @@ your infrastructure, and your use cases.
 
 - **Video AI:** Built for real-time video AI. Combine YOLO, Roboflow, and others with Gemini/OpenAI in real-time.
 - **Low Latency:** Join quickly (500ms) and maintain audio/video latency under 30ms
-  using [Stream's edge network](https://getstream.io/video/).
+  using [Stream's edge network](https://getstream.io/video/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents).
 - **Open:** Built by Stream, but works with any video edge network.
 - **Native APIs:** Native SDK methods from OpenAI (`create response`), Gemini (`generate`), and Claude (
   `create message`) — always access the latest LLM capabilities.
@@ -37,7 +37,7 @@ your infrastructure, and your use cases.
 
 **Step 3: Obtain your Stream API credentials**
 
-Get a free API key from [Stream](https://getstream.io/). Developers receive **333,000 participant minutes** per month,
+Get a free API key from [Stream](https://getstream.io/try-for-free/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents). Developers receive **333,000 participant minutes** per month,
 plus extra credits via the Maker Program.
 
 Follow the [quickstart guide](https://visionagents.ai/introduction/overview) to build your first agent.
