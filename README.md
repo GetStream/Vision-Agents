@@ -1,3 +1,5 @@
+![VisionAgents](assets/repo_image.png)
+
 # Open Vision Agents by Stream
 
 [![build](https://github.com/GetStream/Vision-Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/GetStream/Vision-Agents/actions)
