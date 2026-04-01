@@ -85,7 +85,7 @@ The Vision Agents SDK can be configured very quickly, which allowed us to iterat
 
 - **RF-DETR model**: We wanted a lightweight pretrained model, so we chose \`rfdetr-base\` as a balance between speed and accuracy. The \`rfdetr-nano\` variant runs faster but misses smaller objects. \`rfdetr-large\` is more accurate but couldn't keep up with real-time video on our test hardware.
 
-- **Detection FPS**: We ran RF-DETR at 5 FPS. This is fast enough to \[track player movement]\(https\://getstream.io/blog/ai-ball-player-tracking/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) and ball position without overwhelming the system. Higher FPS didn't improve commentary quality since the bottleneck is the real-time model, not Roboflow.
+- **Detection FPS**: We ran RF-DETR at 5 FPS. This is fast enough to [track player movement](https://getstream.io/blog/ai-ball-player-tracking/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) and ball position without overwhelming the system. Higher FPS didn't improve commentary quality since the bottleneck is the real-time model, not Roboflow.
 
 - **Real-time model FPS**: We tried different FPS rates, but these were much lower than the detection FPS, ranging from 1-3 FPS. The real-time models were only able to keep a few frames in context without getting confused or queueing frames. Sending more frames increased cost without improving responsiveness.
 
