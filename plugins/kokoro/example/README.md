@@ -24,7 +24,7 @@ privacy-focused applications or environments without internet access.
    sudo apt-get install espeak-ng
    ```
 
-2. **Stream Account**: Get your API credentials from [Stream Dashboard](https://dashboard.getstream.io)
+2. **Stream Account**: Get your API credentials from [Stream Dashboard](https://dashboard.getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents)
 
 3. **OpenAI API Key**: For the LLM component
 

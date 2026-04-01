@@ -7,7 +7,7 @@ Realtime and Roboflow object detection.
 
 1. **Get API keys:**
     - OpenAI API key: https://platform.openai.com/api-keys
-    - GetStream API key: https://getstream.io
+    - GetStream API key: https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents
 
 2. **Configure environment:**
    ```bash

@@ -16,7 +16,7 @@ This example demonstrates how to build a real-time voice conversation AI using x
 - Python 3.10 or higher
 - API keys for:
   - [xAI](https://x.ai/) - for Grok voice API
-  - [Stream](https://getstream.io/) - for audio infrastructure
+  - [Stream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) - for audio infrastructure
 
 ## Installation
 
