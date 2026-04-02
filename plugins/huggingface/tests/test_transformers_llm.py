@@ -16,6 +16,7 @@ from vision_agents.plugins.huggingface.events import LLMErrorEvent
 from vision_agents.plugins.huggingface.transformers_llm import (
     ModelResources,
     TransformersLLM,
+    extract_tool_calls_from_text,
 )
 
 
@@ -171,28 +172,38 @@ class TestTransformersLLM:
 
 class TestToolCallParsing:
     async def test_hermes_format(self):
-        llm = TransformersLLM(model="test")
         text = '<tool_call>{"name": "get_weather", "arguments": {"city": "SF"}}</tool_call>'
-        calls = llm._extract_tool_calls_from_text(text)
+        calls = extract_tool_calls_from_text(text)
         assert len(calls) == 1
         assert calls[0]["name"] == "get_weather"
         assert calls[0]["arguments_json"] == {"city": "SF"}
         assert calls[0]["id"]
 
     async def test_generic_json_format(self):
-        llm = TransformersLLM(model="test")
         text = 'Sure: {"name": "get_weather", "arguments": {"city": "NY"}}'
-        calls = llm._extract_tool_calls_from_text(text)
+        calls = extract_tool_calls_from_text(text)
         assert len(calls) == 1
         assert calls[0]["name"] == "get_weather"
 
+    async def test_nested_arguments(self):
+        text = (
+            '{"name": "search", "arguments": {"filters": {"owner": "me", "stars": 5}}}'
+        )
+        calls = extract_tool_calls_from_text(text)
+        assert len(calls) == 1
+        assert calls[0]["name"] == "search"
+        assert calls[0]["arguments_json"] == {"filters": {"owner": "me", "stars": 5}}
+
+    async def test_hermes_nested_arguments(self):
+        text = '<tool_call>{"name": "search", "arguments": {"filters": {"a": {"b": 1}}}}</tool_call>'
+        calls = extract_tool_calls_from_text(text)
+        assert len(calls) == 1
+        assert calls[0]["arguments_json"] == {"filters": {"a": {"b": 1}}}
+
     async def test_no_tool_calls_in_plain_text(self):
-        llm = TransformersLLM(model="test")
-        assert llm._extract_tool_calls_from_text("Hello! How can I help?") == []
+        assert extract_tool_calls_from_text("Hello! How can I help?") == []
         assert (
-            llm._extract_tool_calls_from_text(
-                '<tool_call>{"name": not json}</tool_call>'
-            )
+            extract_tool_calls_from_text('<tool_call>{"name": not json}</tool_call>')
             == []
         )
 
@@ -217,11 +228,148 @@ class TestToolCallExecution:
         ]
 
         result = await llm._handle_tool_calls(
-            tool_calls, [{"role": "user", "content": "weather?"}], [], {}
+            tool_calls, [{"role": "user", "content": "weather?"}], {}
         )
 
         assert calls_received == ["SF"]
         assert result.text == "Hello there!"
+
+    async def test_tool_call_events_only_emitted_for_final_answer(self, conversation):
+        """Tool call markup must never appear in events; only the final
+        natural-language answer should produce chunk + completed events."""
+        tool_call_text = (
+            '<tool_call>{"name": "get_weather", '
+            '"arguments": {"city": "SF"}}</tool_call>'
+        )
+        final_answer = "It is sunny and 72F in San Francisco."
+
+        decode_outputs = iter([tool_call_text, final_answer])
+        tokenizer = _make_mock_tokenizer()
+        tokenizer.decode.side_effect = lambda *a, **kw: next(decode_outputs)
+
+        llm = TransformersLLM(model="test-model")
+        llm.set_conversation(conversation)
+        llm.on_warmed_up(
+            ModelResources(
+                model=_make_mock_model(),
+                tokenizer=tokenizer,
+                device=torch.device("cpu"),
+            )
+        )
+
+        tools_called: list[str] = []
+
+        @llm.register_function("get_weather", description="Get weather")
+        async def get_weather(city: str) -> str:
+            tools_called.append(city)
+            return "Sunny, 72F"
+
+        events_received: list[
+            LLMRequestStartedEvent | LLMResponseChunkEvent | LLMResponseCompletedEvent
+        ] = []
+
+        @llm.events.subscribe
+        async def listen(
+            event: LLMRequestStartedEvent
+            | LLMResponseChunkEvent
+            | LLMResponseCompletedEvent,
+        ):
+            events_received.append(event)
+
+        result = await llm.create_response(
+            messages=[{"role": "user", "content": "weather in SF?"}],
+            stream=True,
+        )
+        await llm.events.wait(1)
+
+        assert tools_called == ["SF"]
+        assert result.text == final_answer
+
+        chunk_events = [
+            e for e in events_received if isinstance(e, LLMResponseChunkEvent)
+        ]
+        completed_events = [
+            e for e in events_received if isinstance(e, LLMResponseCompletedEvent)
+        ]
+
+        assert len(chunk_events) == 1
+        assert chunk_events[0].delta == final_answer
+
+        assert len(completed_events) == 1
+        assert completed_events[0].text == final_answer
+
+        for evt in chunk_events + completed_events:
+            assert "<tool_call>" not in (
+                evt.delta if hasattr(evt, "delta") else evt.text
+            )
+
+    async def test_multi_round_tool_calls_no_event_leakage(self, conversation):
+        """Multiple rounds of tool calls must not leak intermediate text
+        into events.  Only the final answer should produce events."""
+        round1_text = (
+            '<tool_call>{"name": "get_weather", '
+            '"arguments": {"city": "SF"}}</tool_call>'
+        )
+        round2_text = (
+            '<tool_call>{"name": "get_time", '
+            '"arguments": {"timezone": "PST"}}</tool_call>'
+        )
+        final_answer = "It is 2:30 PM and sunny in SF."
+
+        decode_outputs = iter([round1_text, round2_text, final_answer])
+        tokenizer = _make_mock_tokenizer()
+        tokenizer.decode.side_effect = lambda *a, **kw: next(decode_outputs)
+
+        llm = TransformersLLM(model="test-model")
+        llm.set_conversation(conversation)
+        llm.on_warmed_up(
+            ModelResources(
+                model=_make_mock_model(),
+                tokenizer=tokenizer,
+                device=torch.device("cpu"),
+            )
+        )
+
+        tools_called: list[str] = []
+
+        @llm.register_function("get_weather", description="Get weather")
+        async def get_weather(city: str) -> str:
+            tools_called.append(f"weather:{city}")
+            return "Sunny, 72F"
+
+        @llm.register_function("get_time", description="Get time")
+        async def get_time(timezone: str) -> str:
+            tools_called.append(f"time:{timezone}")
+            return "14:30"
+
+        events_received: list[LLMResponseChunkEvent | LLMResponseCompletedEvent] = []
+
+        @llm.events.subscribe
+        async def listen(
+            event: LLMResponseChunkEvent | LLMResponseCompletedEvent,
+        ):
+            events_received.append(event)
+
+        result = await llm.create_response(
+            messages=[{"role": "user", "content": "weather and time?"}],
+            stream=True,
+        )
+        await llm.events.wait(1)
+
+        assert tools_called == ["weather:SF", "time:PST"]
+        assert result.text == final_answer
+
+        chunk_events = [
+            e for e in events_received if isinstance(e, LLMResponseChunkEvent)
+        ]
+        completed_events = [
+            e for e in events_received if isinstance(e, LLMResponseCompletedEvent)
+        ]
+
+        assert len(chunk_events) == 1
+        assert chunk_events[0].delta == final_answer
+        assert len(completed_events) == 1
+        assert completed_events[0].text == final_answer
 
 
 # ---------------------------------------------------------------------------
