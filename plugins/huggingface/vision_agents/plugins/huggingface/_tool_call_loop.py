@@ -99,10 +99,8 @@ async def run_tool_call_loop(
 
         assistant_tool_calls = []
         tool_results = []
-        for tc, res, err in triples:
-            cid = tc.get("id")
-            if not cid:
-                continue
+        for call_index, (tc, res, err) in enumerate(triples):
+            cid = tc.get("id") or f"tool_call_{round_num}_{call_index}"
 
             name = tc["name"]
             args = tc.get("arguments_json", {})
