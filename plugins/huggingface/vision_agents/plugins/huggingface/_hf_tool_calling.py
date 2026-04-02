@@ -235,22 +235,24 @@ async def _process_streaming(
                 accumulated_tool_calls = finalize_pending_tool_calls(pending)
 
             total_text = "".join(text_chunks)
-            latency_ms = (time.perf_counter() - request_start) * 1000
-            ttft_ms_final = None
-            if first_token_time is not None:
-                ttft_ms_final = (first_token_time - request_start) * 1000
 
-            llm.events.send(
-                LLMResponseCompletedEvent(
-                    plugin_name=plugin_name,
-                    original=chunk,
-                    text=total_text,
-                    item_id=chunk_id,
-                    latency_ms=latency_ms,
-                    time_to_first_token_ms=ttft_ms_final,
-                    model=model_id,
+            if finish_reason != "tool_calls":
+                latency_ms = (time.perf_counter() - request_start) * 1000
+                ttft_ms_final = None
+                if first_token_time is not None:
+                    ttft_ms_final = (first_token_time - request_start) * 1000
+
+                llm.events.send(
+                    LLMResponseCompletedEvent(
+                        plugin_name=plugin_name,
+                        original=chunk,
+                        text=total_text,
+                        item_id=chunk_id,
+                        latency_ms=latency_ms,
+                        time_to_first_token_ms=ttft_ms_final,
+                        model=model_id,
+                    )
                 )
-            )
 
         llm_response = LLMResponseEvent(original=chunk, text=total_text)
         i += 1
@@ -384,14 +386,16 @@ async def _handle_tool_calls(
                     next_tool_calls = finalize_pending_tool_calls(pending)
 
                 total_text = "".join(text_chunks)
-                llm.events.send(
-                    LLMResponseCompletedEvent(
-                        plugin_name=plugin_name,
-                        original=chunk,
-                        text=total_text,
-                        item_id=chunk_id,
+
+                if finish_reason != "tool_calls":
+                    llm.events.send(
+                        LLMResponseCompletedEvent(
+                            plugin_name=plugin_name,
+                            original=chunk,
+                            text=total_text,
+                            item_id=chunk_id,
+                        )
                     )
-                )
                 llm_response = LLMResponseEvent(original=chunk, text=total_text)
 
             i += 1
