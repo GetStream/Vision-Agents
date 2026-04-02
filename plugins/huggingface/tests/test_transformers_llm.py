@@ -185,6 +185,21 @@ class TestToolCallParsing:
         assert len(calls) == 1
         assert calls[0]["name"] == "get_weather"
 
+    async def test_nested_arguments(self):
+        text = (
+            '{"name": "search", "arguments": {"filters": {"owner": "me", "stars": 5}}}'
+        )
+        calls = extract_tool_calls_from_text(text)
+        assert len(calls) == 1
+        assert calls[0]["name"] == "search"
+        assert calls[0]["arguments_json"] == {"filters": {"owner": "me", "stars": 5}}
+
+    async def test_hermes_nested_arguments(self):
+        text = '<tool_call>{"name": "search", "arguments": {"filters": {"a": {"b": 1}}}}</tool_call>'
+        calls = extract_tool_calls_from_text(text)
+        assert len(calls) == 1
+        assert calls[0]["arguments_json"] == {"filters": {"a": {"b": 1}}}
+
     async def test_no_tool_calls_in_plain_text(self):
         assert extract_tool_calls_from_text("Hello! How can I help?") == []
         assert (

@@ -103,6 +103,28 @@ def get_quantization_config(quantization: QuantizationType) -> Optional[Any]:
 convert_tools_to_transformers_format = convert_tools_to_chat_completions_format
 
 
+def _extract_json_objects(text: str) -> list[dict[str, Any]]:
+    """Extract all top-level JSON objects from *text* using ``raw_decode``.
+
+    Handles arbitrarily nested braces, unlike a regex approach.
+    """
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(text):
+        idx = text.find("{", idx)
+        if idx == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, idx)
+            if isinstance(obj, dict):
+                objects.append(obj)
+            idx = end
+        except json.JSONDecodeError:
+            idx += 1
+    return objects
+
+
 def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
     """Parse tool calls from raw model output text.
 
@@ -112,39 +134,31 @@ def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
     """
     tool_calls: list[NormalizedToolCallItem] = []
 
-    hermes_pattern = r"<tool_call>\s*(\{.*?\})\s*</tool_call>"
+    hermes_pattern = r"<tool_call>\s*(.*?)\s*</tool_call>"
     for match in re.finditer(hermes_pattern, text, re.DOTALL):
-        try:
-            data = json.loads(match.group(1))
+        for obj in _extract_json_objects(match.group(1)):
             tool_calls.append(
                 {
                     "type": "tool_call",
-                    "id": data.get("id", str(uuid.uuid4())),
-                    "name": data.get("name", ""),
-                    "arguments_json": data.get("arguments", {}),
+                    "id": obj.get("id", str(uuid.uuid4())),
+                    "name": obj.get("name", ""),
+                    "arguments_json": obj.get("arguments", {}),
                 }
             )
-        except json.JSONDecodeError:
-            continue
 
     if tool_calls:
         return tool_calls
 
-    json_pattern = r"\{[^{}]*\"name\"\s*:[^{}]*\"arguments\"\s*:\s*\{[^{}]*\}[^{}]*\}"
-    for match in re.finditer(json_pattern, text):
-        try:
-            data = json.loads(match.group(0))
-            if "name" in data and "arguments" in data:
-                tool_calls.append(
-                    {
-                        "type": "tool_call",
-                        "id": str(uuid.uuid4()),
-                        "name": data["name"],
-                        "arguments_json": data["arguments"],
-                    }
-                )
-        except json.JSONDecodeError:
-            continue
+    for obj in _extract_json_objects(text):
+        if "name" in obj and "arguments" in obj:
+            tool_calls.append(
+                {
+                    "type": "tool_call",
+                    "id": str(uuid.uuid4()),
+                    "name": obj["name"],
+                    "arguments_json": obj["arguments"],
+                }
+            )
 
     return tool_calls
 
