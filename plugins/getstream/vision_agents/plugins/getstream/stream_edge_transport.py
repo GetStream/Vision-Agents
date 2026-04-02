@@ -419,7 +419,6 @@ class StreamEdge(EdgeTransport[StreamCall]):
             call,
             agent.agent_user.id,
             subscription_config=subscription_config,
-            drain_video_frames=not agent._needs_video(),
         )
         # Store immediately so close() can clean up if join is interrupted
         self._real_connection = connection

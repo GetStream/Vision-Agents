@@ -1285,6 +1285,9 @@ class Agent:
         ):
             return
 
+        if not self._needs_video():
+            return
+
         self.logger.info(
             f"📺 Track added: {track_type.name} from {participant.user_id}"
         )
