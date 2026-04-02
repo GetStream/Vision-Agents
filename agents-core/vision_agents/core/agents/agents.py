@@ -1285,6 +1285,9 @@ class Agent:
         ):
             return
 
+        if not self._needs_video():
+            return
+
         self.logger.info(
             f"📺 Track added: {track_type.name} from {participant.user_id}"
         )
@@ -1373,13 +1376,14 @@ class Agent:
         # - Audio processors (for audio analysis)
         # Note: VAD and turn detection are helpers for STT/TTS, not standalone consumers
         needs_audio = self.stt is not None or len(self.audio_processors) > 0
-
         # Video input needed for:
         # - Video processors (for frame analysis)
         # - Realtime mode with video (multimodal LLMs)
-        needs_video = len(self.video_processors) > 0 or _is_video_llm(self.llm)
 
-        return needs_audio or needs_video
+        return needs_audio or self._needs_video()
+
+    def _needs_video(self) -> bool:
+        return len(self.video_processors) > 0 or _is_video_llm(self.llm)
 
     @property
     def audio_processors(self) -> list[AudioProcessor]:
