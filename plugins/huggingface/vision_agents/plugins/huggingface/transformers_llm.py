@@ -176,6 +176,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         torch_dtype: ``"auto"``, ``"float16"``, ``"bfloat16"``, or ``"float32"``.
         trust_remote_code: Allow custom model code (needed for Qwen, Phi, etc.).
         max_new_tokens: Default maximum tokens to generate per response.
+        max_tool_rounds: Maximum tool-call rounds per response (default 3).
     """
 
     def __init__(
@@ -186,6 +187,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         torch_dtype: TorchDtypeType = "auto",
         trust_remote_code: bool = False,
         max_new_tokens: int = 512,
+        max_tool_rounds: int = 3,
     ):
         super().__init__()
 
@@ -195,6 +197,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self._torch_dtype_config = torch_dtype
         self._trust_remote_code = trust_remote_code
         self._max_new_tokens = max_new_tokens
+        self._max_tool_rounds = max_tool_rounds
 
         self._resources: Optional[ModelResources] = None
 
@@ -320,27 +323,72 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         inputs = {k: v.to(device) for k, v in inputs.items()}
         max_tokens = max_new_tokens or self._max_new_tokens
 
+        # When tools are registered, always suppress streaming events and use
+        # non-streaming generation. The model output may contain tool call
+        # markup (e.g. <tool_call>…</tool_call>) that must not be spoken by
+        # TTS.  We only emit the completed event once we confirm the response
+        # contains no tool calls (i.e. the final natural-language answer).
+        is_tool_followup = kwargs.pop("_tool_followup", False)
+        suppress_events = tools_param is not None
+
         self.events.send(
             LLMRequestStartedEvent(
                 plugin_name=PLUGIN_NAME,
                 model=self.model_id,
-                streaming=stream,
+                streaming=stream and not suppress_events,
             )
         )
 
-        if stream:
+        if stream and not suppress_events:
             result = await self._generate_streaming(
                 model, tokenizer, inputs, max_tokens, temperature, do_sample
             )
         else:
             result = await self._generate_non_streaming(
-                model, tokenizer, inputs, max_tokens, temperature, do_sample
+                model,
+                tokenizer,
+                inputs,
+                max_tokens,
+                temperature,
+                do_sample,
+                emit_events=not suppress_events,
             )
 
-        if tools_param and result.text:
+        if suppress_events and result.text:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Raw model output (tools registered): %s", result.text)
             tool_calls = extract_tool_calls_from_text(result.text)
             if tool_calls:
+                if is_tool_followup:
+                    # Return to run_tool_call_loop — it will handle these
+                    # tool calls in the next round without nesting loops.
+                    return result
                 return await self._handle_tool_calls(tool_calls, messages, kwargs)
+            # No tool calls — this is the final answer. Emit chunk +
+            # completed events so that streaming-TTS (which buffers
+            # chunks at sentence boundaries) receives the text.
+            response_id = str(uuid.uuid4())
+            self.events.send(
+                LLMResponseChunkEvent(
+                    plugin_name=PLUGIN_NAME,
+                    content_index=None,
+                    item_id=response_id,
+                    output_index=0,
+                    sequence_number=0,
+                    delta=result.text,
+                    is_first_chunk=True,
+                    time_to_first_token_ms=None,
+                )
+            )
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    plugin_name=PLUGIN_NAME,
+                    original=None,
+                    text=result.text,
+                    item_id=response_id,
+                    model=self.model_id,
+                )
+            )
 
         return result
 
@@ -467,6 +515,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         max_new_tokens: int,
         temperature: float,
         do_sample: bool,
+        emit_events: bool = True,
     ) -> LLMResponseEvent:
         request_start = time.perf_counter()
         response_id = str(uuid.uuid4())
@@ -502,18 +551,18 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         generated_ids = outputs[0][input_length:]
         text = tokenizer.decode(generated_ids, skip_special_tokens=True)
 
-        latency_ms = (time.perf_counter() - request_start) * 1000
-
-        self.events.send(
-            LLMResponseCompletedEvent(
-                plugin_name=PLUGIN_NAME,
-                original=outputs,
-                text=text,
-                item_id=response_id,
-                latency_ms=latency_ms,
-                model=self.model_id,
+        if emit_events:
+            latency_ms = (time.perf_counter() - request_start) * 1000
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    plugin_name=PLUGIN_NAME,
+                    original=outputs,
+                    text=text,
+                    item_id=response_id,
+                    latency_ms=latency_ms,
+                    model=self.model_id,
+                )
             )
-        )
 
         return LLMResponseEvent(original=outputs, text=text)
 
@@ -543,12 +592,15 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             current_messages: list[dict[str, Any]],
         ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
             result = await self.create_response(
-                messages=current_messages, stream=False, **kwargs
+                messages=current_messages, _tool_followup=True, **kwargs
             )
             next_calls = extract_tool_calls_from_text(result.text)
             return result, next_calls
 
-        return await run_tool_call_loop(self, tool_calls, messages, _generate_followup)
+        return await run_tool_call_loop(
+            self, tool_calls, messages, _generate_followup,
+            max_rounds=self._max_tool_rounds,
+        )
 
     def unload(self) -> None:
         logger.info(f"Unloading model: {self.model_id}")

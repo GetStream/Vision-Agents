@@ -80,6 +80,13 @@ async def run_tool_call_loop(
     current_messages = list(messages)
 
     for round_num in range(max_rounds):
+        logger.info(
+            "Tool call round %d: executing %d call(s) — %s",
+            round_num + 1,
+            len(current_tool_calls),
+            ", ".join(tc.get("name", "?") for tc in current_tool_calls),
+        )
+
         triples, seen = await llm._dedup_and_execute(
             current_tool_calls,
             max_concurrency=max_concurrency,
@@ -96,6 +103,13 @@ async def run_tool_call_loop(
             cid = tc.get("id")
             if not cid:
                 continue
+
+            name = tc["name"]
+            args = tc.get("arguments_json", {})
+            if err is not None:
+                logger.warning("  [tool] %s(%s) failed: %s", name, args, err)
+            else:
+                logger.info("  [tool] %s(%s) → %s", name, args, res)
 
             assistant_tool_calls.append(
                 {

@@ -89,6 +89,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         frame_buffer_seconds: Seconds of frames to keep in the buffer.
         max_frames: Maximum frames to send per inference. Evenly sampled from buffer.
         max_new_tokens: Default maximum tokens to generate per response.
+        max_tool_rounds: Maximum tool-call rounds per response (default 3).
     """
 
     def __init__(
@@ -102,6 +103,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         frame_buffer_seconds: int = 10,
         max_frames: int = 4,
         max_new_tokens: int = 512,
+        max_tool_rounds: int = 3,
     ):
         super().__init__()
 
@@ -111,6 +113,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         self._torch_dtype_config = torch_dtype
         self._trust_remote_code = trust_remote_code
         self._max_new_tokens = max_new_tokens
+        self._max_tool_rounds = max_tool_rounds
         self._fps = fps
         self._max_frames = max_frames
 
@@ -285,6 +288,8 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             temperature: Sampling temperature.
             do_sample: Whether to use sampling (vs greedy).
         """
+        is_tool_followup = kwargs.pop("_tool_followup", False)
+
         if self._resources is None:
             logger.error("Model not loaded. Ensure warmup() was called.")
             return LLMResponseEvent(original=None, text="")
@@ -357,6 +362,17 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         generated_ids = outputs[0][input_length:]
         output_text = processor.decode(generated_ids, skip_special_tokens=True)
 
+        if tools_param and output_text:
+            tool_calls = extract_tool_calls_from_text(output_text)
+            if tool_calls:
+                if is_tool_followup:
+                    # Return to run_tool_call_loop — it will handle these
+                    # tool calls in the next round without nesting loops.
+                    return LLMResponseEvent(original=outputs, text=output_text)
+                return await self._handle_tool_calls(
+                    tool_calls, messages, frames, kwargs
+                )
+
         latency_ms = (time.perf_counter() - request_start) * 1000
         response_id = str(uuid.uuid4())
 
@@ -370,13 +386,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                 model=self.model_id,
             )
         )
-
-        if tools_param and output_text:
-            tool_calls = extract_tool_calls_from_text(output_text)
-            if tool_calls:
-                return await self._handle_tool_calls(
-                    tool_calls, messages, frames, kwargs
-                )
 
         return LLMResponseEvent(original=outputs, text=output_text)
 
@@ -488,12 +497,15 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             current_messages: list[dict[str, Any]],
         ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
             result = await self.create_response(
-                messages=current_messages, frames=frames, **kwargs
+                messages=current_messages, frames=frames, _tool_followup=True, **kwargs
             )
             next_calls = extract_tool_calls_from_text(result.text)
             return result, next_calls
 
-        return await run_tool_call_loop(self, tool_calls, messages, _generate_followup)
+        return await run_tool_call_loop(
+            self, tool_calls, messages, _generate_followup,
+            max_rounds=self._max_tool_rounds,
+        )
 
     def unload(self) -> None:
         logger.info(f"Unloading VLM: {self.model_id}")
