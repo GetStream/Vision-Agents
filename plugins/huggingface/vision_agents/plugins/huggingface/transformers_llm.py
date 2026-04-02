@@ -364,22 +364,24 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                     # tool calls in the next round without nesting loops.
                     return result
                 return await self._handle_tool_calls(tool_calls, messages, kwargs)
-            # No tool calls — this is the final answer. Emit chunk +
-            # completed events so that streaming-TTS (which buffers
-            # chunks at sentence boundaries) receives the text.
+            # No tool calls — this is the final answer. Emit events
+            # that were suppressed during generation. Only emit a
+            # synthetic chunk when the caller requested streaming
+            # (needed for streaming-TTS sentence buffering).
             response_id = str(uuid.uuid4())
-            self.events.send(
-                LLMResponseChunkEvent(
-                    plugin_name=PLUGIN_NAME,
-                    content_index=None,
-                    item_id=response_id,
-                    output_index=0,
-                    sequence_number=0,
-                    delta=result.text,
-                    is_first_chunk=True,
-                    time_to_first_token_ms=None,
+            if stream:
+                self.events.send(
+                    LLMResponseChunkEvent(
+                        plugin_name=PLUGIN_NAME,
+                        content_index=None,
+                        item_id=response_id,
+                        output_index=0,
+                        sequence_number=0,
+                        delta=result.text,
+                        is_first_chunk=True,
+                        time_to_first_token_ms=None,
+                    )
                 )
-            )
             self.events.send(
                 LLMResponseCompletedEvent(
                     plugin_name=PLUGIN_NAME,
