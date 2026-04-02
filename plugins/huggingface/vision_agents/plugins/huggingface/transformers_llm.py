@@ -598,7 +598,10 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             return result, next_calls
 
         return await run_tool_call_loop(
-            self, tool_calls, messages, _generate_followup,
+            self,
+            tool_calls,
+            messages,
+            _generate_followup,
             max_rounds=self._max_tool_rounds,
         )
 

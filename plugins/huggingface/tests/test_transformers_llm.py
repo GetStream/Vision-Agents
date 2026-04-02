@@ -219,9 +219,7 @@ class TestToolCallExecution:
         assert calls_received == ["SF"]
         assert result.text == "Hello there!"
 
-    async def test_tool_call_events_only_emitted_for_final_answer(
-        self, conversation
-    ):
+    async def test_tool_call_events_only_emitted_for_final_answer(self, conversation):
         """Tool call markup must never appear in events; only the final
         natural-language answer should produce chunk + completed events."""
         tool_call_text = (
@@ -252,9 +250,7 @@ class TestToolCallExecution:
             return "Sunny, 72F"
 
         events_received: list[
-            LLMRequestStartedEvent
-            | LLMResponseChunkEvent
-            | LLMResponseCompletedEvent
+            LLMRequestStartedEvent | LLMResponseChunkEvent | LLMResponseCompletedEvent
         ] = []
 
         @llm.events.subscribe
@@ -288,7 +284,9 @@ class TestToolCallExecution:
         assert completed_events[0].text == final_answer
 
         for evt in chunk_events + completed_events:
-            assert "<tool_call>" not in (evt.delta if hasattr(evt, "delta") else evt.text)
+            assert "<tool_call>" not in (
+                evt.delta if hasattr(evt, "delta") else evt.text
+            )
 
     async def test_multi_round_tool_calls_no_event_leakage(self, conversation):
         """Multiple rounds of tool calls must not leak intermediate text
@@ -329,9 +327,7 @@ class TestToolCallExecution:
             tools_called.append(f"time:{timezone}")
             return "14:30"
 
-        events_received: list[
-            LLMResponseChunkEvent | LLMResponseCompletedEvent
-        ] = []
+        events_received: list[LLMResponseChunkEvent | LLMResponseCompletedEvent] = []
 
         @llm.events.subscribe
         async def listen(
