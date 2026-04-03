@@ -104,6 +104,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         max_frames: int = 4,
         max_new_tokens: int = 512,
         max_tool_rounds: int = 3,
+        do_sample: bool = True,
     ):
         super().__init__()
 
@@ -114,6 +115,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         self._trust_remote_code = trust_remote_code
         self._max_new_tokens = max_new_tokens
         self._max_tool_rounds = max_tool_rounds
+        self._do_sample = do_sample
         self._fps = fps
         self._max_frames = max_frames
 
@@ -229,7 +231,11 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             {"type": "image"} for _ in range(image_count)
         ]
         image_content.append({"type": "text", "text": text or "Describe what you see."})
-        messages.append({"role": "user", "content": image_content})
+
+        if messages and messages[-1]["role"] == "user":
+            messages[-1] = {"role": "user", "content": image_content}
+        else:
+            messages.append({"role": "user", "content": image_content})
 
         inference_id = str(uuid.uuid4())
 
@@ -276,7 +282,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         frames: Optional[list[av.VideoFrame]] = None,
         max_new_tokens: Optional[int] = None,
         temperature: float = 0.7,
-        do_sample: bool = True,
+        do_sample: Optional[bool] = None,
         **kwargs: Any,
     ) -> LLMResponseEvent:
         """Generate a response from messages and optional video frames.
@@ -289,6 +295,8 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             do_sample: Whether to use sampling (vs greedy).
         """
         is_tool_followup = kwargs.pop("_tool_followup", False)
+        if do_sample is None:
+            do_sample = self._do_sample
 
         if self._resources is None:
             logger.error("Model not loaded. Ensure warmup() was called.")
