@@ -2,7 +2,7 @@ services:
   tencent-agent:
     build:
       context: ../../..
-      dockerfile: vision-agents-stream/plugins/tencent/Dockerfile
+      dockerfile: vision-agents/plugins/tencent/Dockerfile
     volumes:
       - ../..:/app
       - ../../../tencent_rtc_sdk:/tencent_rtc_sdk

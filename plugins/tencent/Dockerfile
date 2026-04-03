@@ -30,7 +30,7 @@ RUN mkdir -p /opt/liteav/lib /opt/liteav/ext
 COPY --from=builder /opt/tencent_rtc_sdk/python/python_x86_64/lib/libliteav.so /opt/liteav/lib/
 COPY --from=builder /opt/tencent_rtc_sdk/python/python_x86_64/_liteav*.so /opt/liteav/ext/
 
-COPY vision-agents-stream/plugins/tencent/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY vision-agents/plugins/tencent/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV LD_LIBRARY_PATH=/opt/liteav/lib
