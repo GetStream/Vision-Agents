@@ -260,6 +260,10 @@ class Realtime(realtime.Realtime):
         elif et == "input_audio_buffer.speech_started":
             InputAudioBufferSpeechStartedEvent.model_validate(event)
             await self.interrupt()
+            # TODO: According to https://developers.openai.com/api/docs/guides/realtime-conversations#interruption-and-truncation
+            #  we must send conversation.item.truncate event to remove
+            #  the unplayed portion of the model’s last response from the conversation.
+            #  However, we don't have this data available yet.
             self._emit_audio_output_done_event(interrupted=True)
 
         elif et == "response.output_item.added":
