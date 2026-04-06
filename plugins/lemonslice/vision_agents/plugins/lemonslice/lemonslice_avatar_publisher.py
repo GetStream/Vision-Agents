@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 import av
-from getstream.video.rtc import audio_track
+from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.llm.events import (
     RealtimeAudioOutputDoneEvent,
@@ -11,6 +11,7 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.processors.base_processor import AudioPublisher, VideoPublisher
 from vision_agents.core.tts.events import TTSAudioEvent
+from vision_agents.core.utils.av_synchronizer import AVSynchronizer
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 from .lemonslice_client import LemonSliceClient
@@ -79,10 +80,7 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
             livekit_api_key=livekit_api_key,
             livekit_api_secret=livekit_api_secret,
         )
-        self._video_track = QueuedVideoTrack(width=width, height=height)
-        self._audio_track = audio_track.AudioStreamTrack(
-            sample_rate=48000, channels=2, format="s16"
-        )
+        self._sync = AVSynchronizer(width=width, height=height)
 
         self._connected = False
         self._agent: Any = None
@@ -91,10 +89,10 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
         logger.debug(f"LemonSlice AvatarPublisher initialized ({width}x{height})")
 
     def publish_video_track(self) -> QueuedVideoTrack:
-        return self._video_track
+        return self._sync.video_track
 
-    def publish_audio_track(self) -> audio_track.AudioStreamTrack:
-        return self._audio_track
+    def publish_audio_track(self) -> AudioStreamTrack:
+        return self._sync.audio_track
 
     def attach_agent(self, agent: Any) -> None:
         self._agent = agent
@@ -105,7 +103,6 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
         await self._connect()
 
     async def close(self) -> None:
-        self._video_track.stop()
         try:
             await self._rtc_manager.close()
         except Exception as exc:
@@ -150,10 +147,10 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
             await self._rtc_manager.close()
 
     async def _on_video_frame(self, frame: av.VideoFrame) -> None:
-        await self._video_track.add_frame(frame)
+        await self._sync.write_video(frame)
 
     async def _on_audio_frame(self, pcm: PcmData) -> None:
-        await self._audio_track.write(pcm)
+        await self._sync.write_audio(pcm)
 
     async def _on_disconnect(self) -> None:
         logger.info("LemonSlice disconnected")

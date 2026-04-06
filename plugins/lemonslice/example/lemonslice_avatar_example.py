@@ -13,6 +13,7 @@ Required environment variables:
 """
 
 import logging
+import os
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
@@ -36,7 +37,7 @@ async def create_agent(**kwargs) -> Agent:
         stt=deepgram.STT(eager_turn_detection=True),
         processors=[
             lemonslice.LemonSliceAvatarPublisher(
-                agent_id="your-agent-id",
+                agent_id=os.getenv("LEMONSLICE_AGENT_ID"),
             ),
         ],
     )
@@ -46,6 +47,8 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
+        await agent.simple_response("tell me something interesting in a short sentence")
+
         await agent.finish()
 
 
