@@ -1424,18 +1424,15 @@ class Agent:
     def _validate_configuration(self):
         """Validate the agent configuration."""
         if _is_audio_llm(self.llm):
-            # Realtime mode - should not have separate STT/TTS
-            if self.stt or self.tts:
+            if self.stt or self.tts or self.turn_detection:
                 self.logger.warning(
-                    "Realtime mode detected: STT and TTS services will be ignored. "
-                    "The Realtime model handles both speech-to-text and text-to-speech internally."
+                    "Realtime mode detected: STT, TTS and Turn Detection services will be disabled. "
+                    "The Realtime model handles speech-to-text, text-to-speech and turn detection internally."
                 )
-                # Realtime mode - should not have separate STT/TTS
-            if self.stt or self.turn_detection:
-                self.logger.warning(
-                    "Realtime mode detected: STT, TTS and Turn Detection services will be ignored. "
-                    "The Realtime model handles both speech-to-text, text-to-speech and turn detection internally."
-                )
+                self.stt = None
+                self.tts = None
+                self.streaming_tts = False
+                self.turn_detection = None
         else:
             if self.turn_detection and self.stt and self.stt.turn_detection:
                 self.logger.warning(
