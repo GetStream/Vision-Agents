@@ -67,22 +67,17 @@ class _SyncedVideoTrack(QueuedVideoTrack):
         if self._stopped:
             raise VideoTrackClosedError("Track stopped")
 
-        released = False
         if self._pending:
             release_at, frame = self._pending[0]
             if asyncio.get_event_loop().time() >= release_at:
                 self._pending.popleft()
                 self.last_frame = frame
-                released = True
 
-        if released:
-            pts, time_base = await self.next_timestamp()
-            result = self.last_frame
-            result.pts = pts
-            result.time_base = time_base
-            return result
-
-        return await super().recv()
+        pts, time_base = await self.next_timestamp()
+        result = self.last_frame
+        result.pts = pts
+        result.time_base = time_base
+        return result
 
     async def flush(self) -> None:
         """Discard all pending frames and flush buffered audio."""
