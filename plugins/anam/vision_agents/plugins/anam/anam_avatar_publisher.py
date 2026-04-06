@@ -19,6 +19,7 @@ from vision_agents.core.llm.events import (
     RealtimeAudioOutputDoneEvent,
     RealtimeAudioOutputEvent,
 )
+from vision_agents.core.llm.realtime import Realtime
 from vision_agents.core.processors.base_processor import AudioPublisher, VideoPublisher
 from vision_agents.core.tts.events import TTSAudioEvent
 from vision_agents.core.turn_detection import TurnStartedEvent
@@ -94,7 +95,9 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         self._client.on(AnamEvent.CONNECTION_CLOSED)(self._on_connection_closed)
         self._client.on(AnamEvent.SESSION_READY)(self._on_session_ready)
 
-        self._sync = AVSynchronizer(width=width, height=height)
+        self._sync = AVSynchronizer(
+            width=width, height=height, fps=30, max_queue_size=30 * 20
+        )
 
         self._connect_timeout = connect_timeout
         self._session_ready_timeout = session_ready_timeout
@@ -161,6 +164,11 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
             raise RuntimeError("Agent is not attached yet")
         return self._real_agent
 
+    def _is_stale_epoch(self, epoch: int) -> bool:
+        """Check if an event's epoch is behind the current LLM epoch."""
+        llm = self._agent.llm
+        return isinstance(llm, Realtime) and epoch != llm.epoch
+
     async def _video_receiver(self) -> None:
         async for frame in self._session.video_frames():
             await self._sync.write_video(frame)
@@ -201,13 +209,16 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         @self._agent.events.subscribe
         async def on_realtime_audio(event: RealtimeAudioOutputEvent):
             async with self._send_lock:
-                if event.data is not None:
+                if event.data is not None and not self._is_stale_epoch(event.epoch):
                     await self._send_audio(event.data)
 
         @self._agent.events.subscribe
-        async def on_realtime_audio_done(_: RealtimeAudioOutputDoneEvent):
+        async def on_realtime_audio_done(event: RealtimeAudioOutputDoneEvent):
             async with self._send_lock:
                 await self._flush_audio()
+                if event.interrupted:
+                    await self._sync.flush()
+                    await self._session.interrupt()
 
         @self._agent.events.subscribe
         async def on_turn_started(event: TurnStartedEvent):
