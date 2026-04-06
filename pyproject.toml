@@ -118,7 +118,6 @@ dev = [
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
     "asgi-lifespan>=2.1.0",
-    "mistralai[realtime]>=1.12.0",
     "testcontainers[redis]>=4.0.0",
     "redis[hiredis]>=5.0.0",
 ]
