@@ -55,7 +55,7 @@ class _SyncedVideoTrack(QueuedVideoTrack):
         if self._stopped:
             return
         frame = ensure_even_dimensions(frame)
-        release_at = asyncio.get_event_loop().time() + self._audio_track.buffered
+        release_at = asyncio.get_running_loop().time() + self._audio_track.buffered
         self._pending.append((release_at, frame))
 
     async def recv(self) -> av.frame.Frame:
@@ -69,7 +69,7 @@ class _SyncedVideoTrack(QueuedVideoTrack):
 
         if self._pending:
             release_at, frame = self._pending[0]
-            if asyncio.get_event_loop().time() >= release_at:
+            if asyncio.get_running_loop().time() >= release_at:
                 self._pending.popleft()
                 self.last_frame = frame
 
