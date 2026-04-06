@@ -258,9 +258,10 @@ class Realtime(realtime.Realtime):
                 text=user_transcript_event.transcript, mode="final", original=event
             )
         elif et == "input_audio_buffer.speech_started":
-            # Validate event but don't need to store it
             InputAudioBufferSpeechStartedEvent.model_validate(event)
-            # await self.output_track.flush()
+            await self.interrupt()
+            self._emit_audio_output_done_event(interrupted=True)
+
         elif et == "response.output_item.added":
             # Start tracking a function call (arguments will stream in)
             item = event.get("item", {})
@@ -307,6 +308,8 @@ class Realtime(realtime.Realtime):
                 raise Exception(
                     "OpenAI realtime failure %s", response_done_event.response
                 )
+            elif response_done_event.response.status == "cancelled":
+                logger.debug("Response cancelled (user interrupted)")
         elif et == "session.updated":
             # Update session with new data
             session_updated_event = SessionUpdatedEvent(**event)
