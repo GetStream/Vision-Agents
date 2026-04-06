@@ -171,7 +171,10 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
 
     async def _video_receiver(self) -> None:
         async for frame in self._session.video_frames():
-            await self._sync.write_video(frame)
+            try:
+                await self._sync.write_video(frame)
+            except Exception:
+                logger.warning("Failed to write video frame", exc_info=True)
 
     async def _audio_receiver(self) -> None:
         async for frame in self._session.audio_frames():
