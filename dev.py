@@ -102,7 +102,7 @@ def mypy_plugins():
     """Run mypy type checks on all plugins."""
     click.echo("Running mypy on plugins...")
     run(
-        "uv run mypy --install-types --non-interactive --exclude 'plugins/[^/]+/tests/' --exclude 'plugins/getstream/.*/sfu_events\\.py' plugins",
+        "uv run mypy --install-types --non-interactive --exclude 'plugins/[^/]+/tests/' --exclude 'plugins/getstream/.*/sfu_events\\.py' --exclude 'plugins/getstream/_generate_sfu_events\\.py' plugins",
     )
 
 
