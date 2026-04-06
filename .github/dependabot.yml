@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "cron"
+      # Check every day at 9am UTC
+      cronjob: "0 9 * * *"
+
+    # Track only direct dependencies used in the project to reduce noise in PRs.
+    allow:
+      - dependency-type: "direct"
