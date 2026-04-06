@@ -59,22 +59,30 @@ class _SyncedVideoTrack(QueuedVideoTrack):
         self._pending.append((release_at, frame))
 
     async def recv(self) -> av.frame.Frame:
-        """Return the next frame, releasing it only once its delay has elapsed."""
+        """Return the next frame, releasing it only once its delay has elapsed.
+
+        When repeating the last frame, pacing matches ``QueuedVideoTrack`` (up to
+        ``1/self.fps`` before advancing timestamps).
+        """
         if self._stopped:
             raise VideoTrackClosedError("Track stopped")
 
-        pts, time_base = await self.next_timestamp()
-
+        released = False
         if self._pending:
             release_at, frame = self._pending[0]
             if asyncio.get_event_loop().time() >= release_at:
                 self._pending.popleft()
                 self.last_frame = frame
+                released = True
 
-        result = self.last_frame
-        result.pts = pts
-        result.time_base = time_base
-        return result
+        if released:
+            pts, time_base = await self.next_timestamp()
+            result = self.last_frame
+            result.pts = pts
+            result.time_base = time_base
+            return result
+
+        return await super().recv()
 
     async def flush(self) -> None:
         """Discard all pending frames and flush buffered audio."""
