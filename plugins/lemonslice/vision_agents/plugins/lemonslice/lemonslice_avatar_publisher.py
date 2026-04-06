@@ -9,8 +9,10 @@ from vision_agents.core.llm.events import (
     RealtimeAudioOutputDoneEvent,
     RealtimeAudioOutputEvent,
 )
+from vision_agents.core.llm.realtime import Realtime
 from vision_agents.core.processors.base_processor import AudioPublisher, VideoPublisher
 from vision_agents.core.tts.events import TTSAudioEvent
+from vision_agents.core.turn_detection import TurnStartedEvent
 from vision_agents.core.utils.av_synchronizer import AVSynchronizer
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
@@ -112,6 +114,11 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
             self._connected = False
             logger.debug("LemonSlice avatar publisher closed")
 
+    def _is_stale_epoch(self, epoch: int) -> bool:
+        """Check if an event's epoch is behind the current LLM epoch."""
+        llm = self._agent.llm
+        return isinstance(llm, Realtime) and epoch != llm.epoch
+
     def _subscribe_to_audio_events(self) -> None:
         @self._agent.events.subscribe
         async def on_tts_audio(event: TTSAudioEvent):
@@ -125,13 +132,26 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
         @self._agent.events.subscribe
         async def on_realtime_audio(event: RealtimeAudioOutputEvent):
             async with self._send_lock:
-                if event.data is not None:
+                if event.data is not None and not self._is_stale_epoch(event.epoch):
                     await self._rtc_manager.send_audio(event.data)
 
         @self._agent.events.subscribe
-        async def on_realtime_audio_done(_: RealtimeAudioOutputDoneEvent):
+        async def on_realtime_audio_done(event: RealtimeAudioOutputDoneEvent):
             async with self._send_lock:
                 await self._rtc_manager.flush()
+                if event.interrupted:
+                    await self._sync.flush()
+                    await self._rtc_manager.interrupt()
+
+        @self._agent.events.subscribe
+        async def on_turn_started(event: TurnStartedEvent):
+            if (
+                event.participant
+                and event.participant.user_id != self._agent.agent_user.id
+            ):
+                async with self._send_lock:
+                    await self._sync.flush()
+                    await self._rtc_manager.interrupt()
 
     async def _connect(self) -> None:
         credentials = self._rtc_manager.generate_credentials()
