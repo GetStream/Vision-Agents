@@ -59,6 +59,22 @@ QuantizationType = Literal["none", "4bit", "8bit"]
 TorchDtypeType = Literal["auto", "float16", "bfloat16", "float32"]
 
 
+def resolve_device(config: DeviceType) -> DeviceType:
+    """Resolve ``"auto"`` to a concrete device based on available hardware.
+
+    ``device_map="auto"`` in HuggingFace only handles CPU/CUDA splits and does
+    not place models on MPS.  This helper picks the best concrete device so
+    callers can use the MPS path explicitly when running on Apple Silicon.
+    """
+    if config != "auto":
+        return config
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def resolve_torch_dtype(config: TorchDtypeType) -> torch.dtype:
     """Map a string config to a concrete ``torch.dtype``.
 
@@ -228,15 +244,14 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
     def _load_model_sync(self) -> ModelResources:
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
+        device = resolve_device(self._device_config)
 
         load_kwargs: dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
             "torch_dtype": torch_dtype,
         }
 
-        if self._device_config == "auto":
-            load_kwargs["device_map"] = "auto"
-        elif self._device_config == "cuda":
+        if device == "cuda":
             load_kwargs["device_map"] = {"": "cuda"}
 
         quant_config = get_quantization_config(self._quantization)
@@ -245,7 +260,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         model = AutoModelForCausalLM.from_pretrained(self.model_id, **load_kwargs)
 
-        if self._device_config == "mps":
+        if device == "mps":
             cast(torch.nn.Module, model).to(torch.device("mps"))
 
         model.eval()
