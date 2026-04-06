@@ -1,20 +1,26 @@
 """
-Gemma 4 Resale Price Advisor
+Voice AI with Gemma 4 - Local Tool-Calling Agent
 
-Point your camera at household items and get resale price suggestions.
-Uses Gemma 4 VLM to identify items and search the web for pricing.
+A real-time voice assistant powered by Gemma 4 running entirely on your hardware.
+Demonstrates how to build a voice AI agent with tool calling using local models:
 
-Creates an agent that uses:
-- TransformersVLM for visual analysis and price estimation (Gemma 4 E4B)
+- Gemma 4 E2B for text generation and tool calling (~5GB)
 - Deepgram for speech-to-text and text-to-speech
-- GetStream for edge/real-time communication
+- GetStream for real-time communication
+
+The user speaks naturally and the agent responds with voice, calling tools
+to look up live information (weather, web searches, unit conversions, etc).
 
 Requirements:
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
 - DEEPGRAM_API_KEY environment variable
-- GPU with ~8GB VRAM recommended (or Apple Silicon with 16GB+ unified memory)
+- GPU with ~6GB VRAM recommended (or Apple Silicon with 16GB+ unified memory)
 
-First run will download Gemma 4 E4B (~8GB).
+First run will download Gemma 4 E2B (~5GB).
+
+Note: Gemma 4 also supports vision (VLM) via TransformersVLM for camera-based
+use-cases, but the multimodal variant (E4B) requires ~16GB VRAM / 32GB unified
+memory. See TransformersVLM in the huggingface plugin for details.
 """
 
 import asyncio
@@ -32,60 +38,48 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 SYSTEM_PROMPT = (
-    "You are a resale price advisor. The user is moving house and selling items. "
-    "You can see their camera feed. When they ask about an item, identify what you "
-    "see and use the search_web tool to look up its current resale value. "
-    "Then give a specific price range in USD with a brief justification. "
-    "Speak naturally, no lists or formatting. Never use emojis or special characters. "
-    "Keep responses under 50 words."
+    "You are a helpful voice assistant running on a local Gemma 4 model. "
+    "You can search the web and check the weather using your tools. "
+    "Always use a tool when the user asks a factual question you're unsure about. "
+    "Speak naturally, as if having a conversation. No lists or formatting. "
+    "Never use emojis or special characters. Keep responses under 50 words."
 )
+
+async def get_weather(location: str) -> str:
+    """Get current weather for a location using wttr.in."""
+    logger.info(f"  [tool] get_weather({location!r})")
+    encoded = urllib.parse.quote_plus(location)
+    url = f"https://wttr.in/{encoded}?format=%C+%t+%h+%w"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                return await resp.text()
+    except (aiohttp.ClientError, TimeoutError) as e:
+        logger.error(f"Weather lookup failed: {e}")
+        return f"Weather lookup failed: {e}"
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create an agent that identifies items and searches for resale prices."""
-    vlm = huggingface.TransformersVLM(
-        model="google/gemma-3n-E4B-it",
-        max_new_tokens=200,
-        fps=1,
-        frame_buffer_seconds=5,
-        max_frames=1,
-        do_sample=False,
+    """Create a voice AI agent with Gemma 4 and tool calling."""
+    llm = huggingface.TransformersLLM(
+        model="google/gemma-4-E2B-it",
     )
 
-    @vlm.register_function(
-        "search_web",
-        description="Search the web for resale prices of an item. Pass a search query.",
-    )
-    async def search_web(query: str) -> str:
-        logger.info(f"  [tool] search_web({query!r})")
-        encoded = urllib.parse.quote_plus(query)
-        url = f"https://html.duckduckgo.com/html/?q={encoded}"
-        headers: dict[str, str] = {
-            "User-Agent": "Mozilla/5.0 (compatible; ResaleAdvisor/1.0)"
-        }
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    text = await resp.text()
-            snippets: list[str] = []
-            for chunk in text.split('class="result__snippet"'):
-                if len(snippets) >= 5:
-                    break
-                if snippets or chunk != text.split('class="result__snippet"')[0]:
-                    clean = chunk.split("</a>")[0].split(">")[-1]
-                    clean = clean.replace("<b>", "").replace("</b>", "").strip()
-                    if clean:
-                        snippets.append(clean)
-            return "\n".join(snippets) if snippets else f"No results found for: {query}"
-        except (aiohttp.ClientError, TimeoutError) as e:
-            logger.error(f"Web search failed: {e}")
-            return f"Search failed: {e}"
+    llm.register_function(
+        "get_weather",
+        description=(
+            "Get current weather for a location. "
+            "Pass a city name like 'San Francisco' or 'London'."
+        ),
+    )(get_weather)
 
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Resale Price Advisor", id="agent"),
+        agent_user=User(name="Voice Assistant", id="agent"),
         instructions=SYSTEM_PROMPT,
-        llm=vlm,
+        llm=llm,
         tts=deepgram.TTS(),
         stt=deepgram.STT(),
     )
@@ -97,12 +91,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     """Join the call and run the agent."""
     call = await agent.create_call(call_type, call_id)
 
-    logger.info("Starting Resale Price Advisor...")
+    logger.info("Starting Voice Assistant...")
 
     async with agent.join(call):
         await asyncio.sleep(2)
         await agent.llm.simple_response(
-            text="Greet the user briefly. Tell them to show items to the camera and ask you for a price.",
+            text="Greet the user briefly. Tell them you can help answer questions, search the web, and check the weather.",
         )
         await agent.finish()
 
