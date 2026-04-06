@@ -12,12 +12,12 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "huggingface_hub<1.0",
+    "huggingface_hub>=0.20.0,<2",
 ]
 
 [project.optional-dependencies]
 transformers = [
-    "transformers>=4.45.0,<5",
+    "transformers>=5.3.0,<6",
     "torch>=2.0.0,<3",
     "accelerate>=0.25.0,<2",
     "supervision>=0.21.0,<1",
