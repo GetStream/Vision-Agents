@@ -12,7 +12,7 @@ from anam import (
     PersonaConfig,
     Session,
 )
-from getstream.video.rtc import audio_track
+from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import Agent
 from vision_agents.core.llm.events import (
@@ -22,6 +22,7 @@ from vision_agents.core.llm.events import (
 from vision_agents.core.processors.base_processor import AudioPublisher, VideoPublisher
 from vision_agents.core.tts.events import TTSAudioEvent
 from vision_agents.core.turn_detection import TurnStartedEvent
+from vision_agents.core.utils.av_synchronizer import AVSynchronizer
 from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
@@ -78,11 +79,6 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         if not avatar_id:
             raise ValueError("Anam avatar ID not provided")
 
-        if width <= 0 or width % 2 != 0:
-            raise ValueError("width must be a positive even integer")
-        if height <= 0 or height % 2 != 0:
-            raise ValueError("height must be a positive even integer")
-
         self._client = AnamClient(
             api_key=api_key,
             persona_config=PersonaConfig(
@@ -98,10 +94,7 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         self._client.on(AnamEvent.CONNECTION_CLOSED)(self._on_connection_closed)
         self._client.on(AnamEvent.SESSION_READY)(self._on_session_ready)
 
-        self._video_track = QueuedVideoTrack(width=width, height=height)
-        self._audio_track = audio_track.AudioStreamTrack(
-            sample_rate=48000, channels=2, format="s16"
-        )
+        self._sync = AVSynchronizer(width=width, height=height)
 
         self._connect_timeout = connect_timeout
         self._session_ready_timeout = session_ready_timeout
@@ -113,16 +106,16 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         self._real_agent: Agent | None = None
         self._audio_input_stream: AgentAudioInputStream | None = None
         self._send_lock = asyncio.Lock()
-        self._audio_receiver_task: asyncio.Task | None = None
-        self._video_receiver_task: asyncio.Task | None = None
+        self._audio_receiver_task: asyncio.Task[None] | None = None
+        self._video_receiver_task: asyncio.Task[None] | None = None
 
     def publish_video_track(self) -> QueuedVideoTrack:
         """Return the video track that receives avatar video frames."""
-        return self._video_track
+        return self._sync.video_track
 
-    def publish_audio_track(self) -> audio_track.AudioStreamTrack:
+    def publish_audio_track(self) -> AudioStreamTrack:
         """Return the audio track that receives avatar audio frames."""
-        return self._audio_track
+        return self._sync.audio_track
 
     def attach_agent(self, agent: Agent) -> None:
         """
@@ -144,10 +137,9 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         Close the Anam avatar publisher, cancel audio & video processing tasks
         and release resources.
         """
-        if self._audio_receiver_task is not None:
-            await cancel_and_wait(self._audio_receiver_task)
-        if self._video_receiver_task is not None:
-            await cancel_and_wait(self._video_receiver_task)
+        for task in (self._audio_receiver_task, self._video_receiver_task):
+            if task is not None:
+                await cancel_and_wait(task)
 
         try:
             await self._exit_stack.aclose()
@@ -171,17 +163,12 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
 
     async def _video_receiver(self) -> None:
         async for frame in self._session.video_frames():
-            try:
-                await self._video_track.add_frame(frame)
-            except Exception:
-                logger.warning(
-                    "Failed to send video frame to video track", exc_info=True
-                )
+            await self._sync.write_video(frame)
 
     async def _audio_receiver(self) -> None:
         async for frame in self._session.audio_frames():
             try:
-                await self._audio_track.write(pcm=PcmData.from_av_frame(frame))
+                await self._sync.write_audio(PcmData.from_av_frame(frame))
             except Exception:
                 logger.warning("Failed to send audio frame", exc_info=True)
 
@@ -193,7 +180,7 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
                 )
             )
         for chunk in pcm.resample(target_channels=1, target_sample_rate=24000).chunks(
-            24000
+            2400  # 100ms
         ):
             await self._audio_input_stream.send_audio_chunk(chunk.to_bytes())
 
@@ -228,8 +215,8 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
                 event.participant
                 and event.participant.user_id != self._agent.agent_user.id
             ):
-                # Interrupt the avatar when the person starts speaking
                 async with self._send_lock:
+                    await self._sync.flush()
                     await self._session.interrupt()
 
     async def _connect(self) -> None:
@@ -240,7 +227,6 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
 
         await self._wait_connected()
         await self._wait_session_ready()
-
         if self._audio_receiver_task is None:
             self._audio_receiver_task = asyncio.create_task(self._audio_receiver())
             self._audio_receiver_task.add_done_callback(_task_done_callback)
