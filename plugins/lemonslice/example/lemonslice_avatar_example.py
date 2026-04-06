@@ -5,6 +5,7 @@ lip-synced video from the TTS audio stream.
 
 Required environment variables:
     LEMONSLICE_API_KEY
+    LEMONSLICE_AGENT_ID
     LIVEKIT_URL
     LIVEKIT_API_KEY
     LIVEKIT_API_SECRET
@@ -25,6 +26,9 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
+    agent_id = os.getenv("LEMONSLICE_AGENT_ID")
+    if not agent_id:
+        raise ValueError("Environment variable LEMONSLICE_AGENT_ID must be set.")
     return Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Avatar Agent", id="agent"),
@@ -36,9 +40,7 @@ async def create_agent(**kwargs) -> Agent:
         tts=cartesia.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),
         processors=[
-            lemonslice.LemonSliceAvatarPublisher(
-                agent_id=os.getenv("LEMONSLICE_AGENT_ID"),
-            ),
+            lemonslice.LemonSliceAvatarPublisher(agent_id=agent_id),
         ],
     )
 
