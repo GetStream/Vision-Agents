@@ -1,0 +1,17 @@
+[project]
+name = "cricket-umpire"
+version = "0.1.0"
+description = "AI-powered Third Umpire agent for real-time women's cricket decision making"
+requires-python = ">=3.12"
+dependencies = [
+    "vision-agents[gemini,ultralytics,getstream]",
+    "python-dotenv",
+    "opencv-python",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools]
+py-modules = ["cricket_umpire"]
