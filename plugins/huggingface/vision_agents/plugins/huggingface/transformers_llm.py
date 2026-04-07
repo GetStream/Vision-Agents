@@ -190,8 +190,8 @@ class TransformersLLM(LocalTextLLM[ModelResources]):
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        device = next(model.parameters()).device
-        return ModelResources(model=model, tokenizer=tokenizer, device=device)
+        torch_device = next(model.parameters()).device
+        return ModelResources(model=model, tokenizer=tokenizer, device=torch_device)
 
     def _apply_template(
         self,
@@ -251,7 +251,7 @@ class TransformersLLM(LocalTextLLM[ModelResources]):
                     loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
         streamer = _AsyncBridgeStreamer(
-            cast(AutoTokenizer, tokenizer),
+            cast(PreTrainedTokenizerBase, tokenizer),
             skip_prompt=True,
             skip_special_tokens=True,
         )
@@ -388,7 +388,7 @@ class TransformersLLM(LocalTextLLM[ModelResources]):
 
         input_length = prepared_input["input_ids"].shape[1]
         generated_ids = outputs[0][input_length:]
-        text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+        text = str(tokenizer.decode(generated_ids, skip_special_tokens=True))
 
         if emit_events:
             latency_ms = (time.perf_counter() - request_start) * 1000

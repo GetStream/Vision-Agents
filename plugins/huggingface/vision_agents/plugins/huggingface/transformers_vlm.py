@@ -128,8 +128,8 @@ class TransformersVLM(LocalVLM[VLMResources]):
             self.model_id, trust_remote_code=self._trust_remote_code
         )
 
-        device = next(model.parameters()).device
-        return VLMResources(model=model, processor=processor, device=device)
+        torch_device = next(model.parameters()).device
+        return VLMResources(model=model, processor=processor, device=torch_device)
 
     def _generate_with_frames(
         self,

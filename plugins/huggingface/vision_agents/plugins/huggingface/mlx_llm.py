@@ -54,8 +54,8 @@ class MlxLLM(LocalTextLLM[MlxModelResources]):
     _plugin_name = "mlx_llm"
 
     def _load_model_sync(self) -> MlxModelResources:
-        model, tokenizer = load(self.model_id)
-        return MlxModelResources(model=model, tokenizer=tokenizer)
+        result = load(self.model_id)
+        return MlxModelResources(model=result[0], tokenizer=result[1])
 
     def _apply_template(
         self,

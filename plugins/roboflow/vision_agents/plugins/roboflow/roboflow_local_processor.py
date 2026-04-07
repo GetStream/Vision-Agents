@@ -282,7 +282,7 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
             annotated_image = annotate_image(
                 image,
                 detections,
-                classes=self._model.class_names,
+                classes=dict(enumerate(self._model.class_names)),
                 dim_factor=self.dim_background_factor,
                 text_scale=self._annotate_text_scale,
                 text_position=self._annotate_text_position,
@@ -338,7 +338,7 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
             # Filter only classes we want to detect
             if self._classes:
                 classes_ids = [
-                    k for k, v in model.class_names.items() if v in self._classes
+                    i for i, v in enumerate(model.class_names) if v in self._classes
                 ]
                 detected_class_ids = (
                     detected_obj.class_id if detected_obj.class_id is not None else []
