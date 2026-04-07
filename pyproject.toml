@@ -100,7 +100,7 @@ exclude = [
 [dependency-groups]
 dev = [
     "ruff",
-    "mypy[mypyc,faster-cache]>=1.19,<1.20", # TODO: unpin later, need to update code before using 1.20
+    "mypy[mypyc,faster-cache]>=1.19,<1.21", # TODO: unpin later, need to update code before using 1.20
     "pip>=25.2",
     "pytest",
     "pytest-xdist",
