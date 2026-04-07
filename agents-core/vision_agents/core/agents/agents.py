@@ -1097,30 +1097,19 @@ class Agent:
         self,
         queues: dict[str, tuple[Participant, AudioQueue]],
     ) -> AsyncIterator[tuple[Participant, PcmData]]:
-        """Poll all participant audio queues in parallel.
+        """Poll all participant audio queues sequentially.
 
-        Yields (Participant, PcmData) tuples as each queue produces a chunk.
-        Queues that time out are silently skipped. On exit, any remaining
-        in-flight tasks are cancelled to avoid unhandled exceptions.
+        Yields (Participant, PcmData) tuples for each queue that has data ready.
+        Queues that time out are silently skipped.
         """
-
-        async def _poll(participant: Participant, queue: AudioQueue):
-            pcm = await asyncio.wait_for(
-                queue.get_duration(duration_ms=20), timeout=0.001
-            )
-            return participant, pcm
-
-        tasks = [asyncio.create_task(_poll(p, q)) for p, q in queues.values()]
-        try:
-            for fut in asyncio.as_completed(tasks):
-                try:
-                    yield await fut
-                except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                    continue
-        finally:
-            for t in tasks:
-                if not t.done():
-                    t.cancel()
+        for participant, queue in queues.values():
+            try:
+                pcm = await asyncio.wait_for(
+                    queue.get_duration(duration_ms=20), timeout=0.001
+                )
+                yield participant, pcm
+            except (TimeoutError, asyncio.QueueEmpty):
+                continue
 
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from per-participant queues."""
