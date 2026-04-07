@@ -27,6 +27,16 @@ transformers-quantized = [
     "vision-agents-plugins-huggingface[transformers]",
     "bitsandbytes>=0.41.0",
 ]
+mlx = [
+    "mlx>=0.22.0",
+    "mlx-lm>=0.22.0",
+]
+mlx-vlm = [
+    "mlx>=0.22.0",
+    "mlx-vlm>=0.4.0",
+    "av",
+    "aiortc",
+]
 
 [project.urls]
 Documentation = "https://visionagents.ai/"

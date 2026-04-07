@@ -17,9 +17,7 @@ Example:
 
 import asyncio
 import gc
-import json
 import logging
-import re
 import time
 import uuid
 from threading import Thread
@@ -36,23 +34,20 @@ from transformers import (
     TextStreamer,
 )
 from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-from vision_agents.core.warmup import Warmable
+from vision_agents.core.llm.llm import LLMResponseEvent
 
 from . import events
-from ._tool_call_loop import (
-    convert_tools_to_chat_completions_format,
-    run_tool_call_loop,
+from ._local_inference import LocalTextLLM
+
+# Re-exported for backward compatibility (tests import from this module).
+from ._local_inference import (
+    extract_tool_calls_from_text as extract_tool_calls_from_text,
 )
 
 logger = logging.getLogger(__name__)
-
-PLUGIN_NAME = "transformers_llm"
 
 DeviceType = Literal["auto", "cuda", "mps", "cpu"]
 QuantizationType = Literal["none", "4bit", "8bit"]
@@ -116,69 +111,6 @@ def get_quantization_config(quantization: QuantizationType) -> Optional[Any]:
     return None
 
 
-convert_tools_to_transformers_format = convert_tools_to_chat_completions_format
-
-
-def _extract_json_objects(text: str) -> list[dict[str, Any]]:
-    """Extract all top-level JSON objects from *text* using ``raw_decode``.
-
-    Handles arbitrarily nested braces, unlike a regex approach.
-    """
-    decoder = json.JSONDecoder()
-    objects: list[dict[str, Any]] = []
-    idx = 0
-    while idx < len(text):
-        idx = text.find("{", idx)
-        if idx == -1:
-            break
-        try:
-            obj, end = decoder.raw_decode(text, idx)
-            if isinstance(obj, dict):
-                objects.append(obj)
-            idx = end
-        except json.JSONDecodeError:
-            idx += 1
-    return objects
-
-
-def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
-    """Parse tool calls from raw model output text.
-
-    Supports:
-    - Hermes format: ``<tool_call>{"name": ..., "arguments": ...}</tool_call>``
-    - Generic JSON: ``{"name": ..., "arguments": ...}``
-    """
-    tool_calls: list[NormalizedToolCallItem] = []
-
-    hermes_pattern = r"<tool_call>\s*(.*?)\s*</tool_call>"
-    for match in re.finditer(hermes_pattern, text, re.DOTALL):
-        for obj in _extract_json_objects(match.group(1)):
-            tool_calls.append(
-                {
-                    "type": "tool_call",
-                    "id": obj.get("id", str(uuid.uuid4())),
-                    "name": obj.get("name", ""),
-                    "arguments_json": obj.get("arguments", {}),
-                }
-            )
-
-    if tool_calls:
-        return tool_calls
-
-    for obj in _extract_json_objects(text):
-        if "name" in obj and "arguments" in obj:
-            tool_calls.append(
-                {
-                    "type": "tool_call",
-                    "id": str(uuid.uuid4()),
-                    "name": obj["name"],
-                    "arguments_json": obj["arguments"],
-                }
-            )
-
-    return tool_calls
-
-
 class ModelResources:
     """Container for a loaded model, tokenizer, and target device."""
 
@@ -193,7 +125,7 @@ class ModelResources:
         self.device = device
 
 
-class TransformersLLM(LLM, Warmable[ModelResources]):
+class TransformersLLM(LocalTextLLM[ModelResources]):
     """Local LLM inference using HuggingFace Transformers.
 
     Unlike ``HuggingFaceLLM`` (API-based), this runs models directly on your
@@ -209,6 +141,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         max_tool_rounds: Maximum tool-call rounds per response (default 3).
     """
 
+    _plugin_name = "transformers_llm"
+
     def __init__(
         self,
         model: str,
@@ -219,28 +153,11 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         max_new_tokens: int = 512,
         max_tool_rounds: int = 3,
     ):
-        super().__init__()
-
-        self.model_id = model
+        super().__init__(model, max_new_tokens, max_tool_rounds)
         self._device_config = device
         self._quantization = quantization
         self._torch_dtype_config = torch_dtype
         self._trust_remote_code = trust_remote_code
-        self._max_new_tokens = max_new_tokens
-        self._max_tool_rounds = max_tool_rounds
-
-        self._resources: Optional[ModelResources] = None
-
-        self.events.register_events_from_module(events)
-
-    async def on_warmup(self) -> ModelResources:
-        logger.info(f"Loading model: {self.model_id}")
-        resources = await asyncio.to_thread(self._load_model_sync)
-        logger.info(f"Model loaded on device: {resources.device}")
-        return resources
-
-    def on_warmed_up(self, resource: ModelResources) -> None:
-        self._resources = resource
 
     def _load_model_sync(self) -> ModelResources:
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
@@ -276,50 +193,14 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         device = next(model.parameters()).device
         return ModelResources(model=model, tokenizer=tokenizer, device=device)
 
-    async def simple_response(
+    def _apply_template(
         self,
-        text: str,
-        participant: Optional[Any] = None,
-    ) -> LLMResponseEvent:
-        if self._conversation is None:
-            logger.warning(
-                "Conversation not initialized. Call set_conversation() first."
-            )
-            return LLMResponseEvent(original=None, text="")
-
-        if participant is None:
-            await self._conversation.send_message(
-                role="user", user_id="user", content=text
-            )
-
-        messages = self._build_messages()
-        return await self.create_response(messages=messages, stream=True)
-
-    async def create_response(
-        self,
-        messages: Optional[list[dict[str, Any]]] = None,
-        *,
-        stream: bool = True,
-        max_new_tokens: Optional[int] = None,
-        temperature: float = 0.7,
-        do_sample: bool = True,
-        **kwargs: Any,
-    ) -> LLMResponseEvent:
-        if self._resources is None:
-            logger.error("Model not loaded. Ensure warmup() was called.")
-            return LLMResponseEvent(original=None, text="")
-
-        if messages is None:
-            messages = self._build_messages()
-
-        model = self._resources.model
+        messages: list[dict[str, Any]],
+        tools_param: Optional[list[dict[str, Any]]],
+    ) -> tuple[Any, bool] | None:
+        assert self._resources is not None
         tokenizer = self._resources.tokenizer
         device = self._resources.device
-
-        tools_param: Optional[list[dict[str, Any]]] = None
-        tools_spec = self.get_available_functions()
-        if tools_spec:
-            tools_param = convert_tools_to_transformers_format(tools_spec)
 
         template_kwargs: dict[str, Any] = {
             "add_generation_prompt": True,
@@ -334,109 +215,35 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 dict[str, Any],
                 tokenizer.apply_chat_template(messages, **template_kwargs),
             )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            return inputs, tools_param is not None
         except (jinja2.TemplateError, TypeError, ValueError) as e:
             if tools_param:
                 logger.warning(
-                    f"apply_chat_template failed with tools, retrying without: {e}"
+                    "apply_chat_template failed with tools, retrying without: %s", e
                 )
                 template_kwargs.pop("tools", None)
                 inputs = cast(
                     dict[str, Any],
                     tokenizer.apply_chat_template(messages, **template_kwargs),
                 )
-                tools_param = None
-            else:
-                logger.exception("Failed to apply chat template")
-                return LLMResponseEvent(original=None, text="")
-
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        max_tokens = max_new_tokens or self._max_new_tokens
-
-        # When tools are registered, always suppress streaming events and use
-        # non-streaming generation. The model output may contain tool call
-        # markup (e.g. <tool_call>…</tool_call>) that must not be spoken by
-        # TTS.  We only emit the completed event once we confirm the response
-        # contains no tool calls (i.e. the final natural-language answer).
-        is_tool_followup = kwargs.pop("_tool_followup", False)
-        suppress_events = tools_param is not None
-
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=self.model_id,
-                streaming=stream and not suppress_events,
-            )
-        )
-
-        if stream and not suppress_events:
-            result = await self._generate_streaming(
-                model, tokenizer, inputs, max_tokens, temperature, do_sample
-            )
-        else:
-            result = await self._generate_non_streaming(
-                model,
-                tokenizer,
-                inputs,
-                max_tokens,
-                temperature,
-                do_sample,
-                emit_events=not suppress_events,
-            )
-
-        if suppress_events and result.text:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("Raw model output (tools registered): %s", result.text)
-            tool_calls = extract_tool_calls_from_text(result.text)
-            if tool_calls:
-                if is_tool_followup:
-                    # Return to run_tool_call_loop — it will handle these
-                    # tool calls in the next round without nesting loops.
-                    return result
-                return await self._handle_tool_calls(tool_calls, messages, kwargs)
-            # No tool calls — this is the final answer. Emit events
-            # that were suppressed during generation. Only emit a
-            # synthetic chunk when the caller requested streaming
-            # (needed for streaming-TTS sentence buffering).
-            response_id = str(uuid.uuid4())
-            if stream:
-                self.events.send(
-                    LLMResponseChunkEvent(
-                        plugin_name=PLUGIN_NAME,
-                        content_index=None,
-                        item_id=response_id,
-                        output_index=0,
-                        sequence_number=0,
-                        delta=result.text,
-                        is_first_chunk=True,
-                        time_to_first_token_ms=None,
-                    )
-                )
-            self.events.send(
-                LLMResponseCompletedEvent(
-                    plugin_name=PLUGIN_NAME,
-                    original=None,
-                    text=result.text,
-                    item_id=response_id,
-                    model=self.model_id,
-                )
-            )
-
-        return result
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+                return inputs, False
+            logger.exception("Failed to apply chat template")
+            return None
 
     async def _generate_streaming(
-        self,
-        model: PreTrainedModel,
-        tokenizer: PreTrainedTokenizerBase,
-        inputs: dict[str, Any],
-        max_new_tokens: int,
-        temperature: float,
-        do_sample: bool,
+        self, prepared_input: Any, max_tokens: int, temperature: float
     ) -> LLMResponseEvent:
+        assert self._resources is not None
+        model = self._resources.model
+        tokenizer = self._resources.tokenizer
+
         loop = asyncio.get_running_loop()
         async_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
         class _AsyncBridgeStreamer(TextStreamer):
-            """Bridges token text to an ``asyncio.Queue`` without blocking the event loop."""
+            """Bridges token text to an ``asyncio.Queue``."""
 
             def on_finalized_text(self, text: str, stream_end: bool = False) -> None:
                 loop.call_soon_threadsafe(async_queue.put_nowait, text)
@@ -450,11 +257,11 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         )
 
         generate_kwargs = {
-            **inputs,
-            "max_new_tokens": max_new_tokens,
+            **prepared_input,
+            "max_new_tokens": max_tokens,
             "streamer": streamer,
-            "do_sample": do_sample,
-            "temperature": temperature if do_sample else 1.0,
+            "do_sample": True,
+            "temperature": temperature,
             "pad_token_id": tokenizer.pad_token_id,
         }
 
@@ -494,7 +301,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
             self.events.send(
                 LLMResponseChunkEvent(
-                    plugin_name=PLUGIN_NAME,
+                    plugin_name=self._plugin_name,
                     content_index=None,
                     item_id=response_id,
                     output_index=0,
@@ -511,7 +318,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         if generation_error:
             self.events.send(
                 events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
+                    plugin_name=self._plugin_name,
                     error_message=str(generation_error),
                     event_data=generation_error,
                 )
@@ -526,7 +333,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         self.events.send(
             LLMResponseCompletedEvent(
-                plugin_name=PLUGIN_NAME,
+                plugin_name=self._plugin_name,
                 original=None,
                 text=total_text,
                 item_id=response_id,
@@ -540,22 +347,23 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
     async def _generate_non_streaming(
         self,
-        model: PreTrainedModel,
-        tokenizer: PreTrainedTokenizerBase,
-        inputs: dict[str, Any],
-        max_new_tokens: int,
+        prepared_input: Any,
+        max_tokens: int,
         temperature: float,
-        do_sample: bool,
-        emit_events: bool = True,
+        emit_events: bool,
     ) -> LLMResponseEvent:
+        assert self._resources is not None
+        model = self._resources.model
+        tokenizer = self._resources.tokenizer
+
         request_start = time.perf_counter()
         response_id = str(uuid.uuid4())
 
         generate_kwargs = {
-            **inputs,
-            "max_new_tokens": max_new_tokens,
-            "do_sample": do_sample,
-            "temperature": temperature if do_sample else 1.0,
+            **prepared_input,
+            "max_new_tokens": max_tokens,
+            "do_sample": True,
+            "temperature": temperature,
             "pad_token_id": tokenizer.pad_token_id,
         }
 
@@ -571,14 +379,14 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             logger.exception("Generation failed")
             self.events.send(
                 events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
+                    plugin_name=self._plugin_name,
                     error_message=str(e),
                     event_data=e,
                 )
             )
             return LLMResponseEvent(original=None, text="")
 
-        input_length = inputs["input_ids"].shape[1]
+        input_length = prepared_input["input_ids"].shape[1]
         generated_ids = outputs[0][input_length:]
         text = tokenizer.decode(generated_ids, skip_special_tokens=True)
 
@@ -586,7 +394,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             latency_ms = (time.perf_counter() - request_start) * 1000
             self.events.send(
                 LLMResponseCompletedEvent(
-                    plugin_name=PLUGIN_NAME,
+                    plugin_name=self._plugin_name,
                     original=outputs,
                     text=text,
                     item_id=response_id,
@@ -597,47 +405,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         return LLMResponseEvent(original=outputs, text=text)
 
-    def _build_messages(self) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = []
-        if self._instructions:
-            messages.append({"role": "system", "content": self._instructions})
-        if self._conversation:
-            for msg in self._conversation.messages:
-                messages.append({"role": msg.role, "content": msg.content})
-        return messages
-
-    def _convert_tools_to_provider_format(
-        self, tools: list[ToolSchema]
-    ) -> list[dict[str, Any]]:
-        return convert_tools_to_transformers_format(tools)
-
-    async def _handle_tool_calls(
-        self,
-        tool_calls: list[NormalizedToolCallItem],
-        messages: list[dict[str, Any]],
-        kwargs: dict[str, Any],
-    ) -> LLMResponseEvent:
-        """Execute tool calls and generate follow-up responses."""
-
-        async def _generate_followup(
-            current_messages: list[dict[str, Any]],
-        ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
-            result = await self.create_response(
-                messages=current_messages, _tool_followup=True, **kwargs
-            )
-            next_calls = extract_tool_calls_from_text(result.text)
-            return result, next_calls
-
-        return await run_tool_call_loop(
-            self,
-            tool_calls,
-            messages,
-            _generate_followup,
-            max_rounds=self._max_tool_rounds,
-        )
-
     def unload(self) -> None:
-        logger.info(f"Unloading model: {self.model_id}")
+        logger.info("Unloading model: %s", self.model_id)
         if self._resources is not None:
             del self._resources.model
             del self._resources.tokenizer
@@ -647,10 +416,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             logger.debug("Cleared CUDA cache")
-
-    @property
-    def is_loaded(self) -> bool:
-        return self._resources is not None
 
     @property
     def device(self) -> Optional[torch.device]:
