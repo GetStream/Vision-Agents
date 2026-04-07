@@ -155,7 +155,7 @@ class TestTransformersVLM:
         }
 
         messages = [{"role": "user", "content": "describe this"}]
-        result = vlm._build_processor_inputs(messages, [])
+        result = vlm._build_processor_inputs(processor, messages, [], None)
         assert "input_ids" in result
 
         call_kwargs = processor.call_args.kwargs
@@ -174,7 +174,7 @@ class TestTransformersVLM:
             }
         ]
         messages = [{"role": "user", "content": "hi"}]
-        vlm._build_processor_inputs(messages, [], tools)
+        vlm._build_processor_inputs(vlm._resources.processor, messages, [], tools)
 
         call_kwargs = vlm._resources.processor.apply_chat_template.call_args.kwargs
         assert call_kwargs["tools"] is tools
@@ -205,7 +205,7 @@ class TestTransformersVLM:
             }
         ]
         result = vlm._build_processor_inputs(
-            [{"role": "user", "content": "hi"}], [], tools
+            vlm._resources.processor, [{"role": "user", "content": "hi"}], [], tools
         )
         assert "input_ids" in result
         assert call_count == 2

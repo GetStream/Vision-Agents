@@ -293,7 +293,9 @@ class TransformersDetectionProcessor(
             threshold=self.conf_threshold,
         )[0]
 
-        id2label: dict[int, str] = resources.model.config.id2label or {}
+        id2label: dict[int, str] = {
+            int(k): str(v) for k, v in (resources.model.config.id2label or {}).items()
+        }
         objects: list[DetectedObject] = []
 
         for score, label_id, box in zip(

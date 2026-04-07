@@ -19,7 +19,6 @@ vision-agents-plugins-pocket = { workspace = true }
 vision-agents-plugins-qwen = { workspace = true }
 vision-agents-plugins-xai = { workspace = true }
 vision-agents-plugins-getstream = { workspace = true }
-vision-agents-plugins-huggingface = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
@@ -38,6 +37,7 @@ vision-agents-plugins-mistral = { workspace = true }
 vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
+vision-agents-plugins-huggingface = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -120,6 +120,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "testcontainers[redis]>=4.0.0",
     "redis[hiredis]>=5.0.0",
+    "vision-agents-plugins-huggingface[mlx-vlm]",
 ]
 
 [tool.mypy]
