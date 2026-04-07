@@ -61,8 +61,8 @@ class _SyncedVideoTrack(QueuedVideoTrack):
     async def recv(self) -> av.frame.Frame:
         """Return the next frame, releasing it only once its delay has elapsed.
 
-        When repeating the last frame, pacing matches ``QueuedVideoTrack`` (up to
-        ``1/self.fps`` before advancing timestamps).
+        Pacing is enforced by ``next_timestamp()``, which sleeps to maintain
+        the frame rate.
         """
         if self._stopped:
             raise VideoTrackClosedError("Track stopped")
