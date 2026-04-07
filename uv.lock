@@ -54,11 +54,10 @@ dev = [
     { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "blockbuster", specifier = ">=1.5.5,<1.6" },
-    { name = "fastmcp", specifier = ">=2.14.0" },
+    { name = "fastmcp", specifier = ">=3.2.0" },
     { name = "hatch", specifier = ">=1.14.2" },
     { name = "hatch-vcs", specifier = ">=0.5.0" },
-    { name = "mistralai", extras = ["realtime"], specifier = ">=1.12.0" },
-    { name = "mypy", extras = ["mypyc", "faster-cache"] },
+    { name = "mypy", extras = ["mypyc", "faster-cache"], specifier = ">=1.19,<1.20" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.37.0" },
     { name = "pip", specifier = ">=25.2" },
     { name = "pre-commit" },
@@ -73,6 +72,7 @@ dev = [
     { name = "scalene", specifier = ">=1.5.54" },
     { name = "testcontainers", extras = ["redis"], specifier = ">=4.0.0" },
     { name = "toml", specifier = ">=0.10.2" },
+    { name = "vision-agents-plugins-huggingface", extras = ["mlx-vlm"], editable = "plugins/huggingface" },
 ]
 
 [[package]]
@@ -1651,7 +1651,7 @@ wheels = [
 
 [[package]]
 name = "fastmcp"
-version = "3.1.1"
+version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -1676,9 +1676,9 @@ dependencies = [
     { name = "watchfiles" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/83/c95d3bf717698a693eccb43e137a32939d2549876e884e246028bff6ecce/fastmcp-3.1.1.tar.gz", hash = "sha256:db184b5391a31199323766a3abf3a8bfbb8010479f77eca84c0e554f18655c48", size = 17347644, upload-time = "2026-03-14T19:12:20.235Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d0/32/4f1b2cfd7b50db89114949f90158b1dcc2c92a1917b9f57c0ff24e47a2f4/fastmcp-3.2.0.tar.gz", hash = "sha256:d4830b8ffc3592d3d9c76dc0f398904cf41f04910e41a0de38cc1004e0903bef", size = 26318581, upload-time = "2026-03-30T20:25:37.692Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/70/ea/570122de7e24f72138d006f799768e14cc1ccf7fcb22b7750b2bd276c711/fastmcp-3.1.1-py3-none-any.whl", hash = "sha256:8132ba069d89f14566b3266919d6d72e2ec23dd45d8944622dca407e9beda7eb", size = 633754, upload-time = "2026-03-14T19:12:22.736Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/67/684fa2d2de1e7504549d4ca457b4f854ccec3cd3be03bd86b33b599fbf58/fastmcp-3.2.0-py3-none-any.whl", hash = "sha256:e71aba3df16f86f546a4a9e513261d3233bcc92bef0dfa647bac3fa33623f681", size = 705550, upload-time = "2026-03-30T20:25:35.499Z" },
 ]
 
 [[package]]
@@ -1875,7 +1875,7 @@ http = [
 
 [[package]]
 name = "getstream"
-version = "3.0.2"
+version = "3.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1890,9 +1890,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "twirp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/fb/ef1853a5df0d6fa47269954888d80bcba39ab88237faabcd6dc1ff491256/getstream-3.0.2.tar.gz", hash = "sha256:01a242c3b7eef429e7e4574b92065eb98d6ad535512b6c37e402f39824ac6868", size = 489789, upload-time = "2026-03-27T10:24:31.388Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/76/97559901a908e662f1d94230dada0b4a1f29aa59b28922acba5617ff76e4/getstream-3.1.2.tar.gz", hash = "sha256:6ff9452dbc562e40793bea6397c8dd1dcabbec68cf8b39f537173e680e265b0c", size = 525297, upload-time = "2026-04-07T16:06:29.135Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/28/a0bf1ce06e9b193a318f5b0905ae3f325f3f87a4b5bd064ec21ec808434f/getstream-3.0.2-py3-none-any.whl", hash = "sha256:6c40cdef935629e0ab3f68ac4ee66325ba9f84db08fc9e7a8d86c69f34ca11e6", size = 296519, upload-time = "2026-03-27T10:24:32.806Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/da/bba16c058dd88084f651e1bccdc31c740455ed652a16480e287f3efaf06b/getstream-3.1.2-py3-none-any.whl", hash = "sha256:49a9ba00273f41898657eb53268afc8531a8e0c4b5e47f4a1a03ba4de3315541", size = 333203, upload-time = "2026-04-07T16:06:30.558Z" },
 ]
 
 [package.optional-dependencies]
@@ -7121,7 +7121,7 @@ requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.0.1,<4" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.1.2,<4" },
     { name = "mcp", specifier = ">=1.23.3,<2" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
@@ -7525,7 +7525,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.0.1,<4" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.1.2,<4" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7577,6 +7577,8 @@ mlx = [
     { name = "mlx-lm" },
 ]
 mlx-vlm = [
+    { name = "aiortc" },
+    { name = "av" },
     { name = "mlx" },
     { name = "mlx-vlm" },
 ]
@@ -7606,6 +7608,8 @@ dev = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'transformers'", specifier = ">=0.25.0,<2" },
     { name = "accelerate", marker = "extra == 'transformers-quantized'", specifier = ">=0.25.0,<2" },
+    { name = "aiortc", marker = "extra == 'mlx-vlm'" },
+    { name = "av", marker = "extra == 'mlx-vlm'" },
     { name = "bitsandbytes", marker = "extra == 'transformers-quantized'", specifier = ">=0.41.0" },
     { name = "huggingface-hub", specifier = ">=0.20.0,<2" },
     { name = "mlx", marker = "extra == 'mlx'", specifier = ">=0.22.0" },
