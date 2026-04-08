@@ -1394,7 +1394,7 @@ wheels = [
 
 [[package]]
 name = "decart"
-version = "0.0.8"
+version = "0.0.33"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1404,9 +1404,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/86/75e55da0dc56528b232e31186c02bf409ba9bce888e5520507a9737cdc36/decart-0.0.8.tar.gz", hash = "sha256:95ea6fc0af5896198ce76abf7d2ecf39feec77e3ebf7c5fa55e2f239879d5545", size = 198620, upload-time = "2025-11-12T17:02:42.627Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/cf/1ff0e1e13ecb744cd15eb0bd5d67285eac0907c88bbfbd29673295ece14f/decart-0.0.33.tar.gz", hash = "sha256:75479e850acc550968c5b7c9c765c5425f28261e9cd40d9b1d4d0b9d76a9cc43", size = 194239, upload-time = "2026-04-06T23:00:10.202Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/e2/e128f098aaf0981849da4684a30d53b9a84be84fc372709de14557d135e9/decart-0.0.8-py3-none-any.whl", hash = "sha256:3f1ab43ced32edcd5a494673bc8f899a559f6a5c59796da88d71c5f48b8422dc", size = 20263, upload-time = "2025-11-12T17:02:40.913Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/cb/84830615797bc83f61f7d7cc63838cf42e60d4606e6690078c33c029e637/decart-0.0.33-py3-none-any.whl", hash = "sha256:225bd1ec2881f701b6a7272351a5f3620aa80fc699f8245378a0b9cf4365e8fb", size = 38326, upload-time = "2026-04-06T23:00:08.558Z" },
 ]
 
 [[package]]
@@ -1420,7 +1420,7 @@ wheels = [
 
 [[package]]
 name = "deepgram-sdk"
-version = "6.0.1"
+version = "6.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -1429,9 +1429,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/46/6dc45de574d766a20853452d7beccf17cb0cfeb685a0f03460f1fe49b48e/deepgram_sdk-6.0.1.tar.gz", hash = "sha256:88558a43d6173a861c8b6d6491b9ee8805679fb09fb81ef51eeb6871dad77767", size = 176743, upload-time = "2026-02-24T13:52:17.163Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/91/85360d998685fee6b570e12250e5ac74ca43420d5d22b44a865b6c3f2469/deepgram_sdk-6.1.1.tar.gz", hash = "sha256:78726f42b2386f80d9fdd92a22ac59ad5558b6c0475b29bb57273ddaaa344794", size = 202224, upload-time = "2026-03-27T19:59:57.202Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/a4/53b9075816edc566694aed014d9864febedf232677b74f5d30bdde64b5de/deepgram_sdk-6.0.1-py3-none-any.whl", hash = "sha256:1b33d621b1c0b1d7a6a7b46fdc393aef4212e670521fada99764f5fb3f9d55fd", size = 490751, upload-time = "2026-02-24T13:52:15.998Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/7f/818ac35b40e38f225858cea38808c7fdd57292553479cabf0bebf7fcdc91/deepgram_sdk-6.1.1-py3-none-any.whl", hash = "sha256:329f45f2a084e8786d3e90d4a4aee630b85cf8770a3b2ee6323bedb176c47113", size = 576299, upload-time = "2026-03-27T19:59:55.949Z" },
 ]
 
 [[package]]
@@ -6724,7 +6724,7 @@ wheels = [
 
 [[package]]
 name = "turbopuffer"
-version = "1.17.0"
+version = "1.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -6737,9 +6737,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/af/ef0fb14e0b8715dcd7658ac97dce6d08faa7dba57956cc0b17f98606fefd/turbopuffer-1.17.0.tar.gz", hash = "sha256:89c18dd535e88545e75ebfef98bbd06e8bb8c3b02abf853a550319d1ca1698f7", size = 154867, upload-time = "2026-03-03T04:27:15.734Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/e5/c7df3bde9efbbafdcf10ba5ae2a0159e4a894183393e2dc02d2cb1c19792/turbopuffer-1.21.0.tar.gz", hash = "sha256:988ddfceab082190673a097edb1e32636a8958cc6ad6c5260b2990513c12ded9", size = 337493, upload-time = "2026-04-07T15:47:34.586Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/70/08/f442616e4e4ecf098f03f69a8354e2db51a277742e0ca3317997fd143dea/turbopuffer-1.17.0-py3-none-any.whl", hash = "sha256:49236d9b2f40035057fa377065ede581fbd52ee36a232a69407f11bdb521a892", size = 116628, upload-time = "2026-03-03T04:27:14.261Z" },
+    { url = "https://files.pythonhosted.org/packages/39/30/995ae0edbb748d6a98bcbb0040ed354e2df31a06092a60e986763de52893/turbopuffer-1.21.0-py3-none-any.whl", hash = "sha256:adbea8fc118138e311047571f1438b4a2ce0d67aa759c1dd33fc3b90bdf2c424", size = 122566, upload-time = "2026-04-07T15:47:35.941Z" },
 ]
 
 [[package]]
@@ -7403,7 +7403,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "decart", specifier = "==0.0.8" },
+    { name = "decart", specifier = ">=0.0.33" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7432,7 +7432,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=6.0.1,<6.1.0" },
+    { name = "deepgram-sdk", specifier = ">=6.0.1,<6.2.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -8072,7 +8072,7 @@ dev = [
 requires-dist = [
     { name = "langchain-google-genai", specifier = ">=4.2.1" },
     { name = "langchain-text-splitters", specifier = ">=1.1.1" },
-    { name = "turbopuffer", specifier = ">=1.17.0,<1.18" },
+    { name = "turbopuffer", specifier = ">=1.17.0,<1.22" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
