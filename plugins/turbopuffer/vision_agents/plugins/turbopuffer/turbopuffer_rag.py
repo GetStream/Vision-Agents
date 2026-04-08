@@ -46,6 +46,7 @@ from typing import Literal
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from turbopuffer import AsyncTurbopuffer, NotFoundError
+from turbopuffer.types import RowParam
 
 from vision_agents.core.rag import RAG, Document
 
@@ -181,19 +182,18 @@ class TurboPufferRAG(RAG):
             None, self._embeddings.embed_documents, all_chunks
         )
 
-        rows = []
+        rows: list[RowParam] = []
         for chunk, embedding, (source, idx) in zip(
             all_chunks, embeddings, chunk_sources
         ):
-            rows.append(
-                {
-                    "id": f"{source}_{idx}",
-                    "vector": embedding,
-                    "text": chunk,
-                    "source": source,
-                    "chunk_index": idx,
-                }
-            )
+            row: RowParam = {
+                "id": f"{source}_{idx}",
+                "vector": embedding,
+                "text": chunk,
+                "source": source,
+                "chunk_index": idx,
+            }
+            rows.append(row)
 
         ns = self._client.namespace(self._namespace_name)
         await ns.write(
