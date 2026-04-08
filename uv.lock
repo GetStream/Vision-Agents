@@ -13,6 +13,7 @@ resolution-markers = [
 [manifest]
 members = [
     "vision-agents",
+    "vision-agents-plugins-anam",
     "vision-agents-plugins-anthropic",
     "vision-agents-plugins-assemblyai",
     "vision-agents-plugins-aws",
@@ -53,11 +54,10 @@ dev = [
     { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "blockbuster", specifier = ">=1.5.5,<1.6" },
-    { name = "fastmcp", specifier = ">=2.14.0" },
+    { name = "fastmcp", specifier = ">=3.2.0" },
     { name = "hatch", specifier = ">=1.14.2" },
     { name = "hatch-vcs", specifier = ">=0.5.0" },
-    { name = "mistralai", extras = ["realtime"], specifier = ">=1.12.0" },
-    { name = "mypy", extras = ["mypyc", "faster-cache"] },
+    { name = "mypy", extras = ["mypyc", "faster-cache"], specifier = ">=1.19,<1.20" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.37.0" },
     { name = "pip", specifier = ">=25.2" },
     { name = "pre-commit" },
@@ -316,6 +316,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/04/5a/151344c3ce5a6ee50437b07aa58364ada145d3a7b63e12849068ed0c5265/albumentations-1.4.24.tar.gz", hash = "sha256:cc8874cb0abccc9117aefacbe385c354ac824fa142f46a6c0896d65cec5f8a6d", size = 263557, upload-time = "2024-12-24T21:59:34.587Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/ae/904b7bf58281d2bc1f3d6d48813bbcee742d1f8e3f9c0e1c451b0f67eb5a/albumentations-1.4.24-py3-none-any.whl", hash = "sha256:2f639257a11e681071f4f7d10f6a6d874ae705bcce52746874cd8d7e317a16d7", size = 274921, upload-time = "2024-12-24T21:59:32.202Z" },
+]
+
+[[package]]
+name = "anam"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "aiortc" },
+    { name = "av" },
+    { name = "numpy" },
+    { name = "python-dotenv" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/02/f5/9004e58543fa57a189e5a851bd1d71e98c481afe7acf42def81e2ac99e68/anam-0.3.0.tar.gz", hash = "sha256:a2485eefdf74932b5898b613bd5eb13cc87a26d3dd46e25732c3ea7512c4ff6e", size = 28567, upload-time = "2026-02-18T16:22:07.1Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/14/894aa07c1f497faa1df55830fb1b2d7fa56ec79866e95212e8bb667c8f70/anam-0.3.0-py3-none-any.whl", hash = "sha256:0849732ae1eaa51182c62d614634554a0987c91fbe6febb5a1304ccc3adb1a59", size = 33902, upload-time = "2026-02-18T16:22:04.693Z" },
 ]
 
 [[package]]
@@ -1632,7 +1649,7 @@ wheels = [
 
 [[package]]
 name = "fastmcp"
-version = "3.1.1"
+version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -1657,9 +1674,9 @@ dependencies = [
     { name = "watchfiles" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/83/c95d3bf717698a693eccb43e137a32939d2549876e884e246028bff6ecce/fastmcp-3.1.1.tar.gz", hash = "sha256:db184b5391a31199323766a3abf3a8bfbb8010479f77eca84c0e554f18655c48", size = 17347644, upload-time = "2026-03-14T19:12:20.235Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/0d/56dc2c9fd402b21b850f2c9725f1dc8c257991d2e48a2d2e8a755215ee47/fastmcp-3.2.1.tar.gz", hash = "sha256:6d824463ed8cefb122a9566ddd96b8a994d8a69db413ab3105509b00b0aca1fd", size = 26327332, upload-time = "2026-04-08T20:15:20.374Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/70/ea/570122de7e24f72138d006f799768e14cc1ccf7fcb22b7750b2bd276c711/fastmcp-3.1.1-py3-none-any.whl", hash = "sha256:8132ba069d89f14566b3266919d6d72e2ec23dd45d8944622dca407e9beda7eb", size = 633754, upload-time = "2026-03-14T19:12:22.736Z" },
+    { url = "https://files.pythonhosted.org/packages/87/f0/e34b511d7fc1c9d20e97d1db99c22a6b0a433c58850f25ac236f40c3bf8b/fastmcp-3.2.1-py3-none-any.whl", hash = "sha256:75e5f681dadd8db206735251644971486a7926ae5486f2a1138be3cb4ceb6e74", size = 707238, upload-time = "2026-04-08T20:15:18.019Z" },
 ]
 
 [[package]]
@@ -1851,7 +1868,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "3.0.1"
+version = "3.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1866,9 +1883,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "twirp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/38/94/9fcc6923503c05335b54e5ed7d5f2b4102ce6d49d643e77ce9a145400b6f/getstream-3.0.1.tar.gz", hash = "sha256:595b26748a7c64b7128a82e1322c00149215b6c936f8e2a4398cb48bfe1f2a57", size = 488271, upload-time = "2026-03-19T17:16:37.891Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/76/97559901a908e662f1d94230dada0b4a1f29aa59b28922acba5617ff76e4/getstream-3.1.2.tar.gz", hash = "sha256:6ff9452dbc562e40793bea6397c8dd1dcabbec68cf8b39f537173e680e265b0c", size = 525297, upload-time = "2026-04-07T16:06:29.135Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4b/2d/6d89acaf83467d9a0ed5faa2948d3b634dcd8273eff81b0c91bab895a297/getstream-3.0.1-py3-none-any.whl", hash = "sha256:571bb73692b49ff9d4d47b6d757cf7f76ad3e59a1c6c20d0b8ddecf6cb3b9021", size = 296521, upload-time = "2026-03-19T17:16:39.292Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/da/bba16c058dd88084f651e1bccdc31c740455ed652a16480e287f3efaf06b/getstream-3.1.2-py3-none-any.whl", hash = "sha256:49a9ba00273f41898657eb53268afc8531a8e0c4b5e47f4a1a03ba4de3315541", size = 333203, upload-time = "2026-04-07T16:06:30.558Z" },
 ]
 
 [package.optional-dependencies]
@@ -6893,6 +6910,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all-plugins = [
+    { name = "vision-agents-plugins-anam" },
     { name = "vision-agents-plugins-anthropic" },
     { name = "vision-agents-plugins-assemblyai" },
     { name = "vision-agents-plugins-aws" },
@@ -6926,6 +6944,9 @@ all-plugins = [
     { name = "vision-agents-plugins-vogent" },
     { name = "vision-agents-plugins-wizper" },
     { name = "vision-agents-plugins-xai" },
+]
+anam = [
+    { name = "vision-agents-plugins-anam" },
 ]
 anthropic = [
     { name = "vision-agents-plugins-anthropic" },
@@ -7042,7 +7063,7 @@ requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.0.1,<4" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.1.2,<4" },
     { name = "mcp", specifier = ">=1.23.3,<2" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
@@ -7055,6 +7076,8 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "urllib3", specifier = ">=2.6.3" },
     { name = "uvicorn", specifier = ">=0.38.0" },
+    { name = "vision-agents-plugins-anam", marker = "extra == 'all-plugins'", editable = "plugins/anam" },
+    { name = "vision-agents-plugins-anam", marker = "extra == 'anam'", editable = "plugins/anam" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'all-plugins'", editable = "plugins/anthropic" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "plugins/anthropic" },
     { name = "vision-agents-plugins-assemblyai", marker = "extra == 'all-plugins'", editable = "plugins/assemblyai" },
@@ -7122,7 +7145,33 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "local", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "local", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+
+[[package]]
+name = "vision-agents-plugins-anam"
+source = { editable = "plugins/anam" }
+dependencies = [
+    { name = "anam" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anam", specifier = ">=0.3.0,<0.4" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
 
 [[package]]
 name = "vision-agents-plugins-anthropic"
@@ -7283,7 +7332,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deepgram-sdk", specifier = ">=6.0.1,<7" },
+    { name = "deepgram-sdk", specifier = ">=6.0.1,<6.1.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -7418,7 +7467,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.0.1,<4" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.1.2,<4" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
