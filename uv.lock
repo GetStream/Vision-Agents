@@ -1394,7 +1394,7 @@ wheels = [
 
 [[package]]
 name = "decart"
-version = "0.0.8"
+version = "0.0.30"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1404,9 +1404,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/86/75e55da0dc56528b232e31186c02bf409ba9bce888e5520507a9737cdc36/decart-0.0.8.tar.gz", hash = "sha256:95ea6fc0af5896198ce76abf7d2ecf39feec77e3ebf7c5fa55e2f239879d5545", size = 198620, upload-time = "2025-11-12T17:02:42.627Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/30/1a358ac2c0f60052daafed188052fa3cce37ecb9e0fbbf1d7646ca36680e/decart-0.0.30.tar.gz", hash = "sha256:bdb6c66ebe6c77f5ec986c27480b19d6da81ed6d2f194f47972693a42cbca189", size = 192765, upload-time = "2026-03-26T14:03:37.809Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/e2/e128f098aaf0981849da4684a30d53b9a84be84fc372709de14557d135e9/decart-0.0.8-py3-none-any.whl", hash = "sha256:3f1ab43ced32edcd5a494673bc8f899a559f6a5c59796da88d71c5f48b8422dc", size = 20263, upload-time = "2025-11-12T17:02:40.913Z" },
+    { url = "https://files.pythonhosted.org/packages/da/c8/a58ad38e5cccbb5a3a2e7e5d710c262f5bebba4cca0070dd8a8abd0089ac/decart-0.0.30-py3-none-any.whl", hash = "sha256:17544e89f599eec2b52a133d267d8470889be61e7d6ce478c4f05fc6872b8301", size = 37541, upload-time = "2026-03-26T14:03:36.281Z" },
 ]
 
 [[package]]
@@ -7403,7 +7403,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "decart", specifier = "==0.0.8" },
+    { name = "decart", specifier = "==0.0.30" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
@@ -8072,7 +8072,7 @@ dev = [
 requires-dist = [
     { name = "langchain-google-genai", specifier = ">=4.2.1" },
     { name = "langchain-text-splitters", specifier = ">=1.1.1" },
-    { name = "turbopuffer", specifier = ">=1.17.0,<1.18" },
+    { name = "turbopuffer", specifier = ">=1.17.0,<1.20" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
