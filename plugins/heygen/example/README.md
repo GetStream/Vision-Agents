@@ -33,7 +33,7 @@ cp .env.example .env
 **For Standard Example** (`avatar_example.py`):
 
 - `HEYGEN_API_KEY` - Get from [HeyGen](https://heygen.com)
-- `STREAM_API_KEY` and `STREAM_SECRET` - Get from [GetStream](https://getstream.io)
+- `STREAM_API_KEY` and `STREAM_SECRET` - Get from [GetStream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents)
 - `CARTESIA_API_KEY` - Get from [Cartesia](https://cartesia.ai)
 - `DEEPGRAM_API_KEY` - Get from [Deepgram](https://deepgram.com)
 - `GOOGLE_API_KEY` - Get from [Google AI Studio](https://makersuite.google.com/app/apikey)
@@ -41,7 +41,7 @@ cp .env.example .env
 **For Realtime Example** (`avatar_realtime_example.py`):
 
 - `HEYGEN_API_KEY` - Get from [HeyGen](https://heygen.com)
-- `STREAM_API_KEY` and `STREAM_SECRET` - Get from [GetStream](https://getstream.io)
+- `STREAM_API_KEY` and `STREAM_SECRET` - Get from [GetStream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents)
 - `GOOGLE_API_KEY` - Get from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
 ## Running the Examples
@@ -196,5 +196,5 @@ Make sure `HEYGEN_API_KEY` is set in your `.env` file.
 
 - [HeyGen API Documentation](https://docs.heygen.com/docs/streaming-api)
 - [Vision Agents Documentation](https://visionagents.ai/)
-- [GetStream Video Documentation](https://getstream.io/video/docs/)
+- [GetStream Video Documentation](https://getstream.io/video/docs/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents)
 

@@ -416,8 +416,12 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         # Open RTC connection and keep it alive for the duration of the returned context manager
         connection = await rtc.join(
-            call, agent.agent_user.id, subscription_config=subscription_config
+            call,
+            agent.agent_user.id,
+            subscription_config=subscription_config,
         )
+        # Store immediately so close() can clean up if join is interrupted
+        self._real_connection = connection
 
         @connection.on("track_added")
         async def on_track(track_id, track_type, user):
@@ -446,7 +450,6 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         # Start the connection
         await connection.__aenter__()
-        self._real_connection = connection
         self._call = call
         # Re-publish already published tracks in case somebody is already on the call when we joined.
         # Otherwise, we won't get the video track from participants joined before us.
@@ -496,6 +499,14 @@ class StreamEdge(EdgeTransport[StreamCall]):
         )
 
     async def close(self):
+        if self._real_connection:
+            try:
+                await self._real_connection.leave()
+            except Exception:
+                logger.exception("Error during connection leave")
+            self._real_connection = None
+        if self.client:
+            await self.client.aclose()
         self._call = None
 
     async def send_custom_event(self, data: dict) -> None:

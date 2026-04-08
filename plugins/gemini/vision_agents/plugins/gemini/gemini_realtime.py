@@ -67,7 +67,7 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
         automatic_activity_detection=AutomaticActivityDetectionDict(
             start_of_speech_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
             end_of_speech_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
-            silence_duration_ms=500,
+            silence_duration_ms=250,
             prefix_padding_ms=50,
         ),
     ),
@@ -258,7 +258,11 @@ class GeminiRealtime(realtime.Realtime):
         )
 
         # Add frame handler (starts automatically)
-        self._video_forwarder.add_frame_handler(self._send_video_frame)
+        # Throttle to self.fps so shared forwarders (which run at higher FPS) don't
+        # saturate the websocket with video data and starve audio sends.
+        self._video_forwarder.add_frame_handler(
+            self._send_video_frame, fps=float(self.fps)
+        )
         logger.info(f"Started video forwarding with {self.fps} FPS")
 
     async def _send_video_frame(self, frame: av.VideoFrame) -> None:
@@ -434,7 +438,11 @@ class GeminiRealtime(realtime.Realtime):
                             self._handle_function_call(part.function_call)
                         )
 
-            if server_content and server_content.turn_complete:
+            if server_content and server_content.interrupted:
+                await self.interrupt()
+                self._emit_audio_output_done_event(interrupted=True)
+                handled = True
+            elif server_content and server_content.turn_complete:
                 self._emit_audio_output_done_event()
                 handled = True
 

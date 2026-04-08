@@ -11,7 +11,7 @@ This example demonstrates how to use the NVIDIA VLM plugin with Vision Agents to
 ## Prerequisites
 
 1. NVIDIA API key - Get one from [NVIDIA API](https://build.nvidia.com/)
-2. Stream API credentials - Get from [GetStream](https://getstream.io/)
+2. Stream API credentials - Get from [GetStream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents)
 3. Deepgram API key - Get from [Deepgram](https://deepgram.com/)
 4. ElevenLabs API key - Get from [ElevenLabs](https://elevenlabs.io/)
 

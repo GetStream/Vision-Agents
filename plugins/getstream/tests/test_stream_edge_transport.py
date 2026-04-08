@@ -1,6 +1,6 @@
 import asyncio
 import time
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -106,3 +106,16 @@ class TestStreamEdge:
     ):
         with pytest.raises(RuntimeError, match="not authenticated"):
             await stream_edge.create_call(call_id="call-1")
+
+    async def test_close_releases_client_resources(self, stream_edge: StreamEdge):
+        stream_edge._real_connection = AsyncMock()
+        real_connection = stream_edge._real_connection
+
+        assert stream_edge.client.client.is_closed is False
+        assert stream_edge._real_connection is not None
+
+        await stream_edge.close()
+
+        assert stream_edge.client.client.is_closed is True
+        assert stream_edge._real_connection is None
+        real_connection.leave.assert_called_once()

@@ -15,7 +15,7 @@ can have conversations with users through video and voice input and output.
     - [OpenAI](https://openai.com) (for the LLM)
     - [Elevenlabs](https://elevenlabs.io/) (for text-to-speech)
     - [Deepgram](https://deepgram.com/) (for speech-to-text)
-    - [Stream](https://getstream.io/) (for video/audio infrastructure)
+    - [Stream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) (for video/audio infrastructure)
     - [Smart Turn](https://fal.ai/models/fal-ai/smart-turn) (for turn detection)
 
 ## Installation

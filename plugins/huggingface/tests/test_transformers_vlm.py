@@ -154,11 +154,107 @@ class TestTransformersVLM:
             "attention_mask": torch.ones_like(input_ids),
         }
 
-        result = vlm._build_vlm_inputs("describe this", [])
+        messages = [{"role": "user", "content": "describe this"}]
+        result = vlm._build_processor_inputs(messages, [])
         assert "input_ids" in result
 
         call_kwargs = processor.call_args.kwargs
         assert call_kwargs["text"] == "describe this"
+
+    async def test_build_processor_inputs_passes_tools(self, vlm):
+        """Tools kwarg is forwarded to apply_chat_template."""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "look_up",
+                    "description": "Look up info",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        messages = [{"role": "user", "content": "hi"}]
+        vlm._build_processor_inputs(messages, [], tools)
+
+        call_kwargs = vlm._resources.processor.apply_chat_template.call_args.kwargs
+        assert call_kwargs["tools"] is tools
+
+    async def test_build_processor_inputs_tools_fallback(self, vlm):
+        """When template fails with tools, retries without and succeeds."""
+        processor = vlm._resources.processor
+        call_count = 0
+
+        def _side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if "tools" in kwargs:
+                raise ValueError("tools not supported")
+            ids = torch.tensor([[1, 2, 3]])
+            return {"input_ids": ids, "attention_mask": torch.ones_like(ids)}
+
+        processor.apply_chat_template.side_effect = _side_effect
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "f",
+                    "description": "d",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        result = vlm._build_processor_inputs(
+            [{"role": "user", "content": "hi"}], [], tools
+        )
+        assert "input_ids" in result
+        assert call_count == 2
+
+    async def test_tool_calls_execute_and_generate_followup(self, vlm, conversation):
+        """Tool calls are executed and the VLM generates a follow-up using the same frames."""
+        for _ in range(2):
+            vlm._frame_buffer.append(_random_video_frame())
+
+        tool_text = (
+            '<tool_call>{"name": "identify", "arguments": {"label": "cat"}}</tool_call>'
+        )
+        followup_text = "That is a cat."
+
+        # First call returns tool call text, second returns plain follow-up
+        call_count = 0
+
+        def _decode_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return tool_text
+            return followup_text
+
+        vlm._resources.processor.decode.side_effect = _decode_side_effect
+
+        calls_received = []
+
+        @vlm.register_function("identify", description="Identify object")
+        async def identify(label: str) -> str:
+            calls_received.append(label)
+            return f"Confirmed: {label}"
+
+        frames_snapshot = list(vlm._frame_buffer)
+        image_count = min(len(frames_snapshot), vlm._max_frames)
+        messages = vlm._build_messages()
+        image_content = [{"type": "image"} for _ in range(image_count)]
+        image_content.append({"type": "text", "text": "what is this?"})
+        messages.append({"role": "user", "content": image_content})
+
+        result = await vlm.create_response(messages=messages, frames=frames_snapshot)
+
+        assert calls_received == ["cat"]
+        assert result.text == followup_text
+
+        # Follow-up call should reuse the same frames
+        last_call = vlm._resources.processor.apply_chat_template.call_args
+        assert last_call.kwargs.get("images") is not None
+        assert len(last_call.kwargs["images"]) == 2
 
 
 # ---------------------------------------------------------------------------

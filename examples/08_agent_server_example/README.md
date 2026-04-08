@@ -22,7 +22,7 @@ In this example, we will cover the HTTP server mode which allows you to:
     - [Gemini](https://ai.google.dev/) (for the LLM)
     - [Elevenlabs](https://elevenlabs.io/) (for text-to-speech)
     - [Deepgram](https://deepgram.com/) (for speech-to-text)
-    - [Stream](https://getstream.io/) (for video/audio infrastructure)
+    - [Stream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) (for video/audio infrastructure)
 
 ## Installation
 

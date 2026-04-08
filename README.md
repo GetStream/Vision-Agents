@@ -1,3 +1,5 @@
+![VisionAgents](assets/repo_image.png)
+
 # Open Vision Agents by Stream
 
 [![build](https://github.com/GetStream/Vision-Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/GetStream/Vision-Agents/actions)
@@ -6,8 +8,6 @@
 [![License](https://img.shields.io/github/license/GetStream/Vision-Agents)](https://github.com/GetStream/Vision-Agents/blob/main/LICENSE)
 [![Discord](https://img.shields.io/discord/1108586339550638090)](https://discord.gg/RkhX9PxMS6)
 [![X (Twitter)](https://img.shields.io/badge/X-@visionagents__ai-000000?logo=x&logoColor=white)](https://x.com/visionagents_ai)
-
-https://github.com/user-attachments/assets/d9778ab9-938d-4101-8605-ff879c29b0e4
 
 ### Multi-modal AI agents that watch, listen, and understand video.
 
@@ -18,7 +18,7 @@ your infrastructure, and your use cases.
 
 - **Video AI:** Built for real-time video AI. Combine YOLO, Roboflow, and others with Gemini/OpenAI in real-time.
 - **Low Latency:** Join quickly (500ms) and maintain audio/video latency under 30ms
-  using [Stream's edge network](https://getstream.io/video/).
+  using [Stream's edge network](https://getstream.io/video/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents).
 - **Open:** Built by Stream, but works with any video edge network.
 - **Native APIs:** Native SDK methods from OpenAI (`create response`), Gemini (`generate`), and Claude (
   `create message`) — always access the latest LLM capabilities.
@@ -37,10 +37,10 @@ your infrastructure, and your use cases.
 
 **Step 3: Obtain your Stream API credentials**
 
-Get a free API key from [Stream](https://getstream.io/). Developers receive **333,000 participant minutes** per month,
+Get a free API key from [Stream](https://getstream.io/try-for-free/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents). Developers receive **333,000 participant minutes** per month,
 plus extra credits via the Maker Program.
 
-Follow the [quickstart guide](https://visionagents.ai/introduction/overview) to build your first agent.
+Follow the [quickstart guide](https://visionagents.ai/introduction/quickstart) to build your first agent.
 
 ## See It In Action
 
