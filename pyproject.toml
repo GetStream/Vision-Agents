@@ -120,6 +120,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "testcontainers[redis]>=4.0.0",
     "redis[hiredis]>=5.0.0",
+    "types-aiofiles>=25.1.0.20251011",
 ]
 
 [tool.mypy]
