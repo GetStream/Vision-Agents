@@ -3,7 +3,6 @@ import datetime
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
@@ -33,7 +32,7 @@ from ..edge.events import (
 )
 from ..edge.types import Connection, Participant, TrackType, User
 from ..events import AgentConnectionEvent, EdgeCustomEventOutboundAdapter
-from ..events.bus import EventBus, InMemoryEventBus
+from ..events.bus import EventBus, EventHandler, InMemoryEventBus
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -1541,7 +1540,7 @@ class Agent:
 
     def _resolve_adapter_deliver(
         self, adapter: OutboundEventAdapter
-    ) -> Callable[[AgentConnectionEvent], Awaitable[None]]:
+    ) -> EventHandler[AgentConnectionEvent]:
         deliver = getattr(adapter, "deliver", None)
         if deliver is None:
             raise ValueError(

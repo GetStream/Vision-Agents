@@ -7,7 +7,7 @@ from .base import (
     VideoProcessorDetectionEvent,
 )
 from .adapters import EdgeCustomEventOutboundAdapter
-from .bus import EventBus, InMemoryEventBus
+from .bus import EventBus, EventHandler, InMemoryEventBus
 from .manager import EventManager
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "ConnectionState",
     "EdgeCustomEventOutboundAdapter",
     "EventBus",
+    "EventHandler",
     "EventManager",
     "InMemoryEventBus",
     "PluginBaseEvent",
