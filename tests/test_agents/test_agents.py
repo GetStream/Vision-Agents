@@ -10,7 +10,7 @@ from vision_agents.core import Agent, User
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.events import EventManager
+from vision_agents.core.events import AgentConnectionEvent, EventManager
 from vision_agents.core.llm.events import (
     RealtimeAgentSpeechTranscriptionEvent,
     RealtimeAudioOutputEvent,
@@ -168,6 +168,14 @@ class RecordingEdge(DummyEdge):
         return self.recorded_audio_track
 
 
+class DummyOutboundAdapter:
+    def __init__(self):
+        self.received: list[AgentConnectionEvent] = []
+
+    async def deliver(self, event: AgentConnectionEvent) -> None:
+        self.received.append(event)
+
+
 class TestAgent:
     @pytest.mark.parametrize(
         "edge_params",
@@ -234,6 +242,53 @@ class TestAgent:
         await agent.send_custom_event(test_data)
 
         assert edge.last_custom_event == test_data
+
+    async def test_send_event_publishes_to_outbound_bus(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(id="agent-1", name="test"),
+        )
+
+        received_events: list[AgentConnectionEvent] = []
+
+        async def on_event(event: AgentConnectionEvent) -> None:
+            received_events.append(event)
+
+        agent.outbound_events.subscribe(on_event)
+
+        outbound_event = AgentConnectionEvent(
+            type="agent.turn_ended",
+            payload={"turn_id": "turn-1"},
+            target="avatar",
+        )
+        result = await agent.send_event(outbound_event)
+
+        assert result is None
+        assert received_events == [outbound_event]
+
+    async def test_send_event_delivers_to_registered_outbound_adapter(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(id="agent-1", name="test"),
+        )
+        adapter = DummyOutboundAdapter()
+        agent.register_outbound_adapter(adapter)
+
+        outbound_event = AgentConnectionEvent(
+            type="ui.button.set_enabled",
+            payload={"id": "confirm", "enabled": True},
+            target="frontend",
+        )
+
+        await agent.send_event(outbound_event)
+
+        assert adapter.received == [outbound_event]
 
     async def test_send_metrics_event(self):
         """Test that metrics are sent as custom events."""

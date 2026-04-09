@@ -54,6 +54,21 @@ class PluginBaseEvent(BaseEvent):
     plugin_version: str | None = None
 
 
+@dataclass
+class AgentConnectionEvent:
+    type: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    correlation_id: Optional[str] = None
+    source: str = "agent"
+    target: Optional[str] = None
+    from_participant_id: Optional[str] = None
+    to_participant_id: Optional[str] = None
+    session_id: Optional[str] = None
+    call_id: Optional[str] = None
+    version: str = "v1"
+
+
 @dataclasses.dataclass
 class ExceptionEvent:
     exc: Exception

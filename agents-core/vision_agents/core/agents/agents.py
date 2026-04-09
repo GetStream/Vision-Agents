@@ -30,6 +30,8 @@ from ..edge.events import (
     TrackRemovedEvent,
 )
 from ..edge.types import Connection, Participant, TrackType, User
+from ..events import AgentConnectionEvent
+from ..events.bus import EventBus, InMemoryEventBus
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -139,6 +141,8 @@ class Agent:
         broadcast_metrics_interval: float = 5.0,
         # Audio filter to process audio from multiple speakers
         multi_speaker_filter: Optional[AudioFilter] = None,
+        # Outbound event bus for external-facing events.
+        outbound_bus: EventBus[AgentConnectionEvent] | None = None,
     ):
         """Initialize the Agent.
 
@@ -208,6 +212,7 @@ class Agent:
         self.events = EventManager()
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(llm_events)
+        self.outbound_events = outbound_bus or InMemoryEventBus[AgentConnectionEvent]()
 
         self.llm = llm
         self.stt = stt
@@ -1509,6 +1514,19 @@ class Agent:
     @property
     def metrics(self) -> AgentMetrics:
         return self._metrics
+
+    def register_outbound_adapter(self, adapter: Any) -> None:
+        """Register an outbound adapter that receives AgentConnectionEvent events."""
+        deliver = getattr(adapter, "deliver", None)
+        if deliver is None:
+            raise ValueError(
+                "Outbound adapter must define an async deliver(event) method"
+            )
+        self.outbound_events.subscribe(deliver)
+
+    async def send_event(self, event: AgentConnectionEvent) -> None:
+        """Publish an external-facing event to the outbound event bus."""
+        await self.outbound_events.publish(event)
 
     async def send_custom_event(self, data: dict) -> None:
         """Send a custom event to all participants watching the call.
