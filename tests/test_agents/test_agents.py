@@ -10,7 +10,11 @@ from vision_agents.core import Agent, User
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.events import AgentConnectionEvent, EventManager
+from vision_agents.core.events import (
+    AgentConnectionEvent,
+    EdgeCustomEventOutboundAdapter,
+    EventManager,
+)
 from vision_agents.core.llm.events import (
     RealtimeAgentSpeechTranscriptionEvent,
     RealtimeAudioOutputEvent,
@@ -289,6 +293,69 @@ class TestAgent:
         await agent.send_event(outbound_event)
 
         assert adapter.received == [outbound_event]
+
+    async def test_send_event_delivers_to_edge_custom_events(self, call: Call):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(id="agent-1", name="test"),
+        )
+        outbound_event = AgentConnectionEvent(
+            type="agent.turn_ended",
+            payload={"turn_id": "turn-123"},
+            target="avatar",
+            call_id=call.id,
+        )
+
+        async with agent.join(call):
+            await agent.send_event(outbound_event)
+
+        assert edge.last_custom_event["type"] == "agent.turn_ended"
+        assert edge.last_custom_event["payload"] == {"turn_id": "turn-123"}
+        assert edge.last_custom_event["target"] == "avatar"
+        assert edge.last_custom_event["call_id"] == call.id
+        assert edge.last_custom_event["event_id"] == outbound_event.event_id
+        assert edge.last_custom_event["version"] == "v1"
+
+    async def test_send_event_can_disable_default_edge_adapter(self, call: Call):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(id="agent-1", name="test"),
+            auto_register_edge_outbound_adapter=False,
+        )
+        outbound_event = AgentConnectionEvent(
+            type="agent.turn_ended",
+            payload={"turn_id": "turn-123"},
+            target="avatar",
+            call_id=call.id,
+        )
+
+        async with agent.join(call):
+            await agent.send_event(outbound_event)
+
+        assert not hasattr(edge, "last_custom_event")
+
+    async def test_edge_outbound_adapter_serializes_event_dataclass(self):
+        edge = DummyEdge()
+        adapter = EdgeCustomEventOutboundAdapter(edge=edge)
+        event = AgentConnectionEvent(
+            type="agent.turn_ended",
+            payload={"turn_id": "turn-123"},
+            target="avatar",
+        )
+
+        await adapter.deliver(event)
+
+        assert edge.last_custom_event["type"] == "agent.turn_ended"
+        assert edge.last_custom_event["payload"] == {"turn_id": "turn-123"}
+        assert edge.last_custom_event["target"] == "avatar"
+        assert edge.last_custom_event["event_id"] == event.event_id
+        assert edge.last_custom_event["source"] == "agent"
 
     async def test_send_metrics_event(self):
         """Test that metrics are sent as custom events."""

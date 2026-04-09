@@ -3,6 +3,7 @@ import datetime
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
@@ -10,6 +11,7 @@ from typing import (
     AsyncIterator,
     Iterator,
     Optional,
+    Protocol,
     TypeGuard,
 )
 from uuid import uuid4
@@ -30,7 +32,7 @@ from ..edge.events import (
     TrackRemovedEvent,
 )
 from ..edge.types import Connection, Participant, TrackType, User
-from ..events import AgentConnectionEvent
+from ..events import AgentConnectionEvent, EdgeCustomEventOutboundAdapter
 from ..events.bus import EventBus, InMemoryEventBus
 from ..events.manager import EventManager
 from ..instructions import Instructions
@@ -79,6 +81,10 @@ from .transcript import TranscriptStore
 logger = logging.getLogger(__name__)
 
 tracer: Tracer = trace.get_tracer("agents")
+
+
+class OutboundEventAdapter(Protocol):
+    async def deliver(self, event: AgentConnectionEvent) -> None: ...
 
 
 class Agent:
@@ -143,6 +149,8 @@ class Agent:
         multi_speaker_filter: Optional[AudioFilter] = None,
         # Outbound event bus for external-facing events.
         outbound_bus: EventBus[AgentConnectionEvent] | None = None,
+        # Whether to auto-register edge custom-event adapter on join.
+        auto_register_edge_outbound_adapter: bool = True,
     ):
         """Initialize the Agent.
 
@@ -171,6 +179,10 @@ class Agent:
                 the first participant who starts speaking and drops audio from
                 everyone else until the active speaker's turn ends, or they go
                 silent.
+            outbound_bus: Optional outbound event bus implementation.
+            auto_register_edge_outbound_adapter: If True, the agent registers
+                a default adapter that forwards outbound events to
+                `edge.send_custom_event()` when joining a call.
 
         """
         self._agent_user_initialized = False
@@ -213,6 +225,9 @@ class Agent:
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(llm_events)
         self.outbound_events = outbound_bus or InMemoryEventBus[AgentConnectionEvent]()
+        self._auto_register_edge_outbound_adapter = auto_register_edge_outbound_adapter
+        self._edge_outbound_adapter = EdgeCustomEventOutboundAdapter(self.edge)
+        self._edge_outbound_adapter_registered = False
 
         self.llm = llm
         self.stt = stt
@@ -687,6 +702,7 @@ class Agent:
             await self.authenticate()
             with self.span("edge.join"):
                 self._connection = await self.edge.join(self, call)
+            self._register_default_outbound_adapter_if_needed()
             self.logger.info(f"🤖 Agent joined call: {call.id}")
 
             # Set up audio and video tracks together to avoid SDP issues
@@ -1515,13 +1531,27 @@ class Agent:
     def metrics(self) -> AgentMetrics:
         return self._metrics
 
-    def register_outbound_adapter(self, adapter: Any) -> None:
-        """Register an outbound adapter that receives AgentConnectionEvent events."""
+    def _register_default_outbound_adapter_if_needed(self) -> None:
+        if not self._auto_register_edge_outbound_adapter:
+            return
+        if self._edge_outbound_adapter_registered:
+            return
+        self.register_outbound_adapter(self._edge_outbound_adapter)
+        self._edge_outbound_adapter_registered = True
+
+    def _resolve_adapter_deliver(
+        self, adapter: OutboundEventAdapter
+    ) -> Callable[[AgentConnectionEvent], Awaitable[None]]:
         deliver = getattr(adapter, "deliver", None)
         if deliver is None:
             raise ValueError(
                 "Outbound adapter must define an async deliver(event) method"
             )
+        return deliver
+
+    def register_outbound_adapter(self, adapter: OutboundEventAdapter) -> None:
+        """Register an outbound adapter that receives AgentConnectionEvent events."""
+        deliver = self._resolve_adapter_deliver(adapter)
         self.outbound_events.subscribe(deliver)
 
     async def send_event(self, event: AgentConnectionEvent) -> None:
