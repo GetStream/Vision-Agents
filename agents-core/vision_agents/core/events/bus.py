@@ -1,10 +1,12 @@
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Generic, Protocol, TypeVar
+from typing import Generic, Protocol, TypeAlias, TypeVar
 
 T = TypeVar("T")
-EventHandler = Callable[[T], Awaitable[None]]
+
+# Async callback signature used by EventBus subscribers.
+EventHandler: TypeAlias = Callable[[T], Awaitable[None]]
 
 
 class EventBus(Protocol[T]):
