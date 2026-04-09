@@ -14,6 +14,7 @@ from vision_agents.core.events import (
     AgentConnectionEvent,
     EdgeCustomEventOutboundAdapter,
     EventManager,
+    InboundConnectionEvent,
 )
 from vision_agents.core.llm.events import (
     RealtimeAgentSpeechTranscriptionEvent,
@@ -339,6 +340,54 @@ class TestAgent:
             await agent.send_event(outbound_event)
 
         assert not hasattr(edge, "last_custom_event")
+
+    async def test_receive_event_publishes_to_inbound_bus(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(id="agent-1", name="test"),
+        )
+        received_events: list[InboundConnectionEvent] = []
+
+        async def on_inbound(event: InboundConnectionEvent) -> None:
+            received_events.append(event)
+
+        agent.inbound_events.subscribe(on_inbound)
+        inbound_event = InboundConnectionEvent(
+            type="ui.button.clicked",
+            payload={"id": "confirm"},
+            source="frontend",
+        )
+        result = await agent.receive_event(inbound_event)
+
+        assert result is None
+        assert received_events == [inbound_event]
+
+    async def test_register_inbound_handler_receives_inbound_event(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(id="agent-1", name="test"),
+        )
+        received_events: list[InboundConnectionEvent] = []
+
+        async def on_inbound(event: InboundConnectionEvent) -> None:
+            received_events.append(event)
+
+        agent.register_inbound_handler(on_inbound)
+        inbound_event = InboundConnectionEvent(
+            type="ui.modal.submit",
+            payload={"value": "yes"},
+            source="frontend",
+        )
+
+        await agent.receive_event(inbound_event)
+
+        assert received_events == [inbound_event]
 
     async def test_edge_outbound_adapter_serializes_event_dataclass(self):
         edge = DummyEdge()

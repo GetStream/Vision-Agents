@@ -31,7 +31,11 @@ from ..edge.events import (
     TrackRemovedEvent,
 )
 from ..edge.types import Connection, Participant, TrackType, User
-from ..events import AgentConnectionEvent, EdgeCustomEventOutboundAdapter
+from ..events import (
+    AgentConnectionEvent,
+    EdgeCustomEventOutboundAdapter,
+    InboundConnectionEvent,
+)
 from ..events.bus import EventBus, EventHandler, InMemoryEventBus
 from ..events.manager import EventManager
 from ..instructions import Instructions
@@ -148,6 +152,8 @@ class Agent:
         multi_speaker_filter: Optional[AudioFilter] = None,
         # Outbound event bus for external-facing events.
         outbound_bus: EventBus[AgentConnectionEvent] | None = None,
+        # Inbound event bus for external events coming into the agent.
+        inbound_bus: EventBus[InboundConnectionEvent] | None = None,
         # Whether to auto-register edge custom-event adapter on join.
         auto_register_edge_outbound_adapter: bool = True,
     ):
@@ -179,6 +185,7 @@ class Agent:
                 everyone else until the active speaker's turn ends, or they go
                 silent.
             outbound_bus: Optional outbound event bus implementation.
+            inbound_bus: Optional inbound event bus implementation.
             auto_register_edge_outbound_adapter: If True, the agent registers
                 a default adapter that forwards outbound events to
                 `edge.send_custom_event()` when joining a call.
@@ -224,6 +231,7 @@ class Agent:
         self.events.register_events_from_module(events)
         self.events.register_events_from_module(llm_events)
         self.outbound_events = outbound_bus or InMemoryEventBus[AgentConnectionEvent]()
+        self.inbound_events = inbound_bus or InMemoryEventBus[InboundConnectionEvent]()
         self._auto_register_edge_outbound_adapter = auto_register_edge_outbound_adapter
         self._edge_outbound_adapter = EdgeCustomEventOutboundAdapter(self.edge)
         self._edge_outbound_adapter_registered = False
@@ -1556,6 +1564,16 @@ class Agent:
     async def send_event(self, event: AgentConnectionEvent) -> None:
         """Publish an external-facing event to the outbound event bus."""
         await self.outbound_events.publish(event)
+
+    def register_inbound_handler(
+        self, handler: EventHandler[InboundConnectionEvent]
+    ) -> None:
+        """Register a handler for external events delivered to the agent."""
+        self.inbound_events.subscribe(handler)
+
+    async def receive_event(self, event: InboundConnectionEvent) -> None:
+        """Publish an external inbound event to the inbound event bus."""
+        await self.inbound_events.publish(event)
 
     async def send_custom_event(self, data: dict) -> None:
         """Send a custom event to all participants watching the call.
