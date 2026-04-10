@@ -3,7 +3,6 @@ from .base import (
     AudioFormat,
     BaseEvent,
     ConnectionState,
-    InboundConnectionEvent,
     PluginBaseEvent,
     VideoProcessorDetectionEvent,
 )
@@ -20,7 +19,6 @@ __all__ = [
     "EventBus",
     "EventHandler",
     "EventManager",
-    "InboundConnectionEvent",
     "InMemoryEventBus",
     "PluginBaseEvent",
     "VideoProcessorDetectionEvent",
